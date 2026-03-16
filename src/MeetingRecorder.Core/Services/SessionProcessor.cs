@@ -72,7 +72,11 @@ public sealed class SessionProcessor
             manifest.StartedAtUtc,
             string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle);
         var mergedAudioPath = Path.Combine(processingRoot, $"{stem}.wav");
-        await WaveChunkMerger.MergeAsync(manifest.RawChunkPaths, mergedAudioPath, cancellationToken);
+        await WaveChunkMerger.MergeAsync(
+            manifest.RawChunkPaths,
+            manifest.MicrophoneChunkPaths,
+            mergedAudioPath,
+            cancellationToken);
         await PublishService.PublishAudioAsync(mergedAudioPath, config.AudioOutputDir, stem, cancellationToken);
 
         manifest = manifest with

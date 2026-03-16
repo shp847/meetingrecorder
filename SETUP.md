@@ -1,136 +1,177 @@
-# Meeting Recorder Setup
+﻿# Meeting Recorder Setup
 
-## What to install
+This guide explains how to run the current app, set up the Whisper model, validate the pipeline, and recover from failed transcription runs.
 
-For a restricted corporate laptop, use the packaged installer bundle produced by:
+## 1. Recommended Deployment
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1`
+For a restricted corporate laptop, the recommended path is the portable extract-and-run bundle.
 
-If you want a fully self-contained bundle and your build machine has the needed runtime packs available, use:
+Copy this folder to the target location:
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1 -SelfContained`
+- `C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\.artifacts\publish\win-x64\MeetingRecorder`
 
-That generates:
+Then run:
 
-- `.artifacts\installer\win-x64\MeetingRecorder-win-x64.zip`
-- or a timestamped variant such as `.artifacts\installer\win-x64\MeetingRecorder-win-x64-YYYYMMDD-HHMMSS.zip`
+- `Run-MeetingRecorder.cmd`
 
-The ZIP contains:
+No install step is required for the normal portable flow.
 
-- `MeetingRecorder\` with the app and worker binaries
-- `Run-MeetingRecorder.cmd` at the ZIP root for direct launch after extraction
-- `Install-MeetingRecorder.cmd`
-- `Install-MeetingRecorder.ps1`
-- this setup guide
+## 2. Portable Mode Data Layout
 
-By default, the bundle is framework-dependent to keep the packaging flow reliable in restricted environments. If the target laptop does not already have the required `.NET 8 Desktop Runtime`, rebuild the bundle with `-SelfContained` on a machine that can satisfy that publish mode.
+In portable mode, the app keeps its data under:
 
-## Easiest portable run flow
+- `<AppFolder>\data\config`
+- `<AppFolder>\data\logs`
+- `<AppFolder>\data\audio`
+- `<AppFolder>\data\transcripts`
+- `<AppFolder>\data\work`
+- `<AppFolder>\data\models`
 
-1. Copy the newest `MeetingRecorder-win-x64*.zip` bundle to the target machine.
-2. Extract the ZIP to any user-writable folder that is not blocked by policy.
-3. Double-click `Run-MeetingRecorder.cmd` from the extracted ZIP root.
-4. Keep the extracted folder where you want the app to live, because the app writes its config, logs, models, and outputs under that same folder.
+The portable behavior is activated by the `portable.mode` marker file shipped with the bundle.
 
-In portable mode, the app runs directly from the extracted folder and keeps its app data in:
+## 3. First Launch Checklist
 
-- `<ExtractedFolder>\MeetingRecorder\data`
+1. Launch the app once.
+2. Confirm the output folders shown on the Dashboard are acceptable.
+3. Open the `Models` tab.
+4. Make sure the configured Whisper model path looks correct.
+5. Install or import the Whisper model until the app shows `Model status: ready`.
+6. Record a short manual test.
 
-The bundle ships with a `portable.mode` marker so this behavior is automatic.
+## 4. Whisper Model Setup
 
-No install step is required for this portable flow.
+The current app supports two setup paths.
 
-## Direct-copy deployment folder
+### Option A: Download from the Models tab
 
-If you do not want to use the ZIP at all, copy this folder directly to the target location:
+Use this when the laptop can reach the model host.
 
-- `.artifacts\publish\win-x64\MeetingRecorder`
+1. Open `Models`.
+2. Click `Refresh Status`.
+3. If the model is missing or invalid, click `Download Base Model`.
+4. Wait for the status message.
+5. Confirm the tab shows `Model status: ready`.
 
-That folder already contains the portable app files, `portable.mode`, and `Run-MeetingRecorder.cmd`.
+### Option B: Import an existing file
 
-If you want the same layout as the ZIP contents before compression, use:
+Use this when corporate policy blocks the download.
 
-- `.artifacts\installer\win-x64\staging`
+1. Acquire a valid `ggml-base.bin` through an approved internal or manual process.
+2. Open `Models`.
+3. Click `Import Existing File`.
+4. Select the `.bin` file.
+5. Wait for validation to complete.
+6. Confirm the tab shows `Model status: ready`.
 
-## Optional install flow
+### Manual fallback
 
-If you still want a copied local install plus a desktop shortcut:
+If needed, you can place the model file directly at the configured path.
 
-1. Extract the ZIP.
-2. Double-click `Install-MeetingRecorder.cmd`.
-3. If PowerShell prompts, allow the script to run for this install.
-4. The installer copies the app to:
-   - `%LOCALAPPDATA%\MeetingRecorder\app`
-5. The installer creates a desktop shortcut named `Meeting Recorder`.
+Default portable path:
 
-If PowerShell script execution is blocked, you can still run the app manually:
+- `<AppFolder>\data\models\asr\ggml-base.bin`
 
-1. Open the extracted `MeetingRecorder\` folder.
-2. Run `MeetingRecorder.App.exe` or `Run-MeetingRecorder.cmd` directly.
+The app treats tiny files as invalid and will not accept an HTML or proxy error page saved with a `.bin` extension.
 
-## First launch behavior
+## 5. Config Setup
 
-In portable mode, on first launch the app creates folders under:
+Open the `Config` tab to review or change:
 
-- `<ExtractedFolder>\MeetingRecorder\data\config`
-- `<ExtractedFolder>\MeetingRecorder\data\logs`
-- `<ExtractedFolder>\MeetingRecorder\data\audio`
-- `<ExtractedFolder>\MeetingRecorder\data\transcripts`
-- `<ExtractedFolder>\MeetingRecorder\data\work`
-- `<ExtractedFolder>\MeetingRecorder\data\models`
+- audio output folder
+- transcript output folder
+- work folder
+- model cache folder
+- Whisper model path
+- diarization asset path
+- microphone capture toggle
+- auto-detection toggle
+- audio threshold
+- meeting stop timeout
 
-The config file is created at:
+The UI shows whether each setting applies:
 
-- `<ExtractedFolder>\MeetingRecorder\data\config\appsettings.json`
+- immediately
+- on the next recording
+- on the next processing run
 
-## Initial setup checklist
+## 6. Recording Validation
 
-1. Launch the app once so it creates the config file and default folders.
-2. Confirm the `Audio` and `Transcripts` folders are acceptable for your environment.
-3. Record a short manual test session with `Start Recording` and `Stop Recording`.
-4. Confirm a session folder appears under the extracted bundle's `data\work` folder.
-5. Confirm a merged `.wav` file appears in the audio output folder after processing.
-6. Confirm a `.md`, `.json`, and `.ready` file appear in the transcripts output folder.
+After the model is ready:
 
-## Whisper model setup
+1. Start a short meeting or test call.
+2. Let the app auto-detect it, or click `Start Recording` manually.
+3. Optionally type a better meeting title in the Dashboard while recording.
+4. Stop the recording, or let auto-stop trigger.
+5. Confirm the final title is reflected in the published filename stem.
 
-The app tries to download the Whisper model on first transcription attempt.
+Expected outputs:
 
-If corporate policy blocks the download:
+- `<stem>.wav` in the audio folder
+- `<stem>.md` in the transcripts folder
+- `<stem>.json` in the transcripts folder
+- `<stem>.ready` in the transcripts folder
 
-1. Place a compatible Whisper model file at the configured path in `appsettings.json`.
-2. By default, that path is:
-   - `<ExtractedFolder>\MeetingRecorder\data\models\asr\ggml-base.bin`
-3. Relaunch the app and retry processing.
+If transcription fails, you should still see the final `.wav`.
 
-## Diarization sidecar
+## 7. Retrying Failed Sessions
 
-Speaker diarization is optional and best-effort.
+If a recording produced audio but no transcript because the Whisper model was missing or invalid:
 
-If you later build or receive a compatible diarization sidecar, place it at:
+1. Fix the model in the `Models` tab until it shows `Model status: ready`.
+2. Open the `Meetings` tab.
+3. Select the failed meeting.
+4. Confirm the row status shows `Failed`.
+5. Click `Retry Processing`.
 
-- `<ExtractedFolder>\MeetingRecorder\data\models\diarization\MeetingRecorder.Diarization.Sidecar.exe`
+Retry works only when the session work folder and `manifest.json` still exist.
 
-If the sidecar is missing, transcript publishing still completes without speaker labels.
+## 8. Power Automate Setup
 
-## Power Automate setup
-
-Configure Power Automate to watch the transcripts output folder for:
+Point your downstream flow at the transcripts folder and watch:
 
 - `*.ready`
 
-Use the shared filename stem to find sibling files:
+Use the shared stem to find:
 
 - `<stem>.md`
 - `<stem>.json`
 - `<stem>.wav`
 
-The `.ready` file is created last and is the only supported completion signal.
+`.ready` is created last and is the only supported completion signal for successful transcript output.
 
-## Corporate-laptop notes
+## 9. Troubleshooting
+
+### No transcript was created
+
+Check the `Models` tab first.
+
+Common causes:
+
+- Whisper model missing
+- Whisper model invalid or too small
+- corporate network replaced the download with an HTML or proxy page
+
+Then inspect:
+
+- `<AppFolder>\data\logs\app.log`
+- `<AppFolder>\data\work\<session-id>\logs\processing.log`
+
+### The meeting recorded speaker audio but not the mic
+
+Make sure `Enable microphone capture` is turned on in `Config` before starting the next recording. That setting applies on the next recording, not mid-session.
+
+### Retry is disabled
+
+Retry will be unavailable when:
+
+- the selected meeting has no matching work manifest
+- the work folder was removed
+- the session is already complete instead of failed
+
+## 10. Corporate-Laptop Notes
 
 - No admin rights are required for normal use.
 - No browser extension is required.
-- The build is local-first and works without OneDrive.
+- No OneDrive dependency is required.
 - CPU-only machines are supported.
-- If microphone capture is restricted, leave `micCaptureEnabled` set to `false` in the config file.
+- Model import exists specifically because some corporate networks block public model downloads.

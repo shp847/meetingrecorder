@@ -79,32 +79,23 @@
                                 Padding="16"
                                 CornerRadius="12"
                                 Background="White">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock FontWeight="SemiBold"
-                                               Text="Rename Current Recording" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="Update the in-progress meeting title before the final audio and transcript files are published." />
-                                    <TextBox x:Name="CurrentMeetingTitleTextBox"
-                                             Margin="0,10,12,0"
-                                             Height="34"
-                                             VerticalContentAlignment="Center" />
-                                </StackPanel>
-                                <Button x:Name="RenameCurrentButton"
-                                        Grid.Column="1"
-                                        Width="140"
-                                        Height="34"
-                                        Margin="12,28,0,0"
-                                        VerticalAlignment="Top"
-                                        Click="RenameCurrentButton_OnClick"
-                                        Content="Rename Current" />
-                            </Grid>
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold"
+                                           Text="Current Meeting Title" />
+                                <TextBlock Margin="0,6,0,0"
+                                           Foreground="#45504D"
+                                           TextWrapping="Wrap"
+                                           Text="Type a title while recording. The current text is applied automatically when recording stops and becomes the published filename stem." />
+                                <TextBox x:Name="CurrentMeetingTitleTextBox"
+                                         Margin="0,10,0,0"
+                                         Height="34"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="CurrentMeetingTitleTextBox_OnTextChanged" />
+                                <TextBlock x:Name="CurrentMeetingTitleStatusTextBlock"
+                                           Margin="0,10,0,0"
+                                           Foreground="#45504D"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
                         </Border>
 
                         <Grid Grid.Row="3" Margin="0,20,0,0">
@@ -210,6 +201,7 @@
                                     <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
                                     <DataGridTextColumn Header="Started (UTC)" Binding="{Binding StartedAtUtc}" Width="1.3*" />
                                     <DataGridTextColumn Header="Platform" Binding="{Binding Platform}" Width="*" />
+                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*" />
                                     <DataGridTextColumn Header="Audio" Binding="{Binding AudioFileName}" Width="1.5*" />
                                     <DataGridTextColumn Header="Transcript" Binding="{Binding TranscriptFileName}" Width="1.5*" />
                                 </DataGrid.Columns>
@@ -232,22 +224,133 @@
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
                                                Text="Renames matching audio and transcript artifacts together so their stems stay aligned." />
+                                    <TextBlock x:Name="SelectedMeetingStatusTextBlock"
+                                               Margin="0,8,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap" />
                                     <TextBox x:Name="SelectedMeetingTitleTextBox"
                                              Margin="0,10,12,0"
                                              Height="34"
                                              VerticalContentAlignment="Center" />
                                 </StackPanel>
-                                <Button x:Name="RenameSelectedMeetingButton"
-                                        Grid.Column="1"
-                                        Width="150"
-                                        Height="34"
-                                        Margin="12,28,0,0"
-                                        VerticalAlignment="Top"
-                                        Click="RenameSelectedMeetingButton_OnClick"
-                                        Content="Rename Meeting" />
+                                <StackPanel Grid.Column="1"
+                                            Margin="12,28,0,0"
+                                            VerticalAlignment="Top">
+                                    <Button x:Name="RenameSelectedMeetingButton"
+                                            Width="150"
+                                            Height="34"
+                                            Click="RenameSelectedMeetingButton_OnClick"
+                                            Content="Rename Meeting" />
+                                    <Button x:Name="RetrySelectedMeetingButton"
+                                            Width="150"
+                                            Height="34"
+                                            Margin="0,10,0,0"
+                                            Click="RetrySelectedMeetingButton_OnClick"
+                                            Content="Retry Processing" />
+                                </StackPanel>
                             </Grid>
                         </Border>
                     </Grid>
+                </TabItem>
+
+                <TabItem Header="Models">
+                    <ScrollViewer Margin="0,12,0,0"
+                                  VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Padding="16"
+                                    CornerRadius="12"
+                                    Background="White">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold"
+                                               Text="Whisper Model Setup" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap"
+                                               Text="The transcription worker needs a valid local ggml Whisper model file. Use Download if your laptop can reach the model host, or Import if you already have the file from another machine or approved internal source." />
+                                    <TextBlock Margin="0,12,0,0"
+                                               TextWrapping="Wrap">
+                                        <Run Text="Configured model path: " />
+                                        <Hyperlink Click="ModelPathLink_OnClick">
+                                            <Run x:Name="ModelPathRun" />
+                                        </Hyperlink>
+                                    </TextBlock>
+                                    <TextBlock x:Name="WhisperModelStatusTextBlock"
+                                               Margin="0,12,0,0"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="WhisperModelDetailsTextBlock"
+                                               Margin="0,6,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,16,0,0"
+                                    Padding="16"
+                                    CornerRadius="12"
+                                    Background="White">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold"
+                                               Text="Setup Actions" />
+                                    <WrapPanel Margin="0,12,0,0">
+                                        <Button x:Name="RefreshModelStatusButton"
+                                                Width="150"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="RefreshModelStatusButton_OnClick"
+                                                Content="Refresh Status" />
+                                        <Button x:Name="DownloadWhisperModelButton"
+                                                Width="170"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="DownloadWhisperModelButton_OnClick"
+                                                Content="Download Base Model" />
+                                        <Button x:Name="ImportWhisperModelButton"
+                                                Width="170"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="ImportWhisperModelButton_OnClick"
+                                                Content="Import Existing File" />
+                                        <Button x:Name="OpenModelFolderButton"
+                                                Width="150"
+                                                Height="34"
+                                                Margin="0,0,0,12"
+                                                Click="OpenModelFolderButton_OnClick"
+                                                Content="Open Model Folder" />
+                                    </WrapPanel>
+                                    <TextBlock x:Name="ModelActionStatusTextBlock"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,16,0,0"
+                                    Padding="16"
+                                    CornerRadius="12"
+                                    Background="White">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold"
+                                               Text="Recommended Flow" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap"
+                                               Text="1. Click Refresh Status to see whether the configured model file is missing, invalid, or ready." />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap"
+                                               Text="2. If your laptop allows the download, click Download Base Model and wait for validation to complete." />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap"
+                                               Text="3. If the download is blocked by corporate policy, get a valid ggml-base.bin file another approved way and use Import Existing File." />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="#45504D"
+                                               TextWrapping="Wrap"
+                                               Text="4. Once the status says the model looks valid, new recordings can be transcribed without restarting the app." />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="Config">

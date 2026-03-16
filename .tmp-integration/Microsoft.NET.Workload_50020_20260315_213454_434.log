@@ -1,0 +1,14 @@
+[2026-03-15 21:34:54.440] [0000C364] === Logging started ===
+[2026-03-15 21:34:54.445] [0000C364] Executing: "C:\Program Files\dotnet\dotnet.exe" test tests\MeetingRecorder.IntegrationTests\MeetingRecorder.IntegrationTests.csproj -p:RestoreIgnoreFailedSources=true -v minimal, PID: 50020, PPID: 47176
+[2026-03-15 21:34:54.448] [0000C364] IsElevated: False
+[2026-03-15 21:34:54.448] [0000C364] Is64BitProcess: True
+[2026-03-15 21:34:54.448] [0000C364] RebootPending: False
+[2026-03-15 21:34:54.448] [0000C364] ProcessorArchitecture: amd64
+[2026-03-15 21:34:54.448] [0000C364] HostArchitecture: x64
+[2026-03-15 21:34:54.448] [0000C364] SdkDirectory: 8.0.418
+[2026-03-15 21:34:54.448] [0000C364] VerifySignatures: False
+[2026-03-15 21:34:54.448] [0000C364] SDK feature band: 8.0.400
+[2026-03-15 21:35:13.211] [0000C364] Shutting down
+[2026-03-15 21:35:13.211] [0000C364] Shutdown completed.
+[2026-03-15 21:35:13.211] [0000C364] Restart required: False
+[2026-03-15 21:35:13.211] [0000C364] === Logging ended ===

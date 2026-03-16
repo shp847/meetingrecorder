@@ -20,13 +20,23 @@ public sealed class MeetingOutputCatalogService
 
     public IReadOnlyList<MeetingOutputRecord> ListMeetings(string audioOutputDir, string transcriptOutputDir)
     {
+        return ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null);
+    }
+
+    public IReadOnlyList<MeetingOutputRecord> ListMeetings(string audioOutputDir, string transcriptOutputDir, string? workDir)
+    {
         var pathsByStem = new Dictionary<string, MeetingOutputMutableRecord>(StringComparer.OrdinalIgnoreCase);
+        var manifestInfoByStem = LoadManifestInfoByStem(workDir);
 
         AddArtifacts(pathsByStem, audioOutputDir);
         AddArtifacts(pathsByStem, transcriptOutputDir);
 
         return pathsByStem.Values
-            .Select(BuildRecord)
+            .Select(record => BuildRecord(
+                record,
+                manifestInfoByStem.TryGetValue(record.Stem, out var manifestInfo)
+                    ? manifestInfo
+                    : null))
             .OrderByDescending(record => record.StartedAtUtc)
             .ThenBy(record => record.Stem, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -37,6 +47,23 @@ public sealed class MeetingOutputCatalogService
         string transcriptOutputDir,
         string existingStem,
         string newTitle,
+        CancellationToken cancellationToken = default)
+    {
+        return await RenameMeetingAsync(
+            audioOutputDir,
+            transcriptOutputDir,
+            existingStem,
+            newTitle,
+            workDir: null,
+            cancellationToken);
+    }
+
+    public async Task<MeetingOutputRecord> RenameMeetingAsync(
+        string audioOutputDir,
+        string transcriptOutputDir,
+        string existingStem,
+        string newTitle,
+        string? workDir,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -52,7 +79,7 @@ public sealed class MeetingOutputCatalogService
         }
 
         var newStem = _pathBuilder.BuildFileStem(stemInfo.Platform, stemInfo.StartedAtUtc, newTitle);
-        var meetings = ListMeetings(audioOutputDir, transcriptOutputDir);
+        var meetings = ListMeetings(audioOutputDir, transcriptOutputDir, workDir);
         var existing = meetings.SingleOrDefault(record => string.Equals(record.Stem, existingStem, StringComparison.OrdinalIgnoreCase))
             ?? throw new FileNotFoundException($"Unable to locate published artifacts for stem '{existingStem}'.");
 
@@ -86,7 +113,9 @@ public sealed class MeetingOutputCatalogService
             await UpdateJsonTitleAsync(Path.Combine(transcriptOutputDir, $"{newStem}{Path.GetExtension(existing.JsonPath)}"), newTitle, cancellationToken);
         }
 
-        return ListMeetings(audioOutputDir, transcriptOutputDir)
+        await UpdateManifestTitleAsync(workDir, existingStem, newTitle, cancellationToken);
+
+        return ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
             .Single(record => string.Equals(record.Stem, newStem, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -131,19 +160,22 @@ public sealed class MeetingOutputCatalogService
         }
     }
 
-    private static MeetingOutputRecord BuildRecord(MeetingOutputMutableRecord record)
+    private static MeetingOutputRecord BuildRecord(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
     {
         if (TryParseStem(record.Stem, out var stemInfo))
         {
+            var storedTitle = manifestInfo?.Title ?? TryReadStoredTitle(record.JsonPath, record.MarkdownPath);
             return new MeetingOutputRecord(
                 record.Stem,
-                HumanizeSlug(stemInfo.TitleSlug),
+                string.IsNullOrWhiteSpace(storedTitle) ? HumanizeSlug(stemInfo.TitleSlug) : storedTitle,
                 stemInfo.StartedAtUtc,
                 stemInfo.Platform,
                 record.AudioPath,
                 record.MarkdownPath,
                 record.JsonPath,
-                record.ReadyMarkerPath);
+                record.ReadyMarkerPath,
+                manifestInfo?.ManifestPath,
+                manifestInfo?.State);
         }
 
         var fallbackTimestamp = record.AudioPath is not null
@@ -157,7 +189,36 @@ public sealed class MeetingOutputCatalogService
             record.AudioPath,
             record.MarkdownPath,
             record.JsonPath,
-            record.ReadyMarkerPath);
+            record.ReadyMarkerPath,
+            manifestInfo?.ManifestPath,
+            manifestInfo?.State);
+    }
+
+    private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir)
+    {
+        var infoByStem = new Dictionary<string, ManifestInfo>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
+        {
+            return infoByStem;
+        }
+
+        var manifestStore = new SessionManifestStore(_pathBuilder);
+        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var manifest = manifestStore.LoadAsync(manifestPath).GetAwaiter().GetResult();
+                var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+                var stem = _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title);
+                infoByStem[stem] = new ManifestInfo(title, manifestPath, manifest.State);
+            }
+            catch
+            {
+                // Ignore malformed or partially-written manifests when listing published outputs.
+            }
+        }
+
+        return infoByStem;
     }
 
     private static bool TryParseStem(string stem, out StemInfo stemInfo)
@@ -200,6 +261,60 @@ public sealed class MeetingOutputCatalogService
             .Select(word => char.ToUpperInvariant(word[0]) + word[1..])
             .ToArray();
         return words.Length == 0 ? "Session" : string.Join(' ', words);
+    }
+
+    private static string? TryReadStoredTitle(string? jsonPath, string? markdownPath)
+    {
+        var titleFromJson = TryReadJsonTitle(jsonPath);
+        if (!string.IsNullOrWhiteSpace(titleFromJson))
+        {
+            return titleFromJson;
+        }
+
+        return TryReadMarkdownTitle(markdownPath);
+    }
+
+    private static string? TryReadJsonTitle(string? jsonPath)
+    {
+        if (string.IsNullOrWhiteSpace(jsonPath) || !File.Exists(jsonPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(File.ReadAllText(jsonPath))?.AsObject();
+            if (node is null)
+            {
+                return null;
+            }
+
+            return node["title"]?.GetValue<string>() ?? node["Title"]?.GetValue<string>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadMarkdownTitle(string? markdownPath)
+    {
+        if (string.IsNullOrWhiteSpace(markdownPath) || !File.Exists(markdownPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var firstLine = File.ReadLines(markdownPath).FirstOrDefault();
+            return firstLine is not null && firstLine.StartsWith("# ", StringComparison.Ordinal)
+                ? firstLine[2..].Trim()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<RenamePair> BuildRenamePairs(MeetingOutputRecord existing, string newStem)
@@ -262,6 +377,47 @@ public sealed class MeetingOutputCatalogService
         }), cancellationToken);
     }
 
+    private async Task UpdateManifestTitleAsync(
+        string? workDir,
+        string existingStem,
+        string newTitle,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
+        {
+            return;
+        }
+
+        var manifestStore = new SessionManifestStore(_pathBuilder);
+        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            MeetingSessionManifest manifest;
+            try
+            {
+                manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var currentTitle = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+            var manifestStem = _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, currentTitle);
+            if (!string.Equals(manifestStem, existingStem, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            await manifestStore.SaveAsync(manifest with
+            {
+                DetectedTitle = newTitle,
+            }, manifestPath, cancellationToken);
+            return;
+        }
+    }
+
     private sealed class MeetingOutputMutableRecord
     {
         public MeetingOutputMutableRecord(string stem)
@@ -280,6 +436,8 @@ public sealed class MeetingOutputCatalogService
         public string? ReadyMarkerPath { get; set; }
     }
 
+    private sealed record ManifestInfo(string Title, string ManifestPath, SessionState State);
+
     private readonly record struct StemInfo(DateTimeOffset StartedAtUtc, MeetingPlatform Platform, string TitleSlug);
 
     private readonly record struct RenamePair(string SourcePath, string DestinationPath);
@@ -293,4 +451,6 @@ public sealed record MeetingOutputRecord(
     string? AudioPath,
     string? MarkdownPath,
     string? JsonPath,
-    string? ReadyMarkerPath);
+    string? ReadyMarkerPath,
+    string? ManifestPath,
+    SessionState? ManifestState);

@@ -1,151 +1,112 @@
-# Meeting Recorder Architecture
+﻿# Meeting Recorder Architecture
 
-## 1. Purpose
+This document describes the current implementation architecture for the Meeting Recorder app as it exists in the repository today. Product behavior and scope live in [PRODUCT_REQUIREMENTS.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\PRODUCT_REQUIREMENTS.md). Deployment and first-run guidance live in [SETUP.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\SETUP.md).
 
-This document describes the implementation architecture for a Windows-first meeting recorder that can run on a corporate-restricted laptop. It complements [PRODUCT_REQUIREMENTS.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\PRODUCT_REQUIREMENTS.md), which defines the product and MVP requirements.
+## 1. Architectural Intent
 
-The architecture is optimized for:
+The architecture is optimized for a corporate-restricted Windows laptop:
 
-- standard-user Windows laptops,
-- local-first recording and processing,
-- resilient batch transcription after meetings,
-- optional speaker diarization, and
-- file-based handoff to Power Automate.
+- standard user permissions
+- local-first recording and processing
+- portable deployment support
+- no Windows service requirement
+- resilient batch transcription after the meeting
+- graceful behavior when model download, diarization, or browser integration are unavailable
 
-## 2. Enterprise Constraints
+## 2. Runtime Shape
 
-The app must assume the following constraints by default:
+The app is split into three runtime projects:
 
-- no administrator rights for install or normal use,
-- no Windows service installation,
-- no dependency on startup tasks or tray-only background behavior,
-- possible restrictions on browser extensions or native messaging,
-- possible restrictions on model downloads and external internet access,
-- CPU-only execution as the baseline,
-- local operation without requiring OneDrive or cloud APIs.
-
-## 3. Deployment Model
-
-The app is a per-user Windows desktop application built on `.NET 8` and `WPF`.
-
-### Runtime shape
-
-- `MeetingRecorder.App` is the desktop UI and orchestration process.
-- `MeetingRecorder.ProcessingWorker` is a separate worker process invoked by the app for merge, transcription, diarization, and publish work.
-- `MeetingRecorder.Core` contains shared contracts, path rules, persistence helpers, state transitions, and common services.
-
-### Deployment characteristics
-
-- install must work in a user-writable location,
-- app data must stay under the user profile,
-- the app must not require elevation to launch, record, or process,
-- model assets are cached locally and reused after provisioning.
-
-## 4. Solution Layout
-
-- `src/MeetingRecorder.App`
-  - WPF UI
-  - session orchestration
-  - manual controls
-  - detection engine
-  - recording engine
-- `src/MeetingRecorder.Core`
-  - domain models
-  - configuration loading
-  - session manifest persistence
+- `MeetingRecorder.App`
+  - WPF desktop UI
+  - recording orchestration
+  - local meeting detection
+  - config editing and hot reload
+  - meetings library, rename, and retry actions
+  - Whisper model setup UI
+- `MeetingRecorder.Core`
+  - shared domain models
   - path and filename rules
-  - logging abstractions
-  - publish contract helpers
-- `src/MeetingRecorder.ProcessingWorker`
-  - background processing runner
-  - audio merge
-  - transcription adapter
-  - diarization adapter
+  - work-manifest persistence
+  - output catalog logic
+  - WAV merge and mix logic
   - transcript rendering
-  - artifact publishing
-- `tests/MeetingRecorder.Core.Tests`
-  - unit tests for deterministic domain behavior
-- `tests/MeetingRecorder.IntegrationTests`
-  - pipeline and publish-contract tests
+  - publish helpers
+  - Whisper model inspection, download, and import logic
+- `MeetingRecorder.ProcessingWorker`
+  - separate background process for post-recording work
+  - final audio preparation
+  - Whisper transcription
+  - optional diarization sidecar integration
+  - transcript and ready-marker publishing
 
-## 5. Component Responsibilities
+The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
 
-## 5.1 App Host
+## 3. Enterprise Constraints
 
-Responsibilities:
+The implementation assumes all of the following may be true:
 
-- launch the desktop app,
-- load configuration,
-- display current state,
-- allow manual start and stop,
-- show consent reminder text,
-- manage the active recording session,
-- queue completed sessions for worker processing.
+- the user has no local admin rights
+- browser extensions are blocked
+- startup apps or services are blocked
+- outbound model downloads are filtered or replaced with HTML error pages
+- the laptop is CPU-only
+- OneDrive is unavailable or not approved
 
-The app host must remain usable even if detection, transcription, or diarization are unavailable.
+As a result, the design keeps the core workflow working with:
 
-## 5.2 Detection Engine
+- manual launch
+- manual recording fallback
+- portable deployment
+- local file-based automation handoff
+- explicit model import when downloads fail
 
-Responsibilities:
+## 4. UI Architecture
 
-- inspect local Windows-visible signals for Teams and Google Meet,
-- assign confidence to candidate meeting sessions,
-- suppress duplicate or overlapping detection events,
-- emit detection evidence for logging and manifests,
-- support a configurable timeout for meeting end.
+The current WPF surface is split across four tabs.
 
-Detection remains advisory in MVP. Manual start and stop must always be available.
-
-## 5.3 Recording Engine
-
-Responsibilities:
-
-- capture system audio using Windows loopback recording,
-- optionally capture microphone audio,
-- write rolling chunk files in the current session work folder,
-- finalize a recording cleanly on stop or interruption,
-- keep raw data recoverable for retry or diagnostics.
-
-The recording engine must not depend on transcription or diarization success.
-
-## 5.4 Session Store
+### Dashboard
 
 Responsibilities:
 
-- create a unique session ID,
-- persist `MeetingSessionManifest` to disk,
-- track session state transitions,
-- expose enough information for retry on restart,
-- preserve failed-session context.
+- show current app and detection status
+- expose manual start and stop controls
+- allow editing the current meeting title while recording
+- show the publish-stem preview for the active title
+- show recent activity
+- link to output and config paths
 
-The work folder is the system of record until final publishing succeeds.
-
-## 5.5 Processing Worker
-
-Responsibilities:
-
-- merge audio chunks into one final file,
-- provision or locate local models,
-- run offline transcription,
-- run optional diarization,
-- render final transcript artifacts,
-- publish files atomically into their final locations.
-
-Worker failures must not crash the UI process.
-
-## 5.6 Publish Service
+### Meetings
 
 Responsibilities:
 
-- write final artifacts using temporary filenames,
-- rename only after file writes are complete,
-- create `.ready` only after all mandatory sibling artifacts exist,
-- avoid duplicate publish events,
-- leave retryable state behind when publish fails.
+- list published meetings from output artifacts
+- surface title, time, platform, status, audio file, and transcript file
+- rename published meetings and keep stems aligned
+- expose retry for failed sessions when a matching manifest still exists
 
-## 6. Session Lifecycle
+### Models
 
-The session lifecycle uses durable states:
+Responsibilities:
+
+- show the configured Whisper model path
+- validate the current model file
+- show `Missing`, `Invalid`, or `Ready` status
+- allow `Download Base Model`
+- allow `Import Existing File`
+- provide quick access to the model folder
+
+### Config
+
+Responsibilities:
+
+- edit the app configuration file
+- hot reload supported settings into the running app
+- show which settings apply immediately versus only on the next recording or processing run
+
+## 5. Session Lifecycle
+
+The durable session lifecycle uses these states:
 
 - `Idle`
 - `Recording`
@@ -155,177 +116,205 @@ The session lifecycle uses durable states:
 - `Published`
 - `Failed`
 
-### Lifecycle rules
+### Lifecycle flow
 
-1. App enters `Recording` only when a manual or detected start is accepted.
-2. Recording writes raw chunks and updates the manifest in place.
-3. On stop, the session enters `Finalizing`, then `Queued`.
-4. The worker loads queued sessions and moves them to `Processing`.
-5. A successful publish moves the session to `Published`.
-6. A recoverable failure moves the session to `Failed` while preserving artifacts for retry.
+1. The app creates a work folder and manifest when a session starts.
+2. During recording, loopback chunks and optional microphone chunks are written to `raw`.
+3. On stop, the manifest is updated with chunk paths and moved to `Queued`.
+4. The UI launches the worker with the manifest path and config path.
+5. The worker loads the manifest, merges audio, and publishes the final WAV.
+6. If transcription succeeds, transcript artifacts are rendered and published.
+7. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
+8. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
 
-## 7. Configuration Model
+## 6. Work Folders and Persistence
 
-Configuration is stored in a user-writable path and loaded at app startup.
+Each session has a dedicated work folder:
 
-### Core configuration fields
+- `<workDir>\<session-id>\manifest.json`
+- `<workDir>\<session-id>\raw\`
+- `<workDir>\<session-id>\processing\`
+- `<workDir>\<session-id>\logs\`
 
-- `audioOutputDir`
-- `transcriptOutputDir`
-- `workDir`
-- `modelCacheDir`
-- `transcriptionModelPath`
-- `diarizationAssetPath`
-- `micCaptureEnabled`
-- `autoDetectEnabled`
-- `meetingStopTimeoutSeconds`
+`manifest.json` is the durable source of truth for:
 
-### Configuration principles
+- session ID
+- platform
+- canonical meeting title
+- detection evidence
+- raw chunk paths
+- microphone chunk paths
+- processing state
+- error summary
 
-- provide sensible defaults,
-- never require editing protected locations,
-- allow the app to start even if optional AI assets are missing,
-- let the user override output and model locations.
+The Meetings tab uses the shared filename stem to reconnect published output files back to their work manifests when those manifests still exist.
 
-## 8. Folder Layout
+## 7. Audio Pipeline
 
-### Config
+### Capture
 
-- `%LOCALAPPDATA%\MeetingRecorder\config\appsettings.json`
+The app records:
 
-### Working data
+- system output via Windows loopback capture
+- optional microphone input via a separate capture path
 
-- `%LOCALAPPDATA%\MeetingRecorder\work\<session-id>\raw\`
-- `%LOCALAPPDATA%\MeetingRecorder\work\<session-id>\processing\`
-- `%LOCALAPPDATA%\MeetingRecorder\work\<session-id>\logs\`
-- `%LOCALAPPDATA%\MeetingRecorder\work\<session-id>\manifest.json`
+### Chunking
 
-### Model cache
+Audio is written as rolling WAV chunks during recording to reduce data loss from crashes or abrupt shutdowns.
 
-- `%LOCALAPPDATA%\MeetingRecorder\models\asr\`
-- `%LOCALAPPDATA%\MeetingRecorder\models\diarization\`
+### Final merge
 
-### Final outputs
+The worker merges loopback chunks into a session-level track.
+If microphone chunks exist, the worker:
 
-- `<ConfiguredAudioFolder>\`
-- `<ConfiguredTranscriptFolder>\`
+- merges microphone chunks
+- resamples and channel-matches the microphone stream to the loopback format
+- mixes both into one final WAV
 
-## 9. File Publish Contract
+This final WAV is the canonical audio artifact used for publishing and transcription.
 
-Each successful session shares a common filename stem:
+## 8. Meeting Naming and Artifact Identity
+
+Each meeting has one canonical title stored in the manifest. The filename stem is derived from:
+
+- start timestamp
+- platform token
+- slugified canonical title
+
+Stem format:
 
 - `YYYY-MM-DD_HHMMSS_<platform>_<session-slug>`
 
-### Required published artifacts
+Important consequences:
+
+- the Dashboard title editor changes the future publish stem
+- published rename updates all sibling artifacts together
+- when possible, published rename also updates the underlying work manifest title
+- retry relies on the stem to locate the correct manifest
+
+## 9. Publish Contract
+
+A successful transcript publish produces:
 
 - `<stem>.wav`
 - `<stem>.md`
 - `<stem>.json`
 - `<stem>.ready`
 
-### Publish ordering
+Publish ordering:
 
-1. write `.wav`, `.md`, and `.json` using temporary filenames,
-2. atomically rename each file into place,
-3. verify all required siblings exist,
-4. create `.ready` last.
+1. write temporary files in the destination folders
+2. rename the final `.wav`, `.md`, and `.json` into place
+3. create `.ready` last
 
-`.ready` is the only supported Power Automate completion trigger in MVP.
+If transcription fails:
 
-## 10. Model Provisioning
+- the final `.wav` is still published
+- transcript artifacts are not published
+- `.ready` is not created
+- the manifest remains retryable
 
-The app uses a local-first provisioning model.
+## 10. Model Provisioning Architecture
 
-### ASR
+The app now uses a shared Whisper model service in `MeetingRecorder.Core`.
 
-- primary runtime is `whisper.cpp` through `Whisper.net`,
-- first use attempts a model download into the local ASR cache,
-- if download fails, the app must support offline model import,
-- once present locally, transcription must not require network access.
+### Shared responsibilities
 
-### Diarization
+- inspect a configured model path
+- detect `Missing`, `Invalid`, and `Valid` model states
+- reject obviously invalid tiny files
+- download the Whisper base model to a temp path and validate it before replacing the configured target
+- import a user-provided `.bin` file and validate it before use
 
-- diarization assets live in the local diarization cache,
-- diarization is optional in MVP,
-- missing diarization assets must not block transcript publishing.
+### Why the service is shared
 
-## 11. Failure Handling
+The same model rules are used by:
 
-### Detection failures
+- the `Models` tab in the desktop app
+- the transcription worker during actual processing
 
-- detection failure must not block manual recording.
+This avoids drift between what the UI says is valid and what the worker will actually accept.
 
-### Recording failures
+### Current behavior
 
-- preserve existing chunks,
-- attempt orderly finalization where possible,
-- mark the session as failed if capture cannot continue.
+- if the worker sees a valid model, it uses it immediately
+- if the model is missing, it may attempt a first-run download
+- if the model is invalid, it fails clearly and preserves the session for retry
+- the UI provides a friendlier path to fix the model and retry processing
 
-### Transcription failures
+## 11. Retry Flow
 
-- preserve the work folder,
-- mark transcription status as failed,
-- do not create `.ready`.
+Retry is intentionally simple and local.
 
-### Diarization failures
+### Preconditions
 
-- publish transcript artifacts without speaker labels when necessary,
-- mark diarization status explicitly,
-- still allow `.ready` creation if all required artifacts are present.
+Retry is only available when:
 
-### Publish failures
+- the Meetings row can be mapped back to a work manifest
+- that manifest is in `Failed`
 
-- keep the work folder and manifest,
-- leave no partial final files under final filenames,
-- do not create `.ready`.
+### Flow
 
-## 12. Security Posture
+1. User selects a failed meeting in the Meetings tab.
+2. User clicks `Retry Processing`.
+3. The app rewrites the manifest to `Queued` and clears the previous error summary.
+4. The app launches the worker against the same manifest.
+5. If the model is now valid, transcript artifacts are generated and published.
 
-- no cloud API dependency in core runtime,
-- no external telemetry by default,
-- no secrets required for MVP,
-- no admin privileges required for normal usage,
-- no browser extension required for MVP,
-- all data stored in user-writable directories,
-- recording remains subject to company policy and local law.
+Current retry is single-session only. There is no bulk retry manager yet.
 
-## 13. Milestone Map
+## 12. Power Automate Handoff
 
-### Milestone 1
+The architecture keeps automation file-based.
 
-- solution scaffold
-- config and session manifests
-- structured logging
+Expected watcher behavior:
 
-### Milestone 2
+- watch `*.ready` in the transcripts output folder
+- resolve sibling files with the same stem
 
-- manual recording
-- chunk persistence
-- merged final audio
+Expected sibling artifacts:
 
-### Milestone 3
+- `<stem>.md`
+- `<stem>.json`
+- `<stem>.wav`
 
-- durable processing queue
-- restart-safe session recovery
+`.ready` is the only completion signal the app guarantees for successful transcript output.
 
-### Milestone 4
+## 13. Portability and Storage Modes
 
-- local transcription
-- transcript rendering
+### Portable mode
 
-### Milestone 5
+If `portable.mode` exists beside the app, runtime data lives under:
 
-- atomic publish contract
-- `.ready` handoff
+- `<AppFolder>\data\config`
+- `<AppFolder>\data\logs`
+- `<AppFolder>\data\audio`
+- `<AppFolder>\data\transcripts`
+- `<AppFolder>\data\work`
+- `<AppFolder>\data\models`
 
-### Milestone 6
+### Non-portable mode
 
-- assisted Teams and Google Meet detection
+Without the portable marker, the same structure lives under `%LOCALAPPDATA%\MeetingRecorder`.
 
-### Milestone 7
+This keeps the deployment flexible for corporate policies that block installer-style locations.
 
-- optional diarization sidecar integration
+## 14. Security and Privacy Posture
 
-### Milestone 8
+- audio and transcript processing are local by default
+- the app does not require cloud APIs for the core workflow
+- no admin rights are required for normal operation
+- model import is supported because downloads may be blocked
+- browser extension support is optional and not required for the current workflow
 
-- packaging and restricted-laptop validation
+## 15. Current Gaps and Planned Hardening
+
+The codebase intentionally does not yet provide:
+
+- transcript editing or review tools
+- bulk retry
+- rich per-session troubleshooting views inside the app
+- automatic cleanup policies for old work folders
+- production-grade speaker identity mapping
+
+These remain future enhancements, not hidden assumptions in the current design.

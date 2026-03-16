@@ -156,12 +156,111 @@ public sealed class SessionProcessorTests
         Assert.True(File.Exists(expectedAudioPath));
     }
 
+    [Fact]
+    public async Task ProcessAsync_Mixes_Microphone_Chunks_Into_Published_Audio()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = new AppConfig
+        {
+            AudioOutputDir = Path.Combine(root, "audio"),
+            TranscriptOutputDir = Path.Combine(root, "transcripts"),
+            WorkDir = Path.Combine(root, "work"),
+            ModelCacheDir = Path.Combine(root, "models"),
+            TranscriptionModelPath = Path.Combine(root, "models", "fake.bin"),
+            DiarizationAssetPath = Path.Combine(root, "models", "diarization"),
+        };
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            config.WorkDir,
+            MeetingPlatform.Teams,
+            "Microphone Mix",
+            Array.Empty<DetectionSignal>());
+
+        var sessionRoot = Path.Combine(config.WorkDir, manifest.SessionId);
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        Directory.CreateDirectory(rawDir);
+        var loopbackChunkPath = Path.Combine(rawDir, "loopback-chunk-0001.wav");
+        var microphoneChunkPath = Path.Combine(rawDir, "microphone-chunk-0001.wav");
+        CreateFloatWave(loopbackChunkPath, TimeSpan.FromMilliseconds(250), amplitude: 0f, sampleRate: 48000, channels: 2);
+        CreatePcmWave(microphoneChunkPath, TimeSpan.FromMilliseconds(250), amplitude: 12000, sampleRate: 16000, channels: 1);
+
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                RawChunkPaths = new[] { loopbackChunkPath },
+                MicrophoneChunkPaths = new[] { microphoneChunkPath },
+            },
+            manifestPath);
+
+        var processor = new SessionProcessor(
+            manifestStore,
+            pathBuilder,
+            new WaveChunkMerger(),
+            new ThrowingTranscriptionProvider(),
+            new FakeDiarizationProvider(),
+            new TranscriptRenderer(),
+            new FilePublishService());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessAsync(manifestPath, config));
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, manifest.StartedAtUtc, "Microphone Mix");
+        var expectedAudioPath = Path.Combine(config.AudioOutputDir, $"{stem}.wav");
+        Assert.True(File.Exists(expectedAudioPath));
+        Assert.True(ReadPeakAmplitude(expectedAudioPath) > 0.01f);
+    }
+
     private static void CreateWave(string path, TimeSpan duration)
     {
         using var writer = new WaveFileWriter(path, new WaveFormat(16000, 16, 1));
         var totalSamples = (int)(16000 * duration.TotalSeconds);
         var buffer = new byte[totalSamples * 2];
         writer.Write(buffer, 0, buffer.Length);
+    }
+
+    private static void CreateFloatWave(string path, TimeSpan duration, float amplitude, int sampleRate, int channels)
+    {
+        using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));
+        var totalSamples = (int)(sampleRate * duration.TotalSeconds * channels);
+        var samples = Enumerable.Repeat(amplitude, totalSamples).ToArray();
+        writer.WriteSamples(samples, 0, samples.Length);
+    }
+
+    private static void CreatePcmWave(string path, TimeSpan duration, short amplitude, int sampleRate, int channels)
+    {
+        using var writer = new WaveFileWriter(path, new WaveFormat(sampleRate, 16, channels));
+        var totalFrames = (int)(sampleRate * duration.TotalSeconds);
+        var samples = new byte[totalFrames * channels * sizeof(short)];
+        for (var frameIndex = 0; frameIndex < totalFrames; frameIndex++)
+        {
+            for (var channelIndex = 0; channelIndex < channels; channelIndex++)
+            {
+                var offset = (frameIndex * channels + channelIndex) * sizeof(short);
+                BitConverter.TryWriteBytes(samples.AsSpan(offset, sizeof(short)), amplitude);
+            }
+        }
+
+        writer.Write(samples, 0, samples.Length);
+    }
+
+    private static float ReadPeakAmplitude(string path)
+    {
+        using var reader = new AudioFileReader(path);
+        var buffer = new float[4096];
+        var peak = 0f;
+        int samplesRead;
+        while ((samplesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            for (var index = 0; index < samplesRead; index++)
+            {
+                peak = Math.Max(peak, Math.Abs(buffer[index]));
+            }
+        }
+
+        return peak;
     }
 
     private sealed class FakeTranscriptionProvider : ITranscriptionProvider

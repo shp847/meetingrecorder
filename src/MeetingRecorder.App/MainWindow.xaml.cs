@@ -2,6 +2,7 @@ using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using Microsoft.Win32;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
     private readonly RecordingSessionCoordinator _recordingCoordinator;
     private readonly WindowMeetingDetector _meetingDetector;
     private readonly ProcessingQueueService _processingQueue;
+    private readonly WhisperModelService _whisperModelService;
     private readonly DispatcherTimer _detectionTimer;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private DateTimeOffset? _lastPositiveDetectionUtc;
@@ -44,6 +46,7 @@ public partial class MainWindow : Window
             new MeetingDetectionEvaluator(),
             new SystemAudioActivityProbe());
         _processingQueue = new ProcessingQueueService(liveConfig, _manifestStore, logger);
+        _whisperModelService = new WhisperModelService(new WhisperNetModelDownloader());
         _detectionTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(5),
@@ -112,24 +115,9 @@ public partial class MainWindow : Window
         await StopCurrentRecordingAsync("Manual stop requested.");
     }
 
-    private async void RenameCurrentButton_OnClick(object sender, RoutedEventArgs e)
+    private void CurrentMeetingTitleTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
     {
-        try
-        {
-            var renamed = await _recordingCoordinator.RenameActiveSessionAsync(CurrentMeetingTitleTextBox.Text, _lifetimeCts.Token);
-            if (!renamed)
-            {
-                AppendActivity("No active recording is available to rename.");
-                return;
-            }
-
-            UpdateCurrentMeetingEditor();
-            AppendActivity($"Renamed active recording to '{CurrentMeetingTitleTextBox.Text.Trim()}'.");
-        }
-        catch (Exception exception)
-        {
-            AppendActivity($"Failed to rename active recording: {exception.Message}");
-        }
+        UpdateCurrentMeetingTitleStatus();
     }
 
     private async void DetectionTimer_OnTick(object? sender, EventArgs e)
@@ -243,6 +231,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            await ApplyPendingCurrentTitleAsync(cancellationToken);
             var manifestPath = await _recordingCoordinator.StopAsync(reason, cancellationToken);
             if (!string.IsNullOrWhiteSpace(manifestPath))
             {
@@ -294,6 +283,7 @@ public partial class MainWindow : Window
                 _liveConfig.Current.TranscriptOutputDir,
                 selectedMeeting.Source.Stem,
                 SelectedMeetingTitleTextBox.Text,
+                _liveConfig.Current.WorkDir,
                 _lifetimeCts.Token);
 
             RefreshMeetingList(renamed.Stem);
@@ -308,6 +298,45 @@ public partial class MainWindow : Window
     private void MeetingsDataGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedMeetingEditor(MeetingsDataGrid.SelectedItem as MeetingListRow);
+    }
+
+    private async void RetrySelectedMeetingButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (MeetingsDataGrid.SelectedItem is not MeetingListRow selectedMeeting)
+        {
+            AppendActivity("Select a meeting before retrying processing.");
+            return;
+        }
+
+        if (!selectedMeeting.CanRetry || string.IsNullOrWhiteSpace(selectedMeeting.Source.ManifestPath))
+        {
+            AppendActivity("The selected meeting does not have a retryable work-session manifest.");
+            return;
+        }
+
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(selectedMeeting.Source.ManifestPath, _lifetimeCts.Token);
+            var now = DateTimeOffset.UtcNow;
+            var queuedManifest = manifest with
+            {
+                State = SessionState.Queued,
+                ErrorSummary = null,
+                TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Queued, now, "Queued for retry."),
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
+            };
+
+            await _manifestStore.SaveAsync(queuedManifest, selectedMeeting.Source.ManifestPath, _lifetimeCts.Token);
+            RefreshMeetingList(selectedMeeting.Source.Stem);
+            await _processingQueue.EnqueueAsync(selectedMeeting.Source.ManifestPath, _lifetimeCts.Token);
+            AppendActivity($"Retried processing for '{selectedMeeting.Title}'.");
+            RefreshMeetingList(selectedMeeting.Source.Stem);
+        }
+        catch (Exception exception)
+        {
+            AppendActivity($"Failed to retry processing: {exception.Message}");
+        }
     }
 
     private async void SaveConfigButton_OnClick(object sender, RoutedEventArgs e)
@@ -362,27 +391,98 @@ public partial class MainWindow : Window
         OpenPath(_liveConfig.ConfigPath);
     }
 
+    private void ModelPathLink_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenPath(_liveConfig.Current.TranscriptionModelPath);
+    }
+
+    private void RefreshModelStatusButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshWhisperModelStatus();
+        ModelActionStatusTextBlock.Text = "Model status refreshed.";
+    }
+
+    private async void DownloadWhisperModelButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SetModelActionButtonsEnabled(false);
+            var result = await _whisperModelService.DownloadBaseModelAsync(_liveConfig.Current.TranscriptionModelPath, _lifetimeCts.Token);
+            RefreshWhisperModelStatus();
+            ModelActionStatusTextBlock.Text = $"{result.Message} ({FormatBytes(result.FileSizeBytes)}).";
+            AppendActivity($"Downloaded Whisper model to '{result.ModelPath}'.");
+        }
+        catch (Exception exception)
+        {
+            ModelActionStatusTextBlock.Text = $"Download failed: {exception.Message}";
+            AppendActivity($"Whisper model download failed: {exception.Message}");
+        }
+        finally
+        {
+            SetModelActionButtonsEnabled(true);
+        }
+    }
+
+    private async void ImportWhisperModelButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "Select a Whisper ggml model file",
+                Filter = "Whisper model (*.bin)|*.bin|All files (*.*)|*.*",
+                CheckFileExists = true,
+                Multiselect = false,
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            SetModelActionButtonsEnabled(false);
+            var result = await _whisperModelService.ImportModelAsync(dialog.FileName, _liveConfig.Current.TranscriptionModelPath, _lifetimeCts.Token);
+            RefreshWhisperModelStatus();
+            ModelActionStatusTextBlock.Text = $"{result.Message} ({FormatBytes(result.FileSizeBytes)}).";
+            AppendActivity($"Imported Whisper model from '{dialog.FileName}' to '{result.ModelPath}'.");
+        }
+        catch (Exception exception)
+        {
+            ModelActionStatusTextBlock.Text = $"Import failed: {exception.Message}";
+            AppendActivity($"Whisper model import failed: {exception.Message}");
+        }
+        finally
+        {
+            SetModelActionButtonsEnabled(true);
+        }
+    }
+
+    private void OpenModelFolderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenPath(_liveConfig.Current.TranscriptionModelPath);
+    }
+
     private void UpdateUi(string status, string detection)
     {
         StatusTextBlock.Text = status;
         DetectionTextBlock.Text = detection;
         StartButton.IsEnabled = !_recordingCoordinator.IsRecording;
         StopButton.IsEnabled = _recordingCoordinator.IsRecording;
-        RenameCurrentButton.IsEnabled = _recordingCoordinator.IsRecording;
         CurrentMeetingTitleTextBox.IsEnabled = _recordingCoordinator.IsRecording;
+        UpdateCurrentMeetingTitleStatus();
     }
 
     private void UpdateCurrentMeetingEditor()
     {
         CurrentMeetingTitleTextBox.Text = _recordingCoordinator.ActiveSession?.Manifest.DetectedTitle ?? string.Empty;
-        RenameCurrentButton.IsEnabled = _recordingCoordinator.IsRecording;
         CurrentMeetingTitleTextBox.IsEnabled = _recordingCoordinator.IsRecording;
+        UpdateCurrentMeetingTitleStatus();
     }
 
     private void RefreshMeetingList(string? selectedStem = null)
     {
         var rows = _meetingOutputCatalogService
-            .ListMeetings(_liveConfig.Current.AudioOutputDir, _liveConfig.Current.TranscriptOutputDir)
+            .ListMeetings(_liveConfig.Current.AudioOutputDir, _liveConfig.Current.TranscriptOutputDir, _liveConfig.Current.WorkDir)
             .Select(record => new MeetingListRow(record))
             .ToArray();
 
@@ -403,6 +503,10 @@ public partial class MainWindow : Window
         SelectedMeetingTitleTextBox.Text = row?.Title ?? string.Empty;
         RenameSelectedMeetingButton.IsEnabled = row is not null;
         SelectedMeetingTitleTextBox.IsEnabled = row is not null;
+        RetrySelectedMeetingButton.IsEnabled = row?.CanRetry == true;
+        SelectedMeetingStatusTextBlock.Text = row is null
+            ? "Select a meeting to see its current processing status and available actions."
+            : $"Status: {row.Status}. {(row.CanRetry ? "Retry is available for this session." : "Retry is unavailable because the work-session manifest is missing or the session is already complete.")}";
     }
 
     private void LoadConfigEditorValues(AppConfig config)
@@ -442,8 +546,10 @@ public partial class MainWindow : Window
         AudioPathRun.Text = config.AudioOutputDir;
         TranscriptPathRun.Text = config.TranscriptOutputDir;
         ConfigPathRun.Text = _liveConfig.ConfigPath;
+        ModelPathRun.Text = config.TranscriptionModelPath;
         AutoDetectTextBlock.Text = BuildRuntimeSummary(config);
         LoadConfigEditorValues(config);
+        RefreshWhisperModelStatus();
 
         if (!string.IsNullOrWhiteSpace(statusMessage))
         {
@@ -454,6 +560,110 @@ public partial class MainWindow : Window
     private static string BuildRuntimeSummary(AppConfig config)
     {
         return $"Auto-detect: {(config.AutoDetectEnabled ? "enabled" : "disabled")} | Mic capture: {(config.MicCaptureEnabled ? "enabled" : "disabled")} | Audio threshold: {config.AutoDetectAudioPeakThreshold:0.000}";
+    }
+
+    private async Task ApplyPendingCurrentTitleAsync(CancellationToken cancellationToken)
+    {
+        var activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            return;
+        }
+
+        var pendingTitle = CurrentMeetingTitleTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(pendingTitle) ||
+            string.Equals(pendingTitle, activeSession.Manifest.DetectedTitle, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var renamed = await _recordingCoordinator.RenameActiveSessionAsync(pendingTitle, cancellationToken);
+        if (!renamed)
+        {
+            return;
+        }
+
+        UpdateCurrentMeetingEditor();
+        AppendActivity($"Applied current meeting title '{pendingTitle}' before publishing.");
+    }
+
+    private void UpdateCurrentMeetingTitleStatus()
+    {
+        var activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            CurrentMeetingTitleStatusTextBlock.Text = "Start a recording to set the meeting title that will drive the published filenames.";
+            return;
+        }
+
+        var pendingTitle = CurrentMeetingTitleTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(pendingTitle))
+        {
+            CurrentMeetingTitleStatusTextBlock.Text = "Leave the field blank to keep the detected meeting title for publishing.";
+            return;
+        }
+
+        var stem = _pathBuilder.BuildFileStem(activeSession.Manifest.Platform, activeSession.Manifest.StartedAtUtc, pendingTitle);
+        if (string.Equals(pendingTitle, activeSession.Manifest.DetectedTitle, StringComparison.Ordinal))
+        {
+            CurrentMeetingTitleStatusTextBlock.Text = $"Current publish stem: {stem}";
+            return;
+        }
+
+        CurrentMeetingTitleStatusTextBlock.Text = $"Pending publish stem: {stem}. The title will be applied automatically when recording stops.";
+    }
+
+    private void RefreshWhisperModelStatus()
+    {
+        try
+        {
+            var status = _whisperModelService.Inspect(_liveConfig.Current.TranscriptionModelPath);
+            WhisperModelStatusTextBlock.Text = status.Kind switch
+            {
+                WhisperModelStatusKind.Valid => "Model status: ready",
+                WhisperModelStatusKind.Missing => "Model status: missing",
+                WhisperModelStatusKind.Invalid => "Model status: invalid",
+                _ => "Model status: unknown",
+            };
+
+            var sizeText = status.FileSizeBytes > 0
+                ? $" File size: {FormatBytes(status.FileSizeBytes)}."
+                : string.Empty;
+            WhisperModelDetailsTextBlock.Text = $"{status.Message}{sizeText}";
+        }
+        catch (Exception exception)
+        {
+            WhisperModelStatusTextBlock.Text = "Model status: error";
+            WhisperModelDetailsTextBlock.Text = exception.Message;
+        }
+    }
+
+    private void SetModelActionButtonsEnabled(bool isEnabled)
+    {
+        RefreshModelStatusButton.IsEnabled = isEnabled;
+        DownloadWhisperModelButton.IsEnabled = isEnabled;
+        ImportWhisperModelButton.IsEnabled = isEnabled;
+        OpenModelFolderButton.IsEnabled = isEnabled;
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1_000_000_000)
+        {
+            return $"{bytes / 1_000_000_000d:0.##} GB";
+        }
+
+        if (bytes >= 1_000_000)
+        {
+            return $"{bytes / 1_000_000d:0.##} MB";
+        }
+
+        if (bytes >= 1_000)
+        {
+            return $"{bytes / 1_000d:0.##} KB";
+        }
+
+        return $"{bytes} bytes";
     }
 
     private void AppendActivity(string message)
@@ -543,6 +753,14 @@ public partial class MainWindow : Window
             : Source.StartedAtUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
         public string Platform => Source.Platform.ToString();
+
+        public string Status => Source.ManifestState?.ToString() ?? (
+            !string.IsNullOrWhiteSpace(Source.ReadyMarkerPath) ? SessionState.Published.ToString() :
+            !string.IsNullOrWhiteSpace(Source.MarkdownPath) || !string.IsNullOrWhiteSpace(Source.JsonPath) ? "Transcript files present" :
+            !string.IsNullOrWhiteSpace(Source.AudioPath) ? "Audio only" :
+            "Unknown");
+
+        public bool CanRetry => !string.IsNullOrWhiteSpace(Source.ManifestPath) && Source.ManifestState is SessionState.Failed;
 
         public string AudioFileName => Path.GetFileName(Source.AudioPath) ?? "Missing";
 
