@@ -1,0 +1,57 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{47A978D3-C859-43BA-877C-9EABEDE9DEDD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MeetingRecorder.Core", "src\MeetingRecorder.Core\MeetingRecorder.Core.csproj", "{18D864A4-E1C0-40DB-8870-1C128C9DCD60}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MeetingRecorder.App", "src\MeetingRecorder.App\MeetingRecorder.App.csproj", "{0EDCA524-50EA-4EA6-AD31-4F7B31F57933}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MeetingRecorder.ProcessingWorker", "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj", "{9876975D-9142-45C0-AFA5-47CE638A5E8C}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A371656C-45D4-42BE-8234-48C118D295EC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MeetingRecorder.Core.Tests", "tests\MeetingRecorder.Core.Tests\MeetingRecorder.Core.Tests.csproj", "{13DFE695-C14B-499E-8248-7D20781FA253}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MeetingRecorder.IntegrationTests", "tests\MeetingRecorder.IntegrationTests\MeetingRecorder.IntegrationTests.csproj", "{D79C0904-89BD-4222-AA52-DDDAC17D8348}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{18D864A4-E1C0-40DB-8870-1C128C9DCD60}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{18D864A4-E1C0-40DB-8870-1C128C9DCD60}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{18D864A4-E1C0-40DB-8870-1C128C9DCD60}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{18D864A4-E1C0-40DB-8870-1C128C9DCD60}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0EDCA524-50EA-4EA6-AD31-4F7B31F57933}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0EDCA524-50EA-4EA6-AD31-4F7B31F57933}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0EDCA524-50EA-4EA6-AD31-4F7B31F57933}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0EDCA524-50EA-4EA6-AD31-4F7B31F57933}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9876975D-9142-45C0-AFA5-47CE638A5E8C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9876975D-9142-45C0-AFA5-47CE638A5E8C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9876975D-9142-45C0-AFA5-47CE638A5E8C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9876975D-9142-45C0-AFA5-47CE638A5E8C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{13DFE695-C14B-499E-8248-7D20781FA253}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{13DFE695-C14B-499E-8248-7D20781FA253}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{13DFE695-C14B-499E-8248-7D20781FA253}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{13DFE695-C14B-499E-8248-7D20781FA253}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D79C0904-89BD-4222-AA52-DDDAC17D8348}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D79C0904-89BD-4222-AA52-DDDAC17D8348}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D79C0904-89BD-4222-AA52-DDDAC17D8348}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D79C0904-89BD-4222-AA52-DDDAC17D8348}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{18D864A4-E1C0-40DB-8870-1C128C9DCD60} = {47A978D3-C859-43BA-877C-9EABEDE9DEDD}
+		{0EDCA524-50EA-4EA6-AD31-4F7B31F57933} = {47A978D3-C859-43BA-877C-9EABEDE9DEDD}
+		{9876975D-9142-45C0-AFA5-47CE638A5E8C} = {47A978D3-C859-43BA-877C-9EABEDE9DEDD}
+		{13DFE695-C14B-499E-8248-7D20781FA253} = {A371656C-45D4-42BE-8234-48C118D295EC}
+		{D79C0904-89BD-4222-AA52-DDDAC17D8348} = {A371656C-45D4-42BE-8234-48C118D295EC}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <MeetingRecorderBuildRoot>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'MeetingRecorderBuild'))</MeetingRecorderBuildRoot>
+    <BaseIntermediateOutputPath>$(MeetingRecorderBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)\obj\**;$(MSBuildProjectDirectory)\bin\**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

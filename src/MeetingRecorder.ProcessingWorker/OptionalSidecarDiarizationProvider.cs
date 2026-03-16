@@ -1,0 +1,62 @@
+using MeetingRecorder.Core.Domain;
+using MeetingRecorder.Core.Processing;
+using System.Diagnostics;
+using System.Text.Json;
+
+namespace MeetingRecorder.ProcessingWorker;
+
+internal sealed class OptionalSidecarDiarizationProvider : IDiarizationProvider
+{
+    private readonly string _diarizationAssetPath;
+    private readonly FileLogWriter _logger;
+
+    public OptionalSidecarDiarizationProvider(string diarizationAssetPath, FileLogWriter logger)
+    {
+        _diarizationAssetPath = diarizationAssetPath;
+        _logger = logger;
+    }
+
+    public async Task<DiarizationResult> ApplySpeakerLabelsAsync(
+        string audioPath,
+        IReadOnlyList<TranscriptSegment> transcriptSegments,
+        CancellationToken cancellationToken)
+    {
+        var sidecarPath = Path.Combine(_diarizationAssetPath, "MeetingRecorder.Diarization.Sidecar.exe");
+        if (!File.Exists(sidecarPath))
+        {
+            _logger.Log("Diarization sidecar not found. Publishing transcript without speaker labels.");
+            return new DiarizationResult(transcriptSegments, false, "Diarization sidecar unavailable.");
+        }
+
+        var inputPath = Path.ChangeExtension(audioPath, ".diarization-input.json");
+        var outputPath = Path.ChangeExtension(audioPath, ".diarization-output.json");
+        await File.WriteAllTextAsync(
+            inputPath,
+            JsonSerializer.Serialize(transcriptSegments, new JsonSerializerOptions { WriteIndented = true }),
+            cancellationToken);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = sidecarPath,
+            Arguments = $"--audio \"{audioPath}\" --segments \"{inputPath}\" --output \"{outputPath}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the diarization sidecar.");
+        await process.WaitForExitAsync(cancellationToken);
+
+        if (process.ExitCode != 0 || !File.Exists(outputPath))
+        {
+            _logger.Log($"Diarization sidecar exited with code {process.ExitCode}. Publishing transcript without speaker labels.");
+            return new DiarizationResult(transcriptSegments, false, "Diarization sidecar did not produce output.");
+        }
+
+        var payload = await File.ReadAllTextAsync(outputPath, cancellationToken);
+        var segments = JsonSerializer.Deserialize<IReadOnlyList<TranscriptSegment>>(payload)
+            ?? transcriptSegments;
+
+        _logger.Log("Diarization sidecar applied speaker labels successfully.");
+        return new DiarizationResult(segments, true, "Diarization sidecar completed.");
+    }
+}

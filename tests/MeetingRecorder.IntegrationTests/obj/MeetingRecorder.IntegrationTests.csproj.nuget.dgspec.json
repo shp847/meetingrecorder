@@ -1,0 +1,160 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\tests\\MeetingRecorder.IntegrationTests\\MeetingRecorder.IntegrationTests.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\MeetingRecorder.Core.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\MeetingRecorder.Core.csproj",
+        "projectName": "MeetingRecorder.Core",
+        "projectPath": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\MeetingRecorder.Core.csproj",
+        "packagesPath": "C:\\Users\\psharm04\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\psharm04\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "NAudio": {
+              "target": "Package",
+              "version": "[2.2.1, )"
+            },
+            "Whisper.net": {
+              "target": "Package",
+              "version": "[1.9.0, )"
+            },
+            "Whisper.net.Runtime": {
+              "target": "Package",
+              "version": "[1.9.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.418/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\tests\\MeetingRecorder.IntegrationTests\\MeetingRecorder.IntegrationTests.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\tests\\MeetingRecorder.IntegrationTests\\MeetingRecorder.IntegrationTests.csproj",
+        "projectName": "MeetingRecorder.IntegrationTests",
+        "projectPath": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\tests\\MeetingRecorder.IntegrationTests\\MeetingRecorder.IntegrationTests.csproj",
+        "packagesPath": "C:\\Users\\psharm04\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\tests\\MeetingRecorder.IntegrationTests\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\psharm04\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\MeetingRecorder.Core.csproj": {
+                "projectPath": "C:\\Users\\psharm04\\OneDrive - Kearney\\Documents\\Coding Projects\\Meeting Recorder\\src\\MeetingRecorder.Core\\MeetingRecorder.Core.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.NET.Test.Sdk": {
+              "target": "Package",
+              "version": "[17.8.0, )"
+            },
+            "coverlet.collector": {
+              "target": "Package",
+              "version": "[6.0.0, )"
+            },
+            "xunit": {
+              "target": "Package",
+              "version": "[2.5.3, )"
+            },
+            "xunit.runner.visualstudio": {
+              "target": "Package",
+              "version": "[2.5.3, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.418/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}
