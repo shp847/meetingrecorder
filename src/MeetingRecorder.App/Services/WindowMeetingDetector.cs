@@ -10,15 +10,18 @@ internal sealed class WindowMeetingDetector
     private readonly LiveAppConfig _config;
     private readonly MeetingDetectionEvaluator _evaluator;
     private readonly IAudioActivityProbe _audioActivityProbe;
+    private readonly MeetingTitleEnricher _meetingTitleEnricher;
 
     public WindowMeetingDetector(
         LiveAppConfig config,
         MeetingDetectionEvaluator evaluator,
-        IAudioActivityProbe audioActivityProbe)
+        IAudioActivityProbe audioActivityProbe,
+        MeetingTitleEnricher meetingTitleEnricher)
     {
         _config = config;
         _evaluator = evaluator;
         _audioActivityProbe = audioActivityProbe;
+        _meetingTitleEnricher = meetingTitleEnricher;
     }
 
     public DetectionDecision? DetectBestCandidate()
@@ -47,14 +50,21 @@ internal sealed class WindowMeetingDetector
                     continue;
                 }
 
-                if (bestCandidate is null || decision.Confidence > bestCandidate.Confidence)
+                var decisionTimestamp = DateTimeOffset.UtcNow;
+                decision = decision with
                 {
-                    bestCandidate = decision with
-                    {
-                        SessionTitle = string.IsNullOrWhiteSpace(decision.SessionTitle)
-                            ? process.MainWindowTitle
-                            : decision.SessionTitle,
-                    };
+                    SessionTitle = string.IsNullOrWhiteSpace(decision.SessionTitle)
+                        ? process.MainWindowTitle
+                        : decision.SessionTitle,
+                };
+                decision = _meetingTitleEnricher.Enrich(
+                    decision,
+                    _config.Current.CalendarTitleFallbackEnabled,
+                    decisionTimestamp);
+
+                if (bestCandidate is null || IsBetterCandidate(decision, bestCandidate))
+                {
+                    bestCandidate = decision;
                 }
             }
             catch
@@ -68,6 +78,32 @@ internal sealed class WindowMeetingDetector
         }
 
         return bestCandidate;
+    }
+
+    internal static bool IsBetterCandidate(DetectionDecision candidate, DetectionDecision currentBest)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(currentBest);
+
+        var candidatePriority = GetCandidatePriority(candidate);
+        var currentBestPriority = GetCandidatePriority(currentBest);
+
+        if (candidatePriority.ShouldStartScore != currentBestPriority.ShouldStartScore)
+        {
+            return candidatePriority.ShouldStartScore > currentBestPriority.ShouldStartScore;
+        }
+
+        if (candidatePriority.Confidence != currentBestPriority.Confidence)
+        {
+            return candidatePriority.Confidence > currentBestPriority.Confidence;
+        }
+
+        if (candidatePriority.SpecificityScore != currentBestPriority.SpecificityScore)
+        {
+            return candidatePriority.SpecificityScore > currentBestPriority.SpecificityScore;
+        }
+
+        return candidatePriority.SignalCount > currentBestPriority.SignalCount;
     }
 
     private static IReadOnlyList<DetectionSignal> BuildSignals(Process process, AudioActivitySnapshot audioActivity)
@@ -114,7 +150,92 @@ internal sealed class WindowMeetingDetector
 
         return signals;
     }
+
+    private static CandidatePriority GetCandidatePriority(DetectionDecision decision)
+    {
+        var specificityScore = 0d;
+        if (HasSpecificSessionTitle(decision))
+        {
+            specificityScore += 1d;
+        }
+
+        if (HasBrowserMeetingEvidence(decision))
+        {
+            specificityScore += 1d;
+        }
+
+        if (IsGenericShellTitle(decision))
+        {
+            specificityScore -= 1d;
+        }
+
+        return new CandidatePriority(
+            decision.ShouldStart ? 1 : 0,
+            decision.Confidence,
+            specificityScore,
+            decision.Signals.Count);
+    }
+
+    private static bool HasSpecificSessionTitle(DetectionDecision decision)
+    {
+        if (string.IsNullOrWhiteSpace(decision.SessionTitle))
+        {
+            return false;
+        }
+
+        var normalized = decision.SessionTitle.Trim();
+        return decision.Platform switch
+        {
+            MeetingPlatform.Teams => !normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) &&
+                !normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase),
+            MeetingPlatform.GoogleMeet => !normalized.Equals("Google Meet", StringComparison.OrdinalIgnoreCase),
+            _ => !normalized.Equals("Detected meeting", StringComparison.OrdinalIgnoreCase),
+        };
+    }
+
+    private static bool HasBrowserMeetingEvidence(DetectionDecision decision)
+    {
+        if (decision.Platform != MeetingPlatform.GoogleMeet)
+        {
+            return false;
+        }
+
+        foreach (var signal in decision.Signals)
+        {
+            if (signal.Source.Equals("browser-window", StringComparison.OrdinalIgnoreCase) ||
+                signal.Source.Equals("browser-url", StringComparison.OrdinalIgnoreCase) ||
+                signal.Value.Contains("meet.google.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsGenericShellTitle(DetectionDecision decision)
+    {
+        if (string.IsNullOrWhiteSpace(decision.SessionTitle))
+        {
+            return true;
+        }
+
+        var normalized = decision.SessionTitle.Trim();
+        return decision.Platform switch
+        {
+            MeetingPlatform.Teams => normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase),
+            MeetingPlatform.GoogleMeet => normalized.Equals("Google Meet", StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        };
+    }
 }
+
+internal readonly record struct CandidatePriority(
+    int ShouldStartScore,
+    double Confidence,
+    double SpecificityScore,
+    int SignalCount);
 
 internal interface IAudioActivityProbe
 {

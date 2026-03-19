@@ -20,7 +20,7 @@ The app is split into three runtime projects:
 - `MeetingRecorder.App`
   - WPF desktop UI
   - recording orchestration
-  - local meeting detection
+  - local meeting detection for Teams and Google Meet
   - config editing and hot reload
   - meetings library, rename, and retry actions
   - Whisper model setup UI
@@ -56,7 +56,7 @@ The implementation assumes all of the following may be true:
 As a result, the design keeps the core workflow working with:
 
 - manual launch
-- manual recording fallback
+- manual recording fallback across conferencing apps that use the normal Windows audio stack
 - portable deployment
 - local file-based automation handoff
 - explicit model import when downloads fail
@@ -71,8 +71,11 @@ Responsibilities:
 
 - show current app and detection status
 - expose manual start and stop controls
+- clarify that manual recording works beyond Teams and Google Meet, while auto-detection is narrower
 - allow editing the current meeting title while recording
 - show the publish-stem preview for the active title
+- show a model-health banner when the current Whisper model is missing or invalid
+- show an update banner when the configured release feed reports a newer version
 - show recent activity
 - link to output and config paths
 
@@ -81,9 +84,9 @@ Responsibilities:
 Responsibilities:
 
 - list published meetings from output artifacts
-- surface title, time, platform, status, audio file, and transcript file
+- surface title, time, duration, platform, status, audio file, and transcript file
 - rename published meetings and keep stems aligned
-- expose retry for failed sessions when a matching manifest still exists
+- expose transcript re-generation for failed sessions and audio-only sessions
 
 ### Models
 
@@ -92,8 +95,11 @@ Responsibilities:
 - show the configured Whisper model path
 - validate the current model file
 - show `Missing`, `Invalid`, or `Ready` status
+- list discovered local model files
+- allow choosing which local model is active
 - allow `Download Base Model`
 - allow `Import Existing File`
+- provide browser links for manual model download
 - provide quick access to the model folder
 
 ### Config
@@ -102,6 +108,8 @@ Responsibilities:
 
 - edit the app configuration file
 - hot reload supported settings into the running app
+- control launch-on-login registration
+- control update-check behavior and update feed URL
 - show which settings apply immediately versus only on the next recording or processing run
 
 ## 5. Session Lifecycle
@@ -148,6 +156,7 @@ Each session has a dedicated work folder:
 - error summary
 
 The Meetings tab uses the shared filename stem to reconnect published output files back to their work manifests when those manifests still exist.
+If the original work manifest is missing but the published audio file still exists, the app can synthesize a new queued manifest in the work folder to support transcript regeneration.
 
 ## 7. Audio Pipeline
 
@@ -157,6 +166,8 @@ The app records:
 
 - system output via Windows loopback capture
 - optional microphone input via a separate capture path
+
+Because capture is based on the Windows audio stack rather than a product-specific conferencing SDK, manual recording works for any meeting app whose audio is present on the normal Windows render path. The current platform-specific logic is only in auto-detection and platform labeling, not in the audio capture pipeline itself.
 
 ### Chunking
 
@@ -240,6 +251,7 @@ This avoids drift between what the UI says is valid and what the worker will act
 - if the worker sees a valid model, it uses it immediately
 - if the model is missing, it may attempt a first-run download
 - if the model is invalid, it fails clearly and preserves the session for retry
+- if the configured model path is unusable and another valid managed model exists, the app can switch to that fallback model
 - the UI provides a friendlier path to fix the model and retry processing
 
 ## 11. Retry Flow
@@ -248,20 +260,20 @@ Retry is intentionally simple and local.
 
 ### Preconditions
 
-Retry is only available when:
+Transcript regeneration is available when:
 
-- the Meetings row can be mapped back to a work manifest
-- that manifest is in `Failed`
+- the Meetings row can be mapped back to a work manifest that can be retried, or
+- the app can synthesize a new work manifest from an existing published audio file
 
 ### Flow
 
-1. User selects a failed meeting in the Meetings tab.
-2. User clicks `Retry Processing`.
-3. The app rewrites the manifest to `Queued` and clears the previous error summary.
-4. The app launches the worker against the same manifest.
-5. If the model is now valid, transcript artifacts are generated and published.
+1. User selects a meeting in the Meetings tab.
+2. User clicks `Re-Generate Transcript`.
+3. The app either reuses the existing manifest or synthesizes a new queued manifest from the published audio file.
+4. The app launches the worker against that manifest.
+5. If the model is valid, transcript artifacts are generated and published.
 
-Current retry is single-session only. There is no bulk retry manager yet.
+Current transcript regeneration is single-session only. There is no bulk retry manager yet.
 
 ## 12. Power Automate Handoff
 
@@ -281,6 +293,17 @@ Expected sibling artifacts:
 `.ready` is the only completion signal the app guarantees for successful transcript output.
 
 ## 13. Portability and Storage Modes
+
+### GitHub-backed bootstrap install
+
+The release flow can publish stable `Install-LatestFromGitHub.cmd` and `Install-LatestFromGitHub.ps1` assets.
+
+That bootstrap path:
+
+- downloads the latest versioned app ZIP from GitHub Releases
+- extracts it to a temporary folder
+- runs the bundled per-user installer
+- preserves the existing `data` folder and sticky config on update installs
 
 ### Portable mode
 
@@ -306,6 +329,7 @@ This keeps the deployment flexible for corporate policies that block installer-s
 - no admin rights are required for normal operation
 - model import is supported because downloads may be blocked
 - browser extension support is optional and not required for the current workflow
+- update downloads are file-based and do not require in-place self-patching while the app is running
 
 ## 15. Current Gaps and Planned Hardening
 

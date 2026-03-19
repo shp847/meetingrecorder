@@ -37,6 +37,7 @@ public sealed class MeetingDetectionEvaluatorTests
         var decision = evaluator.Evaluate(signals);
 
         Assert.False(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
         Assert.Equal(MeetingPlatform.Teams, decision.Platform);
         Assert.Contains("no active system audio", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
@@ -55,6 +56,7 @@ public sealed class MeetingDetectionEvaluatorTests
         var decision = evaluator.Evaluate(signals);
 
         Assert.False(decision.ShouldStart);
+        Assert.False(decision.ShouldKeepRecording);
         Assert.Equal(MeetingPlatform.Teams, decision.Platform);
         Assert.Contains("chat", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }

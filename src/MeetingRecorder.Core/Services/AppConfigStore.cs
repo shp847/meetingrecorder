@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Branding;
 using MeetingRecorder.Core.Configuration;
 using System.Text.Json;
 
@@ -74,8 +75,21 @@ public sealed class AppConfigStore
             ModelCacheDir = modelCache,
             TranscriptionModelPath = Path.Combine(modelCache, "asr", "ggml-base.bin"),
             DiarizationAssetPath = Path.Combine(modelCache, "diarization"),
-            MicCaptureEnabled = false,
+            MicCaptureEnabled = true,
+            LaunchOnLoginEnabled = true,
             AutoDetectEnabled = true,
+            CalendarTitleFallbackEnabled = false,
+            UpdateCheckEnabled = true,
+            AutoInstallUpdatesEnabled = true,
+            UpdateFeedUrl = AppBranding.DefaultUpdateFeedUrl,
+            LastUpdateCheckUtc = null,
+            InstalledReleaseVersion = AppBranding.Version,
+            InstalledReleasePublishedAtUtc = null,
+            InstalledReleaseAssetSizeBytes = null,
+            PendingUpdateZipPath = string.Empty,
+            PendingUpdateVersion = string.Empty,
+            PendingUpdatePublishedAtUtc = null,
+            PendingUpdateAssetSizeBytes = null,
             AutoDetectAudioPeakThreshold = 0.02d,
             MeetingStopTimeoutSeconds = 30,
         };
@@ -93,6 +107,10 @@ public sealed class AppConfigStore
             ModelCacheDir = string.IsNullOrWhiteSpace(config.ModelCacheDir) ? defaults.ModelCacheDir : config.ModelCacheDir,
             TranscriptionModelPath = string.IsNullOrWhiteSpace(config.TranscriptionModelPath) ? defaults.TranscriptionModelPath : config.TranscriptionModelPath,
             DiarizationAssetPath = string.IsNullOrWhiteSpace(config.DiarizationAssetPath) ? defaults.DiarizationAssetPath : config.DiarizationAssetPath,
+            UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
+            InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
+            PendingUpdateZipPath = string.IsNullOrWhiteSpace(config.PendingUpdateZipPath) ? string.Empty : config.PendingUpdateZipPath,
+            PendingUpdateVersion = string.IsNullOrWhiteSpace(config.PendingUpdateVersion) ? string.Empty : config.PendingUpdateVersion,
             AutoDetectAudioPeakThreshold = config.AutoDetectAudioPeakThreshold <= 0d ? defaults.AutoDetectAudioPeakThreshold : config.AutoDetectAudioPeakThreshold,
             MeetingStopTimeoutSeconds = config.MeetingStopTimeoutSeconds <= 0 ? defaults.MeetingStopTimeoutSeconds : config.MeetingStopTimeoutSeconds,
         };

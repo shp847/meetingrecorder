@@ -1,0 +1,7 @@
+.artifacts/
+.tmp/
+.tmp-integration/
+restore-output.log
+src/MeetingRecorder.Setup/Generated/
+**/bin/
+**/obj/

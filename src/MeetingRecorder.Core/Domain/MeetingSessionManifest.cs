@@ -22,6 +22,8 @@ public sealed record MeetingSessionManifest
 
     public string? MergedAudioPath { get; init; }
 
+    public ImportedSourceAudioInfo? ImportedSourceAudio { get; init; }
+
     public ProcessingStageStatus TranscriptionStatus { get; init; } =
         new("transcription", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
 
@@ -33,3 +35,8 @@ public sealed record MeetingSessionManifest
 
     public string? ErrorSummary { get; init; }
 }
+
+public sealed record ImportedSourceAudioInfo(
+    string OriginalPath,
+    long SourceSizeBytes,
+    DateTimeOffset SourceLastWriteUtc);

@@ -3,6 +3,7 @@ using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using System.Diagnostics;
 using System.Text;
+using System.Threading.Channels;
 
 namespace MeetingRecorder.App.Services;
 
@@ -11,17 +12,43 @@ internal sealed class ProcessingQueueService
     private readonly LiveAppConfig _config;
     private readonly SessionManifestStore _manifestStore;
     private readonly FileLogWriter _logger;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly Func<WorkerLaunch> _workerLaunchResolver;
+    private readonly IWorkerProcessFactory _workerProcessFactory;
     private readonly CancellationTokenSource _shutdownCts = new();
+    private readonly Channel<string> _pendingManifestPaths = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+    {
+        SingleReader = true,
+        SingleWriter = false,
+    });
     private readonly object _processSyncRoot = new();
-    private Process? _currentWorker;
+    private readonly Task _drainTask;
+    private IWorkerProcess? _currentWorker;
     private string? _currentManifestPath;
 
-    public ProcessingQueueService(LiveAppConfig config, SessionManifestStore manifestStore, FileLogWriter logger)
+    public ProcessingQueueService(
+        LiveAppConfig config,
+        SessionManifestStore manifestStore,
+        FileLogWriter logger,
+        Func<WorkerLaunch>? workerLaunchResolver = null,
+        IWorkerProcessFactory? workerProcessFactory = null)
     {
         _config = config;
         _manifestStore = manifestStore;
         _logger = logger;
+        _workerLaunchResolver = workerLaunchResolver ?? WorkerLocator.Resolve;
+        _workerProcessFactory = workerProcessFactory ?? new SystemWorkerProcessFactory();
+        _drainTask = Task.Run(() => DrainQueueAsync(_shutdownCts.Token));
+    }
+
+    public bool IsProcessingInProgress
+    {
+        get
+        {
+            lock (_processSyncRoot)
+            {
+                return _currentWorker is { HasExited: false };
+            }
+        }
     }
 
     public async Task ResumePendingSessionsAsync(CancellationToken cancellationToken = default)
@@ -33,79 +60,30 @@ internal sealed class ProcessingQueueService
         }
     }
 
-    public async Task EnqueueAsync(string manifestPath, CancellationToken cancellationToken = default)
+    public Task EnqueueAsync(string manifestPath, CancellationToken cancellationToken = default)
     {
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
-        await _gate.WaitAsync(linkedCts.Token);
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_shutdownCts.IsCancellationRequested)
         {
-            if (_shutdownCts.IsCancellationRequested)
-            {
-                _logger.Log($"Skipping processing enqueue for '{manifestPath}' because shutdown is in progress.");
-                return;
-            }
-
-            var launch = WorkerLocator.Resolve();
-            var arguments = $"{launch.ArgumentPrefix} --manifest \"{manifestPath}\" --config \"{AppDataPaths.GetConfigPath()}\"";
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = launch.FileName,
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-
-            _logger.Log($"Launching worker for '{manifestPath}'. FileName='{startInfo.FileName}'. Arguments='{startInfo.Arguments}'.");
-            var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the processing worker.");
-            SetCurrentWorker(process, manifestPath);
-
-            try
-            {
-                var standardOutput = await process.StandardOutput.ReadToEndAsync(linkedCts.Token);
-                var standardError = await process.StandardError.ReadToEndAsync(linkedCts.Token);
-                await process.WaitForExitAsync(linkedCts.Token);
-
-                if (process.ExitCode != 0)
-                {
-                    var sessionLogPath = Path.Combine(
-                        Path.GetDirectoryName(manifestPath) ?? _config.Current.WorkDir,
-                        "logs",
-                        "processing.log");
-                    _logger.Log($"Worker failed for '{manifestPath}' with exit code {process.ExitCode}: {standardError} See '{sessionLogPath}' for per-session diagnostics.");
-                    return;
-                }
-
-                _logger.Log($"Worker completed for '{manifestPath}': {standardOutput.Trim()}");
-            }
-            catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync(CancellationToken.None);
-                }
-
-                _logger.Log($"Worker canceled during shutdown for '{manifestPath}'.");
-            }
-            finally
-            {
-                ClearCurrentWorker(process);
-                process.Dispose();
-            }
+            _logger.Log($"Skipping processing enqueue for '{manifestPath}' because shutdown is in progress.");
+            return Task.CompletedTask;
         }
-        finally
+
+        if (!_pendingManifestPaths.Writer.TryWrite(manifestPath))
         {
-            _gate.Release();
+            _logger.Log($"Skipping processing enqueue for '{manifestPath}' because the queue is no longer accepting work.");
         }
+
+        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _shutdownCts.Cancel();
+        _pendingManifestPaths.Writer.TryComplete();
 
-        Process? worker;
+        IWorkerProcess? worker;
         string? manifestPath;
         lock (_processSyncRoot)
         {
@@ -113,28 +91,108 @@ internal sealed class ProcessingQueueService
             manifestPath = _currentManifestPath;
         }
 
-        if (worker is null)
+        if (worker is not null)
         {
-            return;
+            try
+            {
+                if (!worker.HasExited)
+                {
+                    _logger.Log($"Stopping worker for '{manifestPath}' because the application is shutting down.");
+                    worker.Kill(entireProcessTree: true);
+                }
+
+                await worker.WaitForExitAsync(cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+                // The worker may already have exited.
+            }
         }
 
         try
         {
-            if (!worker.HasExited)
-            {
-                _logger.Log($"Stopping worker for '{manifestPath}' because the application is shutting down.");
-                worker.Kill(entireProcessTree: true);
-            }
-
-            await worker.WaitForExitAsync(cancellationToken);
+            await _drainTask.WaitAsync(cancellationToken);
         }
-        catch (InvalidOperationException)
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
         {
-            // The worker may already have exited.
         }
     }
 
-    private void SetCurrentWorker(Process process, string manifestPath)
+    private async Task DrainQueueAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _pendingManifestPaths.Reader.WaitToReadAsync(cancellationToken))
+            {
+                while (_pendingManifestPaths.Reader.TryRead(out var manifestPath))
+                {
+                    await ProcessManifestAsync(manifestPath, cancellationToken);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task ProcessManifestAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        var launch = _workerLaunchResolver();
+        var arguments = $"{launch.ArgumentPrefix} --manifest \"{manifestPath}\" --config \"{AppDataPaths.GetConfigPath()}\"";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = launch.FileName,
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        _logger.Log($"Launching worker for '{manifestPath}'. FileName='{startInfo.FileName}'. Arguments='{startInfo.Arguments}'.");
+        var process = _workerProcessFactory.Start(startInfo);
+        SetCurrentWorker(process, manifestPath);
+
+        try
+        {
+            var standardOutputTask = process.ReadStandardOutputToEndAsync(cancellationToken);
+            var standardErrorTask = process.ReadStandardErrorToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(standardOutputTask, standardErrorTask);
+
+            var standardOutput = standardOutputTask.Result;
+            var standardError = standardErrorTask.Result;
+
+            if (process.ExitCode != 0)
+            {
+                var sessionLogPath = Path.Combine(
+                    Path.GetDirectoryName(manifestPath) ?? _config.Current.WorkDir,
+                    "logs",
+                    "processing.log");
+                _logger.Log($"Worker failed for '{manifestPath}' with exit code {process.ExitCode}: {standardError} See '{sessionLogPath}' for per-session diagnostics.");
+                return;
+            }
+
+            _logger.Log($"Worker completed for '{manifestPath}': {standardOutput.Trim()}");
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+
+            _logger.Log($"Worker canceled during shutdown for '{manifestPath}'.");
+        }
+        finally
+        {
+            ClearCurrentWorker(process);
+            process.Dispose();
+        }
+    }
+
+    private void SetCurrentWorker(IWorkerProcess process, string manifestPath)
     {
         lock (_processSyncRoot)
         {
@@ -143,7 +201,7 @@ internal sealed class ProcessingQueueService
         }
     }
 
-    private void ClearCurrentWorker(Process process)
+    private void ClearCurrentWorker(IWorkerProcess process)
     {
         lock (_processSyncRoot)
         {
@@ -153,5 +211,73 @@ internal sealed class ProcessingQueueService
                 _currentManifestPath = null;
             }
         }
+    }
+}
+
+internal interface IWorkerProcessFactory
+{
+    IWorkerProcess Start(ProcessStartInfo startInfo);
+}
+
+internal interface IWorkerProcess : IDisposable
+{
+    int ExitCode { get; }
+
+    bool HasExited { get; }
+
+    Task<string> ReadStandardOutputToEndAsync(CancellationToken cancellationToken);
+
+    Task<string> ReadStandardErrorToEndAsync(CancellationToken cancellationToken);
+
+    Task WaitForExitAsync(CancellationToken cancellationToken);
+
+    void Kill(bool entireProcessTree);
+}
+
+internal sealed class SystemWorkerProcessFactory : IWorkerProcessFactory
+{
+    public IWorkerProcess Start(ProcessStartInfo startInfo)
+    {
+        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the processing worker.");
+        return new SystemWorkerProcess(process);
+    }
+}
+
+internal sealed class SystemWorkerProcess : IWorkerProcess
+{
+    private readonly Process _process;
+
+    public SystemWorkerProcess(Process process)
+    {
+        _process = process;
+    }
+
+    public int ExitCode => _process.ExitCode;
+
+    public bool HasExited => _process.HasExited;
+
+    public Task<string> ReadStandardOutputToEndAsync(CancellationToken cancellationToken)
+    {
+        return _process.StandardOutput.ReadToEndAsync(cancellationToken);
+    }
+
+    public Task<string> ReadStandardErrorToEndAsync(CancellationToken cancellationToken)
+    {
+        return _process.StandardError.ReadToEndAsync(cancellationToken);
+    }
+
+    public Task WaitForExitAsync(CancellationToken cancellationToken)
+    {
+        return _process.WaitForExitAsync(cancellationToken);
+    }
+
+    public void Kill(bool entireProcessTree)
+    {
+        _process.Kill(entireProcessTree);
+    }
+
+    public void Dispose()
+    {
+        _process.Dispose();
     }
 }

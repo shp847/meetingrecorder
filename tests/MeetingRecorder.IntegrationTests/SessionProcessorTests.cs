@@ -213,6 +213,61 @@ public sealed class SessionProcessorTests
         Assert.True(ReadPeakAmplitude(expectedAudioPath) > 0.01f);
     }
 
+    [Fact]
+    public async Task ProcessAsync_Uses_Existing_MergedAudioPath_When_Raw_Chunks_Are_Missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = new AppConfig
+        {
+            AudioOutputDir = Path.Combine(root, "audio"),
+            TranscriptOutputDir = Path.Combine(root, "transcripts"),
+            WorkDir = Path.Combine(root, "work"),
+            ModelCacheDir = Path.Combine(root, "models"),
+            TranscriptionModelPath = Path.Combine(root, "models", "fake.bin"),
+            DiarizationAssetPath = Path.Combine(root, "models", "diarization"),
+        };
+
+        Directory.CreateDirectory(config.AudioOutputDir);
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            config.WorkDir,
+            MeetingPlatform.Teams,
+            "Legacy Audio",
+            Array.Empty<DetectionSignal>());
+
+        var existingAudioPath = Path.Combine(config.AudioOutputDir, "2026-03-16_004645_teams_legacy-audio.wav");
+        CreateWave(existingAudioPath, TimeSpan.FromMilliseconds(250));
+
+        var manifestPath = Path.Combine(config.WorkDir, manifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                StartedAtUtc = new DateTimeOffset(2026, 3, 16, 0, 46, 45, TimeSpan.Zero),
+                RawChunkPaths = Array.Empty<string>(),
+                MicrophoneChunkPaths = Array.Empty<string>(),
+                MergedAudioPath = existingAudioPath,
+            },
+            manifestPath);
+
+        var processor = new SessionProcessor(
+            manifestStore,
+            pathBuilder,
+            new WaveChunkMerger(),
+            new FakeTranscriptionProvider(),
+            new FakeDiarizationProvider(),
+            new TranscriptRenderer(),
+            new FilePublishService());
+
+        var published = await processor.ProcessAsync(manifestPath, config);
+
+        Assert.Equal(existingAudioPath, published.AudioPath);
+        Assert.True(File.Exists(published.MarkdownPath));
+        Assert.True(File.Exists(published.JsonPath));
+        Assert.True(File.Exists(published.ReadyMarkerPath));
+    }
+
     private static void CreateWave(string path, TimeSpan duration)
     {
         using var writer = new WaveFileWriter(path, new WaveFormat(16000, 16, 1));

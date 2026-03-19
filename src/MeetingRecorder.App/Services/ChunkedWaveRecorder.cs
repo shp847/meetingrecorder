@@ -1,9 +1,11 @@
 using NAudio.Wave;
+using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.App.Services;
 
 internal sealed class ChunkedWaveRecorder : IDisposable
 {
+    private const int DefaultLevelHistoryCapacity = 180;
     private readonly Func<IWaveIn> _captureFactory;
     private readonly string _directory;
     private readonly string _filePrefix;
@@ -18,6 +20,7 @@ internal sealed class ChunkedWaveRecorder : IDisposable
     private bool _isStarted;
     private long _totalBytesRecorded;
     private bool _loggedFirstAudioPacket;
+    private readonly AudioLevelHistory _levelHistory = new(DefaultLevelHistoryCapacity);
 
     public ChunkedWaveRecorder(
         Func<IWaveIn> captureFactory,
@@ -36,6 +39,8 @@ internal sealed class ChunkedWaveRecorder : IDisposable
     public IReadOnlyList<string> ChunkPaths => _chunkPaths;
 
     public long TotalBytesRecorded => Interlocked.Read(ref _totalBytesRecorded);
+
+    public AudioLevelHistory LevelHistory => _levelHistory;
 
     public void Start()
     {
@@ -88,6 +93,11 @@ internal sealed class ChunkedWaveRecorder : IDisposable
     private void Capture_OnDataAvailable(object? sender, WaveInEventArgs e)
     {
         Interlocked.Add(ref _totalBytesRecorded, e.BytesRecorded);
+        if (_capture is not null)
+        {
+            _levelHistory.AddSample(AudioLevelMeter.MeasurePeakLevel(e.Buffer, e.BytesRecorded, _capture.WaveFormat));
+        }
+
         if (!_loggedFirstAudioPacket && e.BytesRecorded > 0)
         {
             _loggedFirstAudioPacket = true;

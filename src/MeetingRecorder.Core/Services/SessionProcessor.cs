@@ -71,17 +71,12 @@ public sealed class SessionProcessor
             manifest.Platform,
             manifest.StartedAtUtc,
             string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle);
-        var mergedAudioPath = Path.Combine(processingRoot, $"{stem}.wav");
-        await WaveChunkMerger.MergeAsync(
-            manifest.RawChunkPaths,
-            manifest.MicrophoneChunkPaths,
-            mergedAudioPath,
-            cancellationToken);
-        await PublishService.PublishAudioAsync(mergedAudioPath, config.AudioOutputDir, stem, cancellationToken);
+        var sourceAudioPath = await ResolveSourceAudioPathAsync(manifest, processingRoot, stem, cancellationToken);
+        await PublishService.PublishAudioAsync(sourceAudioPath, config.AudioOutputDir, stem, cancellationToken);
 
         manifest = manifest with
         {
-            MergedAudioPath = mergedAudioPath,
+            MergedAudioPath = sourceAudioPath,
             TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Running, DateTimeOffset.UtcNow, null),
         };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
@@ -89,7 +84,7 @@ public sealed class SessionProcessor
         TranscriptionResult transcription;
         try
         {
-            transcription = await TranscriptionProvider.TranscribeAsync(mergedAudioPath, cancellationToken);
+            transcription = await TranscriptionProvider.TranscribeAsync(sourceAudioPath, cancellationToken);
             manifest = manifest with
             {
                 TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, transcription.Message),
@@ -119,7 +114,7 @@ public sealed class SessionProcessor
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
-            var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(mergedAudioPath, transcription.Segments, cancellationToken);
+            var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(sourceAudioPath, transcription.Segments, cancellationToken);
             transcriptSegments = diarization.Segments;
             manifest = manifest with
             {
@@ -154,7 +149,7 @@ public sealed class SessionProcessor
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
             var published = await PublishService.PublishAsync(
-                mergedAudioPath,
+                sourceAudioPath,
                 markdownPath,
                 jsonPath,
                 config.AudioOutputDir,
@@ -183,5 +178,31 @@ public sealed class SessionProcessor
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
             throw;
         }
+    }
+
+    private async Task<string> ResolveSourceAudioPathAsync(
+        MeetingSessionManifest manifest,
+        string processingRoot,
+        string stem,
+        CancellationToken cancellationToken)
+    {
+        if (manifest.RawChunkPaths.Count > 0 || manifest.MicrophoneChunkPaths.Count > 0)
+        {
+            var mergedAudioPath = Path.Combine(processingRoot, $"{stem}.wav");
+            await WaveChunkMerger.MergeAsync(
+                manifest.RawChunkPaths,
+                manifest.MicrophoneChunkPaths,
+                mergedAudioPath,
+                cancellationToken);
+            return mergedAudioPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifest.MergedAudioPath) && File.Exists(manifest.MergedAudioPath))
+        {
+            return manifest.MergedAudioPath;
+        }
+
+        throw new InvalidOperationException(
+            "No raw audio chunks were available, and no existing merged audio file could be found for this session.");
     }
 }

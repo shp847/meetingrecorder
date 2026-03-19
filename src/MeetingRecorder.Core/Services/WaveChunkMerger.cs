@@ -51,6 +51,88 @@ public sealed class WaveChunkMerger
         }
     }
 
+    public Task<string> MergePublishedAudioFilesAsync(
+        IReadOnlyList<string> audioPaths,
+        string outputPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (audioPaths.Count == 0)
+        {
+            throw new InvalidOperationException("At least one published audio file is required.");
+        }
+
+        var outputDirectory = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("Output path must have a directory.");
+        Directory.CreateDirectory(outputDirectory);
+
+        var readers = new List<AudioFileReader>(audioPaths.Count);
+        try
+        {
+            foreach (var audioPath in audioPaths)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!File.Exists(audioPath))
+                {
+                    throw new FileNotFoundException("A published audio file could not be found.", audioPath);
+                }
+
+                readers.Add(new AudioFileReader(audioPath));
+            }
+
+            var targetSampleRate = readers[0].WaveFormat.SampleRate;
+            var targetChannels = readers[0].WaveFormat.Channels;
+            var providers = readers
+                .Select(reader => MatchWaveFormat(reader, targetSampleRate, targetChannels))
+                .ToArray();
+
+            var concatenated = new ConcatenatingSampleProvider(providers);
+            var waveProvider = new SampleToWaveProvider16(concatenated);
+            var outputFormat = waveProvider.WaveFormat;
+            using var writer = new WaveFileWriter(outputPath, outputFormat);
+            var buffer = new byte[16_384];
+            int bytesRead;
+            while ((bytesRead = waveProvider.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                writer.Write(buffer, 0, bytesRead);
+            }
+
+            return Task.FromResult(outputPath);
+        }
+        finally
+        {
+            foreach (var reader in readers)
+            {
+                reader.Dispose();
+            }
+        }
+    }
+
+    public Task<(string FirstOutputPath, string SecondOutputPath)> SplitPublishedAudioFileAsync(
+        string audioPath,
+        TimeSpan splitPoint,
+        string firstOutputPath,
+        string secondOutputPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(audioPath))
+        {
+            throw new FileNotFoundException("A published audio file could not be found.", audioPath);
+        }
+
+        using var durationReader = new AudioFileReader(audioPath);
+        var totalDuration = durationReader.TotalTime;
+        if (splitPoint <= TimeSpan.Zero || splitPoint >= totalDuration)
+        {
+            throw new InvalidOperationException("The split point must fall inside the published audio duration.");
+        }
+
+        WriteAudioSegment(audioPath, TimeSpan.Zero, splitPoint, firstOutputPath, cancellationToken);
+        WriteAudioSegment(audioPath, splitPoint, totalDuration - splitPoint, secondOutputPath, cancellationToken);
+        return Task.FromResult((firstOutputPath, secondOutputPath));
+    }
+
     private static Task<string> MergeWaveChunksAsync(
         IReadOnlyList<string> chunkPaths,
         string outputPath,
@@ -150,6 +232,35 @@ public sealed class WaveChunkMerger
 
         throw new InvalidOperationException(
             $"Unable to convert audio from {current.WaveFormat.Channels} channels to {channels} channels.");
+    }
+
+    private static void WriteAudioSegment(
+        string audioPath,
+        TimeSpan skip,
+        TimeSpan take,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var outputDirectory = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("Output path must have a directory.");
+        Directory.CreateDirectory(outputDirectory);
+
+        using var reader = new AudioFileReader(audioPath);
+        var segmentProvider = new OffsetSampleProvider(reader)
+        {
+            SkipOver = skip,
+            Take = take,
+        };
+        var waveProvider = new SampleToWaveProvider16(segmentProvider);
+        using var writer = new WaveFileWriter(outputPath, waveProvider.WaveFormat);
+
+        var buffer = new byte[16_384];
+        int bytesRead;
+        while ((bytesRead = waveProvider.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            writer.Write(buffer, 0, bytesRead);
+        }
     }
 
     private static void TryDelete(string path)

@@ -1,9 +1,12 @@
 using MeetingRecorder.Core.Domain;
+using NAudio.Wave;
 
 namespace MeetingRecorder.Core.Services;
 
 public sealed class FilePublishService
 {
+    private readonly TranscriptionAudioPreparer _publishedAudioPreparer = new();
+
     public Task<string> PublishAudioAsync(
         string sourceAudioPath,
         string destinationAudioDir,
@@ -13,8 +16,16 @@ public sealed class FilePublishService
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(destinationAudioDir);
 
-        var audioDestination = Path.Combine(destinationAudioDir, $"{stem}{Path.GetExtension(sourceAudioPath)}");
-        PublishFile(sourceAudioPath, audioDestination, cancellationToken);
+        var audioDestination = Path.Combine(destinationAudioDir, $"{stem}.wav");
+        if (string.Equals(
+                Path.GetFullPath(sourceAudioPath),
+                Path.GetFullPath(audioDestination),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(audioDestination);
+        }
+
+        PublishSpeechOptimizedAudio(sourceAudioPath, audioDestination, cancellationToken);
         return Task.FromResult(audioDestination);
     }
 
@@ -65,6 +76,34 @@ public sealed class FilePublishService
         }
 
         File.Copy(sourcePath, tempPath, overwrite: true);
+        File.Move(tempPath, destinationPath, overwrite: true);
+    }
+
+    private void PublishSpeechOptimizedAudio(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var tempPath = $"{destinationPath}.tmp";
+        if (File.Exists(tempPath))
+        {
+            File.Delete(tempPath);
+        }
+
+        _publishedAudioPreparer.PrepareAsync(sourcePath, tempPath, cancellationToken)
+            .GetAwaiter()
+            .GetResult();
+
+        using (var reader = new WaveFileReader(tempPath))
+        {
+            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm ||
+                reader.WaveFormat.SampleRate != TranscriptionAudioPreparer.WhisperSampleRate ||
+                reader.WaveFormat.Channels != TranscriptionAudioPreparer.WhisperChannelCount ||
+                reader.WaveFormat.BitsPerSample != TranscriptionAudioPreparer.WhisperBitsPerSample)
+            {
+                throw new IOException("Published audio did not match the expected speech-optimized WAV format.");
+            }
+        }
+
         File.Move(tempPath, destinationPath, overwrite: true);
     }
 }

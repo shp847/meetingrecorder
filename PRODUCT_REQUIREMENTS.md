@@ -14,6 +14,8 @@ Meeting Recorder is a Windows desktop application that:
 - writes final artifacts into stable `Audio` and `Transcripts` folders
 - creates a `.ready` marker so Power Automate or another watcher can react to completed transcript output
 
+Manual recording is intentionally conferencing-app agnostic: if audio is flowing through the normal Windows render device and optional microphone path, the recorder can capture it regardless of whether the call is in Teams, Google Meet, Zoom, Webex, or another meeting tool. Assisted auto-detection is narrower and currently only recognizes Teams and Google Meet patterns.
+
 The product is intentionally shaped for corporate-restricted laptops:
 
 - standard user permissions
@@ -33,19 +35,27 @@ The current app exposes four main tabs:
   - current meeting title editor
   - recent activity log
   - links to output and config paths
+  - model-health banner
+  - update banner with download and release-page actions
 - `Meetings`
   - published meeting list
+  - meeting duration display
+  - audio and transcript artifact links
   - rename published meeting
-  - retry failed processing when a matching work-session manifest still exists
+  - transcript re-generation for retryable failed sessions and audio-only sessions
 - `Models`
   - Whisper model status
   - Whisper model download
   - Whisper model import from an existing file
+  - local model catalog and model selection
+  - browser links for manual model download
   - open model path and folder
 - `Config`
   - editable settings
   - hot reload for supported values
   - per-setting notes about when changes apply
+  - launch-on-login toggle
+  - update-check and update-feed settings
 
 ## 3. Core Goals
 
@@ -78,6 +88,7 @@ The current app exposes four main tabs:
 
 - Manual recording controls
 - Heuristic auto-detection for Teams desktop and Google Meet windows
+- Manual recording support for other conferencing apps that use the normal Windows output and microphone paths
 - Auto-stop after a configurable timeout
 - Rolling WAV chunk capture
 - Optional microphone capture
@@ -88,9 +99,11 @@ The current app exposes four main tabs:
 - `.md`, `.json`, and `.ready` publish contract
 - Hot-reloaded config
 - Whisper model status, download, and import UI
+- Whisper model catalog selection and fallback
 - Published meeting rename
-- Retry for failed processing
+- Transcript regeneration for failed and audio-only published sessions
 - Portable deployment
+- GitHub-backed bootstrap install and update flow
 
 ### Explicitly out of scope
 
@@ -110,6 +123,7 @@ The current app exposes four main tabs:
 
 - The app must detect likely Teams desktop meetings from process names, window titles, and meeting-like keywords.
 - The app must detect likely Google Meet sessions from browser window titles and other OS-visible hints.
+- The app is not required to auto-detect Zoom, Webex, or every other conferencing platform in the current MVP.
 - The app must require both meeting-like signals and active output audio before auto-starting recording.
 - The app must suppress obvious Teams chat or navigation windows.
 - The app must expose manual start and stop even when detection is wrong or unavailable.
@@ -155,6 +169,9 @@ The current app exposes four main tabs:
 - The app must show whether the model is `Missing`, `Invalid`, or `Ready`.
 - The app must allow a user to attempt downloading the Whisper base model.
 - The app must allow a user to import an existing valid `ggml-base.bin`.
+- The app must list discovered local models from the managed model folder and the currently configured path.
+- The app must allow the user to switch the active model without editing config by hand.
+- If the configured model path is missing or invalid, the app should prefer another valid managed model when one is available.
 - Download and import flows must validate the model before replacing the configured file.
 - The app must not silently keep a tiny invalid proxy or error file as if it were a real model.
 
@@ -183,9 +200,11 @@ The current app exposes four main tabs:
 
 - The Meetings tab must list published meetings derived from output files.
 - The meeting list should prefer exact titles from the work manifest when available.
+- The meeting list should show meeting duration when it can be resolved from the manifest or audio file.
 - The meeting list must show enough status to distinguish complete sessions from failed or incomplete ones.
-- The app must expose `Retry Processing` for sessions that have a retryable failed manifest.
-- Retry is not required for sessions whose work folders were removed.
+- The app must expose direct links to the published audio and transcript artifacts.
+- The app must expose `Re-Generate Transcript` for sessions that can be retried from an existing or synthesized work manifest.
+- If the original work folder is missing but the final audio file exists, the app should be able to synthesize a new queued manifest and regenerate the transcript from that audio.
 
 ## 6.10 Configuration
 
@@ -198,7 +217,10 @@ The app must allow configuration of:
 - Whisper model path
 - diarization asset path
 - microphone capture on or off
+- launch on login on or off
 - auto-detection on or off
+- update checks on or off
+- update feed URL
 - auto-detect audio threshold
 - meeting stop timeout
 
@@ -230,12 +252,14 @@ Configuration requirements:
 The current MVP is considered successful when:
 
 - a user can launch the app without admin rights
-- the app can record a meeting locally
+- the app can record a meeting locally, including conferencing apps outside Teams and Google Meet when the user starts recording manually
 - the app can publish one final WAV per session
 - a valid local Whisper model can be installed through the app or imported into place
 - once a valid model exists, the app can generate `.md`, `.json`, and `.ready` outputs
 - a failed transcription caused by a missing or invalid model can be retried from the Meetings tab after model setup is fixed
 - Power Automate can watch `.ready` and find sibling artifacts by stem
+- a first-time user can install from the GitHub bootstrap command without manually extracting a ZIP
+- a later update install preserves the user’s existing config values
 
 ## 9. Related Documents
 

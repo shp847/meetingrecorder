@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Meeting Recorder"
+    Manufacturer="Meeting Recorder"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="F0C6921D-2F56-4BB2-96A1-62FCB7E4C936"
+    Language="1033"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <SummaryInformation Description="Meeting Recorder" Manufacturer="Meeting Recorder" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Meeting Recorder is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="ProductIcon" SourceFile="..\MeetingRecorder.App\Assets\MeetingRecorder.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Meeting Recorder" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Meeting Recorder" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="MainFeature" Title="Meeting Recorder" Level="1" AllowAdvertise="no">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+      <ComponentRef Id="DesktopShortcutComponent" />
+    </Feature>
+
+    <Component Id="StartMenuShortcutComponent" Directory="ApplicationProgramsFolder" Guid="5F825DA0-E8CE-4C69-BF26-06A4E8C7B7FC">
+      <Shortcut
+        Id="StartMenuShortcut"
+        Name="Meeting Recorder"
+        Description="Meeting Recorder"
+        Target="[INSTALLFOLDER]MeetingRecorder.App.exe"
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="ProductIcon" />
+      <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcutComponent" Directory="DesktopFolder" Guid="80F0F300-EE57-41DD-BD19-E10E4BFF6D9A">
+      <Shortcut
+        Id="DesktopShortcut"
+        Name="Meeting Recorder"
+        Description="Meeting Recorder"
+        Target="[INSTALLFOLDER]MeetingRecorder.App.exe"
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="ProductIcon" />
+      <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

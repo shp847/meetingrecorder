@@ -10,12 +10,14 @@ internal sealed class WhisperNetTranscriptionProvider : ITranscriptionProvider
     private readonly string _modelPath;
     private readonly FileLogWriter _logger;
     private readonly WhisperModelService _modelService;
+    private readonly TranscriptionAudioPreparer _audioPreparer;
 
     public WhisperNetTranscriptionProvider(string modelPath, FileLogWriter logger)
     {
         _modelPath = modelPath;
         _logger = logger;
         _modelService = new WhisperModelService(new WhisperNetModelDownloader());
+        _audioPreparer = new TranscriptionAudioPreparer();
     }
 
     public async Task<TranscriptionResult> TranscribeAsync(string audioPath, CancellationToken cancellationToken)
@@ -26,28 +28,55 @@ internal sealed class WhisperNetTranscriptionProvider : ITranscriptionProvider
         var modelLength = File.Exists(_modelPath) ? new FileInfo(_modelPath).Length : 0L;
         _logger.Log($"Starting transcription for '{audioPath}'. AudioBytes={audioLength}. ModelPath='{_modelPath}'. ModelBytes={modelLength}.");
 
-        using var whisperFactory = WhisperFactory.FromPath(_modelPath);
-        using var processor = whisperFactory
-            .CreateBuilder()
-            .WithLanguage("auto")
-            .Build();
-
-        await using var audioStream = File.OpenRead(audioPath);
-        var segments = new List<TranscriptSegment>();
-
-        await foreach (var result in processor.ProcessAsync(audioStream).WithCancellation(cancellationToken))
+        var preparedAudioPath = BuildPreparedAudioPath(audioPath);
+        try
         {
-            var text = result.Text.Trim();
-            if (string.IsNullOrWhiteSpace(text))
+            await _audioPreparer.PrepareAsync(audioPath, preparedAudioPath, cancellationToken);
+            var preparedAudioLength = File.Exists(preparedAudioPath) ? new FileInfo(preparedAudioPath).Length : 0L;
+            _logger.Log(
+                $"Prepared transcription audio at '{preparedAudioPath}'. " +
+                $"Format=PCM {TranscriptionAudioPreparer.WhisperBitsPerSample}-bit, " +
+                $"{TranscriptionAudioPreparer.WhisperSampleRate}Hz, {TranscriptionAudioPreparer.WhisperChannelCount} channel(s). " +
+                $"Bytes={preparedAudioLength}.");
+
+            using var whisperFactory = WhisperFactory.FromPath(_modelPath);
+            using var processor = whisperFactory
+                .CreateBuilder()
+                .WithLanguage("auto")
+                .Build();
+
+            await using var audioStream = File.OpenRead(preparedAudioPath);
+            var segments = new List<TranscriptSegment>();
+
+            await foreach (var result in processor.ProcessAsync(audioStream).WithCancellation(cancellationToken))
             {
-                continue;
+                var text = result.Text.Trim();
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                segments.Add(new TranscriptSegment(result.Start, result.End, null, text));
             }
 
-            segments.Add(new TranscriptSegment(result.Start, result.End, null, text));
+            _logger.Log($"Transcription completed with {segments.Count} segments.");
+            return new TranscriptionResult(segments, "auto", "Whisper transcription completed.");
         }
+        finally
+        {
+            if (File.Exists(preparedAudioPath))
+            {
+                File.Delete(preparedAudioPath);
+            }
+        }
+    }
 
-        _logger.Log($"Transcription completed with {segments.Count} segments.");
-        return new TranscriptionResult(segments, "auto", "Whisper transcription completed.");
+    private static string BuildPreparedAudioPath(string audioPath)
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderTranscription");
+        Directory.CreateDirectory(tempDirectory);
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(audioPath);
+        return Path.Combine(tempDirectory, $"{fileNameWithoutExtension}-{Guid.NewGuid():N}.wav");
     }
 
     private async Task EnsureModelAsync(CancellationToken cancellationToken)

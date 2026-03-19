@@ -1,5 +1,6 @@
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Processing;
+using MeetingRecorder.Core.Services;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -9,11 +10,21 @@ internal sealed class OptionalSidecarDiarizationProvider : IDiarizationProvider
 {
     private readonly string _diarizationAssetPath;
     private readonly FileLogWriter _logger;
+    private readonly DiarizationAssetCatalogService _assetCatalogService;
 
     public OptionalSidecarDiarizationProvider(string diarizationAssetPath, FileLogWriter logger)
+        : this(diarizationAssetPath, logger, new DiarizationAssetCatalogService())
+    {
+    }
+
+    internal OptionalSidecarDiarizationProvider(
+        string diarizationAssetPath,
+        FileLogWriter logger,
+        DiarizationAssetCatalogService assetCatalogService)
     {
         _diarizationAssetPath = diarizationAssetPath;
         _logger = logger;
+        _assetCatalogService = assetCatalogService;
     }
 
     public async Task<DiarizationResult> ApplySpeakerLabelsAsync(
@@ -21,10 +32,11 @@ internal sealed class OptionalSidecarDiarizationProvider : IDiarizationProvider
         IReadOnlyList<TranscriptSegment> transcriptSegments,
         CancellationToken cancellationToken)
     {
-        var sidecarPath = Path.Combine(_diarizationAssetPath, "MeetingRecorder.Diarization.Sidecar.exe");
-        if (!File.Exists(sidecarPath))
+        var installedAssets = _assetCatalogService.InspectInstalledAssets(_diarizationAssetPath);
+        var sidecarPath = installedAssets.SidecarExecutablePath;
+        if (!installedAssets.IsReady || string.IsNullOrWhiteSpace(sidecarPath) || !File.Exists(sidecarPath))
         {
-            _logger.Log("Diarization sidecar not found. Publishing transcript without speaker labels.");
+            _logger.Log($"Diarization sidecar not found. {installedAssets.DetailsText} Publishing transcript without speaker labels.");
             return new DiarizationResult(transcriptSegments, false, "Diarization sidecar unavailable.");
         }
 

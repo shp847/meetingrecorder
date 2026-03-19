@@ -11,6 +11,7 @@ public sealed class MeetingDetectionEvaluator
             return new DetectionDecision(
                 MeetingPlatform.Unknown,
                 false,
+                false,
                 0d,
                 string.Empty,
                 signals,
@@ -59,10 +60,10 @@ public sealed class MeetingDetectionEvaluator
                     : MeetingPlatform.Unknown;
 
         var confidence = Math.Min(1d, Math.Max(meetConfidence, teamsConfidence));
-        var shouldStart = confidence >= 0.75d &&
+        var shouldKeepRecording = confidence >= 0.75d &&
             platform != MeetingPlatform.Unknown &&
-            hasAudioActivity &&
             !suppressedTeamsWindowDetected;
+        var shouldStart = shouldKeepRecording && hasAudioActivity;
         var reason = shouldStart
             ? "Detection confidence met the recording threshold and active system audio was present."
             : BuildReason(confidence, platform, hasAudioActivity, suppressedTeamsWindowDetected);
@@ -70,6 +71,7 @@ public sealed class MeetingDetectionEvaluator
         return new DetectionDecision(
             platform,
             shouldStart,
+            shouldKeepRecording,
             confidence,
             title ?? "Detected meeting",
             signals,

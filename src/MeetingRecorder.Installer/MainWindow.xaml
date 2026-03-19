@@ -1,0 +1,203 @@
+<Window x:Class="MeetingRecorder.Installer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Meeting Recorder Installer"
+        Width="880"
+        Height="640"
+        MinWidth="760"
+        MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanMinimize"
+        Background="#F5F1E8">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock FontSize="30"
+                       FontWeight="Bold"
+                       Foreground="#0E2238"
+                       Text="Meeting Recorder Installer" />
+            <TextBlock Margin="0,8,0,0"
+                       Foreground="#32465A"
+                       FontSize="15"
+                       TextWrapping="Wrap"
+                       Text="This installer downloads the latest release, installs it into Documents\MeetingRecorder, and keeps your existing recordings, transcripts, models, and config on update. To stay friendlier to locked-down corporate laptops, it avoids creating Windows shortcuts automatically." />
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Margin="0,20,0,0"
+                Padding="18"
+                CornerRadius="18"
+                Background="#FFFDF8"
+                BorderBrush="#D9CFBC"
+                BorderThickness="1">
+            <StackPanel>
+                <TextBlock FontSize="20"
+                           FontWeight="SemiBold"
+                           Foreground="#0E2238"
+                           Text="{Binding StatusTitle}" />
+                <TextBlock Margin="0,8,0,0"
+                           Foreground="#32465A"
+                           FontSize="14"
+                           TextWrapping="Wrap"
+                           Text="{Binding StatusMessage}" />
+                <TextBlock Margin="0,8,0,0"
+                           Foreground="#6D7C8A"
+                           FontSize="13"
+                           Text="{Binding ReleaseSummary}" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="2"
+                    Margin="0,16,0,0">
+            <ProgressBar Height="18"
+                         Maximum="100"
+                         Value="{Binding ProgressPercent}"
+                         IsIndeterminate="{Binding IsIndeterminate}"
+                         Foreground="#276749"
+                         Background="#E6DFD0" />
+            <TextBlock Margin="0,8,0,0"
+                       Foreground="#32465A"
+                       FontSize="13"
+                       Text="{Binding ProgressCaption}" />
+        </StackPanel>
+
+        <Grid Grid.Row="3"
+              Margin="0,20,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.25*" />
+                <ColumnDefinition Width="0.9*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Margin="0,0,12,0"
+                    Padding="16"
+                    CornerRadius="18"
+                    Background="#FFFDF8"
+                    BorderBrush="#D9CFBC"
+                    BorderThickness="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="#0E2238"
+                               Text="Installer Activity" />
+                    <TextBox Grid.Row="1"
+                             Margin="0,12,0,0"
+                             Padding="10"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Disabled"
+                             TextWrapping="Wrap"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             BorderThickness="0"
+                             Background="#F8F4EC"
+                             Foreground="#213140"
+                             Text="{Binding ActivityLog}" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1"
+                    Margin="12,0,0,0"
+                    Padding="16"
+                    CornerRadius="18"
+                    Background="#FFFDF8"
+                    BorderBrush="#D9CFBC"
+                    BorderThickness="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel>
+                        <TextBlock FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="#0E2238"
+                                   Text="If the installer is blocked" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Foreground="#32465A"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   Text="You can fall back to the GitHub script installer or do a manual portable install. The steps below are always available so users are never stuck." />
+                    </StackPanel>
+
+                    <TextBox Grid.Row="1"
+                             Margin="0,12,0,0"
+                             Padding="10"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Disabled"
+                             TextWrapping="Wrap"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             BorderThickness="0"
+                             Background="#F8F4EC"
+                             Foreground="#213140"
+                             Text="{Binding ManualSteps}" />
+                </Grid>
+            </Border>
+        </Grid>
+
+        <WrapPanel Grid.Row="4"
+                   Margin="0,20,0,0"
+                   HorizontalAlignment="Right"
+                   ItemHeight="40">
+            <Button Width="140"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="RetryInstallButton_Click"
+                    IsEnabled="{Binding CanRetryInstall}"
+                    Content="Retry Install" />
+            <Button Width="180"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="BackupInstallerButton_Click"
+                    IsEnabled="{Binding CanLaunchBackupInstaller}"
+                    Content="Try Backup CMD Installer" />
+            <Button Width="130"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="OpenInstallFolderButton_Click"
+                    IsEnabled="{Binding CanOpenInstallFolder}"
+                    Content="Open App Folder" />
+            <Button Width="160"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="CreateDesktopShortcutButton_Click"
+                    IsEnabled="{Binding CanCreateDesktopShortcut}"
+                    Content="Add Desktop Shortcut" />
+            <Button Width="176"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="CreateStartMenuShortcutButton_Click"
+                    IsEnabled="{Binding CanCreateStartMenuShortcut}"
+                    Content="Add Start Menu Shortcut" />
+            <Button Width="120"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="OpenReleasePageButton_Click"
+                    IsEnabled="{Binding CanOpenReleasePage}"
+                    Content="Open Release" />
+            <Button Width="140"
+                    Margin="0,0,10,0"
+                    Padding="12,8"
+                    Click="CopyManualStepsButton_Click"
+                    IsEnabled="{Binding CanCopyManualSteps}"
+                    Content="Copy Manual Steps" />
+            <Button Width="96"
+                    Padding="12,8"
+                    Click="CloseButton_Click"
+                    Content="Close" />
+        </WrapPanel>
+    </Grid>
+</Window>

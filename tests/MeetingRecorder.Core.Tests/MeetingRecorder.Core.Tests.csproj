@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MeetingRecorder.Core\MeetingRecorder.Core.csproj" />
+    <ProjectReference Include="..\..\src\MeetingRecorder.App\MeetingRecorder.App.csproj" />
   </ItemGroup>
 
 </Project>
