@@ -125,7 +125,21 @@ public sealed class InstallerPackagingTests
         var packageContents = File.ReadAllText(packagePath);
 
         Assert.Contains("AllowSameVersionUpgrades=\"yes\"", packageContents, StringComparison.Ordinal);
-        Assert.Contains("<Property Id=\"REINSTALLMODE\" Value=\"amus\" />", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixProject_Suppresses_Intentional_Same_Version_Reinstall_Validation_Warning()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var projectPath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "MeetingRecorder.Setup.wixproj");
+
+        Assert.True(File.Exists(projectPath), $"Expected WiX project file at '{projectPath}'.");
+
+        var projectContents = File.ReadAllText(projectPath);
+
+        Assert.Contains("ICE61", projectContents, StringComparison.Ordinal);
     }
 
     [Fact]

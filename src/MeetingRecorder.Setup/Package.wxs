@@ -21,7 +21,6 @@
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
     <Property Id="ARPINSTALLLOCATION" Secure="yes" />
     <Property Id="MsiLogging" Value="voicewarmup!" />
-    <Property Id="REINSTALLMODE" Value="amus" />
     <Property Id="PHYSICALUSERPROFILE" Secure="yes">
       <RegistrySearch
         Id="SearchPhysicalUserProfile"

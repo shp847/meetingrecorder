@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(HasHarvestedAppFiles)' == 'true'">
-    <SuppressIces>$(SuppressIces);ICE91</SuppressIces>
+    <SuppressIces>$(SuppressIces);ICE91;ICE61</SuppressIces>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(HasHarvestedAppFiles)' != 'true'">
