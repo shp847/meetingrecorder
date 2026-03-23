@@ -33,6 +33,15 @@ function Invoke-GitQuery {
     return @($output)
 }
 
+function Get-SourceStatePathspec {
+    return @(
+        ".",
+        ":(exclude).artifacts",
+        ":(glob,exclude)**/bin/**",
+        ":(glob,exclude)**/obj/**"
+    )
+}
+
 function Get-ReleaseSourceMetadata {
     param(
         [string]$RepoRoot
@@ -43,7 +52,7 @@ function Get-ReleaseSourceMetadata {
     # git status --short
     $gitCommit = (Invoke-GitQuery -RepoRoot $RepoRoot -Arguments @("rev-parse", "HEAD") | Select-Object -First 1).Trim()
     $gitCommitShort = (Invoke-GitQuery -RepoRoot $RepoRoot -Arguments @("rev-parse", "--short", "HEAD") | Select-Object -First 1).Trim()
-    $worktreeStatus = Invoke-GitQuery -RepoRoot $RepoRoot -Arguments @("status", "--short")
+    $worktreeStatus = Invoke-GitQuery -RepoRoot $RepoRoot -Arguments (@("status", "--short", "--untracked-files=all", "--") + (Get-SourceStatePathspec))
 
     return [ordered]@{
         formatVersion   = 1

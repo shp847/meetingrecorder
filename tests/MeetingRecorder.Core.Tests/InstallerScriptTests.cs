@@ -292,6 +292,10 @@ public sealed class InstallerScriptTests
         Assert.Contains("builtAtUtc", scriptContents, StringComparison.Ordinal);
         Assert.Contains("gitCommit", scriptContents, StringComparison.Ordinal);
         Assert.Contains("isWorktreeDirty", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Get-SourceStatePathspec", scriptContents, StringComparison.Ordinal);
+        Assert.Contains(".artifacts", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("bin", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("obj", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
