@@ -74,6 +74,7 @@ This release turns Meeting Recorder into a complete day-to-day product for pract
 - EXE bootstrapper now uses the shared app shell styling for status, progress, fallback guidance, and actions, with a scrollable layout and cleaner grouped buttons at the default window size
 - In-app `Install Available Update` handoff now resolves the updater CLI from the installed app directory instead of the transient single-file extraction folder, fixing failed update launches that could report the helper missing
 - Same-version pending updates now compare published-at and asset-size identity before they are treated as already installed, so refreshed `0.3` builds do not get skipped just because the semantic version text stayed the same
+- The MSI now allows refreshed same-version release assets to overwrite the installed app binaries on reinstall, fixing cases where `release-source.json` updated but `MeetingRecorder.App.exe` and `MeetingRecorder.ProcessingWorker.exe` stayed on the previous `0.3` build
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory instead of the transient single-file extraction folder, fixing queued sessions that could otherwise stay unpublished after recording stops
 - Script fallback: `Install-LatestFromGitHub.cmd` or `Install-LatestFromGitHub.ps1`
 - Manual fallback: `MeetingRecorder-v0.3-win-x64.zip` with `Install-MeetingRecorder.cmd`

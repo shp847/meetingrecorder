@@ -12,13 +12,16 @@
     Compressed="yes">
 
     <SummaryInformation Description="Meeting Recorder" Manufacturer="Meeting Recorder" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Meeting Recorder is already installed." />
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of Meeting Recorder is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Icon Id="ProductIcon" SourceFile="..\MeetingRecorder.App\Assets\MeetingRecorder.ico" />
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
     <Property Id="ARPINSTALLLOCATION" Secure="yes" />
     <Property Id="MsiLogging" Value="voicewarmup!" />
+    <Property Id="REINSTALLMODE" Value="amus" />
     <Property Id="PHYSICALUSERPROFILE" Secure="yes">
       <RegistrySearch
         Id="SearchPhysicalUserProfile"

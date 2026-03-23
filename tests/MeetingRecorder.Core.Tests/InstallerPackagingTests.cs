@@ -113,6 +113,22 @@ public sealed class InstallerPackagingTests
     }
 
     [Fact]
+    public void WixPackage_Allows_Refreshed_Same_Version_Reinstalls_To_Overwrite_Installed_Binaries()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("AllowSameVersionUpgrades=\"yes\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("<Property Id=\"REINSTALLMODE\" Value=\"amus\" />", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WixPackage_Skips_The_License_Agreement_Dialog()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

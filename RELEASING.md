@@ -77,6 +77,7 @@ Packaging validation notes:
 - the MSI should no longer emit the old `ARPINSTALLLOCATION` WiX warning during normal builds
 - `ICE91` is intentionally suppressed for harvested release builds because the MSI is authored as per-user-only and installs into user-profile directories by design
 - the MSI now enables Windows Installer logging by default, so direct MSI troubleshooting should leave a verbose log under `%TEMP%`
+- the MSI now allows refreshed same-version release assets to replace already-installed binaries, so a rebuilt `0.x` package can still overwrite an older apphost on reinstall
 - the release build should stamp the MSI summary `Word Count` to `10` so the shipped per-user MSI advertises that normal installs do not require UAC elevation
 - the MSI now skips the stock license-agreement page and goes straight from welcome to ready-to-install
 - the MSI now uses the WiX finish dialog so users see an explicit completion screen instead of a silent exit
