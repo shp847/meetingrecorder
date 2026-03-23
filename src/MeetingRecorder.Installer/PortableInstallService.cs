@@ -7,19 +7,35 @@ namespace MeetingRecorder.Installer;
 
 internal sealed class PortableInstallService
 {
-    private static readonly string[] PreservedDataDirectories =
+    private const string ManagedDataDirectoryName = "data";
+    private const string PortableLauncherFileName = "Run-MeetingRecorder.cmd";
+    private const string ExecutableFileName = "MeetingRecorder.App.exe";
+    private static readonly string[] RequiredExecutablePayloadFiles =
     [
-        "config",
-        "logs",
-        "audio",
-        "transcripts",
-        "work",
+        ExecutableFileName,
+        "AppPlatform.Deployment.Cli.exe",
+        "MeetingRecorder.ProcessingWorker.exe",
     ];
+    private static readonly string[] PortableBundleMarkerFiles =
+    [
+        "portable.mode",
+        "bundle-mode.txt",
+    ];
+    private readonly InstallPathProcessManager _processManager;
+
+    public PortableInstallService()
+        : this(new InstallPathProcessManager())
+    {
+    }
+
+    internal PortableInstallService(InstallPathProcessManager processManager)
+    {
+        _processManager = processManager;
+    }
 
     public string GetDefaultInstallRoot()
     {
-        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        return Path.Combine(documentsPath, "MeetingRecorder");
+        return AppDataPaths.GetManagedInstallRoot();
     }
 
     public async Task<string> InstallAsync(
@@ -40,8 +56,8 @@ internal sealed class PortableInstallService
 
         Directory.CreateDirectory(installParent);
 
-        var stagingRoot = Path.Combine(installParent, "MeetingRecorder-install-" + Guid.NewGuid().ToString("N"));
-        var backupRoot = Path.Combine(installParent, "MeetingRecorder-backup-" + Guid.NewGuid().ToString("N"));
+        var stagingRoot = CreateWorkspacePath(installParent, "MRI");
+        var backupRoot = CreateWorkspacePath(installParent, "MRB");
         var isUpdate = Directory.Exists(resolvedInstallRoot);
         var movedBackup = false;
         var finalInstallMoved = false;
@@ -49,6 +65,8 @@ internal sealed class PortableInstallService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            await _processManager.EnsureInstallPathReleasedAsync(resolvedInstallRoot, cancellationToken);
+
             progress?.Report(new InstallerProgressInfo(
                 "Preparing the installation",
                 "Copying the app bundle into a safe staging folder.",
@@ -56,40 +74,34 @@ internal sealed class PortableInstallService
                 isUpdate ? "Update install detected. Preserving your existing data next." : "Fresh install detected."));
 
             CopyDirectoryContents(sourceBundleRoot, stagingRoot, overwriteExisting: true, cancellationToken);
+            PrepareBundleForManagedInstall(stagingRoot);
 
             if (isUpdate)
             {
                 progress?.Report(new InstallerProgressInfo(
                     "Preserving your data",
-                    "Keeping your config, transcripts, recordings, and downloaded models.",
+                    "Keeping your config, transcripts, recordings, and downloaded models while refreshing the app files.",
                     88));
 
-                var existingDataRoot = Path.Combine(resolvedInstallRoot, "data");
-                var stagingDataRoot = Path.Combine(stagingRoot, "data");
-
-                foreach (var preservedDirectory in PreservedDataDirectories)
+                ApplyStagedBundleToExistingInstall(
+                    stagingRoot,
+                    resolvedInstallRoot,
+                    backupRoot,
+                    cancellationToken);
+                movedBackup = Directory.Exists(backupRoot) && Directory.EnumerateFileSystemEntries(backupRoot).Any();
+                finalInstallMoved = true;
+            }
+            else
+            {
+                if (Directory.Exists(resolvedInstallRoot))
                 {
-                    CopyDirectoryContents(
-                        Path.Combine(existingDataRoot, preservedDirectory),
-                        Path.Combine(stagingDataRoot, preservedDirectory),
-                        overwriteExisting: true,
-                        cancellationToken);
+                    TryMoveExistingInstallToBackup(resolvedInstallRoot, backupRoot);
+                    movedBackup = true;
                 }
 
-                MergeDirectoryWithoutOverwriting(
-                    Path.Combine(existingDataRoot, "models"),
-                    Path.Combine(stagingDataRoot, "models"),
-                    cancellationToken);
+                Directory.Move(stagingRoot, resolvedInstallRoot);
+                finalInstallMoved = true;
             }
-
-            if (Directory.Exists(resolvedInstallRoot))
-            {
-                TryMoveExistingInstallToBackup(resolvedInstallRoot, backupRoot);
-                movedBackup = true;
-            }
-
-            Directory.Move(stagingRoot, resolvedInstallRoot);
-            finalInstallMoved = true;
 
             progress?.Report(new InstallerProgressInfo(
                 "Applying portable settings",
@@ -101,7 +113,8 @@ internal sealed class PortableInstallService
                 releaseInfo,
                 cancellationToken);
 
-            var executablePath = Path.Combine(resolvedInstallRoot, "MeetingRecorder.App.exe");
+            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot);
+            var launchPath = ResolveInstalledPostInstallLaunchPath(resolvedInstallRoot);
 
             progress?.Report(new InstallerProgressInfo(
                 "Finishing up",
@@ -109,14 +122,12 @@ internal sealed class PortableInstallService
                 100));
 
             var launchOnLoginChanged = new AutoStartRegistrationService()
-                .SyncRegistration(config.LaunchOnLoginEnabled, executablePath);
+                .SyncRegistration(config.LaunchOnLoginEnabled, launchPath);
 
-            if (movedBackup && Directory.Exists(backupRoot))
-            {
-                Directory.Delete(backupRoot, recursive: true);
-            }
+            TryDeleteDirectory(stagingRoot);
+            CleanupBackupDirectory(backupRoot);
 
-            return executablePath;
+            return launchPath;
         }
         catch
         {
@@ -124,14 +135,22 @@ internal sealed class PortableInstallService
 
             if (movedBackup)
             {
-                if (finalInstallMoved && Directory.Exists(resolvedInstallRoot))
+                if (isUpdate)
                 {
-                    TryDeleteDirectory(resolvedInstallRoot);
+                    TryDeleteReplaceableInstallEntries(resolvedInstallRoot);
+                    RestoreBackupEntries(backupRoot, resolvedInstallRoot);
                 }
-
-                if (!Directory.Exists(resolvedInstallRoot) && Directory.Exists(backupRoot))
+                else
                 {
-                    Directory.Move(backupRoot, resolvedInstallRoot);
+                    if (finalInstallMoved && Directory.Exists(resolvedInstallRoot))
+                    {
+                        TryDeleteDirectory(resolvedInstallRoot);
+                    }
+
+                    if (!Directory.Exists(resolvedInstallRoot) && Directory.Exists(backupRoot))
+                    {
+                        Directory.Move(backupRoot, resolvedInstallRoot);
+                    }
                 }
             }
 
@@ -139,8 +158,170 @@ internal sealed class PortableInstallService
         }
     }
 
+    internal static void PrepareBundleForManagedInstall(string stagingRoot)
+    {
+        foreach (var markerFile in PortableBundleMarkerFiles)
+        {
+            var markerPath = Path.Combine(stagingRoot, markerFile);
+            if (File.Exists(markerPath))
+            {
+                File.Delete(markerPath);
+            }
+        }
+    }
+
+    internal static string CreateWorkspacePath(string installParent, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(installParent))
+        {
+            throw new ArgumentException("Install parent is required.", nameof(installParent));
+        }
+
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            throw new ArgumentException("Workspace prefix is required.", nameof(prefix));
+        }
+
+        return Path.Combine(
+            installParent,
+            prefix + "-" + Guid.NewGuid().ToString("N")[..12]);
+    }
+
+    internal static string GetInstalledConfigPath(string? localApplicationDataRootOverride = null)
+    {
+        return AppDataPaths.GetManagedConfigPath(localApplicationDataRootOverride);
+    }
+
+    internal static void CleanupBackupDirectory(string backupRoot)
+    {
+        if (!Directory.Exists(backupRoot))
+        {
+            return;
+        }
+
+        try
+        {
+            ResetDirectoryAttributes(backupRoot);
+            Directory.Delete(backupRoot, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup only. A leftover backup folder should not fail the install.
+        }
+    }
+
+    internal static void ApplyStagedBundleToExistingInstall(
+        string stagingRoot,
+        string installRoot,
+        string backupRoot,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stagingRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(backupRoot);
+
+        Directory.CreateDirectory(installRoot);
+        Directory.CreateDirectory(backupRoot);
+
+        MoveReplaceableInstallEntriesToBackup(installRoot, backupRoot, cancellationToken);
+        MoveStagedEntriesIntoInstallRoot(stagingRoot, installRoot, cancellationToken);
+        MergeDirectoryWithoutOverwriting(
+            Path.Combine(stagingRoot, ManagedDataDirectoryName),
+            Path.Combine(installRoot, ManagedDataDirectoryName),
+            cancellationToken);
+    }
+
+    internal static string ResolveInstalledLaunchPath(string installRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
+
+        var launcherPath = Path.Combine(installRoot, PortableLauncherFileName);
+        if (File.Exists(launcherPath))
+        {
+            return launcherPath;
+        }
+
+        var executablePath = Path.Combine(installRoot, ExecutableFileName);
+        if (File.Exists(executablePath))
+        {
+            return executablePath;
+        }
+
+        throw new InvalidOperationException(
+            $"The installed Meeting Recorder launcher could not be found under '{installRoot}'.");
+    }
+
+    internal static string ResolveInstalledPostInstallLaunchPath(string installRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
+
+        var executablePath = Path.Combine(installRoot, ExecutableFileName);
+        if (File.Exists(executablePath))
+        {
+            return executablePath;
+        }
+
+        throw new InvalidOperationException(
+            $"Meeting Recorder install is missing '{ExecutableFileName}' under '{installRoot}'.");
+    }
+
+    internal static void EnsureInstalledExecutablePayload(string sourceBundleRoot, string installRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceBundleRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
+
+        Directory.CreateDirectory(installRoot);
+
+        foreach (var fileName in RequiredExecutablePayloadFiles)
+        {
+            var installedPath = Path.Combine(installRoot, fileName);
+            if (File.Exists(installedPath))
+            {
+                continue;
+            }
+
+            var sourcePath = Path.Combine(sourceBundleRoot, fileName);
+            if (!File.Exists(sourcePath))
+            {
+                continue;
+            }
+
+            File.Copy(sourcePath, installedPath, overwrite: true);
+        }
+
+        var missingRequiredFiles = RequiredExecutablePayloadFiles
+            .Where(fileName => !File.Exists(Path.Combine(installRoot, fileName)))
+            .ToArray();
+        if (missingRequiredFiles.Length == 0)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Meeting Recorder install is missing required executable files after deployment: {string.Join(", ", missingRequiredFiles.Select(fileName => $"'{fileName}'"))}.");
+    }
+
     private static void TryMoveExistingInstallToBackup(string installRoot, string backupRoot)
     {
+        const int maxAttempts = 4;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                Directory.Move(installRoot, backupRoot);
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(attempt));
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(attempt));
+            }
+        }
+
         try
         {
             Directory.Move(installRoot, backupRoot);
@@ -221,7 +402,7 @@ internal sealed class PortableInstallService
         GitHubReleaseBootstrapInfo releaseInfo,
         CancellationToken cancellationToken)
     {
-        var configPath = Path.Combine(installRoot, "data", "config", "appsettings.json");
+        var configPath = GetInstalledConfigPath();
         var store = new AppConfigStore(configPath);
         var current = await store.LoadOrCreateAsync(cancellationToken);
         var updated = current with
@@ -257,5 +438,124 @@ internal sealed class PortableInstallService
         {
             // Best effort cleanup only.
         }
+    }
+
+    private static void MoveReplaceableInstallEntriesToBackup(
+        string installRoot,
+        string backupRoot,
+        CancellationToken cancellationToken)
+    {
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (IsPreservedTopLevelEntry(entryPath))
+            {
+                continue;
+            }
+
+            var entryName = Path.GetFileName(entryPath);
+            var backupPath = Path.Combine(backupRoot, entryName);
+            MoveFileSystemEntry(entryPath, backupPath);
+        }
+    }
+
+    private static void MoveStagedEntriesIntoInstallRoot(
+        string stagingRoot,
+        string installRoot,
+        CancellationToken cancellationToken)
+    {
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(stagingRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (IsPreservedTopLevelEntry(entryPath))
+            {
+                continue;
+            }
+
+            var entryName = Path.GetFileName(entryPath);
+            var destinationPath = Path.Combine(installRoot, entryName);
+            MoveFileSystemEntry(entryPath, destinationPath);
+        }
+    }
+
+    private static void RestoreBackupEntries(string backupRoot, string installRoot)
+    {
+        if (!Directory.Exists(backupRoot))
+        {
+            return;
+        }
+
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(backupRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            var entryName = Path.GetFileName(entryPath);
+            var destinationPath = Path.Combine(installRoot, entryName);
+            MoveFileSystemEntry(entryPath, destinationPath);
+        }
+    }
+
+    private static void TryDeleteReplaceableInstallEntries(string installRoot)
+    {
+        if (!Directory.Exists(installRoot))
+        {
+            return;
+        }
+
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            if (IsPreservedTopLevelEntry(entryPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (Directory.Exists(entryPath))
+                {
+                    Directory.Delete(entryPath, recursive: true);
+                }
+                else if (File.Exists(entryPath))
+                {
+                    File.Delete(entryPath);
+                }
+            }
+            catch
+            {
+                // Best effort rollback cleanup only.
+            }
+        }
+    }
+
+    private static bool IsPreservedTopLevelEntry(string entryPath)
+    {
+        var entryName = Path.GetFileName(entryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return string.Equals(entryName, ManagedDataDirectoryName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void MoveFileSystemEntry(string sourcePath, string destinationPath)
+    {
+        if (Directory.Exists(sourcePath))
+        {
+            Directory.Move(sourcePath, destinationPath);
+            return;
+        }
+
+        File.Move(sourcePath, destinationPath);
+    }
+
+    private static void ResetDirectoryAttributes(string rootPath)
+    {
+        foreach (var directory in Directory.EnumerateDirectories(rootPath, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(directory, FileAttributes.Normal);
+        }
+
+        foreach (var file in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+
+        File.SetAttributes(rootPath, FileAttributes.Normal);
     }
 }

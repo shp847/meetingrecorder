@@ -49,6 +49,7 @@ public sealed class ExternalAudioImportService
 
         Directory.CreateDirectory(config.WorkDir);
         var knownImports = await LoadKnownImportsAsync(config.WorkDir, cancellationToken);
+        var knownAppOwnedMeetings = await LoadKnownAppOwnedMeetingsAsync(config.WorkDir, cancellationToken);
         var imported = new List<ImportedExternalAudioResult>();
 
         foreach (var sourcePath in Directory.EnumerateFiles(config.AudioOutputDir).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
@@ -80,6 +81,11 @@ public sealed class ExternalAudioImportService
                 NormalizePath(sourcePath),
                 sourceFile.Length,
                 CreateUtcTimestamp(sourceFile.LastWriteTimeUtc));
+
+            if (RepresentsKnownAppOwnedMeeting(sourceMetadata.OriginalPath, knownAppOwnedMeetings))
+            {
+                continue;
+            }
 
             if (knownImports.Any(existing => SourceMatches(existing, sourceMetadata)))
             {
@@ -191,6 +197,40 @@ public sealed class ExternalAudioImportService
         return knownImports;
     }
 
+    private async Task<List<AppOwnedMeetingIdentity>> LoadKnownAppOwnedMeetingsAsync(string workDir, CancellationToken cancellationToken)
+    {
+        var knownMeetings = new List<AppOwnedMeetingIdentity>();
+        if (!Directory.Exists(workDir))
+        {
+            return knownMeetings;
+        }
+
+        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+                if (manifest.ImportedSourceAudio is not null)
+                {
+                    continue;
+                }
+
+                knownMeetings.Add(new AppOwnedMeetingIdentity(
+                    manifest.Platform,
+                    NormalizeMeetingTitle(manifest.DetectedTitle),
+                    manifest.StartedAtUtc));
+            }
+            catch
+            {
+                // Ignore malformed or partially-written manifests while scanning for known meetings.
+            }
+        }
+
+        return knownMeetings;
+    }
+
     private static bool HasSettled(FileInfo sourceFile, DateTimeOffset nowUtc)
     {
         var lastWriteUtc = CreateUtcTimestamp(sourceFile.LastWriteTimeUtc);
@@ -210,7 +250,10 @@ public sealed class ExternalAudioImportService
             return false;
         }
 
+        var sidecarDir = ArtifactPathBuilder.BuildTranscriptSidecarRoot(transcriptOutputDir);
         return File.Exists(Path.Combine(transcriptOutputDir, $"{stem}.md")) ||
+            File.Exists(Path.Combine(sidecarDir, $"{stem}.json")) ||
+            File.Exists(Path.Combine(sidecarDir, $"{stem}.ready")) ||
             File.Exists(Path.Combine(transcriptOutputDir, $"{stem}.json")) ||
             File.Exists(Path.Combine(transcriptOutputDir, $"{stem}.ready"));
     }
@@ -232,6 +275,22 @@ public sealed class ExternalAudioImportService
         return string.Equals(existing.OriginalPath, current.OriginalPath, StringComparison.OrdinalIgnoreCase) &&
             existing.SourceSizeBytes == current.SourceSizeBytes &&
             existing.SourceLastWriteUtc.UtcDateTime == current.SourceLastWriteUtc.UtcDateTime;
+    }
+
+    private static bool RepresentsKnownAppOwnedMeeting(
+        string sourcePath,
+        IReadOnlyList<AppOwnedMeetingIdentity> knownMeetings)
+    {
+        if (!TryParsePublishedStem(Path.GetFileNameWithoutExtension(sourcePath), out var meetingInfo))
+        {
+            return false;
+        }
+
+        var normalizedTitle = NormalizeMeetingTitle(meetingInfo.Title);
+        return knownMeetings.Any(existing =>
+            existing.Platform == meetingInfo.Platform &&
+            string.Equals(existing.NormalizedTitle, normalizedTitle, StringComparison.OrdinalIgnoreCase) &&
+            existing.StartedAtUtc.UtcDateTime == meetingInfo.StartedAtUtc.UtcDateTime);
     }
 
     private static string BuildImportedTitle(string sourcePath)
@@ -318,6 +377,18 @@ public sealed class ExternalAudioImportService
         return Path.GetFullPath(path);
     }
 
+    private static string NormalizeMeetingTitle(string title)
+    {
+        return string.Join(
+            ' ',
+            title
+                .Trim()
+                .Replace('-', ' ')
+                .Replace('_', ' ')
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Trim();
+    }
+
     private static DateTimeOffset CreateUtcTimestamp(DateTime utcDateTime)
     {
         return new(DateTime.SpecifyKind(utcDateTime, DateTimeKind.Utc));
@@ -371,6 +442,11 @@ public sealed class ExternalAudioImportService
     private readonly record struct ImportedMeetingInfo(
         MeetingPlatform Platform,
         string Title,
+        DateTimeOffset StartedAtUtc);
+
+    private readonly record struct AppOwnedMeetingIdentity(
+        MeetingPlatform Platform,
+        string NormalizedTitle,
         DateTimeOffset StartedAtUtc);
 }
 

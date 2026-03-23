@@ -19,6 +19,7 @@ if ([string]::IsNullOrWhiteSpace($normalizedAppRoot)) {
 $resolvedAppRoot = [System.IO.Path]::GetFullPath($normalizedAppRoot)
 $appExePath = Join-Path $resolvedAppRoot "MeetingRecorder.App.exe"
 $workerExePath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.exe"
+$workerDllPath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.dll"
 $setupPath = Join-Path $resolvedAppRoot "SETUP.md"
 $bundleModePath = Join-Path $resolvedAppRoot "bundle-mode.txt"
 $modelDirectory = Join-Path $resolvedAppRoot "data\models\asr"
@@ -54,18 +55,21 @@ function Test-VisualCppRuntime {
 }
 
 if (-not (Test-Path $appExePath)) {
-    Write-Host "Missing required application executable: $appExePath"
+    Write-Host "Meeting Recorder cannot start because MeetingRecorder.App.exe is missing from this install: $appExePath"
+    Write-Host "Repair or reinstall the app bundle instead of launching the WPF app from MeetingRecorder.App.dll."
     exit 1
 }
 
-if (-not (Test-Path $workerExePath)) {
-    Write-Host "Missing required processing worker executable: $workerExePath"
+if ((-not (Test-Path $workerExePath)) -and (-not (Test-Path $workerDllPath))) {
+    Write-Host "Missing required processing worker output: $workerExePath or $workerDllPath"
     exit 1
 }
 
 $bundleMode = Get-BundleMode -Path $bundleModePath
+$workerRequiresDotNetRuntime = (-not (Test-Path $workerExePath)) -and (Test-Path $workerDllPath)
+$requiresDotNetRuntime = ($bundleMode -eq "framework-dependent") -or $workerRequiresDotNetRuntime
 
-if ($bundleMode -eq "framework-dependent" -and -not (Test-WindowsDesktopRuntime)) {
+if ($requiresDotNetRuntime -and -not (Test-WindowsDesktopRuntime)) {
     Write-Host "This Meeting Recorder bundle requires the .NET 8 Desktop Runtime, but it was not detected."
     Write-Host "Run Install-Dependencies.cmd in this folder, or install it manually from:"
     Write-Host "https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
@@ -91,6 +95,10 @@ else {
 if ($bundledModelCount -eq 0) {
     Write-Host "Note: no Whisper model files were found under $modelDirectory."
     Write-Host "The app can still launch, but transcription will require downloading or importing a model from the Models tab."
+}
+
+if ($workerRequiresDotNetRuntime) {
+    Write-Host "Note: MeetingRecorder.ProcessingWorker.exe was not found, so transcription will fall back to MeetingRecorder.ProcessingWorker.dll through dotnet."
 }
 
 Write-Host "Dependency check passed. Bundle mode: $bundleMode."

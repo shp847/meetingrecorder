@@ -5,7 +5,7 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class WhisperModelReleaseCatalogServiceTests
 {
     [Fact]
-    public async Task ListAvailableRemoteModelsAsync_Returns_GitHub_Model_Assets_In_Recommended_Order()
+    public async Task ListAvailableRemoteModelsAsync_Returns_GitHub_Model_Assets_With_Other_Models_In_Descending_Size_Order()
     {
         const string payload = """
             {
@@ -64,6 +64,15 @@ public sealed class WhisperModelReleaseCatalogServiceTests
             },
             item =>
             {
+                Assert.Equal("ggml-medium.en-q8_0.bin", item.FileName);
+                Assert.Equal(823_000_000L, item.FileSizeBytes);
+                Assert.False(item.IsRecommended);
+                Assert.Equal(
+                    "Most accurate of the four q8_0 options, but much larger and slower; best for stronger machines.",
+                    item.Description);
+            },
+            item =>
+            {
                 Assert.Equal("ggml-small.en-q8_0.bin", item.FileName);
                 Assert.Equal(252_000_000L, item.FileSizeBytes);
                 Assert.False(item.IsRecommended);
@@ -78,15 +87,6 @@ public sealed class WhisperModelReleaseCatalogServiceTests
                 Assert.False(item.IsRecommended);
                 Assert.Equal(
                     "Smallest and fastest option; best for quickest setup or lighter machines, with the lowest accuracy.",
-                    item.Description);
-            },
-            item =>
-            {
-                Assert.Equal("ggml-medium.en-q8_0.bin", item.FileName);
-                Assert.Equal(823_000_000L, item.FileSizeBytes);
-                Assert.False(item.IsRecommended);
-                Assert.Equal(
-                    "Most accurate of the four q8_0 options, but much larger and slower; best for stronger machines.",
                     item.Description);
             });
     }

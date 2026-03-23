@@ -40,13 +40,15 @@ public sealed class FilePublishService
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(destinationTranscriptDir);
+        var sidecarTranscriptDir = ArtifactPathBuilder.BuildTranscriptSidecarRoot(destinationTranscriptDir);
+        Directory.CreateDirectory(sidecarTranscriptDir);
 
         var audioDestination = PublishAudioAsync(finalAudioPath, destinationAudioDir, stem, cancellationToken)
             .GetAwaiter()
             .GetResult();
         var markdownDestination = Path.Combine(destinationTranscriptDir, $"{stem}{Path.GetExtension(markdownPath)}");
-        var jsonDestination = Path.Combine(destinationTranscriptDir, $"{stem}{Path.GetExtension(jsonPath)}");
-        var readyDestination = Path.Combine(destinationTranscriptDir, $"{stem}.ready");
+        var jsonDestination = Path.Combine(sidecarTranscriptDir, $"{stem}{Path.GetExtension(jsonPath)}");
+        var readyDestination = Path.Combine(sidecarTranscriptDir, $"{stem}.ready");
 
         PublishFile(markdownPath, markdownDestination, cancellationToken);
         PublishFile(jsonPath, jsonDestination, cancellationToken);

@@ -31,7 +31,7 @@ public sealed class GitHubReleaseBootstrapService
         }
 
         var releasePageUrl = TryGetString(root, "html_url");
-        var publishedAtUtc = TryGetDateTimeOffset(root, "published_at");
+        var releasePublishedAtUtc = TryGetDateTimeOffset(root, "published_at");
 
         var assets = root.TryGetProperty("assets", out var assetsElement) && assetsElement.ValueKind == JsonValueKind.Array
             ? assetsElement.EnumerateArray()
@@ -64,6 +64,7 @@ public sealed class GitHubReleaseBootstrapService
             tagName,
             TryGetString(root, "name"),
             appZipAsset.Name);
+        var publishedAtUtc = ResolveEffectivePublishedAtUtc(releasePublishedAtUtc, appZipAsset.UpdatedAtUtc);
 
         return new GitHubReleaseBootstrapInfo(
             version.DisplayLabel,
@@ -87,7 +88,8 @@ public sealed class GitHubReleaseBootstrapService
         return new GitHubReleaseAssetInfo(
             name,
             downloadUrl,
-            TryGetInt64(asset, "size"));
+            TryGetInt64(asset, "size"),
+            TryGetDateTimeOffset(asset, "updated_at"));
     }
 
     private static long? TryGetInt64(JsonElement element, string propertyName)
@@ -121,6 +123,25 @@ public sealed class GitHubReleaseBootstrapService
             ? property.GetString()
             : null;
     }
+
+    private static DateTimeOffset? ResolveEffectivePublishedAtUtc(
+        DateTimeOffset? releasePublishedAtUtc,
+        DateTimeOffset? assetUpdatedAtUtc)
+    {
+        if (!releasePublishedAtUtc.HasValue)
+        {
+            return assetUpdatedAtUtc;
+        }
+
+        if (!assetUpdatedAtUtc.HasValue)
+        {
+            return releasePublishedAtUtc;
+        }
+
+        return assetUpdatedAtUtc.Value > releasePublishedAtUtc.Value
+            ? assetUpdatedAtUtc
+            : releasePublishedAtUtc;
+    }
 }
 
 public sealed record GitHubReleaseBootstrapInfo(
@@ -135,4 +156,5 @@ public sealed record GitHubReleaseBootstrapInfo(
 public sealed record GitHubReleaseAssetInfo(
     string Name,
     string DownloadUrl,
-    long? SizeBytes);
+    long? SizeBytes,
+    DateTimeOffset? UpdatedAtUtc);

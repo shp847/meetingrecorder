@@ -44,6 +44,31 @@ function Get-ReleaseVersionLabel {
     return "v" + $versionValue
 }
 
+function Get-RepoInformationalVersion {
+    param(
+        [string]$RepoRoot
+    )
+
+    $propsPath = Join-Path $RepoRoot "Directory.Build.props"
+    if (-not (Test-Path $propsPath)) {
+        throw "Could not find Directory.Build.props at $propsPath"
+    }
+
+    [xml]$props = Get-Content -Path $propsPath
+    $propertyGroup = $props.Project.PropertyGroup
+    $informationalVersion = [string]$propertyGroup.InformationalVersion
+    if (-not [string]::IsNullOrWhiteSpace($informationalVersion)) {
+        return $informationalVersion.Trim()
+    }
+
+    $versionValue = [string]$propertyGroup.Version
+    if ([string]::IsNullOrWhiteSpace($versionValue)) {
+        throw "Could not resolve a repo version from Directory.Build.props"
+    }
+
+    return $versionValue.Trim()
+}
+
 function Get-GitHubRepositoryInfo {
     param(
         [string]$RepoRoot
@@ -75,6 +100,7 @@ $releaseRoot = Join-Path $repoRoot ".artifacts\installer\$Runtime"
 $bundledAsrModelsPath = Join-Path $repoRoot "assets\models\asr"
 $bundledDiarizationAssetsPath = Join-Path $repoRoot "assets\models\diarization"
 $versionLabel = Get-ReleaseVersionLabel -RepoRoot $repoRoot
+$script:RepoInformationalVersion = Get-RepoInformationalVersion -RepoRoot $repoRoot
 $repositoryInfo = Get-GitHubRepositoryInfo -RepoRoot $repoRoot
 
 function Publish-ReleasePayloadAssets {
@@ -118,7 +144,7 @@ function Get-GitHubApiHeaders {
     $headers = @{
         "Accept" = "application/vnd.github+json"
         "X-GitHub-Api-Version" = "2022-11-28"
-        "User-Agent" = "MeetingRecorderRelease/0.1"
+        "User-Agent" = "MeetingRecorderRelease/$script:RepoInformationalVersion"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($Token)) {
@@ -146,6 +172,83 @@ function Resolve-GitHubToken {
     }
 
     return ""
+}
+
+function Invoke-GitQuery {
+    param(
+        [string]$RepoRoot,
+        [string[]]$Arguments
+    )
+
+    $output = & git -C $RepoRoot @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed while validating release assets."
+    }
+
+    return @($output)
+}
+
+function Get-SourceStatePathspec {
+    return @(
+        ".",
+        ":(exclude).artifacts",
+        ":(glob,exclude)**/bin/**",
+        ":(glob,exclude)**/obj/**"
+    )
+}
+
+function Get-CurrentRepoSourceState {
+    param(
+        [string]$RepoRoot
+    )
+
+    $gitCommit = (Invoke-GitQuery -RepoRoot $RepoRoot -Arguments @("rev-parse", "HEAD") | Select-Object -First 1).Trim()
+    $worktreeStatus = Invoke-GitQuery -RepoRoot $RepoRoot -Arguments (@("status", "--short", "--untracked-files=all", "--") + (Get-SourceStatePathspec))
+
+    return [pscustomobject]@{
+        GitCommit       = $gitCommit
+        IsWorktreeDirty = ($worktreeStatus.Count -gt 0)
+    }
+}
+
+function Get-ReleaseSourceMetadata {
+    param(
+        [string]$PackagePath
+    )
+
+    $metadataPath = Join-Path $PackagePath "release-source.json"
+    if (-not (Test-Path $metadataPath)) {
+        throw "Installer asset directory '$PackagePath' is missing release-source.json. Rebuild installer assets before uploading."
+    }
+
+    $metadata = Get-Content -Path $metadataPath -Raw | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace([string]$metadata.gitCommit)) {
+        throw "Installer asset metadata at '$metadataPath' is missing gitCommit. The assets must be rebuilt from the current clean repo state."
+    }
+
+    return $metadata
+}
+
+function Assert-ReleaseAssetsMatchCurrentRepoState {
+    param(
+        [string]$RepoRoot,
+        [string]$PackagePath
+    )
+
+    $metadata = Get-ReleaseSourceMetadata -PackagePath $PackagePath
+    $currentState = Get-CurrentRepoSourceState -RepoRoot $RepoRoot
+
+    if ([bool]$metadata.isWorktreeDirty) {
+        throw "Installer assets in '$PackagePath' were built from a dirty worktree and must be rebuilt from the current clean repo state before uploading."
+    }
+
+    if ($currentState.IsWorktreeDirty) {
+        throw "The current repo worktree is dirty. Commit or stash your changes, rebuild installer assets, and then upload the release."
+    }
+
+    if ([string]$metadata.gitCommit -ne $currentState.GitCommit) {
+        throw "Installer assets in '$PackagePath' target commit '$($metadata.gitCommit)', but the current repo is at '$($currentState.GitCommit)'. The assets must be rebuilt from the current clean repo state before uploading."
+    }
 }
 
 function Get-LatestGitHubRelease {
@@ -251,7 +354,7 @@ function Publish-GitHubReleaseAsset {
         "Accept" = "application/vnd.github+json"
         "Authorization" = "Bearer $Token"
         "X-GitHub-Api-Version" = "2022-11-28"
-        "User-Agent" = "MeetingRecorderRelease/0.1"
+        "User-Agent" = "MeetingRecorderRelease/$script:RepoInformationalVersion"
         "Content-Type" = "application/octet-stream"
     }
 
@@ -392,6 +495,7 @@ Write-Host "- Upload any diarization sidecar bundles or supporting diarization a
 if ($UploadToGitHubLatestRelease.IsPresent -or $DryRunGitHubUpload.IsPresent) {
     Write-Host ""
     Write-Host "Syncing release assets to the latest GitHub release..."
+    Assert-ReleaseAssetsMatchCurrentRepoState -RepoRoot $repoRoot -PackagePath $releaseRoot
     $resolvedGitHubToken = Resolve-GitHubToken -ExplicitToken $GitHubToken
     Sync-ReleaseAssetsToGitHubLatestRelease `
         -Owner $repositoryInfo.Owner `

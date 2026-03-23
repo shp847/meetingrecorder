@@ -6,17 +6,46 @@ using System.Runtime.InteropServices;
 
 namespace MeetingRecorder.App.Services;
 
+internal interface IOutlookCalendarAppointmentSource
+{
+    IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
+        MeetingPlatform platform,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset? endedAtUtc);
+}
+
+internal sealed record OutlookCalendarAppointmentDetails(
+    string Subject,
+    DateTime StartLocal,
+    int PlatformMatchScore,
+    IReadOnlyList<string> AttendeeNames);
+
 internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitleProvider
 {
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(1);
-    private static readonly TimeSpan CalendarLookupTolerance = TimeSpan.FromMinutes(5);
     private readonly object _cacheGate = new();
+    private readonly IOutlookCalendarAppointmentSource _appointmentSource;
 
     private DateTimeOffset _cacheExpiresUtc;
     private MeetingPlatform _cachedPlatform = MeetingPlatform.Unknown;
-    private CalendarMeetingTitleCandidate? _cachedCandidate;
+    private DateTimeOffset _cachedStartedAtUtc;
+    private DateTimeOffset? _cachedEndedAtUtc;
+    private CalendarMeetingDetailsCandidate? _cachedCandidate;
 
-    public CalendarMeetingTitleCandidate? TryGetCurrentMeetingTitle(MeetingPlatform platform, DateTimeOffset nowUtc)
+    public OutlookCalendarMeetingTitleProvider()
+        : this(new OutlookCalendarAppointmentSource())
+    {
+    }
+
+    internal OutlookCalendarMeetingTitleProvider(IOutlookCalendarAppointmentSource appointmentSource)
+    {
+        _appointmentSource = appointmentSource;
+    }
+
+    public CalendarMeetingDetailsCandidate? TryGetMeetingTitle(
+        MeetingPlatform platform,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset? endedAtUtc)
     {
         if (platform == MeetingPlatform.Unknown)
         {
@@ -25,16 +54,19 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
 
         lock (_cacheGate)
         {
-            if (platform == _cachedPlatform && nowUtc < _cacheExpiresUtc)
+            if (platform == _cachedPlatform &&
+                startedAtUtc == _cachedStartedAtUtc &&
+                Nullable.Equals(endedAtUtc, _cachedEndedAtUtc) &&
+                DateTimeOffset.UtcNow < _cacheExpiresUtc)
             {
                 return _cachedCandidate;
             }
         }
 
-        CalendarMeetingTitleCandidate? resolved;
+        CalendarMeetingDetailsCandidate? resolved;
         try
         {
-            resolved = QueryCurrentMeetingTitle(platform, nowUtc);
+            resolved = QueryMeetingTitle(platform, startedAtUtc, endedAtUtc);
         }
         catch
         {
@@ -44,164 +76,273 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
         lock (_cacheGate)
         {
             _cachedPlatform = platform;
+            _cachedStartedAtUtc = startedAtUtc;
+            _cachedEndedAtUtc = endedAtUtc;
             _cachedCandidate = resolved;
-            _cacheExpiresUtc = nowUtc.Add(CacheLifetime);
+            _cacheExpiresUtc = DateTimeOffset.UtcNow.Add(CacheLifetime);
         }
 
         return resolved;
     }
 
-    private static CalendarMeetingTitleCandidate? QueryCurrentMeetingTitle(MeetingPlatform platform, DateTimeOffset nowUtc)
+    private CalendarMeetingDetailsCandidate? QueryMeetingTitle(
+        MeetingPlatform platform,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset? endedAtUtc)
     {
-        var outlookType = Type.GetTypeFromProgID("Outlook.Application", throwOnError: false);
-        if (outlookType is null)
+        var candidates = _appointmentSource.ReadOverlappingAppointments(platform, startedAtUtc, endedAtUtc);
+        if (candidates.Count == 0)
         {
             return null;
         }
 
-        object? outlookApplication = null;
-        object? outlookNamespace = null;
-        object? calendarFolder = null;
-        object? calendarItems = null;
+        var matchedCandidate = candidates
+            .Where(candidate => candidate.PlatformMatchScore > 0)
+            .OrderByDescending(candidate => candidate.PlatformMatchScore)
+            .ThenBy(candidate => Math.Abs((candidate.StartLocal - startedAtUtc.LocalDateTime).TotalMinutes))
+            .FirstOrDefault();
 
-        try
+        if (matchedCandidate is not null)
         {
-            outlookApplication = Activator.CreateInstance(outlookType);
-            if (outlookApplication is null)
-            {
-                return null;
-            }
-
-            outlookNamespace = InvokeComMethod(outlookApplication, "GetNamespace", "MAPI");
-            if (outlookNamespace is null)
-            {
-                return null;
-            }
-
-            calendarFolder = InvokeComMethod(outlookNamespace, "GetDefaultFolder", 9);
-            if (calendarFolder is null)
-            {
-                return null;
-            }
-
-            calendarItems = GetComProperty(calendarFolder, "Items");
-            if (calendarItems is null)
-            {
-                return null;
-            }
-
-            TrySetComProperty(calendarItems, "IncludeRecurrences", true);
-            TryInvokeComMethod(calendarItems, "Sort", "[Start]");
-
-            var candidates = ReadOverlappingAppointments(calendarItems, platform, nowUtc);
-            if (candidates.Count == 0)
-            {
-                return null;
-            }
-
-            var matchedCandidate = candidates
-                .Where(candidate => candidate.PlatformMatchScore > 0)
-                .OrderByDescending(candidate => candidate.PlatformMatchScore)
-                .ThenBy(candidate => Math.Abs((candidate.StartLocal - nowUtc.LocalDateTime).TotalMinutes))
-                .FirstOrDefault();
-
-            if (matchedCandidate is not null)
-            {
-                return new CalendarMeetingTitleCandidate(matchedCandidate.Subject, "Outlook calendar");
-            }
-
-            return candidates.Count == 1
-                ? new CalendarMeetingTitleCandidate(candidates[0].Subject, "Outlook calendar")
-                : null;
+            return BuildCalendarCandidate(matchedCandidate);
         }
-        finally
-        {
-            ReleaseComObject(calendarItems);
-            ReleaseComObject(calendarFolder);
-            ReleaseComObject(outlookNamespace);
-            ReleaseComObject(outlookApplication);
-        }
+
+        return candidates.Count == 1
+            ? BuildCalendarCandidate(candidates[0])
+            : null;
     }
 
-    private static List<CalendarAppointmentCandidate> ReadOverlappingAppointments(
-        object calendarItems,
-        MeetingPlatform platform,
-        DateTimeOffset nowUtc)
+    private static CalendarMeetingDetailsCandidate BuildCalendarCandidate(OutlookCalendarAppointmentDetails appointment)
     {
-        var lowerBoundLocal = nowUtc.LocalDateTime.Subtract(CalendarLookupTolerance);
-        var upperBoundLocal = nowUtc.LocalDateTime.Add(CalendarLookupTolerance);
-        var candidates = new List<CalendarAppointmentCandidate>();
+        return new CalendarMeetingDetailsCandidate(
+            appointment.Subject.Trim(),
+            NormalizeAttendees(appointment.AttendeeNames),
+            "Outlook calendar");
+    }
 
-        if (calendarItems is not IEnumerable enumerable)
+    private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<string>? attendeeNames)
+    {
+        if (attendeeNames is null || attendeeNames.Count == 0)
         {
-            return candidates;
+            return Array.Empty<MeetingAttendee>();
         }
 
-        foreach (var item in enumerable)
+        var dedupedNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attendeeName in attendeeNames)
         {
-            if (item is null)
+            if (string.IsNullOrWhiteSpace(attendeeName))
             {
                 continue;
             }
 
-            try
+            var trimmedName = attendeeName.Trim();
+            if (!dedupedNames.ContainsKey(trimmedName))
             {
-                var subject = GetComStringProperty(item, "Subject");
-                if (string.IsNullOrWhiteSpace(subject))
-                {
-                    continue;
-                }
-
-                var startLocal = GetComDateTimeProperty(item, "Start");
-                var endLocal = GetComDateTimeProperty(item, "End");
-                if (!startLocal.HasValue || !endLocal.HasValue)
-                {
-                    continue;
-                }
-
-                if (startLocal.Value > upperBoundLocal)
-                {
-                    break;
-                }
-
-                if (endLocal.Value < lowerBoundLocal)
-                {
-                    continue;
-                }
-
-                var location = GetComStringProperty(item, "Location");
-                var body = GetComStringProperty(item, "Body");
-                candidates.Add(new CalendarAppointmentCandidate(
-                    subject.Trim(),
-                    startLocal.Value,
-                    ScorePlatformMatch(platform, subject, location, body)));
-            }
-            finally
-            {
-                ReleaseComObject(item);
+                dedupedNames[trimmedName] = trimmedName;
             }
         }
 
-        return candidates;
+        return dedupedNames.Values
+            .Select(name => new MeetingAttendee(name, [MeetingAttendeeSource.OutlookCalendar]))
+            .ToArray();
     }
 
-    private static int ScorePlatformMatch(MeetingPlatform platform, string subject, string? location, string? body)
+    private sealed class OutlookCalendarAppointmentSource : IOutlookCalendarAppointmentSource
     {
-        var haystack = string.Join(
-            "\n",
-            new[] { subject, location ?? string.Empty, body ?? string.Empty })
-            .ToLowerInvariant();
+        private static readonly TimeSpan CalendarLookupTolerance = TimeSpan.FromMinutes(5);
 
-        return platform switch
+        public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
+            MeetingPlatform platform,
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset? endedAtUtc)
         {
-            MeetingPlatform.Teams when haystack.Contains("teams.microsoft.com", StringComparison.Ordinal) => 3,
-            MeetingPlatform.Teams when haystack.Contains("microsoft teams", StringComparison.Ordinal) => 2,
-            MeetingPlatform.Teams when haystack.Contains("teams", StringComparison.Ordinal) => 1,
-            MeetingPlatform.GoogleMeet when haystack.Contains("meet.google.com", StringComparison.Ordinal) => 3,
-            MeetingPlatform.GoogleMeet when haystack.Contains("google meet", StringComparison.Ordinal) => 2,
-            MeetingPlatform.GoogleMeet when haystack.Contains("meet", StringComparison.Ordinal) => 1,
-            _ => 0,
-        };
+            var outlookType = Type.GetTypeFromProgID("Outlook.Application", throwOnError: false);
+            if (outlookType is null)
+            {
+                return Array.Empty<OutlookCalendarAppointmentDetails>();
+            }
+
+            object? outlookApplication = null;
+            object? outlookNamespace = null;
+            object? calendarFolder = null;
+            object? calendarItems = null;
+
+            try
+            {
+                outlookApplication = Activator.CreateInstance(outlookType);
+                if (outlookApplication is null)
+                {
+                    return Array.Empty<OutlookCalendarAppointmentDetails>();
+                }
+
+                outlookNamespace = InvokeComMethod(outlookApplication, "GetNamespace", "MAPI");
+                if (outlookNamespace is null)
+                {
+                    return Array.Empty<OutlookCalendarAppointmentDetails>();
+                }
+
+                calendarFolder = InvokeComMethod(outlookNamespace, "GetDefaultFolder", 9);
+                if (calendarFolder is null)
+                {
+                    return Array.Empty<OutlookCalendarAppointmentDetails>();
+                }
+
+                calendarItems = GetComProperty(calendarFolder, "Items");
+                if (calendarItems is null)
+                {
+                    return Array.Empty<OutlookCalendarAppointmentDetails>();
+                }
+
+                TrySetComProperty(calendarItems, "IncludeRecurrences", true);
+                TryInvokeComMethod(calendarItems, "Sort", "[Start]");
+
+                return ReadAppointmentsFromItems(calendarItems, platform, startedAtUtc, endedAtUtc);
+            }
+            finally
+            {
+                ReleaseComObject(calendarItems);
+                ReleaseComObject(calendarFolder);
+                ReleaseComObject(outlookNamespace);
+                ReleaseComObject(outlookApplication);
+            }
+        }
+
+        private static IReadOnlyList<OutlookCalendarAppointmentDetails> ReadAppointmentsFromItems(
+            object calendarItems,
+            MeetingPlatform platform,
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset? endedAtUtc)
+        {
+            var meetingStartLocal = startedAtUtc.LocalDateTime;
+            var meetingEndLocal = (endedAtUtc ?? startedAtUtc).LocalDateTime;
+            if (meetingEndLocal < meetingStartLocal)
+            {
+                meetingEndLocal = meetingStartLocal;
+            }
+
+            var lowerBoundLocal = meetingStartLocal.Subtract(CalendarLookupTolerance);
+            var upperBoundLocal = meetingEndLocal.Add(CalendarLookupTolerance);
+            var candidates = new List<OutlookCalendarAppointmentDetails>();
+
+            if (calendarItems is not IEnumerable enumerable)
+            {
+                return candidates;
+            }
+
+            foreach (var item in enumerable)
+            {
+                if (item is null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var subject = GetComStringProperty(item, "Subject");
+                    if (string.IsNullOrWhiteSpace(subject))
+                    {
+                        continue;
+                    }
+
+                    var startLocal = GetComDateTimeProperty(item, "Start");
+                    var endLocal = GetComDateTimeProperty(item, "End");
+                    if (!startLocal.HasValue || !endLocal.HasValue)
+                    {
+                        continue;
+                    }
+
+                    if (startLocal.Value > upperBoundLocal)
+                    {
+                        break;
+                    }
+
+                    if (endLocal.Value < lowerBoundLocal)
+                    {
+                        continue;
+                    }
+
+                    var location = GetComStringProperty(item, "Location");
+                    var body = GetComStringProperty(item, "Body");
+                    var attendees = ReadAttendeeNames(item);
+                    candidates.Add(new OutlookCalendarAppointmentDetails(
+                        subject.Trim(),
+                        startLocal.Value,
+                        ScorePlatformMatch(platform, subject, location, body),
+                        attendees));
+                }
+                finally
+                {
+                    ReleaseComObject(item);
+                }
+            }
+
+            return candidates;
+        }
+
+        private static IReadOnlyList<string> ReadAttendeeNames(object appointmentItem)
+        {
+            object? recipients = null;
+
+            try
+            {
+                recipients = GetComProperty(appointmentItem, "Recipients");
+                if (recipients is not IEnumerable enumerable)
+                {
+                    return Array.Empty<string>();
+                }
+
+                var attendeeNames = new List<string>();
+                foreach (var recipient in enumerable)
+                {
+                    if (recipient is null)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var name = GetComStringProperty(recipient, "Name");
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            attendeeNames.Add(name.Trim());
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseComObject(recipient);
+                    }
+                }
+
+                return attendeeNames;
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+            finally
+            {
+                ReleaseComObject(recipients);
+            }
+        }
+
+        private static int ScorePlatformMatch(MeetingPlatform platform, string subject, string? location, string? body)
+        {
+            var haystack = string.Join(
+                    "\n",
+                    new[] { subject, location ?? string.Empty, body ?? string.Empty })
+                .ToLowerInvariant();
+
+            return platform switch
+            {
+                MeetingPlatform.Teams when haystack.Contains("teams.microsoft.com", StringComparison.Ordinal) => 3,
+                MeetingPlatform.Teams when haystack.Contains("microsoft teams", StringComparison.Ordinal) => 2,
+                MeetingPlatform.Teams when haystack.Contains("teams", StringComparison.Ordinal) => 1,
+                MeetingPlatform.GoogleMeet when haystack.Contains("meet.google.com", StringComparison.Ordinal) => 3,
+                MeetingPlatform.GoogleMeet when haystack.Contains("google meet", StringComparison.Ordinal) => 2,
+                MeetingPlatform.GoogleMeet when haystack.Contains("meet", StringComparison.Ordinal) => 1,
+                _ => 0,
+            };
+        }
     }
 
     private static object? GetComProperty(object target, string propertyName)
@@ -278,6 +419,4 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
             Marshal.ReleaseComObject(instance);
         }
     }
-
-    private sealed record CalendarAppointmentCandidate(string Subject, DateTime StartLocal, int PlatformMatchScore);
 }

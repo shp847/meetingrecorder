@@ -4,7 +4,7 @@ internal static class WorkerLocator
 {
     public static WorkerLaunch Resolve()
     {
-        foreach (var candidate in EnumerateCandidates())
+        foreach (var candidate in EnumerateCandidates(Environment.ProcessPath, AppContext.BaseDirectory))
         {
             if (!File.Exists(candidate))
             {
@@ -22,13 +22,27 @@ internal static class WorkerLocator
         throw new FileNotFoundException("Unable to locate the MeetingRecorder processing worker output.");
     }
 
-    private static IEnumerable<string> EnumerateCandidates()
+    internal static string ResolveInstalledAppRoot(string? processPath, string appContextBaseDirectory)
     {
-        var baseDirectory = AppContext.BaseDirectory;
-        yield return Path.Combine(baseDirectory, "MeetingRecorder.ProcessingWorker.exe");
-        yield return Path.Combine(baseDirectory, "MeetingRecorder.ProcessingWorker.dll");
+        if (!string.IsNullOrWhiteSpace(processPath))
+        {
+            var processDirectory = Path.GetDirectoryName(processPath.Trim());
+            if (!string.IsNullOrWhiteSpace(processDirectory))
+            {
+                return processDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+        }
 
-        var current = new DirectoryInfo(baseDirectory);
+        return appContextBaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    internal static IEnumerable<string> EnumerateCandidates(string? processPath, string appContextBaseDirectory)
+    {
+        var installedRoot = ResolveInstalledAppRoot(processPath, appContextBaseDirectory);
+        yield return Path.Combine(installedRoot, "MeetingRecorder.ProcessingWorker.exe");
+        yield return Path.Combine(installedRoot, "MeetingRecorder.ProcessingWorker.dll");
+
+        var current = new DirectoryInfo(appContextBaseDirectory);
         while (current is not null)
         {
             var rootCandidate = Path.Combine(

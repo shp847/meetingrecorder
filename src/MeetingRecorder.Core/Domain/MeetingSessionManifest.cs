@@ -24,6 +24,18 @@ public sealed record MeetingSessionManifest
 
     public ImportedSourceAudioInfo? ImportedSourceAudio { get; init; }
 
+    public string? ProjectName { get; init; }
+
+    public IReadOnlyList<string> KeyAttendees { get; init; } = Array.Empty<string>();
+
+    public DetectedAudioSource? DetectedAudioSource { get; init; }
+
+    public IReadOnlyList<MeetingAttendee> Attendees { get; init; } = Array.Empty<MeetingAttendee>();
+
+    public MeetingProcessingOverrides? ProcessingOverrides { get; init; }
+
+    public MeetingProcessingMetadata? ProcessingMetadata { get; init; }
+
     public ProcessingStageStatus TranscriptionStatus { get; init; } =
         new("transcription", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
 

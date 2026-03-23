@@ -1,17 +1,23 @@
 using System.IO.Compression;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using MeetingRecorder.Core.Domain;
 
 namespace MeetingRecorder.Core.Services;
 
 public sealed class DiarizationAssetCatalogService
 {
+    public const string BundleManifestFileName = "meeting-recorder-diarization-bundle.json";
+    public const string RuntimeStatusFileName = "meeting-recorder-diarization-runtime-status.json";
+
     private static readonly string[] SupportingFileExtensions =
     [
         ".onnx",
-        ".bin",
         ".json",
+        ".txt",
+        ".md",
         ".yaml",
         ".yml",
-        ".txt",
     ];
 
     public DiarizationAssetInstallStatus InspectInstalledAssets(string diarizationAssetPath)
@@ -25,10 +31,16 @@ public sealed class DiarizationAssetCatalogService
             return new DiarizationAssetInstallStatus(
                 string.Empty,
                 null,
+                null,
+                null,
+                null,
                 Array.Empty<string>(),
                 false,
-                "No diarization asset folder is configured.",
-                "Choose a diarization sidecar bundle or set the diarization asset path in Config.");
+                "No diarization model bundle is configured.",
+                "Choose a diarization model bundle or set the diarization asset path in Settings.",
+                null,
+                null,
+                null);
         }
 
         if (!Directory.Exists(normalizedRoot))
@@ -36,47 +48,140 @@ public sealed class DiarizationAssetCatalogService
             return new DiarizationAssetInstallStatus(
                 normalizedRoot,
                 null,
+                null,
+                null,
+                null,
                 Array.Empty<string>(),
                 false,
-                "Diarization sidecar not installed.",
-                $"The configured folder '{normalizedRoot}' does not exist yet.");
+                "Diarization model bundle not installed.",
+                $"The configured folder '{normalizedRoot}' does not exist yet.",
+                null,
+                null,
+                null);
         }
 
         var allFiles = Directory.GetFiles(normalizedRoot, "*", SearchOption.AllDirectories);
-        var sidecarExecutablePath = allFiles.FirstOrDefault(file =>
+        var runtimeStatus = TryReadRuntimeStatus(normalizedRoot);
+        var manifestPath = allFiles.FirstOrDefault(file =>
             string.Equals(
                 Path.GetFileName(file),
-                "MeetingRecorder.Diarization.Sidecar.exe",
+                BundleManifestFileName,
                 StringComparison.OrdinalIgnoreCase));
 
-        var supportingFiles = allFiles
-            .Where(file =>
-                !string.Equals(file, sidecarExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                SupportingFileExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (string.IsNullOrWhiteSpace(sidecarExecutablePath))
+        if (string.IsNullOrWhiteSpace(manifestPath))
         {
             return new DiarizationAssetInstallStatus(
                 normalizedRoot,
                 null,
-                supportingFiles,
+                null,
+                null,
+                null,
+                ListSupportingFiles(allFiles, excludedPaths: Array.Empty<string>()),
                 false,
-                "Diarization sidecar not installed.",
-                $"No 'MeetingRecorder.Diarization.Sidecar.exe' was found under '{normalizedRoot}'.");
+                "Diarization model bundle not installed.",
+                $"No '{BundleManifestFileName}' bundle manifest was found under '{normalizedRoot}'.",
+                runtimeStatus?.GpuAccelerationAvailable,
+                runtimeStatus?.EffectiveExecutionProvider,
+                runtimeStatus?.DiagnosticMessage);
         }
 
-        var supportingFileSummary = supportingFiles.Length == 0
-            ? "No extra model/config files were detected in the folder."
-            : $"Supporting files detected: {supportingFiles.Length}.";
+        DiarizationModelBundleManifest manifest;
+        try
+        {
+            var json = File.ReadAllText(manifestPath);
+            manifest = JsonSerializer.Deserialize<DiarizationModelBundleManifest>(json, SerializerOptions)
+                ?? throw new InvalidOperationException("The bundle manifest was empty.");
+        }
+        catch (Exception exception)
+        {
+            return new DiarizationAssetInstallStatus(
+                normalizedRoot,
+                manifestPath,
+                null,
+                null,
+                null,
+                ListSupportingFiles(allFiles, excludedPaths: [manifestPath]),
+                false,
+                "Diarization model bundle is invalid.",
+                $"Unable to read '{BundleManifestFileName}': {exception.Message}",
+                runtimeStatus?.GpuAccelerationAvailable,
+                runtimeStatus?.EffectiveExecutionProvider,
+                runtimeStatus?.DiagnosticMessage);
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.BundleVersion) ||
+            string.IsNullOrWhiteSpace(manifest.SegmentationModelFileName) ||
+            string.IsNullOrWhiteSpace(manifest.EmbeddingModelFileName))
+        {
+            return new DiarizationAssetInstallStatus(
+                normalizedRoot,
+                manifestPath,
+                null,
+                null,
+                null,
+                ListSupportingFiles(allFiles, excludedPaths: [manifestPath]),
+                false,
+                "Diarization model bundle is invalid.",
+                $"'{BundleManifestFileName}' must include bundleVersion, segmentationModelFileName, and embeddingModelFileName.",
+                runtimeStatus?.GpuAccelerationAvailable,
+                runtimeStatus?.EffectiveExecutionProvider,
+                runtimeStatus?.DiagnosticMessage);
+        }
+
+        var manifestDirectory = Path.GetDirectoryName(manifestPath) ?? normalizedRoot;
+        var segmentationModelPath = ResolveBundleFilePath(manifestDirectory, manifest.SegmentationModelFileName);
+        var embeddingModelPath = ResolveBundleFilePath(manifestDirectory, manifest.EmbeddingModelFileName);
+        var missingFiles = new List<string>();
+
+        if (!File.Exists(segmentationModelPath))
+        {
+            missingFiles.Add(manifest.SegmentationModelFileName);
+        }
+
+        if (!File.Exists(embeddingModelPath))
+        {
+            missingFiles.Add(manifest.EmbeddingModelFileName);
+        }
+
+        var supportingFiles = ListSupportingFiles(
+            allFiles,
+            excludedPaths:
+            [
+                manifestPath,
+                segmentationModelPath,
+                embeddingModelPath,
+            ]);
+
+        if (missingFiles.Count > 0)
+        {
+            return new DiarizationAssetInstallStatus(
+                normalizedRoot,
+                manifestPath,
+                File.Exists(segmentationModelPath) ? segmentationModelPath : null,
+                File.Exists(embeddingModelPath) ? embeddingModelPath : null,
+                manifest.BundleVersion,
+                supportingFiles,
+                false,
+                "Diarization model bundle is incomplete.",
+                $"The bundle manifest was found, but these files are missing: {string.Join(", ", missingFiles)}.",
+                runtimeStatus?.GpuAccelerationAvailable,
+                runtimeStatus?.EffectiveExecutionProvider,
+                runtimeStatus?.DiagnosticMessage);
+        }
+
         return new DiarizationAssetInstallStatus(
             normalizedRoot,
-            sidecarExecutablePath,
+            manifestPath,
+            segmentationModelPath,
+            embeddingModelPath,
+            manifest.BundleVersion,
             supportingFiles,
             true,
-            "Diarization sidecar looks ready.",
-            $"{supportingFileSummary} Speaker labels will be applied when the sidecar runs successfully.");
+            "Diarization model bundle looks ready.",
+            $"Bundle version '{manifest.BundleVersion}' is installed. Speaker labeling will run with '{Path.GetFileName(segmentationModelPath)}' and '{Path.GetFileName(embeddingModelPath)}'.",
+            runtimeStatus?.GpuAccelerationAvailable,
+            runtimeStatus?.EffectiveExecutionProvider,
+            runtimeStatus?.DiagnosticMessage);
     }
 
     public async Task<DiarizationAssetInstallStatus> ImportAssetIntoManagedDirectoryAsync(
@@ -153,12 +258,96 @@ public sealed class DiarizationAssetCatalogService
 
         return Task.CompletedTask;
     }
+
+    public async Task WriteRuntimeStatusAsync(
+        string diarizationAssetPath,
+        DiarizationRuntimeStatus runtimeStatus,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(diarizationAssetPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(diarizationAssetPath);
+        var statusPath = Path.Combine(diarizationAssetPath, RuntimeStatusFileName);
+        var serializerOptions = new JsonSerializerOptions(SerializerOptions)
+        {
+            WriteIndented = true,
+        };
+        await File.WriteAllTextAsync(
+            statusPath,
+            JsonSerializer.Serialize(runtimeStatus, serializerOptions),
+            cancellationToken);
+    }
+
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    private static string ResolveBundleFilePath(string manifestDirectory, string fileName)
+    {
+        return Path.GetFullPath(Path.Combine(manifestDirectory, fileName.Trim()));
+    }
+
+    private static IReadOnlyList<string> ListSupportingFiles(
+        IReadOnlyList<string> allFiles,
+        IReadOnlyList<string> excludedPaths)
+    {
+        return allFiles
+            .Where(file =>
+                SupportingFileExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase) &&
+                !excludedPaths.Any(excluded => string.Equals(file, excluded, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static DiarizationRuntimeStatus? TryReadRuntimeStatus(string assetRootPath)
+    {
+        var statusPath = Path.Combine(assetRootPath, RuntimeStatusFileName);
+        if (!File.Exists(statusPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<DiarizationRuntimeStatus>(File.ReadAllText(statusPath), SerializerOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
+
+internal sealed record DiarizationModelBundleManifest(
+    string BundleVersion,
+    string SegmentationModelFileName,
+    string EmbeddingModelFileName);
 
 public sealed record DiarizationAssetInstallStatus(
     string AssetRootPath,
-    string? SidecarExecutablePath,
+    string? BundleManifestPath,
+    string? SegmentationModelPath,
+    string? EmbeddingModelPath,
+    string? BundleVersion,
     IReadOnlyList<string> SupportingFilePaths,
     bool IsReady,
     string StatusText,
-    string DetailsText);
+    string DetailsText,
+    bool? GpuAccelerationAvailable,
+    DiarizationExecutionProvider? EffectiveExecutionProvider,
+    string? DiagnosticMessage)
+{
+    public string? SidecarExecutablePath => string.IsNullOrWhiteSpace(AssetRootPath) || !Directory.Exists(AssetRootPath)
+        ? null
+        : Directory.EnumerateFiles(AssetRootPath, "*.exe", SearchOption.AllDirectories).FirstOrDefault();
+}
+
+public sealed record DiarizationRuntimeStatus(
+    [property: JsonPropertyName("gpuAccelerationAvailable")] bool GpuAccelerationAvailable,
+    [property: JsonPropertyName("effectiveExecutionProvider")] DiarizationExecutionProvider? EffectiveExecutionProvider,
+    [property: JsonPropertyName("diagnosticMessage")] string? DiagnosticMessage,
+    [property: JsonPropertyName("updatedAtUtc")] DateTimeOffset UpdatedAtUtc);

@@ -9,11 +9,23 @@
     <RootNamespace>MeetingRecorder.Installer</RootNamespace>
     <ApplicationIcon>..\MeetingRecorder.App\Assets\MeetingRecorder.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
-    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MeetingRecorder.Core\MeetingRecorder.Core.csproj" />
+    <ProjectReference Include="..\AppPlatform.Abstractions\AppPlatform.Abstractions.csproj" />
+    <ProjectReference Include="..\AppPlatform.Deployment\AppPlatform.Deployment.csproj" />
+    <ProjectReference Include="..\AppPlatform.Deployment.WpfHost\AppPlatform.Deployment.WpfHost.csproj" />
+    <ProjectReference Include="..\AppPlatform.Shell.Wpf\AppPlatform.Shell.Wpf.csproj" />
+    <ProjectReference Include="..\MeetingRecorder.Product\MeetingRecorder.Product.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\MeetingRecorder.Product\MeetingRecorder.product.json" Link="MeetingRecorder.product.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 </Project>

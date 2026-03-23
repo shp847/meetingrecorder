@@ -52,6 +52,42 @@ public sealed class FilePublishServiceTests
         Assert.True(File.Exists(audioPath));
     }
 
+    [Fact]
+    public async Task PublishAsync_Publishes_Json_And_Ready_Into_Json_Subfolder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var sourceDir = Path.Combine(root, "source");
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(sourceDir);
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+
+        var sourceAudioPath = Path.Combine(sourceDir, "source.wav");
+        var sourceMarkdownPath = Path.Combine(sourceDir, "source.md");
+        var sourceJsonPath = Path.Combine(sourceDir, "source.json");
+        CreateFloatWave(sourceAudioPath, TimeSpan.FromSeconds(1), sampleRate: 48_000, channels: 2);
+        await File.WriteAllTextAsync(sourceMarkdownPath, "# Example");
+        await File.WriteAllTextAsync(sourceJsonPath, "{ \"Title\": \"Example\" }");
+
+        var service = new FilePublishService();
+
+        var published = await service.PublishAsync(
+            sourceAudioPath,
+            sourceMarkdownPath,
+            sourceJsonPath,
+            audioDir,
+            transcriptDir,
+            "2026-03-19_143250_teams_example");
+
+        Assert.Equal(Path.Combine(transcriptDir, "2026-03-19_143250_teams_example.md"), published.MarkdownPath);
+        Assert.Equal(Path.Combine(transcriptDir, "json", "2026-03-19_143250_teams_example.json"), published.JsonPath);
+        Assert.Equal(Path.Combine(transcriptDir, "json", "2026-03-19_143250_teams_example.ready"), published.ReadyMarkerPath);
+        Assert.True(File.Exists(published.MarkdownPath));
+        Assert.True(File.Exists(published.JsonPath));
+        Assert.True(File.Exists(published.ReadyMarkerPath));
+    }
+
     private static void CreateFloatWave(string path, TimeSpan duration, int sampleRate, int channels)
     {
         using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));

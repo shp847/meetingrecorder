@@ -174,7 +174,9 @@ public sealed class AppUpdateService
                 TryGetString(root, "name"),
                 asset?.Name);
             var releasePageUrl = TryGetString(root, "html_url");
-            var publishedAtUtc = TryGetDateTimeOffset(root, "published_at");
+            var publishedAtUtc = ResolveEffectivePublishedAtUtc(
+                TryGetDateTimeOffset(root, "published_at"),
+                asset?.UpdatedAtUtc);
             return new AppUpdateRelease(version.DisplayLabel, version.ComparableVersion, asset?.Url, releasePageUrl, publishedAtUtc, asset?.SizeBytes);
         }
 
@@ -204,7 +206,8 @@ public sealed class AppUpdateService
             .Select(asset => new AppUpdateAsset(
                 TryGetString(asset, "name"),
                 TryGetString(asset, "browser_download_url"),
-                TryGetInt64(asset, "size")))
+                TryGetInt64(asset, "size"),
+                TryGetDateTimeOffset(asset, "updated_at")))
             .Where(asset => !string.IsNullOrWhiteSpace(asset.Url))
             .ToArray();
 
@@ -213,6 +216,25 @@ public sealed class AppUpdateService
                 asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             ?? assets.FirstOrDefault(asset => asset.Name?.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) == true)
             ?? assets.FirstOrDefault();
+    }
+
+    private static DateTimeOffset? ResolveEffectivePublishedAtUtc(
+        DateTimeOffset? releasePublishedAtUtc,
+        DateTimeOffset? assetUpdatedAtUtc)
+    {
+        if (!releasePublishedAtUtc.HasValue)
+        {
+            return assetUpdatedAtUtc;
+        }
+
+        if (!assetUpdatedAtUtc.HasValue)
+        {
+            return releasePublishedAtUtc;
+        }
+
+        return assetUpdatedAtUtc.Value > releasePublishedAtUtc.Value
+            ? assetUpdatedAtUtc
+            : releasePublishedAtUtc;
     }
 
     private static string BuildUpdateAvailableMessage(
@@ -434,7 +456,8 @@ internal sealed record AppUpdateRelease(
 internal sealed record AppUpdateAsset(
     string? Name,
     string? Url,
-    long? SizeBytes);
+    long? SizeBytes,
+    DateTimeOffset? UpdatedAtUtc);
 
 internal readonly record struct ReleaseVersionInfo(
     string DisplayLabel,

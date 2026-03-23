@@ -53,12 +53,14 @@ $installerExecutablePath = Join-Path $packagePath "MeetingRecorderInstaller.exe"
 $installerMsiPath = Join-Path $packagePath "MeetingRecorderInstaller.msi"
 $bootstrapCommandPath = Join-Path $packagePath "Install-LatestFromGitHub.cmd"
 $bootstrapScriptPath = Join-Path $packagePath "Install-LatestFromGitHub.ps1"
+$releaseSourceMetadataPath = Join-Path $packagePath "release-source.json"
 $publishScript = Join-Path $PSScriptRoot "Publish-Portable.ps1"
 $publishedAppPath = Join-Path $repoRoot ".artifacts\publish\$Runtime\MeetingRecorder"
 $installerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Installer\MeetingRecorder.Installer.csproj"
 $msiProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Setup\MeetingRecorder.Setup.wixproj"
 $msiTemp = Join-Path $packagePath "msi-temp"
 $msiGeneratedAuthoringPath = Join-Path $msiTemp "generated\AppFiles.wxs"
+$msiBuildOutputPath = Join-Path $packagePath "msi-build"
 $msiStagingPath = Join-Path $packagePath "msi-staging"
 $gitHubReleaseLimitBytes = [long]2GB
 
@@ -347,6 +349,8 @@ function Write-MsiHarvestAuthoring {
     $usedIdentifiers = @{}
     $componentIds = New-Object System.Collections.Generic.List[string]
     $builder = New-Object System.Text.StringBuilder
+    $componentRegistryKey = "Software\Meeting Recorder\Installer\Components"
+    $directoryRegistryKey = "Software\Meeting Recorder\Installer\Directories"
 
     function Add-Line {
         param([string]$Text)
@@ -369,19 +373,30 @@ function Write-MsiHarvestAuthoring {
             else {
                 Convert-ToWixIdentifier -Prefix "fil_" -Value $relativePath -UsedIdentifiers $usedIdentifiers
             }
+            $registryValueName = Convert-ToWixIdentifier -Prefix "reg_" -Value $relativePath -UsedIdentifiers $usedIdentifiers
 
             $componentIds.Add($componentId)
             $componentGuid = (New-DeterministicGuid -Value ("msi|" + $relativePath)).ToString().ToUpperInvariant()
             Add-Line ($indent + ('<Component Id="{0}" Guid="{1}">' -f $componentId, $componentGuid))
-            Add-Line ($indent + '  ' + ('<File Id="{0}" Source="{1}" KeyPath="yes" />' -f $fileId, (Escape-WixXml $file.FullName)))
+            Add-Line ($indent + '  ' + ('<File Id="{0}" Source="{1}" />' -f $fileId, (Escape-WixXml $file.FullName)))
+            Add-Line ($indent + '  ' + ('<RegistryValue Root="HKCU" Key="{0}" Name="{1}" Type="integer" Value="1" KeyPath="yes" />' -f $componentRegistryKey, $registryValueName))
             Add-Line ($indent + '</Component>')
         }
 
         foreach ($directory in Get-ChildItem -Path $CurrentPath -Directory | Sort-Object Name) {
             $relativeDirectoryPath = Get-RelativePathCompat -BasePath $sourceDirectory.FullName -TargetPath $directory.FullName
             $directoryId = Convert-ToWixIdentifier -Prefix "dir_" -Value $relativeDirectoryPath -UsedIdentifiers $usedIdentifiers
+            $cleanupComponentId = Convert-ToWixIdentifier -Prefix "cmpdir_" -Value $relativeDirectoryPath -UsedIdentifiers $usedIdentifiers
+            $removeFolderId = Convert-ToWixIdentifier -Prefix "rmv_" -Value $relativeDirectoryPath -UsedIdentifiers $usedIdentifiers
+            $directoryRegistryName = Convert-ToWixIdentifier -Prefix "dirreg_" -Value $relativeDirectoryPath -UsedIdentifiers $usedIdentifiers
             Add-Line ($indent + ('<Directory Id="{0}" Name="{1}">' -f $directoryId, (Escape-WixXml $directory.Name)))
             Write-DirectoryContent -CurrentPath $directory.FullName -IndentLevel ($IndentLevel + 1)
+            $componentIds.Add($cleanupComponentId)
+            $cleanupComponentGuid = (New-DeterministicGuid -Value ("msi-dir|" + $relativeDirectoryPath)).ToString().ToUpperInvariant()
+            Add-Line (($indent + '  ') + ('<Component Id="{0}" Guid="{1}">' -f $cleanupComponentId, $cleanupComponentGuid))
+            Add-Line (($indent + '  ') + ('  <RemoveFolder Id="{0}" Directory="{1}" On="uninstall" />' -f $removeFolderId, $directoryId))
+            Add-Line (($indent + '  ') + ('  <RegistryValue Root="HKCU" Key="{0}" Name="{1}" Type="integer" Value="1" KeyPath="yes" />' -f $directoryRegistryKey, $directoryRegistryName))
+            Add-Line (($indent + '  ') + '</Component>')
             Add-Line ($indent + '</Directory>')
         }
     }
@@ -457,6 +472,50 @@ function Invoke-DotnetBuildMsi {
     return $msi.FullName
 }
 
+function Set-MsiPerUserNoElevationSummaryInfo {
+    param(
+        [string]$MsiPath
+    )
+
+    if (-not (Test-Path $MsiPath)) {
+        throw "Cannot stamp MSI summary information because '$MsiPath' does not exist."
+    }
+
+    $dtfAssemblyPath = Get-ChildItem -Path (Join-Path $env:USERPROFILE ".nuget\\packages\\wixtoolset.sdk") `
+        -Directory `
+        -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "tools\\net6.0\\WixToolset.Dtf.WindowsInstaller.dll" } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($dtfAssemblyPath)) {
+        throw "Could not locate WixToolset.Dtf.WindowsInstaller.dll to stamp MSI summary information."
+    }
+
+    Add-Type -Path $dtfAssemblyPath
+
+    $database = [WixToolset.Dtf.WindowsInstaller.Database]::new(
+        $MsiPath,
+        [WixToolset.Dtf.WindowsInstaller.DatabaseOpenMode]::Transact)
+
+    try {
+        $summaryInfo = $database.SummaryInfo
+        try {
+            $summaryInfo.WordCount = 10
+            $summaryInfo.Persist()
+        }
+        finally {
+            $summaryInfo.Dispose()
+        }
+
+        $database.Commit()
+    }
+    finally {
+        $database.Dispose()
+    }
+}
+
 function Invoke-DotnetPublishSingleFile {
     param(
         [string]$ProjectPath,
@@ -489,7 +548,7 @@ function Invoke-DotnetPublishSingleFile {
         "--self-contained",
         "true",
         "-p:PublishSingleFile=true",
-        "-p:EnableCompressionInSingleFile=false",
+        "-p:EnableCompressionInSingleFile=true",
         "-p:IncludeNativeLibrariesForSelfExtract=true",
         "-p:RestoreIgnoreFailedSources=true",
         "-p:NuGetAudit=false",
@@ -544,6 +603,7 @@ $signingConfiguration = Resolve-CodeSigningConfiguration `
 Reset-PackageOutputDirectory -DirectoryPath $packagePath
 Remove-Item -Recurse -Force $installerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiTemp -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force $msiBuildOutputPath -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
 
 & $publishScript -Configuration $Configuration -Runtime $Runtime -OutputRoot ".artifacts\publish\$Runtime" -FrameworkDependent:$FrameworkDependent
@@ -563,13 +623,15 @@ $installerMsiBuiltPath = Invoke-DotnetBuildMsi `
     -ProjectPath $msiProjectPath `
     -ProductVersion (([xml](Get-Content -Path (Join-Path $repoRoot "Directory.Build.props"))).Project.PropertyGroup.Version.Trim()) `
     -GeneratedWixSource $msiGeneratedAuthoringPath `
-    -OutputDirectory $msiTemp
+    -OutputDirectory $msiBuildOutputPath
+Set-MsiPerUserNoElevationSummaryInfo -MsiPath $installerMsiBuiltPath
 
 Sign-ArtifactFiles `
     -SigningConfiguration $signingConfiguration `
     -FilePaths @(
         (Join-Path $publishedAppPath "MeetingRecorder.App.exe"),
-        (Join-Path $publishedAppPath "MeetingRecorder.ProcessingWorker.exe")
+        (Join-Path $publishedAppPath "MeetingRecorder.ProcessingWorker.exe"),
+        (Join-Path $publishedAppPath "AppPlatform.Deployment.Cli.exe")
     )
 
 $publishedPowerShellScripts = Get-ChildItem -Path $publishedAppPath -Filter "*.ps1" -File -ErrorAction SilentlyContinue |
@@ -577,6 +639,12 @@ $publishedPowerShellScripts = Get-ChildItem -Path $publishedAppPath -Filter "*.p
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths $publishedPowerShellScripts
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($installerPublishedExecutable)
 
+$publishedReleaseSourceMetadataPath = Join-Path $publishedAppPath "release-source.json"
+if (-not (Test-Path $publishedReleaseSourceMetadataPath)) {
+    throw "Portable publish is missing release-source.json at '$publishedReleaseSourceMetadataPath'. Rebuild the portable bundle before packaging installer assets."
+}
+
+New-Item -ItemType Directory -Force -Path $stagingPath | Out-Null
 New-Item -ItemType Directory -Force -Path $bundleRoot | Out-Null
 Copy-Item -Path (Join-Path $publishedAppPath "*") -Destination $bundleRoot -Recurse -Force
 Copy-Item -Path (Join-Path $PSScriptRoot "Run-MeetingRecorder.cmd") -Destination (Join-Path $stagingPath "Run-MeetingRecorder.cmd") -Force
@@ -595,6 +663,7 @@ $installerExecutablePath = Publish-StableAsset -SourcePath $installerPublishedEx
 $installerMsiPath = Publish-StableAsset -SourcePath $installerMsiBuiltPath -PreferredPath $installerMsiPath
 $bootstrapCommandPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.cmd") -PreferredPath $bootstrapCommandPath
 $bootstrapScriptPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.ps1") -PreferredPath $bootstrapScriptPath
+$releaseSourceMetadataPath = Publish-StableAsset -SourcePath $publishedReleaseSourceMetadataPath -PreferredPath $releaseSourceMetadataPath
 
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($bootstrapScriptPath)
 

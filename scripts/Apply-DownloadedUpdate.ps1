@@ -10,103 +10,91 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$progressId = 4201
-$tempRoot = Join-Path $env:TEMP ("MeetingRecorder-UpdateApply-" + [Guid]::NewGuid().ToString("N"))
-$extractPath = Join-Path $tempRoot "extract"
+$ProgressPreference = "SilentlyContinue"
 
-function Set-UpdateProgress {
+function New-InstallerLogPath {
     param(
-        [int]$PercentComplete,
-        [string]$Status
+        [string]$OperationName
     )
 
-    Write-Progress -Id $progressId -Activity "Updating Meeting Recorder" -Status $Status -PercentComplete $PercentComplete
+    $logDirectory = Join-Path $env:TEMP "MeetingRecorderInstaller"
+    New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+    return Join-Path $logDirectory ("{0}-{1}.log" -f $OperationName, (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
 
-function Complete-UpdateProgress {
-    Write-Progress -Id $progressId -Activity "Updating Meeting Recorder" -Completed
-}
-
-function Wait-ForSourceProcessExit {
+function Write-InstallerLog {
     param(
-        [int]$ProcessId
+        [string]$Message
     )
 
-    if ($ProcessId -le 0) {
+    $timestamp = [DateTimeOffset]::Now.ToString("O")
+    Add-Content -Path $script:InstallerLogPath -Value "$timestamp $Message" -Encoding UTF8
+}
+
+function Pause-OnInstallerError {
+    if ($env:MEETINGRECORDER_SKIP_SCRIPT_PAUSE -eq "1") {
         return
     }
 
-    try {
-        $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-        if ($null -eq $process) {
-            return
-        }
-
-        Wait-Process -Id $ProcessId -Timeout 300 -ErrorAction Stop
-    }
-    catch {
-        Start-Sleep -Seconds 2
-    }
+    Write-Host ""
+    [void](Read-Host "The updater reported an error. Review the messages above, then press Enter to close this window")
 }
 
-function Invoke-StagedInstaller {
-    param(
-        [string]$InstallerPath,
-        [string]$InstallRoot,
-        [string]$ReleaseVersion,
-        [string]$ReleasePublishedAtUtc,
-        [long]$ReleaseAssetSizeBytes
-    )
+$script:InstallerLogPath = New-InstallerLogPath -OperationName "apply-update"
+Write-Host "Diagnostic log: $script:InstallerLogPath"
 
-    $parameters = @{
-        InstallRoot = $InstallRoot
+try {
+    Write-InstallerLog "Apply-DownloadedUpdate started."
+    $deploymentCliPath = Join-Path $PSScriptRoot "AppPlatform.Deployment.Cli.exe"
+    if (-not (Test-Path $deploymentCliPath)) {
+        throw "AppPlatform.Deployment.Cli.exe is missing from the installed app folder."
     }
 
+    Write-InstallerLog "Resolved deployment CLI path '$deploymentCliPath'."
+
+    $cliArguments = @(
+        "apply-update",
+        "--zip-path",
+        $ZipPath,
+        "--install-root",
+        $InstallRoot,
+        "--source-process-id",
+        $SourceProcessId.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        "--update-channel",
+        "AutoUpdate",
+        "--log-path",
+        $script:InstallerLogPath,
+        "--pause-on-error"
+    )
+
     if (-not [string]::IsNullOrWhiteSpace($ReleaseVersion)) {
-        $parameters.ReleaseVersion = $ReleaseVersion
+        $cliArguments += @("--release-version", $ReleaseVersion)
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ReleasePublishedAtUtc)) {
-        $parameters.ReleasePublishedAtUtc = $ReleasePublishedAtUtc
+        $cliArguments += @("--release-published-at-utc", $ReleasePublishedAtUtc)
     }
 
     if ($ReleaseAssetSizeBytes -gt 0) {
-        $parameters.ReleaseAssetSizeBytes = $ReleaseAssetSizeBytes
+        $cliArguments += @("--release-asset-size-bytes", $ReleaseAssetSizeBytes.ToString([System.Globalization.CultureInfo]::InvariantCulture))
     }
 
-    & $InstallerPath @parameters
+    Write-InstallerLog "Delegating update apply execution to AppPlatform.Deployment.Cli."
+    Write-Host "Delegating update apply execution to AppPlatform.Deployment.Cli..."
+    & $deploymentCliPath @cliArguments
+    $exitCode = $LASTEXITCODE
+    Write-InstallerLog "AppPlatform.Deployment.Cli exited with code $exitCode."
+    if ($exitCode -ne 0) {
+        Write-Host "Diagnostic log: $script:InstallerLogPath"
+        Pause-OnInstallerError
+    }
+
+    exit $exitCode
 }
-
-try {
-    if (-not (Test-Path $ZipPath)) {
-        throw "The downloaded update package '$ZipPath' could not be found."
-    }
-
-    Set-UpdateProgress -PercentComplete 10 -Status "Waiting for the current app process to close..."
-    Wait-ForSourceProcessExit -ProcessId $SourceProcessId
-
-    New-Item -ItemType Directory -Force -Path $extractPath | Out-Null
-
-    Set-UpdateProgress -PercentComplete 45 -Status "Extracting the downloaded update package..."
-    Expand-Archive -Path $ZipPath -DestinationPath $extractPath -Force
-
-    $installerPath = Join-Path $extractPath "Install-MeetingRecorder.ps1"
-    if (-not (Test-Path $installerPath)) {
-        throw "The downloaded update package did not contain Install-MeetingRecorder.ps1."
-    }
-
-    Set-UpdateProgress -PercentComplete 80 -Status "Installing the updated app files..."
-    Invoke-StagedInstaller `
-        -InstallerPath $installerPath `
-        -InstallRoot $InstallRoot `
-        -ReleaseVersion $ReleaseVersion `
-        -ReleasePublishedAtUtc $ReleasePublishedAtUtc `
-        -ReleaseAssetSizeBytes $ReleaseAssetSizeBytes
-
-    Set-UpdateProgress -PercentComplete 100 -Status "Update complete."
-}
-finally {
-    Complete-UpdateProgress
-    Remove-Item -Recurse -Force $tempRoot -ErrorAction SilentlyContinue
-    Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+catch {
+    Write-InstallerLog ("Apply-DownloadedUpdate failed: " + $_.Exception.ToString())
+    Write-Error $_
+    Write-Host "Diagnostic log: $script:InstallerLogPath"
+    Pause-OnInstallerError
+    exit 1
 }

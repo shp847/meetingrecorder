@@ -36,6 +36,21 @@ public sealed class AutoStartRegistrationServiceTests
         Assert.True(store.RemoveWasCalled);
     }
 
+    [Fact]
+    public void SyncRegistration_Wraps_Command_Launchers_With_CmdExe_When_Enabled()
+    {
+        var store = new FakeAutoStartRegistrationStore();
+        var service = new AutoStartRegistrationService(store);
+
+        service.SyncRegistration(
+            enabled: true,
+            executablePath: @"C:\Portable Apps\MeetingRecorder\Run-MeetingRecorder.cmd");
+
+        Assert.Equal(
+            "cmd.exe /c \"\\\"C:\\Portable Apps\\MeetingRecorder\\Run-MeetingRecorder.cmd\\\"\"",
+            store.StoredCommand);
+    }
+
     private sealed class FakeAutoStartRegistrationStore : IAutoStartRegistrationStore
     {
         public string? StoredCommand { get; set; }

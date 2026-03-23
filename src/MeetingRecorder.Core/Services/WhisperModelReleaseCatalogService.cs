@@ -39,6 +39,7 @@ public sealed class WhisperModelReleaseCatalogService
             .Where(asset => asset is not null)
             .Select(asset => asset!)
             .OrderByDescending(asset => asset.IsRecommended)
+            .ThenByDescending(asset => asset.FileSizeBytes ?? -1L)
             .ThenBy(asset => GetRecommendationPriority(asset.FileName))
             .ThenBy(asset => asset.FileName, StringComparer.OrdinalIgnoreCase)
             .ToArray();

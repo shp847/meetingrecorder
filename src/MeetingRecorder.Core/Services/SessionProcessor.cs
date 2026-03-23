@@ -7,6 +7,9 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class SessionProcessor
 {
+    private static readonly IReadOnlyList<SpeakerIdentity> EmptySpeakers = Array.Empty<SpeakerIdentity>();
+    private static readonly IReadOnlyList<SpeakerTurn> EmptySpeakerTurns = Array.Empty<SpeakerTurn>();
+
     public SessionProcessor(
         SessionManifestStore manifestStore,
         ArtifactPathBuilder pathBuilder,
@@ -106,6 +109,9 @@ public sealed class SessionProcessor
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
         IReadOnlyList<TranscriptSegment> transcriptSegments = transcription.Segments;
+        IReadOnlyList<SpeakerIdentity> speakers = EmptySpeakers;
+        IReadOnlyList<SpeakerTurn> speakerTurns = EmptySpeakerTurns;
+        DiarizationMetadata? diarizationMetadata = null;
         try
         {
             manifest = manifest with
@@ -116,6 +122,9 @@ public sealed class SessionProcessor
 
             var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(sourceAudioPath, transcription.Segments, cancellationToken);
             transcriptSegments = diarization.Segments;
+            speakers = diarization.Speakers ?? EmptySpeakers;
+            speakerTurns = diarization.SpeakerTurns ?? EmptySpeakerTurns;
+            diarizationMetadata = diarization.Metadata;
             manifest = manifest with
             {
                 DiarizationStatus = new ProcessingStageStatus(
@@ -133,6 +142,19 @@ public sealed class SessionProcessor
             };
         }
 
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+
+        manifest = manifest with
+        {
+            ProcessingMetadata = new MeetingProcessingMetadata(
+                Path.GetFileName(config.TranscriptionModelPath),
+                transcriptSegments.Any(segment =>
+                    !string.IsNullOrWhiteSpace(segment.SpeakerId) ||
+                    !string.IsNullOrWhiteSpace(segment.SpeakerLabel)),
+                speakers,
+                speakerTurns,
+                diarizationMetadata),
+        };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
         var markdownPath = Path.Combine(processingRoot, $"{stem}.md");
@@ -160,7 +182,6 @@ public sealed class SessionProcessor
             manifest = manifest with
             {
                 State = SessionState.Published,
-                EndedAtUtc = DateTimeOffset.UtcNow,
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Artifacts published."),
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);

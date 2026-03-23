@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
     Name="Meeting Recorder"
     Manufacturer="Meeting Recorder"
     Version="$(var.ProductVersion)"
     UpgradeCode="F0C6921D-2F56-4BB2-96A1-62FCB7E4C936"
     Language="1033"
-    Scope="perMachine"
+    Scope="perUser"
     InstallerVersion="500"
     Compressed="yes">
 
@@ -16,44 +17,91 @@
 
     <Icon Id="ProductIcon" SourceFile="..\MeetingRecorder.App\Assets\MeetingRecorder.ico" />
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="ARPINSTALLLOCATION" Secure="yes" />
+    <Property Id="MsiLogging" Value="voicewarmup!" />
+    <Property Id="PHYSICALUSERPROFILE" Secure="yes">
+      <RegistrySearch
+        Id="SearchPhysicalUserProfile"
+        Root="HKCU"
+        Key="Volatile Environment"
+        Name="USERPROFILE"
+        Type="raw" />
+    </Property>
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Meeting Recorder is installed and ready to use." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Meeting Recorder" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="INSTALLFOLDER" Value="[PHYSICALUSERPROFILE]\Documents\MeetingRecorder" After="AppSearch" Sequence="both" Condition="PHYSICALUSERPROFILE" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
+    <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]Launch-MeetingRecorder-AfterInstall.vbs" After="CostFinalize" Sequence="ui" />
 
-    <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Meeting Recorder" />
+    <CustomAction
+      Id="LaunchApplication"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixShellExec"
+      Impersonate="yes"
+      Return="ignore" />
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <UI>
+      <Publish
+        Dialog="WelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="VerifyReadyDlg"
+        Order="999"
+        Condition="1" />
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="WelcomeDlg"
+        Order="999"
+        Condition="1" />
+      <Publish
+        Dialog="ExitDialog"
+        Control="Finish"
+        Event="DoAction"
+        Value="LaunchApplication"
+        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+    <StandardDirectory Id="TARGETDIR">
+      <Directory Id="INSTALLFOLDER" Name="MeetingRecorder" />
     </StandardDirectory>
 
+<?if $(var.HasHarvestedAppFiles) = true ?>
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ApplicationProgramsFolder" Name="Meeting Recorder" />
     </StandardDirectory>
-
-    <StandardDirectory Id="DesktopFolder" />
+<?endif ?>
 
     <Feature Id="MainFeature" Title="Meeting Recorder" Level="1" AllowAdvertise="no">
-      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="$(var.AppFilesComponentGroupId)" />
+      <ComponentRef Id="InstallFolderCleanupComponent" />
+<?if $(var.HasHarvestedAppFiles) = true ?>
       <ComponentRef Id="StartMenuShortcutComponent" />
-      <ComponentRef Id="DesktopShortcutComponent" />
+<?endif ?>
     </Feature>
 
-    <Component Id="StartMenuShortcutComponent" Directory="ApplicationProgramsFolder" Guid="5F825DA0-E8CE-4C69-BF26-06A4E8C7B7FC">
+    <Component Id="InstallFolderCleanupComponent" Directory="INSTALLFOLDER" Guid="2E95628E-D3E9-4429-B237-B0A28F6A37D2">
+      <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="InstallFolderCleanup" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+<?if $(var.HasHarvestedAppFiles) = true ?>
+    <Component Id="StartMenuShortcutComponent" Directory="ApplicationProgramsFolder" Guid="A2129A35-BE1D-4F84-9F28-0D147755A4CD">
       <Shortcut
-        Id="StartMenuShortcut"
+        Id="StartMenuMeetingRecorderShortcut"
         Name="Meeting Recorder"
         Description="Meeting Recorder"
         Target="[INSTALLFOLDER]MeetingRecorder.App.exe"
         WorkingDirectory="INSTALLFOLDER"
-        Icon="ProductIcon" />
+        Icon="ProductIcon"
+        Advertise="no" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>
-
-    <Component Id="DesktopShortcutComponent" Directory="DesktopFolder" Guid="80F0F300-EE57-41DD-BD19-E10E4BFF6D9A">
-      <Shortcut
-        Id="DesktopShortcut"
-        Name="Meeting Recorder"
-        Description="Meeting Recorder"
-        Target="[INSTALLFOLDER]MeetingRecorder.App.exe"
-        WorkingDirectory="INSTALLFOLDER"
-        Icon="ProductIcon" />
-      <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
-    </Component>
+<?endif ?>
   </Package>
 </Wix>

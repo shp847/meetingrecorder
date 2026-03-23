@@ -64,14 +64,15 @@ public sealed class SessionManifestStore
         var manifest = JsonSerializer.Deserialize<MeetingSessionManifest>(json, SerializerOptions)
             ?? throw new InvalidOperationException($"Unable to deserialize manifest '{manifestPath}'.");
 
-        return Task.FromResult(manifest);
+        return Task.FromResult(NormalizeManifest(manifest));
     }
 
     public Task SaveAsync(MeetingSessionManifest manifest, string manifestPath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(manifestPath) ?? throw new InvalidOperationException("Manifest path must include a directory."));
-        var json = JsonSerializer.Serialize(manifest, SerializerOptions);
+        var normalizedManifest = NormalizeManifest(manifest);
+        var json = JsonSerializer.Serialize(normalizedManifest, SerializerOptions);
         File.WriteAllText(manifestPath, json);
         return Task.CompletedTask;
     }
@@ -106,6 +107,69 @@ public sealed class SessionManifestStore
         CancellationToken cancellationToken)
     {
         await SaveAsync(manifest, manifestPath, cancellationToken);
-        return manifest;
+        return NormalizeManifest(manifest);
+    }
+
+    private static MeetingSessionManifest NormalizeManifest(MeetingSessionManifest manifest)
+    {
+        return manifest with
+        {
+            KeyAttendees = MeetingMetadataNameMatcher.MergeNames(manifest.KeyAttendees, Array.Empty<string>()),
+            Attendees = NormalizeAttendees(manifest.Attendees),
+        };
+    }
+
+    private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<MeetingAttendee>? attendees)
+    {
+        if (attendees is null || attendees.Count == 0)
+        {
+            return Array.Empty<MeetingAttendee>();
+        }
+
+        var merged = new List<(string Name, List<MeetingAttendeeSource> Sources)>();
+        foreach (var attendee in attendees)
+        {
+            if (string.IsNullOrWhiteSpace(attendee.Name))
+            {
+                continue;
+            }
+
+            var normalizedName = MeetingMetadataNameMatcher.NormalizeDisplayName(attendee.Name);
+            var existingIndex = merged.FindIndex(existing =>
+                MeetingMetadataNameMatcher.AreReasonableMatch(existing.Name, normalizedName));
+            if (existingIndex < 0)
+            {
+                var newSources = attendee.Sources.Distinct().ToList();
+                if (newSources.Count == 0)
+                {
+                    newSources.Add(MeetingAttendeeSource.Unknown);
+                }
+
+                merged.Add((normalizedName, newSources));
+                continue;
+            }
+
+            var existing = merged[existingIndex];
+            var preferredName = MeetingMetadataNameMatcher.ChoosePreferredDisplayName(existing.Name, normalizedName);
+            var existingSources = existing.Sources;
+            foreach (var source in attendee.Sources.Distinct())
+            {
+                if (!existingSources.Contains(source))
+                {
+                    existingSources.Add(source);
+                }
+            }
+
+            if (existingSources.Count == 0)
+            {
+                existingSources.Add(MeetingAttendeeSource.Unknown);
+            }
+
+            merged[existingIndex] = (preferredName, existingSources);
+        }
+
+        return merged
+            .Select(item => new MeetingAttendee(item.Name, item.Sources.ToArray()))
+            .ToArray();
     }
 }

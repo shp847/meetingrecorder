@@ -22,13 +22,20 @@ public sealed class MeetingDetectionEvaluator
         var meetConfidence = 0d;
         string? title = null;
         var hasAudioActivity = false;
+        var hasUnverifiedBrowserAudio = false;
         var suppressedTeamsWindowDetected = false;
+        var genericTeamsShellDetected = false;
 
         foreach (var signal in signals)
         {
-            if (string.Equals(signal.Source, "audio-activity", StringComparison.OrdinalIgnoreCase))
+            if (IsActiveAudioSignal(signal))
             {
                 hasAudioActivity = true;
+            }
+
+            if (string.Equals(signal.Source, "audio-browser-unverified", StringComparison.OrdinalIgnoreCase))
+            {
+                hasUnverifiedBrowserAudio = true;
             }
 
             var normalized = signal.Value.ToLowerInvariant();
@@ -37,8 +44,15 @@ public sealed class MeetingDetectionEvaluator
                 if (string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) &&
                     IsSuppressedTeamsWindowTitle(signal.Value))
                 {
+                    title ??= TryExtractTeamsAttendeeTitle(signal.Value);
                     suppressedTeamsWindowDetected = true;
                     continue;
+                }
+
+                if (string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) &&
+                    IsGenericTeamsShellTitle(signal.Value))
+                {
+                    genericTeamsShellDetected = true;
                 }
 
                 teamsConfidence += signal.Weight;
@@ -46,7 +60,8 @@ public sealed class MeetingDetectionEvaluator
             }
 
             if (normalized.Contains("google meet", StringComparison.Ordinal) ||
-                normalized.Contains("meet.google.com", StringComparison.Ordinal))
+                normalized.Contains("meet.google.com", StringComparison.Ordinal) ||
+                normalized.StartsWith("meet -", StringComparison.Ordinal))
             {
                 meetConfidence += signal.Weight;
                 title ??= CleanTitle(signal.Value, "Google Meet");
@@ -60,13 +75,19 @@ public sealed class MeetingDetectionEvaluator
                     : MeetingPlatform.Unknown;
 
         var confidence = Math.Min(1d, Math.Max(meetConfidence, teamsConfidence));
+        if (platform == MeetingPlatform.Teams && genericTeamsShellDetected)
+        {
+            confidence = 0.74d;
+        }
+
         var shouldKeepRecording = confidence >= 0.75d &&
             platform != MeetingPlatform.Unknown &&
-            !suppressedTeamsWindowDetected;
+            !suppressedTeamsWindowDetected &&
+            !genericTeamsShellDetected;
         var shouldStart = shouldKeepRecording && hasAudioActivity;
         var reason = shouldStart
             ? "Detection confidence met the recording threshold and active system audio was present."
-            : BuildReason(confidence, platform, hasAudioActivity, suppressedTeamsWindowDetected);
+            : BuildReason(confidence, platform, hasAudioActivity, hasUnverifiedBrowserAudio, suppressedTeamsWindowDetected, genericTeamsShellDetected);
 
         return new DetectionDecision(
             platform,
@@ -82,16 +103,28 @@ public sealed class MeetingDetectionEvaluator
         double confidence,
         MeetingPlatform platform,
         bool hasAudioActivity,
-        bool suppressedTeamsWindowDetected)
+        bool hasUnverifiedBrowserAudio,
+        bool suppressedTeamsWindowDetected,
+        bool genericTeamsShellDetected)
     {
         if (suppressedTeamsWindowDetected)
         {
             return "The detected Teams window appears to be a chat or navigation view, not an active meeting.";
         }
 
+        if (genericTeamsShellDetected)
+        {
+            return "The detected Teams window appears to be a generic Teams shell, not a specific active meeting.";
+        }
+
         if (platform == MeetingPlatform.Unknown || confidence < 0.75d)
         {
             return "Detection confidence did not meet the recording threshold.";
+        }
+
+        if (platform == MeetingPlatform.GoogleMeet && hasUnverifiedBrowserAudio)
+        {
+            return "Google Meet-like window detected, but the active browser audio could not be attributed to the Meet tab.";
         }
 
         if (!hasAudioActivity)
@@ -100,6 +133,13 @@ public sealed class MeetingDetectionEvaluator
         }
 
         return "Detection did not meet the recording criteria.";
+    }
+
+    private static bool IsActiveAudioSignal(DetectionSignal signal)
+    {
+        return signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) &&
+            signal.Weight > 0d;
     }
 
     private static string CleanTitle(string value, string suffix)
@@ -119,6 +159,30 @@ public sealed class MeetingDetectionEvaluator
             normalized.StartsWith("files |", StringComparison.Ordinal) ||
             normalized.StartsWith("approvals |", StringComparison.Ordinal) ||
             normalized.StartsWith("assignments |", StringComparison.Ordinal) ||
-            normalized.StartsWith("calls |", StringComparison.Ordinal);
+            normalized.StartsWith("calls |", StringComparison.Ordinal) ||
+            normalized.StartsWith("search |", StringComparison.Ordinal);
+    }
+
+    private static bool IsGenericTeamsShellTitle(string value)
+    {
+        var normalized = CleanTitle(value, "Microsoft Teams").Trim();
+        return normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryExtractTeamsAttendeeTitle(string value)
+    {
+        const string chatPrefix = "Chat |";
+        const string teamsSuffix = "| Microsoft Teams";
+
+        var trimmed = value.Trim();
+        if (!trimmed.StartsWith(chatPrefix, StringComparison.OrdinalIgnoreCase) ||
+            !trimmed.EndsWith(teamsSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var attendeeTitle = trimmed[chatPrefix.Length..^teamsSuffix.Length].Trim().Trim('|', ' ');
+        return string.IsNullOrWhiteSpace(attendeeTitle) ? null : attendeeTitle;
     }
 }

@@ -33,6 +33,7 @@ internal sealed class RecordingSessionCoordinator
         string title,
         IReadOnlyList<DetectionSignal> detectionEvidence,
         bool autoStarted,
+        DetectedAudioSource? detectedAudioSource = null,
         CancellationToken cancellationToken = default)
     {
         if (ActiveSession is not null)
@@ -42,6 +43,13 @@ internal sealed class RecordingSessionCoordinator
 
         var currentConfig = _config.Current;
         var initialManifest = await _manifestStore.CreateAsync(currentConfig.WorkDir, platform, title, detectionEvidence, cancellationToken);
+        if (detectedAudioSource is not null)
+        {
+            initialManifest = initialManifest with
+            {
+                DetectedAudioSource = detectedAudioSource,
+            };
+        }
         var sessionRoot = _pathBuilder.BuildSessionRoot(currentConfig.WorkDir, initialManifest.SessionId);
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         var rawDir = Path.Combine(sessionRoot, "raw");
@@ -150,6 +158,114 @@ internal sealed class RecordingSessionCoordinator
         await _manifestStore.SaveAsync(updatedManifest, ActiveSession.ManifestPath, cancellationToken);
         ActiveSession.Manifest = updatedManifest;
         _logger.Log($"Active session '{updatedManifest.SessionId}' renamed to '{trimmedTitle}'.");
+        return true;
+    }
+
+    public async Task<bool> UpdateActiveSessionMetadataAsync(
+        string title,
+        string? projectName,
+        IReadOnlyList<string> keyAttendees,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (ActiveSession is null)
+        {
+            return false;
+        }
+
+        var trimmedTitle = title.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedTitle))
+        {
+            throw new ArgumentException("A meeting title is required.", nameof(title));
+        }
+
+        var normalizedProjectName = string.IsNullOrWhiteSpace(projectName)
+            ? null
+            : projectName.Trim();
+        var normalizedKeyAttendees = MeetingMetadataNameMatcher.MergeNames(keyAttendees, Array.Empty<string>());
+        var updatedManifest = ActiveSession.Manifest with
+        {
+            DetectedTitle = trimmedTitle,
+            ProjectName = normalizedProjectName,
+            KeyAttendees = normalizedKeyAttendees,
+        };
+        if (updatedManifest == ActiveSession.Manifest)
+        {
+            return false;
+        }
+
+        await _manifestStore.SaveAsync(updatedManifest, ActiveSession.ManifestPath, cancellationToken);
+        ActiveSession.Manifest = updatedManifest;
+        _logger.Log(
+            $"Updated active session '{updatedManifest.SessionId}' metadata. " +
+            $"Title='{trimmedTitle}', Project='{normalizedProjectName ?? string.Empty}', KeyAttendees={normalizedKeyAttendees.Count}.");
+        return true;
+    }
+
+    public async Task<bool> ReclassifyActiveSessionAsync(
+        MeetingPlatform platform,
+        IReadOnlyList<DetectionSignal> detectionEvidence,
+        DetectedAudioSource? detectedAudioSource = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (ActiveSession is null ||
+            platform == MeetingPlatform.Unknown ||
+            platform == ActiveSession.Manifest.Platform)
+        {
+            return false;
+        }
+
+        var previousPlatform = ActiveSession.Manifest.Platform;
+        var updatedManifest = ActiveSession.Manifest with
+        {
+            Platform = platform,
+            DetectionEvidence = detectionEvidence.ToArray(),
+            DetectedAudioSource = detectedAudioSource ?? ActiveSession.Manifest.DetectedAudioSource,
+        };
+
+        await _manifestStore.SaveAsync(updatedManifest, ActiveSession.ManifestPath, cancellationToken);
+        ActiveSession.Manifest = updatedManifest;
+        _logger.Log(
+            $"Active session '{updatedManifest.SessionId}' reclassified from '{previousPlatform}' to '{platform}'.");
+        return true;
+    }
+
+    public async Task<bool> MergeActiveSessionAttendeesAsync(
+        string expectedSessionId,
+        IReadOnlyList<MeetingAttendee> attendees,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (ActiveSession is null ||
+            !string.Equals(ActiveSession.Manifest.SessionId, expectedSessionId, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (attendees.Count == 0)
+        {
+            return false;
+        }
+
+        var updatedManifest = await TeamsLiveAttendeeCaptureService.MergeAttendeesIntoManifestAsync(
+            _manifestStore,
+            ActiveSession.Manifest,
+            ActiveSession.ManifestPath,
+            attendees,
+            cancellationToken);
+
+        if (ReferenceEquals(updatedManifest, ActiveSession.Manifest))
+        {
+            return false;
+        }
+
+        ActiveSession.Manifest = updatedManifest;
+        _logger.Log(
+            $"Updated active session '{updatedManifest.SessionId}' with {updatedManifest.Attendees.Count} persisted attendee(s) from live Teams capture.");
         return true;
     }
 

@@ -11,6 +11,7 @@ internal sealed class ProcessingQueueService
 {
     private readonly LiveAppConfig _config;
     private readonly SessionManifestStore _manifestStore;
+    private readonly IMeetingMetadataEnricher _meetingMetadataEnricher;
     private readonly FileLogWriter _logger;
     private readonly Func<WorkerLaunch> _workerLaunchResolver;
     private readonly IWorkerProcessFactory _workerProcessFactory;
@@ -29,11 +30,13 @@ internal sealed class ProcessingQueueService
         LiveAppConfig config,
         SessionManifestStore manifestStore,
         FileLogWriter logger,
+        IMeetingMetadataEnricher? meetingMetadataEnricher = null,
         Func<WorkerLaunch>? workerLaunchResolver = null,
         IWorkerProcessFactory? workerProcessFactory = null)
     {
         _config = config;
         _manifestStore = manifestStore;
+        _meetingMetadataEnricher = meetingMetadataEnricher ?? new PassthroughMeetingMetadataEnricher();
         _logger = logger;
         _workerLaunchResolver = workerLaunchResolver ?? WorkerLocator.Resolve;
         _workerProcessFactory = workerProcessFactory ?? new SystemWorkerProcessFactory();
@@ -116,6 +119,10 @@ internal sealed class ProcessingQueueService
         catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
         {
         }
+        catch (Exception exception) when (_shutdownCts.IsCancellationRequested)
+        {
+            _logger.Log($"Ignoring queued processing failure during shutdown: {exception.Message}");
+        }
     }
 
     private async Task DrainQueueAsync(CancellationToken cancellationToken)
@@ -137,6 +144,7 @@ internal sealed class ProcessingQueueService
 
     private async Task ProcessManifestAsync(string manifestPath, CancellationToken cancellationToken)
     {
+        await TryEnrichManifestAsync(manifestPath, cancellationToken);
         var launch = _workerLaunchResolver();
         var arguments = $"{launch.ArgumentPrefix} --manifest \"{manifestPath}\" --config \"{AppDataPaths.GetConfigPath()}\"";
         var startInfo = new ProcessStartInfo
@@ -189,6 +197,28 @@ internal sealed class ProcessingQueueService
         {
             ClearCurrentWorker(process);
             process.Dispose();
+        }
+    }
+
+    private async Task TryEnrichManifestAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        if (!_config.Current.MeetingAttendeeEnrichmentEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+            await _meetingMetadataEnricher.TryEnrichAsync(manifest, manifestPath, cancellationToken);
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Attendee enrichment failed for '{manifestPath}': {exception.Message}");
         }
     }
 

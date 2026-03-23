@@ -1,0 +1,35 @@
+{
+  "productId": "meeting-recorder",
+  "productName": "Meeting Recorder",
+  "displayName": "Meeting Recorder",
+  "executableName": "MeetingRecorder.App.exe",
+  "portableLauncherFileName": "Run-MeetingRecorder.cmd",
+  "installerExecutableName": "MeetingRecorderInstaller.exe",
+  "installerMsiName": "MeetingRecorderInstaller.msi",
+  "portableArchivePrefix": "MeetingRecorder",
+  "updateFeedUrl": "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+  "releasePageUrl": "https://github.com/shp847/meetingrecorder/releases",
+  "gitHubRepositoryOwner": "shp847",
+  "gitHubRepositoryName": "meetingrecorder",
+  "managedInstallLayout": {
+    "installRoot": "%USERPROFILE%\\Documents\\MeetingRecorder",
+    "dataRoot": "%LOCALAPPDATA%\\MeetingRecorder",
+    "configPath": "%LOCALAPPDATA%\\MeetingRecorder\\config\\appsettings.json",
+    "preservedDataDirectories": [ "config", "logs", "audio", "transcripts", "work" ],
+    "mergeWithoutOverwriteDirectories": [ "models" ],
+    "legacyInstallRoots": [ "%LOCALAPPDATA%\\Programs\\Meeting Recorder" ]
+  },
+  "releaseChannelPolicy": {
+    "supportsPerUserMsi": true,
+    "supportsPortableZip": true,
+    "supportsCommandBootstrap": true,
+    "supportsExecutableBootstrap": true,
+    "supportsAutoUpgrade": true
+  },
+  "shortcutPolicy": {
+    "displayName": "Meeting Recorder",
+    "desktopShortcutFileName": "Meeting Recorder.lnk",
+    "startMenuShortcutFileName": "Meeting Recorder.lnk",
+    "runRegistryEntryName": "MeetingRecorder"
+  }
+}

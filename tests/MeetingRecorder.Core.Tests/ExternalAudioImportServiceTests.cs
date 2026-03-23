@@ -47,12 +47,13 @@ public sealed class ExternalAudioImportServiceTests
         var config = CreateConfig(root);
         Directory.CreateDirectory(config.AudioOutputDir);
         Directory.CreateDirectory(config.TranscriptOutputDir);
+        Directory.CreateDirectory(Path.Combine(config.TranscriptOutputDir, "json"));
         Directory.CreateDirectory(config.WorkDir);
 
         var sourcePath = Path.Combine(config.AudioOutputDir, "Voice Memo 17.wav");
         await WriteSilentWaveFileAsync(sourcePath, TimeSpan.FromSeconds(2));
         File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddMinutes(-5));
-        await File.WriteAllTextAsync(Path.Combine(config.TranscriptOutputDir, "Voice Memo 17.md"), "# Voice Memo 17");
+        await File.WriteAllTextAsync(Path.Combine(config.TranscriptOutputDir, "json", "Voice Memo 17.ready"), "ready");
 
         var service = new ExternalAudioImportService(new ArtifactPathBuilder());
 
@@ -134,6 +135,47 @@ public sealed class ExternalAudioImportServiceTests
         Assert.Equal(MeetingPlatform.Teams, manifest.Platform);
         Assert.Equal("Test Call 3", manifest.DetectedTitle);
         Assert.Equal(new DateTimeOffset(2026, 3, 16, 0, 46, 45, TimeSpan.Zero), manifest.StartedAtUtc);
+    }
+
+    [Fact]
+    public async Task ImportPendingAudioFilesAsync_Skips_AppPublished_Audio_When_A_Normal_Session_Already_Exists_For_The_Same_Meeting()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var config = CreateConfig(root);
+        Directory.CreateDirectory(config.AudioOutputDir);
+        Directory.CreateDirectory(config.TranscriptOutputDir);
+        Directory.CreateDirectory(config.WorkDir);
+
+        var sourcePath = Path.Combine(config.AudioOutputDir, "2026-03-19_143250_teams_chao-adam.wav");
+        await WriteSilentWaveFileAsync(sourcePath, TimeSpan.FromSeconds(2));
+        File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddMinutes(-5));
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var existingManifest = await manifestStore.CreateAsync(
+            config.WorkDir,
+            MeetingPlatform.Teams,
+            "Chao Adam",
+            Array.Empty<DetectionSignal>());
+
+        var sessionRoot = pathBuilder.BuildSessionRoot(config.WorkDir, existingManifest.SessionId);
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await manifestStore.SaveAsync(
+            existingManifest with
+            {
+                StartedAtUtc = new DateTimeOffset(2026, 3, 19, 14, 32, 50, TimeSpan.Zero),
+                State = SessionState.Processing,
+                MergedAudioPath = Path.Combine(sessionRoot, "processing", "merged.wav"),
+                ImportedSourceAudio = null,
+            },
+            manifestPath);
+
+        var service = new ExternalAudioImportService(pathBuilder);
+
+        var imported = await service.ImportPendingAudioFilesAsync(config, DateTimeOffset.UtcNow);
+
+        Assert.Empty(imported);
+        Assert.True(File.Exists(sourcePath));
     }
 
     private static AppConfig CreateConfig(string root)

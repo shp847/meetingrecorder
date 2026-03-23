@@ -32,7 +32,10 @@ internal static class Program
                 pathBuilder,
                 new WaveChunkMerger(),
                 new WhisperNetTranscriptionProvider(config.TranscriptionModelPath, logger),
-                new OptionalSidecarDiarizationProvider(config.DiarizationAssetPath, logger),
+                new LocalSpeakerDiarizationProvider(
+                    config.DiarizationAssetPath,
+                    config.DiarizationAccelerationPreference,
+                    logger),
                 new TranscriptRenderer(),
                 new FilePublishService());
 

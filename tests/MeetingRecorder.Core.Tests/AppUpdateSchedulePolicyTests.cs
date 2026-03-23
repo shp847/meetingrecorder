@@ -5,6 +5,51 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class AppUpdateSchedulePolicyTests
 {
     [Fact]
+    public void ShouldRunAutomaticCheck_Returns_True_For_Startup_When_Update_Checks_Are_Enabled()
+    {
+        var policy = new AppUpdateSchedulePolicy();
+
+        var shouldRun = policy.ShouldRunAutomaticCheck(
+            updateChecksEnabled: true,
+            lastCheckedUtc: DateTimeOffset.Parse("2026-03-19T16:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            nowUtc: DateTimeOffset.Parse("2026-03-19T16:05:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            cadence: TimeSpan.FromDays(1),
+            trigger: AppUpdateCheckTrigger.Startup);
+
+        Assert.True(shouldRun);
+    }
+
+    [Fact]
+    public void ShouldRunAutomaticCheck_Returns_True_For_Shutdown_When_Update_Checks_Are_Enabled()
+    {
+        var policy = new AppUpdateSchedulePolicy();
+
+        var shouldRun = policy.ShouldRunAutomaticCheck(
+            updateChecksEnabled: true,
+            lastCheckedUtc: DateTimeOffset.Parse("2026-03-19T16:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            nowUtc: DateTimeOffset.Parse("2026-03-19T16:05:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            cadence: TimeSpan.FromDays(1),
+            trigger: AppUpdateCheckTrigger.Shutdown);
+
+        Assert.True(shouldRun);
+    }
+
+    [Fact]
+    public void ShouldRunAutomaticCheck_Returns_False_When_Update_Checks_Are_Disabled()
+    {
+        var policy = new AppUpdateSchedulePolicy();
+
+        var shouldRun = policy.ShouldRunAutomaticCheck(
+            updateChecksEnabled: false,
+            lastCheckedUtc: null,
+            nowUtc: DateTimeOffset.Parse("2026-03-19T16:05:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            cadence: TimeSpan.FromDays(1),
+            trigger: AppUpdateCheckTrigger.Startup);
+
+        Assert.False(shouldRun);
+    }
+
+    [Fact]
     public void ShouldRunScheduledCheck_Returns_True_When_No_Check_Has_Run_Yet()
     {
         var policy = new AppUpdateSchedulePolicy();

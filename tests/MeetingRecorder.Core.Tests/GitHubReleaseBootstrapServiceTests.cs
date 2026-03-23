@@ -76,6 +76,31 @@ public sealed class GitHubReleaseBootstrapServiceTests
     }
 
     [Fact]
+    public async Task GetLatestReleaseAsync_Uses_AppZip_UpdatedAt_When_It_Is_Newer_Than_Release_PublishedAt()
+    {
+        var service = new GitHubReleaseBootstrapService(new FakeFeedClient("""
+            {
+              "tag_name": "e82258e",
+              "name": "Meeting Recorder v0.2",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/e82258e",
+              "published_at": "2026-03-17T19:28:22Z",
+              "assets": [
+                {
+                  "name": "MeetingRecorder-v0.2-win-x64.zip",
+                  "browser_download_url": "https://example.com/MeetingRecorder-v0.2-win-x64.zip",
+                  "size": 74220015,
+                  "updated_at": "2026-03-19T18:35:44Z"
+                }
+              ]
+            }
+            """));
+
+        var release = await service.GetLatestReleaseAsync("https://api.github.com/repos/shp847/meetingrecorder/releases/latest");
+
+        Assert.Equal(DateTimeOffset.Parse("2026-03-19T18:35:44Z", null, System.Globalization.DateTimeStyles.RoundtripKind), release.PublishedAtUtc);
+    }
+
+    [Fact]
     public async Task GetLatestReleaseAsync_Throws_When_No_Installer_Zip_Asset_Exists()
     {
         var service = new GitHubReleaseBootstrapService(new FakeFeedClient("""

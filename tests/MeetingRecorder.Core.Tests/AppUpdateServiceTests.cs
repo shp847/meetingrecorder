@@ -10,12 +10,12 @@ public sealed class AppUpdateServiceTests
     {
         var service = new AppUpdateService(new FakeUpdateFeedClient("""
             {
-              "tag_name": "v0.3",
-              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.3",
+              "tag_name": "v0.4",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.4",
               "assets": [
                 {
-                  "name": "MeetingRecorder-v0.3-win-x64.zip",
-                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip"
+                  "name": "MeetingRecorder-v0.4-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/v0.4/MeetingRecorder-v0.4-win-x64.zip"
                 }
               ]
             }
@@ -31,8 +31,8 @@ public sealed class AppUpdateServiceTests
             enabled: true);
 
         Assert.Equal(AppUpdateStatusKind.UpdateAvailable, result.Status);
-        Assert.Equal("0.3", result.LatestVersion);
-        Assert.Equal("https://github.com/shp847/meetingrecorder/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip", result.DownloadUrl);
+        Assert.Equal("0.4", result.LatestVersion);
+        Assert.Equal("https://github.com/shp847/meetingrecorder/releases/download/v0.4/MeetingRecorder-v0.4-win-x64.zip", result.DownloadUrl);
     }
 
     [Fact]
@@ -189,6 +189,41 @@ public sealed class AppUpdateServiceTests
         Assert.Equal(AppUpdateStatusKind.UpdateAvailable, result.Status);
         Assert.False(result.IsNewerByPublishedAt);
         Assert.True(result.IsNewerByAssetSize);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_Returns_UpdateAvailable_When_Same_Version_Asset_Was_Refreshed()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "e82258e",
+              "name": "Meeting Recorder v0.2",
+              "published_at": "2026-03-17T19:28:22Z",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/e82258e",
+              "assets": [
+                {
+                  "name": "MeetingRecorder-v0.2-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/e82258e/MeetingRecorder-v0.2-win-x64.zip",
+                  "size": 74220015,
+                  "updated_at": "2026-03-19T18:35:44Z"
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                "0.2",
+                "e82258e",
+                DateTimeOffset.Parse("2026-03-17T19:28:22Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                74220015),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal(AppUpdateStatusKind.UpdateAvailable, result.Status);
+        Assert.True(result.IsNewerByPublishedAt);
+        Assert.Equal(DateTimeOffset.Parse("2026-03-19T18:35:44Z", null, System.Globalization.DateTimeStyles.RoundtripKind), result.LatestPublishedAtUtc);
+        Assert.Contains("newer published build", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

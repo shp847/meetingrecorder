@@ -12,4 +12,9 @@
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\AppPlatform.Abstractions\AppPlatform.Abstractions.csproj" />
+    <ProjectReference Include="..\AppPlatform.Configuration\AppPlatform.Configuration.csproj" />
+  </ItemGroup>
+
 </Project>

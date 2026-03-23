@@ -10,7 +10,7 @@ public sealed class LiveAppConfigTests
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var configPath = Path.Combine(root, "config", "appsettings.json");
-        var store = new AppConfigStore(configPath);
+        var store = new AppConfigStore(configPath, Path.Combine(root, "documents"));
         var initial = await store.LoadOrCreateAsync();
         var runtime = new LiveAppConfig(store, initial);
 
@@ -30,7 +30,7 @@ public sealed class LiveAppConfigTests
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var configPath = Path.Combine(root, "config", "appsettings.json");
-        var store = new AppConfigStore(configPath);
+        var store = new AppConfigStore(configPath, Path.Combine(root, "documents"));
         var initial = await store.LoadOrCreateAsync();
         var runtime = new LiveAppConfig(store, initial);
 

@@ -112,17 +112,9 @@ public sealed class DiarizationAssetReleaseCatalogService
         var normalized = fileName.ToLowerInvariant();
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
 
-        if (normalized.StartsWith("meetingrecorder.diarization.sidecar", StringComparison.Ordinal))
+        if (normalized.Contains("diarization", StringComparison.Ordinal) && extension == ".zip")
         {
-            if (extension == ".zip")
-            {
-                return DiarizationRemoteAssetKind.Bundle;
-            }
-
-            if (extension == ".exe")
-            {
-                return DiarizationRemoteAssetKind.Executable;
-            }
+            return DiarizationRemoteAssetKind.Bundle;
         }
 
         if (!normalized.Contains("diarization", StringComparison.Ordinal))
@@ -159,8 +151,8 @@ public sealed class DiarizationAssetReleaseCatalogService
     {
         return kind switch
         {
-            DiarizationRemoteAssetKind.Bundle => "Recommended: installs the diarization sidecar and its supporting files together.",
-            DiarizationRemoteAssetKind.Executable => "Executable only. Use this if you already have the matching diarization model files.",
+            DiarizationRemoteAssetKind.Bundle => "Recommended: installs the diarization model bundle, including the segmentation model, embedding model, and manifest.",
+            DiarizationRemoteAssetKind.Executable => "Legacy executable-only asset. Use this only for older diarization setups.",
             DiarizationRemoteAssetKind.Model => $"Supporting diarization model asset: {fileName}.",
             DiarizationRemoteAssetKind.Config => $"Supporting diarization config asset: {fileName}.",
             _ => "Downloadable diarization asset from the current GitHub release.",

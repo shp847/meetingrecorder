@@ -18,19 +18,19 @@ public sealed class DiarizationAssetReleaseCatalogServiceTests
                   "size": 1200
                 },
                 {
-                  "name": "MeetingRecorder.Diarization.Sidecar-win-x64.zip",
-                  "browser_download_url": "https://example.com/MeetingRecorder.Diarization.Sidecar-win-x64.zip",
+                  "name": "meeting-recorder-diarization-bundle-win-x64.zip",
+                  "browser_download_url": "https://example.com/meeting-recorder-diarization-bundle-win-x64.zip",
                   "size": 24000000
                 },
                 {
-                  "name": "MeetingRecorder.Diarization.Sidecar.exe",
-                  "browser_download_url": "https://example.com/MeetingRecorder.Diarization.Sidecar.exe",
+                  "name": "meeting-recorder-diarization-model.int8.onnx",
+                  "browser_download_url": "https://example.com/meeting-recorder-diarization-model.int8.onnx",
                   "size": 11000000
                 },
                 {
-                  "name": "meetingrecorder-diarization-model.onnx",
-                  "browser_download_url": "https://example.com/meetingrecorder-diarization-model.onnx",
-                  "size": 87000000
+                  "name": "meeting-recorder-diarization-bundle.json",
+                  "browser_download_url": "https://example.com/meeting-recorder-diarization-bundle.json",
+                  "size": 400
                 },
                 {
                   "name": "release-notes.txt",
@@ -51,38 +51,48 @@ public sealed class DiarizationAssetReleaseCatalogServiceTests
             assets,
             asset =>
             {
-                Assert.Equal("MeetingRecorder.Diarization.Sidecar-win-x64.zip", asset.FileName);
+                Assert.Equal("meeting-recorder-diarization-bundle-win-x64.zip", asset.FileName);
                 Assert.Equal(DiarizationRemoteAssetKind.Bundle, asset.Kind);
                 Assert.True(asset.IsRecommended);
             },
             asset =>
             {
-                Assert.Equal("MeetingRecorder.Diarization.Sidecar.exe", asset.FileName);
-                Assert.Equal(DiarizationRemoteAssetKind.Executable, asset.Kind);
+                Assert.Equal("meeting-recorder-diarization-model.int8.onnx", asset.FileName);
+                Assert.Equal(DiarizationRemoteAssetKind.Model, asset.Kind);
                 Assert.False(asset.IsRecommended);
             },
             asset =>
             {
-                Assert.Equal("meetingrecorder-diarization-model.onnx", asset.FileName);
-                Assert.Equal(DiarizationRemoteAssetKind.Model, asset.Kind);
+                Assert.Equal("meeting-recorder-diarization-bundle.json", asset.FileName);
+                Assert.Equal(DiarizationRemoteAssetKind.Config, asset.Kind);
                 Assert.False(asset.IsRecommended);
             });
     }
 
     [Fact]
-    public void InspectInstalledAssets_Returns_Ready_When_Sidecar_Exists()
+    public void InspectInstalledAssets_Returns_Ready_When_ModelBundle_Exists()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var assetRoot = Path.Combine(root, "models", "diarization");
         Directory.CreateDirectory(assetRoot);
-        File.WriteAllText(Path.Combine(assetRoot, "MeetingRecorder.Diarization.Sidecar.exe"), "stub");
-        File.WriteAllText(Path.Combine(assetRoot, "meetingrecorder-diarization-model.onnx"), "stub");
+        File.WriteAllText(Path.Combine(assetRoot, "model.int8.onnx"), "stub");
+        File.WriteAllText(Path.Combine(assetRoot, "nemo_en_titanet_small.onnx"), "stub");
+        File.WriteAllText(
+            Path.Combine(assetRoot, DiarizationAssetCatalogService.BundleManifestFileName),
+            """
+            {
+              "bundleVersion": "2026.03.21",
+              "segmentationModelFileName": "model.int8.onnx",
+              "embeddingModelFileName": "nemo_en_titanet_small.onnx"
+            }
+            """);
 
         var status = new DiarizationAssetCatalogService().InspectInstalledAssets(assetRoot);
 
         Assert.True(status.IsReady);
-        Assert.Equal(Path.Combine(assetRoot, "MeetingRecorder.Diarization.Sidecar.exe"), status.SidecarExecutablePath);
-        Assert.Single(status.SupportingFilePaths);
+        Assert.Equal(Path.Combine(assetRoot, "model.int8.onnx"), status.SegmentationModelPath);
+        Assert.Equal(Path.Combine(assetRoot, "nemo_en_titanet_small.onnx"), status.EmbeddingModelPath);
+        Assert.Equal("2026.03.21", status.BundleVersion);
     }
 
     [Fact]
@@ -92,29 +102,37 @@ public sealed class DiarizationAssetReleaseCatalogServiceTests
         var modelCacheDir = Path.Combine(root, "models");
         var bundleBytes = BuildZipBundleBytes(new Dictionary<string, string>
         {
-            ["MeetingRecorder.Diarization.Sidecar.exe"] = "stub",
-            ["meetingrecorder-diarization-model.onnx"] = "stub",
+            ["model.int8.onnx"] = "stub",
+            ["nemo_en_titanet_small.onnx"] = "stub",
+            [DiarizationAssetCatalogService.BundleManifestFileName] =
+                """
+                {
+                  "bundleVersion": "2026.03.21",
+                  "segmentationModelFileName": "model.int8.onnx",
+                  "embeddingModelFileName": "nemo_en_titanet_small.onnx"
+                }
+                """,
         });
         var service = new DiarizationAssetReleaseCatalogService(
             new FakeFeedClient("{}", bundleBytes),
             new DiarizationAssetCatalogService());
         var asset = new DiarizationRemoteAsset(
-            "MeetingRecorder.Diarization.Sidecar-win-x64.zip",
-            "https://example.com/MeetingRecorder.Diarization.Sidecar-win-x64.zip",
+            "meeting-recorder-diarization-bundle-win-x64.zip",
+            "https://example.com/meeting-recorder-diarization-bundle-win-x64.zip",
             bundleBytes.LongLength,
             DiarizationRemoteAssetKind.Bundle,
             true,
-            "Recommended diarization sidecar bundle.");
+            "Recommended diarization model bundle.");
 
         var installed = await service.DownloadRemoteAssetIntoManagedDirectoryAsync(asset, modelCacheDir);
 
         Assert.True(installed.IsReady);
         Assert.Equal(
-            Path.Combine(modelCacheDir, "diarization", "MeetingRecorder.Diarization.Sidecar.exe"),
-            installed.SidecarExecutablePath);
-        Assert.Contains(
-            Path.Combine(modelCacheDir, "diarization", "meetingrecorder-diarization-model.onnx"),
-            installed.SupportingFilePaths);
+            Path.Combine(modelCacheDir, "diarization", "model.int8.onnx"),
+            installed.SegmentationModelPath);
+        Assert.Equal(
+            Path.Combine(modelCacheDir, "diarization", "nemo_en_titanet_small.onnx"),
+            installed.EmbeddingModelPath);
     }
 
     private static byte[] BuildZipBundleBytes(IReadOnlyDictionary<string, string> files)

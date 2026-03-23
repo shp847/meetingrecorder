@@ -1,0 +1,75 @@
+<Window x:Class="MeetingRecorder.App.SetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Setup"
+        Width="900"
+        Height="780"
+        MinWidth="720"
+        MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppCanvasBrush}">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AppPlatform.Shell.Wpf;component/ShellTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock FontSize="28"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource AppTextBrush}"
+                       Text="Setup" />
+            <TextBlock Margin="0,8,0,0"
+                       Style="{StaticResource DialogBodyTextStyle}"
+                       Text="Use Setup to make transcription and optional speaker labeling ready. For recording behavior, meeting files, updates, and troubleshooting, open Settings." />
+        </StackPanel>
+
+        <TabControl x:Name="SetupTabControl"
+                    Grid.Row="1"
+                    Margin="0,18,0,0"
+                    Style="{StaticResource DialogSectionTabControlStyle}"
+                    ItemContainerStyle="{StaticResource DialogSectionTabItemStyle}">
+            <TabItem Header="Transcription">
+                <ContentControl x:Name="TranscriptionSetupBodyHost"
+                                Margin="0,16,0,0" />
+            </TabItem>
+            <TabItem Header="Speaker labeling">
+                <ContentControl x:Name="SpeakerLabelingSetupBodyHost"
+                                Margin="0,16,0,0" />
+            </TabItem>
+        </TabControl>
+
+        <Grid Grid.Row="3"
+              Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock VerticalAlignment="Center"
+                       Style="{StaticResource DialogBodyTextStyle}"
+                       Text="Settings handles everyday app behavior, storage, updates, and troubleshooting." />
+
+            <Button Grid.Column="1"
+                    Margin="12,0,12,0"
+                    Style="{StaticResource SecondaryActionButtonStyle}"
+                    Click="OpenSettingsButton_OnClick"
+                    Content="Open Settings" />
+            <Button Grid.Column="2"
+                    Style="{StaticResource SecondaryActionButtonStyle}"
+                    Click="CloseButton_OnClick"
+                    Content="Close" />
+        </Grid>
+    </Grid>
+</Window>

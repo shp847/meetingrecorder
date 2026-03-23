@@ -50,6 +50,18 @@ public sealed class AutoStartRegistrationService
     internal static string BuildCommand(string executablePath)
     {
         var normalized = executablePath.Trim();
+        var extension = Path.GetExtension(normalized);
+        if (string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"cmd.exe /c \"\\\"{normalized}\\\"\"";
+        }
+
+        if (string.Equals(extension, ".ps1", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"powershell.exe -ExecutionPolicy Bypass -File \"{normalized}\"";
+        }
+
         return normalized.StartsWith("\"", StringComparison.Ordinal)
             ? normalized
             : $"\"{normalized}\"";

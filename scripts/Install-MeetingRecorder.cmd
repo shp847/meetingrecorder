@@ -1,4 +1,5 @@
 @echo off
+set "MEETINGRECORDER_SKIP_SCRIPT_PAUSE=1"
 powershell -ExecutionPolicy Bypass -File "%~dp0Install-MeetingRecorder.ps1" %*
 set "EXIT_CODE=%errorlevel%"
 if not "%EXIT_CODE%"=="0" (

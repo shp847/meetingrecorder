@@ -1,81 +1,40 @@
+using AppPlatform.Configuration;
 using MeetingRecorder.Core.Configuration;
 
 namespace MeetingRecorder.Core.Services;
 
 public sealed class LiveAppConfig
 {
-    private readonly AppConfigStore _configStore;
-    private readonly object _syncRoot = new();
-    private AppConfig _current;
-    private DateTimeOffset _lastObservedWriteUtc;
+    private readonly LiveJsonConfig<AppConfig> _liveConfig;
 
     public LiveAppConfig(AppConfigStore configStore, AppConfig initialConfig)
     {
-        _configStore = configStore;
-        _current = initialConfig;
-        _lastObservedWriteUtc = ReadLastWriteUtc();
+        _liveConfig = new LiveJsonConfig<AppConfig>(configStore, initialConfig);
+        _liveConfig.Changed += OnLiveConfigChanged;
     }
 
     public event EventHandler<LiveAppConfigChangedEventArgs>? Changed;
 
-    public string ConfigPath => _configStore.ConfigPath;
+    public string ConfigPath => _liveConfig.ConfigPath;
 
-    public AppConfig Current
-    {
-        get
-        {
-            lock (_syncRoot)
-            {
-                return _current;
-            }
-        }
-    }
+    public AppConfig Current => _liveConfig.Current;
 
     public async Task<AppConfig> SaveAsync(AppConfig config, CancellationToken cancellationToken = default)
     {
-        var saved = await _configStore.SaveAsync(config, cancellationToken);
-        UpdateCurrent(saved, LiveAppConfigChangeSource.Save);
-        return saved;
+        return await _liveConfig.SaveAsync(config, cancellationToken);
     }
 
     public async Task<AppConfig?> ReloadIfChangedAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var currentWriteUtc = ReadLastWriteUtc();
-        lock (_syncRoot)
-        {
-            if (currentWriteUtc <= _lastObservedWriteUtc)
-            {
-                return null;
-            }
-        }
-
-        var loaded = await _configStore.LoadOrCreateAsync(cancellationToken);
-        UpdateCurrent(loaded, LiveAppConfigChangeSource.Reload);
-        return loaded;
+        return await _liveConfig.ReloadIfChangedAsync(cancellationToken);
     }
 
-    private void UpdateCurrent(AppConfig config, LiveAppConfigChangeSource source)
+    private void OnLiveConfigChanged(object? sender, LiveJsonConfigChangedEventArgs<AppConfig> changedArgs)
     {
-        var changedArgs = default(LiveAppConfigChangedEventArgs);
-
-        lock (_syncRoot)
-        {
-            var previous = _current;
-            _current = config;
-            _lastObservedWriteUtc = ReadLastWriteUtc();
-            changedArgs = new LiveAppConfigChangedEventArgs(previous, config, source);
-        }
-
-        Changed?.Invoke(this, changedArgs);
-    }
-
-    private DateTimeOffset ReadLastWriteUtc()
-    {
-        return File.Exists(_configStore.ConfigPath)
-            ? File.GetLastWriteTimeUtc(_configStore.ConfigPath)
-            : DateTimeOffset.MinValue;
+        var source = changedArgs.Source == LiveJsonConfigChangeSource.Reload
+            ? LiveAppConfigChangeSource.Reload
+            : LiveAppConfigChangeSource.Save;
+        Changed?.Invoke(this, new LiveAppConfigChangedEventArgs(changedArgs.PreviousConfig, changedArgs.CurrentConfig, source));
     }
 }
 

@@ -4,10 +4,13 @@ namespace MeetingRecorder.App.Services;
 
 internal interface ICalendarMeetingTitleProvider
 {
-    CalendarMeetingTitleCandidate? TryGetCurrentMeetingTitle(MeetingPlatform platform, DateTimeOffset nowUtc);
+    CalendarMeetingDetailsCandidate? TryGetMeetingTitle(MeetingPlatform platform, DateTimeOffset startedAtUtc, DateTimeOffset? endedAtUtc);
 }
 
-internal sealed record CalendarMeetingTitleCandidate(string Title, string Source);
+internal sealed record CalendarMeetingDetailsCandidate(
+    string Title,
+    IReadOnlyList<MeetingAttendee> Attendees,
+    string Source);
 
 internal sealed class MeetingTitleEnricher
 {
@@ -30,7 +33,7 @@ internal sealed class MeetingTitleEnricher
 
         try
         {
-            var candidate = _calendarMeetingTitleProvider.TryGetCurrentMeetingTitle(decision.Platform, nowUtc);
+            var candidate = _calendarMeetingTitleProvider.TryGetMeetingTitle(decision.Platform, nowUtc, nowUtc);
             if (candidate is null || string.IsNullOrWhiteSpace(candidate.Title))
             {
                 return decision;
@@ -80,7 +83,7 @@ internal sealed class MeetingTitleEnricher
 
         return decision.Platform switch
         {
-            MeetingPlatform.Teams => normalizedTitle is "microsoft teams" or "teams" or "ms-teams" or "sharing control bar",
+            MeetingPlatform.Teams => normalizedTitle is "microsoft teams" or "teams" or "ms-teams" or "sharing control bar" or "search",
             MeetingPlatform.GoogleMeet => normalizedTitle is "google meet" or "meet",
             _ => false,
         };

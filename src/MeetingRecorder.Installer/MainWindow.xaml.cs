@@ -13,24 +13,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const double BytesPerMegabyte = 1024d * 1024d;
     private readonly HttpFileDownloader _fileDownloader;
     private readonly InstallerBootstrapper _bootstrapper;
-    private readonly WindowsShortcutService _shortcutService;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly IReadOnlyList<string> _forwardedArguments;
 
     private GitHubReleaseBootstrapInfo? _latestRelease;
     private string _statusTitle = "Preparing the installer";
     private string _statusMessage = "One click is all most users should need. The installer will do the rest.";
-    private string _releaseSummary = "Waiting to contact GitHub for the latest release.";
+    private string _releaseSummary = "Preparing installer package metadata.";
     private string _progressCaption = "Starting up...";
     private string _activityLog = "Installer started.";
     private string _manualSteps;
-    private string _installRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "MeetingRecorder");
+    private string _installRoot = AppDataPaths.GetManagedInstallRoot();
     private string _releasePageUrl = AppBranding.DefaultReleasePageUrl;
     private double _progressPercent;
     private bool _isIndeterminate = true;
     private bool _isBusy;
     private bool _installSucceeded;
+    private string _statusTone = "Progress";
+    private string _statusToneLabel = "Preparing";
 
     public MainWindow()
     {
@@ -38,11 +38,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DataContext = this;
 
         _fileDownloader = new HttpFileDownloader();
-        _shortcutService = new WindowsShortcutService();
+        _forwardedArguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
         _bootstrapper = new InstallerBootstrapper(
             new GitHubReleaseBootstrapService(new HttpAppUpdateFeedClient()),
-            _fileDownloader,
-            new PortableInstallService());
+            _fileDownloader);
         _manualSteps = _bootstrapper.BuildManualSteps(null);
 
         Loaded += MainWindow_Loaded;
@@ -100,15 +99,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetProperty(ref _manualSteps, value);
     }
 
+    public string StatusTone
+    {
+        get => _statusTone;
+        private set => SetProperty(ref _statusTone, value);
+    }
+
+    public string StatusToneLabel
+    {
+        get => _statusToneLabel;
+        private set => SetProperty(ref _statusToneLabel, value);
+    }
+
     public bool CanRetryInstall => !_isBusy && !_installSucceeded;
 
-    public bool CanLaunchBackupInstaller => !_isBusy && !_installSucceeded;
+    public bool CanLaunchBackupInstaller => !_isBusy;
 
     public bool CanOpenInstallFolder => !_isBusy && Directory.Exists(_installRoot);
-
-    public bool CanCreateDesktopShortcut => !_isBusy && Directory.Exists(_installRoot);
-
-    public bool CanCreateStartMenuShortcut => !_isBusy && Directory.Exists(_installRoot);
 
     public bool CanOpenReleasePage => !_isBusy;
 
@@ -134,16 +141,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _installSucceeded = false;
+        SetStatusTone("Progress", "Installing");
         SetBusy(true);
-        StatusTitle = "Checking GitHub for the latest release";
-        StatusMessage = "The installer is contacting GitHub and preparing the portable install.";
+        StatusTitle = "Preparing installer assets";
+        StatusMessage = "The installer is locating a bundled local package or preparing the shared bootstrap path.";
         ProgressCaption = "Starting...";
         IsIndeterminate = true;
 
         try
         {
             var progress = new Progress<InstallerProgressInfo>(UpdateProgress);
-            var result = await _bootstrapper.InstallLatestAsync(progress, _lifetimeCancellation.Token);
+            var result = await _bootstrapper.InstallLatestAsync(_forwardedArguments, progress, _lifetimeCancellation.Token);
 
             _latestRelease = result.ReleaseInfo;
             _installRoot = result.InstallRoot;
@@ -151,18 +159,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ManualSteps = result.ManualSteps;
 
             _installSucceeded = true;
-            StatusTitle = "Installed successfully";
+            SetStatusTone("Success", "Handoff complete");
+            StatusTitle = "Command installer launched";
             StatusMessage =
-                $"{AppBranding.ProductName} was installed into {_installRoot} and launched directly. " +
-                "If you want shortcuts, use the explicit shortcut buttons below so the main install path stays friendlier to corporate endpoint controls.";
+                $"Continue in the command window that opened for {AppBranding.ProductName}. " +
+                "This EXE now hands off to the shared command installer path, preferring bundled local package assets when they are present and otherwise using the GitHub bootstrap flow. " +
+                $"App files install into '{_installRoot}', while writable config, logs, models, and work files stay under %LOCALAPPDATA%\\MeetingRecorder.";
             ReleaseSummary = BuildReleaseSummary(result.ReleaseInfo);
             ProgressPercent = 100;
-            ProgressCaption = "Done. The app is ready to use.";
+            ProgressCaption = $"Diagnostic log: {result.DiagnosticLogPath}";
             IsIndeterminate = false;
-            AppendLog("Installer finished successfully.");
+            AppendLog($"Command bootstrap launched from '{result.BootstrapCommandPath}'.");
+            AppendLog($"Diagnostic log: {result.DiagnosticLogPath}");
         }
         catch (OperationCanceledException)
         {
+            SetStatusTone("Warning", "Cancelled");
             StatusTitle = "Installer cancelled";
             StatusMessage = "The installer was closed before it could finish.";
             ProgressCaption = "Cancelled.";
@@ -172,6 +184,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch (Exception exception)
         {
             _installSucceeded = false;
+            SetStatusTone("Danger", "Needs attention");
             StatusTitle = "The primary installer hit a problem";
             StatusMessage = exception.Message;
             ProgressCaption = "You can retry, use the backup CMD installer, or follow the manual steps.";
@@ -205,7 +218,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ProgressCaption = progress.Detail;
 
-            if (progress.Title.Contains("Latest release found", StringComparison.OrdinalIgnoreCase))
+            if (progress.Title.Contains("Latest release found", StringComparison.OrdinalIgnoreCase) ||
+                progress.Title.Contains("Using local installer assets", StringComparison.OrdinalIgnoreCase))
             {
                 ReleaseSummary = progress.Detail;
             }
@@ -237,28 +251,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetBusy(true);
         try
         {
+            SetStatusTone("Warning", "Fallback path");
             StatusTitle = "Launching the backup CMD installer";
-            StatusMessage = "Downloading the fallback command installer from GitHub.";
+            StatusMessage = "Preparing the fallback command installer.";
             ProgressCaption = "Preparing the fallback installer...";
             IsIndeterminate = true;
-            AppendLog("Downloading backup installer assets.");
+            AppendLog("Preparing backup installer assets.");
 
             var commandPath = await _bootstrapper.DownloadBackupInstallerAsync(_latestRelease, _lifetimeCancellation.Token);
             var workingDirectory = Path.GetDirectoryName(commandPath)
                 ?? throw new InvalidOperationException("The backup installer path did not have a parent directory.");
 
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = commandPath,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = true,
-            });
+            Process.Start(InstallerBootstrapper.BuildBootstrapHandoffStartInfo(
+                commandPath,
+                workingDirectory,
+                BuildExecutableBootstrapArguments()));
 
             AppendLog("Backup CMD installer launched.");
             Close();
         }
         catch (Exception exception)
         {
+            SetStatusTone("Danger", "Needs attention");
             StatusTitle = "Backup installer failed";
             StatusMessage = exception.Message;
             ProgressCaption = "Use the manual steps if the backup path is blocked too.";
@@ -283,20 +297,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             FileName = _installRoot,
             UseShellExecute = true,
         });
-    }
-
-    private void CreateDesktopShortcutButton_Click(object sender, RoutedEventArgs e)
-    {
-        TryCreateShortcut(
-            _shortcutService.GetDesktopShortcutPath(),
-            "Desktop");
-    }
-
-    private void CreateStartMenuShortcutButton_Click(object sender, RoutedEventArgs e)
-    {
-        TryCreateShortcut(
-            _shortcutService.GetStartMenuShortcutPath(),
-            "Start menu");
     }
 
     private void OpenReleasePageButton_Click(object sender, RoutedEventArgs e)
@@ -336,7 +336,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (releaseInfo is null)
         {
-            return "Release metadata was not available.";
+            return "Release metadata is still loading.";
         }
 
         var sizeText = releaseInfo.AppZipAsset.SizeBytes.HasValue
@@ -345,7 +345,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var publishedText = releaseInfo.PublishedAtUtc.HasValue
             ? releaseInfo.PublishedAtUtc.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm")
             : "publish time unavailable";
-        return $"Latest GitHub release: {releaseInfo.Version} | {sizeText} | published {publishedText}";
+        return $"Version {releaseInfo.Version} | {sizeText} | published {publishedText}";
+    }
+
+    private void SetStatusTone(string tone, string label)
+    {
+        StatusTone = tone;
+        StatusToneLabel = label;
     }
 
     private void SetBusy(bool isBusy)
@@ -354,53 +360,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateButtonStates();
     }
 
-    private void TryCreateShortcut(string shortcutPath, string surfaceName)
-    {
-        if (!Directory.Exists(_installRoot))
-        {
-            return;
-        }
-
-        var launcherPath = ResolveShortcutTargetPath();
-        var iconPath = Path.Combine(_installRoot, "MeetingRecorder.ico");
-        var result = _shortcutService.TryCreateShortcut(shortcutPath, launcherPath, _installRoot, iconPath);
-        if (result.Success)
-        {
-            StatusTitle = $"{surfaceName} shortcut created";
-            StatusMessage = $"A {surfaceName.ToLowerInvariant()} shortcut was added for {AppBranding.ProductName}.";
-            AppendLog($"Created {surfaceName.ToLowerInvariant()} shortcut at '{shortcutPath}'.");
-        }
-        else
-        {
-            StatusTitle = $"{surfaceName} shortcut was blocked";
-            StatusMessage =
-                $"The install succeeded, but Windows blocked {surfaceName.ToLowerInvariant()} shortcut creation. " +
-                "You can still launch from the app folder or pin the app manually.";
-            AppendLog(
-                $"Unable to create {surfaceName.ToLowerInvariant()} shortcut at '{shortcutPath}': {result.ErrorMessage}");
-        }
-
-        UpdateButtonStates();
-    }
-
-    private string ResolveShortcutTargetPath()
-    {
-        var launcherPath = Path.Combine(_installRoot, "Run-MeetingRecorder.cmd");
-        if (File.Exists(launcherPath))
-        {
-            return launcherPath;
-        }
-
-        return Path.Combine(_installRoot, "MeetingRecorder.App.exe");
-    }
-
     private void UpdateButtonStates()
     {
         OnPropertyChanged(nameof(CanRetryInstall));
         OnPropertyChanged(nameof(CanLaunchBackupInstaller));
         OnPropertyChanged(nameof(CanOpenInstallFolder));
-        OnPropertyChanged(nameof(CanCreateDesktopShortcut));
-        OnPropertyChanged(nameof(CanCreateStartMenuShortcut));
         OnPropertyChanged(nameof(CanOpenReleasePage));
         OnPropertyChanged(nameof(CanCopyManualSteps));
     }
@@ -419,5 +383,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private IReadOnlyList<string> BuildExecutableBootstrapArguments()
+    {
+        var arguments = new List<string>(_forwardedArguments);
+        if (!arguments.Any(argument =>
+                string.Equals(argument, "-InstallChannel", StringComparison.OrdinalIgnoreCase)))
+        {
+            arguments.Add("-InstallChannel");
+            arguments.Add("ExecutableBootstrap");
+        }
+
+        return arguments;
     }
 }

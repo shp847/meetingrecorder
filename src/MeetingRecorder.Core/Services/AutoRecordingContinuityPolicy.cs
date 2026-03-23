@@ -5,11 +5,25 @@ namespace MeetingRecorder.Core.Services;
 public sealed class AutoRecordingContinuityPolicy
 {
     private static readonly TimeSpan MinimumWeakSignalTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MinimumTeamsShellContinuationTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan RecentAutoStopRecoveryWindow = TimeSpan.FromMinutes(2);
 
     public TimeSpan GetAutoStopTimeout(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
+        TimeSpan configuredTimeout)
+    {
+        return GetAutoStopTimeout(
+            decision,
+            activePlatform,
+            activeSessionTitle: null,
+            configuredTimeout);
+    }
+
+    public TimeSpan GetAutoStopTimeout(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
         TimeSpan configuredTimeout)
     {
         if (configuredTimeout <= TimeSpan.Zero)
@@ -27,6 +41,14 @@ public sealed class AutoRecordingContinuityPolicy
                 : MinimumWeakSignalTimeout;
         }
 
+        if (HasTeamsShellContinuation(decision, activePlatform, activeSessionTitle))
+        {
+            var scaledTimeout = TimeSpan.FromSeconds(configuredTimeout.TotalSeconds * 3d);
+            return scaledTimeout >= MinimumTeamsShellContinuationTimeout
+                ? scaledTimeout
+                : MinimumTeamsShellContinuationTimeout;
+        }
+
         return configuredTimeout;
     }
 
@@ -40,7 +62,7 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
-        if (!decision.ShouldKeepRecording || decision.Platform == MeetingPlatform.Unknown)
+        if (!decision.ShouldStart || decision.Platform == MeetingPlatform.Unknown)
         {
             return false;
         }
@@ -66,6 +88,39 @@ public sealed class AutoRecordingContinuityPolicy
             hasRecentMicrophoneActivity: false);
     }
 
+    public bool ShouldReclassifyAutoStartedSession(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform)
+    {
+        if (decision is null ||
+            !decision.ShouldStart ||
+            activePlatform == MeetingPlatform.Unknown ||
+            decision.Platform == MeetingPlatform.Unknown ||
+            decision.Platform == activePlatform)
+        {
+            return false;
+        }
+
+        var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        if (HasStrongAttributedAudioMatch(decision) &&
+            !IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform))
+        {
+            return true;
+        }
+
+        if (activePlatform != MeetingPlatform.GoogleMeet || decision.Platform != MeetingPlatform.Teams)
+        {
+            return false;
+        }
+
+        if (!HasWindowTitleEvidence(decision) || !HasTeamsHostEvidence(decision))
+        {
+            return false;
+        }
+
+        return !IsGenericMeetingTitle(normalizedDetectedTitle, MeetingPlatform.Teams);
+    }
+
     public bool ShouldRefreshLastPositiveSignal(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
@@ -88,6 +143,11 @@ public sealed class AutoRecordingContinuityPolicy
             return true;
         }
 
+        if (HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
         if (HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
         {
             return true;
@@ -103,10 +163,70 @@ public sealed class AutoRecordingContinuityPolicy
 
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
     {
-        return decision is not null &&
-            decision.Platform == activePlatform &&
-            decision.Platform != MeetingPlatform.Unknown &&
-            !decision.ShouldKeepRecording;
+        if (decision is null ||
+            decision.Platform != activePlatform ||
+            decision.Platform == MeetingPlatform.Unknown ||
+            decision.ShouldKeepRecording)
+        {
+            return false;
+        }
+
+        foreach (var signal in decision.Signals)
+        {
+            if (!string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(signal.Source, "browser-window", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(signal.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasStrongAttributedAudioMatch(DetectionDecision decision)
+    {
+        return decision.DetectedAudioSource is
+        {
+            Confidence: AudioSourceConfidence.High,
+            MatchKind: not AudioSourceMatchKind.EndpointFallback,
+        };
+    }
+
+    private static bool HasTeamsShellContinuation(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        if (decision is null ||
+            activePlatform != MeetingPlatform.Teams ||
+            decision.Platform != MeetingPlatform.Teams)
+        {
+            return false;
+        }
+
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
+        if (IsGenericMeetingTitle(normalizedActiveTitle, MeetingPlatform.Teams))
+        {
+            return false;
+        }
+
+        if (!HasWindowTitleEvidence(decision))
+        {
+            return false;
+        }
+
+        var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        if (IsGenericMeetingTitle(normalizedDetectedTitle, MeetingPlatform.Teams))
+        {
+            return true;
+        }
+
+        return HasSuppressedTeamsNavigationSignal(decision);
     }
 
     private static bool HasSpecificMeetingTitleMatch(DetectionDecision decision, string? activeSessionTitle)
@@ -133,23 +253,31 @@ public sealed class AutoRecordingContinuityPolicy
         return !IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform);
     }
 
-    private static string NormalizeMeetingTitle(string title)
+    private static bool HasSuppressedTeamsTitleContinuation(DetectionDecision decision, string? activeSessionTitle)
     {
-        var normalized = title.Trim();
-        normalized = CollapseWhitespace(normalized);
-
-        if (normalized.StartsWith("Meeting compact view |", StringComparison.OrdinalIgnoreCase))
+        if (decision.Platform != MeetingPlatform.Teams || !HasSuppressedTeamsNavigationSignal(decision))
         {
-            normalized = normalized["Meeting compact view |".Length..].Trim();
+            return false;
         }
 
-        if (normalized.EndsWith("| Pinned window", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(activeSessionTitle) || string.IsNullOrWhiteSpace(decision.SessionTitle))
         {
-            normalized = normalized[..^"| Pinned window".Length].Trim();
+            return false;
         }
 
-        return CollapseWhitespace(normalized.Trim('|', ' '));
+        var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedDetectedTitle) ||
+            string.IsNullOrWhiteSpace(normalizedActiveTitle) ||
+            !string.Equals(normalizedDetectedTitle, normalizedActiveTitle, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !IsGenericMeetingTitle(normalizedDetectedTitle, MeetingPlatform.Teams);
     }
+
+    private static string NormalizeMeetingTitle(string title) => MeetingTitleNormalizer.NormalizeForComparison(title);
 
     private static bool IsGenericMeetingTitle(string title, MeetingPlatform platform)
     {
@@ -166,7 +294,7 @@ public sealed class AutoRecordingContinuityPolicy
 
         return platform switch
         {
-            MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms-teams" or "sharing control bar",
+            MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms teams" or "sharing control bar",
             MeetingPlatform.GoogleMeet => normalized is "google meet" or "meet",
             _ => false,
         };
@@ -189,11 +317,6 @@ public sealed class AutoRecordingContinuityPolicy
         return normalizedDetectedTitle.StartsWith("sharing control bar", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string CollapseWhitespace(string value)
-    {
-        return string.Join(" ", value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-    }
-
     private static bool HasSuppressedTeamsNavigationSignal(DetectionDecision decision)
     {
         if (decision.Platform != MeetingPlatform.Teams)
@@ -209,6 +332,32 @@ public sealed class AutoRecordingContinuityPolicy
             }
 
             if (IsSuppressedTeamsWindowTitle(signal.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasWindowTitleEvidence(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasTeamsHostEvidence(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (string.Equals(signal.Source, "teams-host", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

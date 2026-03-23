@@ -7,6 +7,8 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class ArtifactPathBuilder
 {
+    public const string TranscriptSidecarDirectoryName = "json";
+
     public string BuildFileStem(MeetingPlatform platform, DateTimeOffset startedAtUtc, string sessionTitle)
     {
         var platformToken = platform switch
@@ -31,6 +33,11 @@ public sealed class ArtifactPathBuilder
     public string BuildSessionRoot(string workDir, string sessionId)
     {
         return Path.Combine(workDir, sessionId);
+    }
+
+    public static string BuildTranscriptSidecarRoot(string transcriptOutputDir)
+    {
+        return Path.Combine(transcriptOutputDir, TranscriptSidecarDirectoryName);
     }
 
     private static string Slugify(string value)

@@ -18,11 +18,13 @@ public sealed class MeetingOutputCatalogServiceTests
 
         var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
         var sourceStem = "2026-03-15_235430_teams_echo";
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(transcriptJsonDir);
 
         var audioPath = Path.Combine(audioDir, $"{sourceStem}.wav");
         var markdownPath = Path.Combine(transcriptDir, $"{sourceStem}.md");
-        var jsonPath = Path.Combine(transcriptDir, $"{sourceStem}.json");
-        var readyPath = Path.Combine(transcriptDir, $"{sourceStem}.ready");
+        var jsonPath = Path.Combine(transcriptJsonDir, $"{sourceStem}.json");
+        var readyPath = Path.Combine(transcriptJsonDir, $"{sourceStem}.ready");
 
         await File.WriteAllTextAsync(audioPath, "audio");
         await File.WriteAllTextAsync(markdownPath, "# Echo" + Environment.NewLine + Environment.NewLine + "Body");
@@ -41,8 +43,8 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Equal(expectedStem, renamed.Stem);
         Assert.True(File.Exists(Path.Combine(audioDir, $"{expectedStem}.wav")));
         Assert.True(File.Exists(Path.Combine(transcriptDir, $"{expectedStem}.md")));
-        Assert.True(File.Exists(Path.Combine(transcriptDir, $"{expectedStem}.json")));
-        Assert.True(File.Exists(Path.Combine(transcriptDir, $"{expectedStem}.ready")));
+        Assert.True(File.Exists(Path.Combine(transcriptJsonDir, $"{expectedStem}.json")));
+        Assert.True(File.Exists(Path.Combine(transcriptJsonDir, $"{expectedStem}.ready")));
         Assert.False(File.Exists(audioPath));
         Assert.False(File.Exists(markdownPath));
         Assert.False(File.Exists(jsonPath));
@@ -51,7 +53,7 @@ public sealed class MeetingOutputCatalogServiceTests
         var markdown = await File.ReadAllTextAsync(Path.Combine(transcriptDir, $"{expectedStem}.md"));
         Assert.StartsWith("# Client Weekly Sync", markdown, StringComparison.Ordinal);
 
-        var json = await File.ReadAllTextAsync(Path.Combine(transcriptDir, $"{expectedStem}.json"));
+        var json = await File.ReadAllTextAsync(Path.Combine(transcriptJsonDir, $"{expectedStem}.json"));
         Assert.Contains("\"Title\": \"Client Weekly Sync\"", json, StringComparison.Ordinal);
     }
 
@@ -217,12 +219,13 @@ public sealed class MeetingOutputCatalogServiceTests
         var transcriptDir = Path.Combine(root, "transcripts");
         Directory.CreateDirectory(audioDir);
         Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(Path.Combine(transcriptDir, "json"));
 
         var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
         var stem = "2026-03-15_235430_teams_legacy-sync";
         await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
         await File.WriteAllTextAsync(
-            Path.Combine(transcriptDir, $"{stem}.json"),
+            Path.Combine(transcriptDir, "json", $"{stem}.json"),
             JsonSerializer.Serialize(new
             {
                 Title = "Legacy Sync",
@@ -237,6 +240,213 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Null(meeting.ManifestPath);
         Assert.Null(meeting.ManifestState);
         Assert.Equal(MeetingPlatform.Teams, meeting.Platform);
+        Assert.Empty(meeting.Attendees);
+        Assert.Null(meeting.TranscriptionModelFileName);
+        Assert.False(meeting.HasSpeakerLabels);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Prefers_Manifest_Attendees_And_Processing_Metadata_Over_Json_Sidecar()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Client Sync",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var enrichedManifest = manifest with
+        {
+            Attendees = [new MeetingAttendee("Manifest Person", [MeetingAttendeeSource.TeamsLiveRoster])],
+            ProcessingMetadata = new MeetingProcessingMetadata("manifest-model.bin", true),
+        };
+        await manifestStore.SaveAsync(enrichedManifest, manifestPath);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, manifest.StartedAtUtc, manifest.DetectedTitle);
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Client Sync",
+                attendees = new[]
+                {
+                    new
+                    {
+                        name = "Json Person",
+                        sources = new[] { "OutlookCalendar" },
+                    },
+                },
+                transcriptionModelFileName = "json-model.bin",
+                hasSpeakerLabels = false,
+                segments = Array.Empty<object>(),
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.Collection(meeting.Attendees, attendee => Assert.Equal("Manifest Person", attendee.Name));
+        Assert.Equal("manifest-model.bin", meeting.TranscriptionModelFileName);
+        Assert.True(meeting.HasSpeakerLabels);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Prefers_Manifest_Detected_Audio_Source_Over_Json_Sidecar()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Client Sync",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var enrichedManifest = manifest with
+        {
+            DetectedAudioSource = new DetectedAudioSource(
+                "Microsoft Teams",
+                "Client Sync | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.High,
+                DateTimeOffset.UtcNow),
+        };
+        await manifestStore.SaveAsync(enrichedManifest, manifestPath);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, manifest.StartedAtUtc, manifest.DetectedTitle);
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Client Sync",
+                detectedAudioSource = new
+                {
+                    appName = "Google Meet",
+                    matchKind = "BrowserTab",
+                    confidence = "Medium",
+                    observedAtUtc = DateTimeOffset.UtcNow,
+                },
+                segments = Array.Empty<object>(),
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.NotNull(meeting.DetectedAudioSource);
+        Assert.Equal("Microsoft Teams", meeting.DetectedAudioSource!.AppName);
+        Assert.Equal(AudioSourceMatchKind.Window, meeting.DetectedAudioSource.MatchKind);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Falls_Back_To_Json_Attendees_And_Processing_Metadata_When_Manifest_Is_Missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var stem = "2026-03-15_235430_teams_json-fallback";
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Json Fallback",
+                attendees = new[]
+                {
+                    new
+                    {
+                        name = "Jane Smith",
+                        sources = new[] { "OutlookCalendar", "TeamsLiveRoster" },
+                    },
+                },
+                transcriptionModelFileName = "ggml-small.bin",
+                hasSpeakerLabels = true,
+                segments = new[]
+                {
+                    new
+                    {
+                        speakerLabel = "Jane Smith",
+                        text = "Hello",
+                    },
+                },
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
+
+        Assert.Collection(meeting.Attendees, attendee =>
+        {
+            Assert.Equal("Jane Smith", attendee.Name);
+            Assert.Equal(
+                [MeetingAttendeeSource.OutlookCalendar, MeetingAttendeeSource.TeamsLiveRoster],
+                attendee.Sources);
+        });
+        Assert.Equal("ggml-small.bin", meeting.TranscriptionModelFileName);
+        Assert.True(meeting.HasSpeakerLabels);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Infers_Speaker_Labels_From_Legacy_Json_Segments_When_Metadata_Is_Missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var stem = "2026-03-15_235430_teams_legacy-speakers";
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Legacy Speakers",
+                segments = new[]
+                {
+                    new
+                    {
+                        speakerLabel = "Speaker 1",
+                        text = "Hello",
+                    },
+                },
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
+
+        Assert.True(meeting.HasSpeakerLabels);
+        Assert.Empty(meeting.Attendees);
+        Assert.Null(meeting.TranscriptionModelFileName);
     }
 
     [Fact]
@@ -386,12 +596,13 @@ public sealed class MeetingOutputCatalogServiceTests
         var transcriptDir = Path.Combine(root, "transcripts");
         Directory.CreateDirectory(audioDir);
         Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(Path.Combine(transcriptDir, "json"));
 
         var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
         var stem = "2026-03-15_235430_teams_client-call";
         var audioPath = Path.Combine(audioDir, $"{stem}.wav");
         var markdownPath = Path.Combine(transcriptDir, $"{stem}.md");
-        var jsonPath = Path.Combine(transcriptDir, $"{stem}.json");
+        var jsonPath = Path.Combine(transcriptDir, "json", $"{stem}.json");
 
         await File.WriteAllTextAsync(audioPath, "audio");
         await File.WriteAllTextAsync(

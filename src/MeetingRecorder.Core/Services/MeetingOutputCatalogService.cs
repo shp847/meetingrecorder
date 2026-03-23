@@ -113,18 +113,104 @@ public sealed class MeetingOutputCatalogService
 
         if (!string.IsNullOrWhiteSpace(existing.MarkdownPath))
         {
-            await UpdateMarkdownTitleAsync(Path.Combine(transcriptOutputDir, $"{newStem}{Path.GetExtension(existing.MarkdownPath)}"), newTitle, cancellationToken);
+            await UpdateMarkdownTitleAsync(GetRenamedArtifactPath(existing.MarkdownPath, newStem), newTitle, cancellationToken);
         }
 
         if (!string.IsNullOrWhiteSpace(existing.JsonPath))
         {
-            await UpdateJsonTitleAsync(Path.Combine(transcriptOutputDir, $"{newStem}{Path.GetExtension(existing.JsonPath)}"), newTitle, cancellationToken);
+            await UpdateJsonTitleAsync(GetRenamedArtifactPath(existing.JsonPath, newStem), newTitle, cancellationToken);
         }
 
         await UpdateManifestTitleAsync(workDir, existingStem, newTitle, cancellationToken);
 
         return ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
             .Single(record => string.Equals(record.Stem, newStem, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public async Task<MeetingOutputRecord> UpdateMeetingProjectAsync(
+        string audioOutputDir,
+        string transcriptOutputDir,
+        string existingStem,
+        string? projectName,
+        string? workDir,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var normalizedProjectName = NormalizeOptionalMetadataValue(projectName);
+        var existing = ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
+            .SingleOrDefault(record => string.Equals(record.Stem, existingStem, StringComparison.OrdinalIgnoreCase))
+            ?? throw new FileNotFoundException($"Unable to locate published artifacts for stem '{existingStem}'.");
+
+        if (!string.IsNullOrWhiteSpace(existing.MarkdownPath) && File.Exists(existing.MarkdownPath))
+        {
+            await UpdateMarkdownProjectAsync(existing.MarkdownPath, normalizedProjectName, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(existing.JsonPath) && File.Exists(existing.JsonPath))
+        {
+            await UpdateJsonProjectAsync(existing.JsonPath, normalizedProjectName, cancellationToken);
+        }
+
+        await UpdateManifestAsync(
+            workDir,
+            existingStem,
+            manifest => manifest with
+            {
+                ProjectName = normalizedProjectName,
+            },
+            cancellationToken);
+
+        return ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
+            .Single(record => string.Equals(record.Stem, existingStem, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public async Task<MeetingOutputRecord> MergeMeetingAttendeesAsync(
+        string audioOutputDir,
+        string transcriptOutputDir,
+        string existingStem,
+        IReadOnlyList<MeetingAttendee> attendees,
+        string? workDir,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var existing = ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
+            .SingleOrDefault(record => string.Equals(record.Stem, existingStem, StringComparison.OrdinalIgnoreCase))
+            ?? throw new FileNotFoundException($"Unable to locate published artifacts for stem '{existingStem}'.");
+
+        var mergedAttendees = NormalizeAttendees(existing.Attendees.Concat(attendees).ToArray());
+        var mergedKeyAttendees = NormalizeKeyAttendees(
+            (existing.KeyAttendees ?? Array.Empty<string>()).Concat(mergedAttendees.Select(attendee => attendee.Name)).ToArray());
+        if (AreEquivalent(existing.Attendees, mergedAttendees) &&
+            (existing.KeyAttendees ?? Array.Empty<string>()).SequenceEqual(mergedKeyAttendees, StringComparer.Ordinal))
+        {
+            return existing;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existing.JsonPath) && File.Exists(existing.JsonPath))
+        {
+            await UpdateJsonAttendeesAsync(existing.JsonPath, mergedAttendees, cancellationToken);
+            await UpdateJsonKeyAttendeesAsync(existing.JsonPath, mergedKeyAttendees, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(existing.MarkdownPath) && File.Exists(existing.MarkdownPath))
+        {
+            await UpdateMarkdownKeyAttendeesAsync(existing.MarkdownPath, mergedKeyAttendees, cancellationToken);
+        }
+
+        await UpdateManifestAsync(
+            workDir,
+            existingStem,
+            manifest => manifest with
+            {
+                Attendees = mergedAttendees,
+                KeyAttendees = mergedKeyAttendees,
+            },
+            cancellationToken);
+
+        return ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
+            .Single(record => string.Equals(record.Stem, existingStem, StringComparison.OrdinalIgnoreCase));
     }
 
     public IReadOnlyList<string> ListSpeakerLabels(MeetingOutputRecord record)
@@ -214,6 +300,13 @@ public sealed class MeetingOutputCatalogService
             RawChunkPaths = Array.Empty<string>(),
             MicrophoneChunkPaths = Array.Empty<string>(),
             MergedAudioPath = record.AudioPath,
+            ProjectName = record.ProjectName,
+            KeyAttendees = NormalizeKeyAttendees(record.KeyAttendees ?? Array.Empty<string>()),
+            DetectedAudioSource = NormalizeDetectedAudioSource(record.DetectedAudioSource),
+            Attendees = record.Attendees,
+            ProcessingMetadata = new MeetingProcessingMetadata(
+                record.TranscriptionModelFileName,
+                record.HasSpeakerLabels),
             TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Queued, now, "Queued from an existing published audio file."),
             DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
             PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
@@ -275,6 +368,8 @@ public sealed class MeetingOutputCatalogService
             .Where(value => value != DateTimeOffset.MinValue)
             .DefaultIfEmpty(mergedManifest.StartedAtUtc)
             .Min();
+        var projectName = GetMergedProjectName(orderedRecords);
+        var keyAttendees = NormalizeKeyAttendees(orderedRecords.SelectMany(record => record.KeyAttendees ?? Array.Empty<string>()).ToArray());
         var sessionRoot = _pathBuilder.BuildSessionRoot(workDir, mergedManifest.SessionId);
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         var mergedAudioPath = Path.Combine(sessionRoot, "processing", "merged.wav");
@@ -285,6 +380,8 @@ public sealed class MeetingOutputCatalogService
         {
             StartedAtUtc = startedAtUtc,
             MergedAudioPath = mergedAudioPath,
+            ProjectName = projectName,
+            KeyAttendees = keyAttendees,
             State = SessionState.Queued,
             EndedAtUtc = null,
             RawChunkPaths = Array.Empty<string>(),
@@ -364,6 +461,8 @@ public sealed class MeetingOutputCatalogService
             DetectedTitle = firstTitle,
             StartedAtUtc = startedAtUtc,
             MergedAudioPath = firstAudioPath,
+            ProjectName = record.ProjectName,
+            KeyAttendees = NormalizeKeyAttendees(record.KeyAttendees ?? Array.Empty<string>()),
             State = SessionState.Queued,
             EndedAtUtc = null,
             RawChunkPaths = Array.Empty<string>(),
@@ -374,6 +473,8 @@ public sealed class MeetingOutputCatalogService
             DetectedTitle = secondTitle,
             StartedAtUtc = secondStartedAtUtc,
             MergedAudioPath = secondAudioPath,
+            ProjectName = record.ProjectName,
+            KeyAttendees = NormalizeKeyAttendees(record.KeyAttendees ?? Array.Empty<string>()),
             State = SessionState.Queued,
             EndedAtUtc = null,
             RawChunkPaths = Array.Empty<string>(),
@@ -400,7 +501,7 @@ public sealed class MeetingOutputCatalogService
             return;
         }
 
-        foreach (var path in Directory.EnumerateFiles(directory))
+        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
         {
             var stem = Path.GetFileNameWithoutExtension(path);
             if (string.IsNullOrWhiteSpace(stem))
@@ -436,9 +537,13 @@ public sealed class MeetingOutputCatalogService
 
     private static MeetingOutputRecord BuildRecord(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
     {
+        var jsonMetadata = TryReadJsonMetadata(record.JsonPath);
+
         if (TryParseStem(record.Stem, out var stemInfo))
         {
-            var storedTitle = manifestInfo?.Title ?? TryReadStoredTitle(record.JsonPath, record.MarkdownPath);
+            var storedTitle = manifestInfo?.Title ?? jsonMetadata?.Title ?? TryReadMarkdownTitle(record.MarkdownPath);
+            var projectName = manifestInfo?.ProjectName ?? jsonMetadata?.ProjectName ?? TryReadMarkdownProject(record.MarkdownPath);
+            var keyAttendees = manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath);
             return new MeetingOutputRecord(
                 record.Stem,
                 string.IsNullOrWhiteSpace(storedTitle) ? HumanizeSlug(stemInfo.TitleSlug) : storedTitle,
@@ -450,7 +555,13 @@ public sealed class MeetingOutputCatalogService
                 record.JsonPath,
                 record.ReadyMarkerPath,
                 manifestInfo?.ManifestPath,
-                manifestInfo?.State);
+                manifestInfo?.State,
+                manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
+                manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
+                manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
+                projectName,
+                manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
+                keyAttendees);
         }
 
         var fallbackTimestamp = record.AudioPath is not null
@@ -467,7 +578,13 @@ public sealed class MeetingOutputCatalogService
             record.JsonPath,
             record.ReadyMarkerPath,
             manifestInfo?.ManifestPath,
-            manifestInfo?.State);
+            manifestInfo?.State,
+            manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
+            manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
+            manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
+            manifestInfo?.ProjectName ?? jsonMetadata?.ProjectName ?? TryReadMarkdownProject(record.MarkdownPath),
+            manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
+            manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath));
     }
 
     private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir, IEnumerable<string> discoveredStems)
@@ -497,7 +614,17 @@ public sealed class MeetingOutputCatalogService
                     continue;
                 }
 
-                infoByStem[stem] = new ManifestInfo(title, manifestPath, manifest.State, manifest.StartedAtUtc, manifest.EndedAtUtc);
+                infoByStem[stem] = new ManifestInfo(
+                    title,
+                    manifestPath,
+                    manifest.State,
+                    manifest.StartedAtUtc,
+                    manifest.EndedAtUtc,
+                    manifest.ProjectName,
+                    NormalizeKeyAttendees(manifest.KeyAttendees),
+                    NormalizeAttendees(manifest.Attendees),
+                    manifest.ProcessingMetadata,
+                    NormalizeDetectedAudioSource(manifest.DetectedAudioSource));
             }
             catch
             {
@@ -550,15 +677,170 @@ public sealed class MeetingOutputCatalogService
         return words.Length == 0 ? "Session" : string.Join(' ', words);
     }
 
-    private static string? TryReadStoredTitle(string? jsonPath, string? markdownPath)
+    private static JsonTranscriptMetadata? TryReadJsonMetadata(string? jsonPath)
     {
-        var titleFromJson = TryReadJsonTitle(jsonPath);
-        if (!string.IsNullOrWhiteSpace(titleFromJson))
+        if (string.IsNullOrWhiteSpace(jsonPath) || !File.Exists(jsonPath))
         {
-            return titleFromJson;
+            return null;
         }
 
-        return TryReadMarkdownTitle(markdownPath);
+        try
+        {
+            var node = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
+            if (node is null)
+            {
+                return null;
+            }
+
+            var hasSpeakerLabels = TryGetJsonBoolean(node, "HasSpeakerLabels", "hasSpeakerLabels")
+                ?? TryInferHasSpeakerLabels(node);
+
+            return new JsonTranscriptMetadata(
+                GetJsonString(node, "Title", "title"),
+                NormalizeAttendees(TryReadJsonAttendees(node)),
+                GetJsonString(node, "TranscriptionModelFileName", "transcriptionModelFileName"),
+                NormalizeOptionalMetadataValue(GetJsonString(node, "ProjectName", "projectName")),
+                NormalizeKeyAttendees(TryReadJsonKeyAttendees(node)),
+                hasSpeakerLabels,
+                TryReadDetectedAudioSource(node));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<string> TryReadJsonKeyAttendees(JsonObject node)
+    {
+        var keyAttendeesNode = node["KeyAttendees"] as JsonArray ?? node["keyAttendees"] as JsonArray;
+        if (keyAttendeesNode is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var keyAttendees = new List<string>();
+        foreach (var attendeeNode in keyAttendeesNode)
+        {
+            if (attendeeNode is JsonValue value &&
+                value.TryGetValue<string>(out var attendeeName) &&
+                !string.IsNullOrWhiteSpace(attendeeName))
+            {
+                keyAttendees.Add(attendeeName);
+            }
+        }
+
+        return keyAttendees;
+    }
+
+    private static IReadOnlyList<MeetingAttendee> TryReadJsonAttendees(JsonObject node)
+    {
+        var attendeesNode = node["Attendees"] as JsonArray ?? node["attendees"] as JsonArray;
+        if (attendeesNode is null)
+        {
+            return Array.Empty<MeetingAttendee>();
+        }
+
+        var attendees = new List<MeetingAttendee>();
+        foreach (var attendeeNode in attendeesNode)
+        {
+            if (attendeeNode is not JsonObject attendeeObject)
+            {
+                continue;
+            }
+
+            var name = GetJsonString(attendeeObject, "Name", "name");
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var sourcesNode = attendeeObject["Sources"] as JsonArray ?? attendeeObject["sources"] as JsonArray;
+            var sources = new List<MeetingAttendeeSource>();
+            if (sourcesNode is not null)
+            {
+                foreach (var sourceNode in sourcesNode)
+                {
+                    if (TryParseAttendeeSource(sourceNode, out var source))
+                    {
+                        sources.Add(source);
+                    }
+                }
+            }
+
+            attendees.Add(new MeetingAttendee(
+                name.Trim(),
+                sources.Count == 0 ? [MeetingAttendeeSource.Unknown] : sources.ToArray()));
+        }
+
+        return attendees;
+    }
+
+    private static bool TryParseAttendeeSource(JsonNode? sourceNode, out MeetingAttendeeSource source)
+    {
+        if (sourceNode is JsonValue value)
+        {
+            if (value.TryGetValue<string>(out var text) &&
+                Enum.TryParse<MeetingAttendeeSource>(text, ignoreCase: true, out source) &&
+                Enum.IsDefined(source))
+            {
+                return true;
+            }
+
+            if (value.TryGetValue<int>(out var numericValue) &&
+                Enum.IsDefined(typeof(MeetingAttendeeSource), numericValue))
+            {
+                source = (MeetingAttendeeSource)numericValue;
+                return true;
+            }
+        }
+
+        source = MeetingAttendeeSource.Unknown;
+        return false;
+    }
+
+    private static bool TryInferHasSpeakerLabels(JsonObject node)
+    {
+        var speakers = GetSpeakersArray(node);
+        if (speakers is { Count: > 0 })
+        {
+            return true;
+        }
+
+        var segments = GetSegmentsArray(node);
+        if (segments is null)
+        {
+            return false;
+        }
+
+        foreach (var segmentNode in segments)
+        {
+            if (segmentNode is not JsonObject segmentObject)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(GetJsonString(segmentObject, "SpeakerLabel", "speakerLabel", "DisplaySpeakerLabel", "displaySpeakerLabel")) ||
+                !string.IsNullOrWhiteSpace(GetJsonString(segmentObject, "SpeakerId", "speakerId")))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool? TryGetJsonBoolean(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is JsonValue value &&
+                value.TryGetValue<bool>(out var boolean))
+            {
+                return boolean;
+            }
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<string> TryReadJsonSpeakerLabels(string? jsonPath)
@@ -571,6 +853,33 @@ public sealed class MeetingOutputCatalogService
         try
         {
             var node = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
+            var speakers = GetSpeakersArray(node);
+            if (speakers is { Count: > 0 })
+            {
+                var speakerLabels = new List<string>();
+                var seenSpeakerLabels = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var speakerNode in speakers)
+                {
+                    if (speakerNode is not JsonObject speakerObject)
+                    {
+                        continue;
+                    }
+
+                    var displayName = GetJsonString(speakerObject, "DisplayName", "displayName");
+                    if (string.IsNullOrWhiteSpace(displayName) || !seenSpeakerLabels.Add(displayName))
+                    {
+                        continue;
+                    }
+
+                    speakerLabels.Add(displayName);
+                }
+
+                if (speakerLabels.Count > 0)
+                {
+                    return speakerLabels;
+                }
+            }
+
             var segments = GetSegmentsArray(node);
             if (segments is null)
             {
@@ -586,7 +895,7 @@ public sealed class MeetingOutputCatalogService
                     continue;
                 }
 
-                var label = GetJsonString(segmentObject, "SpeakerLabel", "speakerLabel");
+                var label = GetJsonString(segmentObject, "SpeakerLabel", "speakerLabel", "DisplaySpeakerLabel", "displaySpeakerLabel");
                 if (string.IsNullOrWhiteSpace(label) || !seen.Add(label))
                 {
                     continue;
@@ -726,6 +1035,62 @@ public sealed class MeetingOutputCatalogService
         }
     }
 
+    private static string? TryReadMarkdownProject(string? markdownPath)
+    {
+        if (string.IsNullOrWhiteSpace(markdownPath) || !File.Exists(markdownPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            foreach (var line in File.ReadLines(markdownPath))
+            {
+                if (!line.StartsWith("- Project:", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return NormalizeOptionalMetadataValue(line["- Project:".Length..]);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<string> TryReadMarkdownKeyAttendees(string? markdownPath)
+    {
+        if (string.IsNullOrWhiteSpace(markdownPath) || !File.Exists(markdownPath))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            foreach (var line in File.ReadLines(markdownPath))
+            {
+                if (!line.StartsWith("- Key Attendees:", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return NormalizeKeyAttendees(
+                    line["- Key Attendees:".Length..]
+                        .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+
+            return Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     private static IReadOnlyList<RenamePair> BuildRenamePairs(MeetingOutputRecord existing, string newStem)
     {
         var pairs = new List<RenamePair>();
@@ -746,6 +1111,13 @@ public sealed class MeetingOutputCatalogService
         var directory = Path.GetDirectoryName(sourcePath)
             ?? throw new InvalidOperationException("Artifact path must include a directory.");
         pairs.Add(new RenamePair(sourcePath, Path.Combine(directory, $"{newStem}{Path.GetExtension(sourcePath)}")));
+    }
+
+    private static string GetRenamedArtifactPath(string existingPath, string newStem)
+    {
+        var directory = Path.GetDirectoryName(existingPath)
+            ?? throw new InvalidOperationException("Artifact path must include a directory.");
+        return Path.Combine(directory, $"{newStem}{Path.GetExtension(existingPath)}");
     }
 
     private static async Task UpdateMarkdownTitleAsync(string markdownPath, string newTitle, CancellationToken cancellationToken)
@@ -775,15 +1147,62 @@ public sealed class MeetingOutputCatalogService
             return;
         }
 
-        var json = await File.ReadAllTextAsync(jsonPath, cancellationToken);
-        var node = JsonNode.Parse(json)?.AsObject()
-            ?? throw new InvalidOperationException($"Unable to parse transcript JSON '{jsonPath}'.");
-        var propertyName = node.ContainsKey("title") ? "title" : "Title";
-        node[propertyName] = newTitle;
-        await File.WriteAllTextAsync(jsonPath, node.ToJsonString(new System.Text.Json.JsonSerializerOptions
+        await UpdateJsonAsync(
+            jsonPath,
+            node =>
+            {
+                var propertyName = node.ContainsKey("title") ? "title" : "Title";
+                node[propertyName] = newTitle;
+            },
+            cancellationToken);
+    }
+
+    private static async Task UpdateJsonProjectAsync(
+        string jsonPath,
+        string? projectName,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(jsonPath))
         {
-            WriteIndented = true,
-        }), cancellationToken);
+            return;
+        }
+
+        await UpdateJsonAsync(
+            jsonPath,
+            node => SetJsonStringProperty(node, "projectName", "ProjectName", projectName),
+            cancellationToken);
+    }
+
+    private static async Task UpdateJsonAttendeesAsync(
+        string jsonPath,
+        IReadOnlyList<MeetingAttendee> attendees,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            return;
+        }
+
+        await UpdateJsonAsync(
+            jsonPath,
+            node => node["attendees"] = BuildAttendeesJsonArray(attendees),
+            cancellationToken);
+    }
+
+    private static async Task UpdateJsonKeyAttendeesAsync(
+        string jsonPath,
+        IReadOnlyList<string> keyAttendees,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            return;
+        }
+
+        await UpdateJsonAsync(
+            jsonPath,
+            node => node["keyAttendees"] = BuildKeyAttendeesJsonArray(keyAttendees),
+            cancellationToken);
     }
 
     private static async Task UpdateJsonSpeakerLabelsAsync(
@@ -796,35 +1215,176 @@ public sealed class MeetingOutputCatalogService
             return;
         }
 
-        var json = await File.ReadAllTextAsync(jsonPath, cancellationToken);
-        var node = JsonNode.Parse(json)?.AsObject()
-            ?? throw new InvalidOperationException($"Unable to parse transcript JSON '{jsonPath}'.");
-        var segments = GetSegmentsArray(node);
-        if (segments is not null)
-        {
-            foreach (var segmentNode in segments)
+        await UpdateJsonAsync(
+            jsonPath,
+            node =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (segmentNode is not JsonObject segmentObject)
+                var speakers = GetSpeakersArray(node);
+                if (speakers is not null)
                 {
-                    continue;
+                    foreach (var speakerNode in speakers)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (speakerNode is not JsonObject speakerObject)
+                        {
+                            continue;
+                        }
+
+                        var propertyName = speakerObject.ContainsKey("displayName") ? "displayName" : "DisplayName";
+                        var label = GetJsonString(speakerObject, "DisplayName", "displayName");
+                        if (string.IsNullOrWhiteSpace(label) || !speakerLabelMap.TryGetValue(label, out var updatedLabel))
+                        {
+                            continue;
+                        }
+
+                        speakerObject[propertyName] = updatedLabel;
+                    }
                 }
 
-                var propertyName = segmentObject.ContainsKey("speakerLabel") ? "speakerLabel" : "SpeakerLabel";
-                var label = GetJsonString(segmentObject, "SpeakerLabel", "speakerLabel");
-                if (string.IsNullOrWhiteSpace(label) || !speakerLabelMap.TryGetValue(label, out var updatedLabel))
+                var segments = GetSegmentsArray(node);
+                if (segments is null)
                 {
-                    continue;
+                    return;
                 }
 
-                segmentObject[propertyName] = updatedLabel;
+                foreach (var segmentNode in segments)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (segmentNode is not JsonObject segmentObject)
+                    {
+                        continue;
+                    }
+
+                    foreach (var propertyName in new[]
+                             {
+                                 segmentObject.ContainsKey("speakerLabel") ? "speakerLabel" : "SpeakerLabel",
+                                 segmentObject.ContainsKey("displaySpeakerLabel") ? "displaySpeakerLabel" : "DisplaySpeakerLabel",
+                             }.Distinct(StringComparer.Ordinal))
+                    {
+                        var label = GetJsonString(segmentObject, propertyName);
+                        if (string.IsNullOrWhiteSpace(label) || !speakerLabelMap.TryGetValue(label, out var updatedLabel))
+                        {
+                            continue;
+                        }
+
+                        segmentObject[propertyName] = updatedLabel;
+                    }
+                }
+            },
+            cancellationToken);
+    }
+
+    private static async Task UpdateMarkdownProjectAsync(
+        string markdownPath,
+        string? projectName,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(markdownPath))
+        {
+            return;
+        }
+
+        var lines = (await File.ReadAllLinesAsync(markdownPath, cancellationToken)).ToList();
+        var existingProjectLineIndex = lines.FindIndex(line => line.StartsWith("- Project:", StringComparison.OrdinalIgnoreCase));
+        var normalizedProjectName = NormalizeOptionalMetadataValue(projectName);
+
+        if (string.IsNullOrWhiteSpace(normalizedProjectName))
+        {
+            if (existingProjectLineIndex >= 0)
+            {
+                lines.RemoveAt(existingProjectLineIndex);
+            }
+        }
+        else
+        {
+            var projectLine = $"- Project: {normalizedProjectName}";
+            if (existingProjectLineIndex >= 0)
+            {
+                lines[existingProjectLineIndex] = projectLine;
+            }
+            else
+            {
+                var insertAfterIndex = lines.FindLastIndex(line =>
+                    line.StartsWith("- Started", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("- Platform:", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("- Session ID:", StringComparison.OrdinalIgnoreCase));
+                if (insertAfterIndex < 0)
+                {
+                    insertAfterIndex = lines.FindIndex(line => line.StartsWith("# ", StringComparison.Ordinal));
+                }
+
+                var insertIndex = insertAfterIndex >= 0 ? insertAfterIndex + 1 : 0;
+                lines.Insert(insertIndex, projectLine);
             }
         }
 
-        await File.WriteAllTextAsync(jsonPath, node.ToJsonString(new System.Text.Json.JsonSerializerOptions
+        await File.WriteAllLinesAsync(markdownPath, lines, cancellationToken);
+    }
+
+    private static async Task UpdateMarkdownKeyAttendeesAsync(
+        string markdownPath,
+        IReadOnlyList<string> keyAttendees,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(markdownPath))
         {
-            WriteIndented = true,
-        }), cancellationToken);
+            return;
+        }
+
+        var lines = (await File.ReadAllLinesAsync(markdownPath, cancellationToken)).ToList();
+        var existingKeyAttendeesLineIndex = lines.FindIndex(line => line.StartsWith("- Key Attendees:", StringComparison.OrdinalIgnoreCase));
+        var normalizedKeyAttendees = NormalizeKeyAttendees(keyAttendees);
+
+        if (normalizedKeyAttendees.Count == 0)
+        {
+            if (existingKeyAttendeesLineIndex >= 0)
+            {
+                lines.RemoveAt(existingKeyAttendeesLineIndex);
+            }
+        }
+        else
+        {
+            var keyAttendeesLine = $"- Key Attendees: {string.Join(", ", normalizedKeyAttendees)}";
+            if (existingKeyAttendeesLineIndex >= 0)
+            {
+                lines[existingKeyAttendeesLineIndex] = keyAttendeesLine;
+            }
+            else
+            {
+                var insertAfterIndex = lines.FindLastIndex(line =>
+                    line.StartsWith("- Project:", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("- Started", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("- Platform:", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("- Session ID:", StringComparison.OrdinalIgnoreCase));
+                if (insertAfterIndex < 0)
+                {
+                    insertAfterIndex = lines.FindIndex(line => line.StartsWith("# ", StringComparison.Ordinal));
+                }
+
+                var insertIndex = insertAfterIndex >= 0 ? insertAfterIndex + 1 : 0;
+                lines.Insert(insertIndex, keyAttendeesLine);
+            }
+        }
+
+        await File.WriteAllLinesAsync(markdownPath, lines, cancellationToken);
+    }
+
+    private static async Task UpdateJsonAsync(
+        string jsonPath,
+        Action<JsonObject> update,
+        CancellationToken cancellationToken)
+    {
+        var json = await File.ReadAllTextAsync(jsonPath, cancellationToken);
+        var node = JsonNode.Parse(json)?.AsObject()
+            ?? throw new InvalidOperationException($"Unable to parse transcript JSON '{jsonPath}'.");
+        update(node);
+        await File.WriteAllTextAsync(
+            jsonPath,
+            node.ToJsonString(new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+            }),
+            cancellationToken);
     }
 
     private static async Task UpdateMarkdownSpeakerLabelsAsync(
@@ -865,6 +1425,86 @@ public sealed class MeetingOutputCatalogService
         return node["Segments"] as JsonArray ?? node["segments"] as JsonArray;
     }
 
+    private static JsonArray? GetSpeakersArray(JsonObject? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        return node["Speakers"] as JsonArray ?? node["speakers"] as JsonArray;
+    }
+
+    private static void SetJsonStringProperty(
+        JsonObject node,
+        string camelCasePropertyName,
+        string pascalCasePropertyName,
+        string? value)
+    {
+        var normalizedValue = NormalizeOptionalMetadataValue(value);
+        if (string.IsNullOrWhiteSpace(normalizedValue))
+        {
+            node.Remove(camelCasePropertyName);
+            node.Remove(pascalCasePropertyName);
+            return;
+        }
+
+        var propertyName = node.ContainsKey(camelCasePropertyName)
+            ? camelCasePropertyName
+            : node.ContainsKey(pascalCasePropertyName)
+                ? pascalCasePropertyName
+                : camelCasePropertyName;
+        node[propertyName] = normalizedValue;
+    }
+
+    private static JsonArray BuildAttendeesJsonArray(IReadOnlyList<MeetingAttendee> attendees)
+    {
+        return new JsonArray(
+            NormalizeAttendees(attendees)
+                .Select(attendee => (JsonNode)new JsonObject
+                {
+                    ["name"] = attendee.Name,
+                    ["sources"] = new JsonArray(attendee.Sources.Select(source => JsonValue.Create(source.ToString())).ToArray()),
+                })
+                .ToArray());
+    }
+
+    private static DetectedAudioSource? TryReadDetectedAudioSource(JsonObject node)
+    {
+        var audioSourceNode = node["DetectedAudioSource"] as JsonObject ?? node["detectedAudioSource"] as JsonObject;
+        if (audioSourceNode is null)
+        {
+            return null;
+        }
+
+        var appName = NormalizeOptionalMetadataValue(GetJsonString(audioSourceNode, "AppName", "appName"));
+        if (string.IsNullOrWhiteSpace(appName))
+        {
+            return null;
+        }
+
+        if (!TryParseJsonEnum(audioSourceNode, out AudioSourceMatchKind matchKind, "MatchKind", "matchKind"))
+        {
+            matchKind = AudioSourceMatchKind.EndpointFallback;
+        }
+
+        if (!TryParseJsonEnum(audioSourceNode, out AudioSourceConfidence confidence, "Confidence", "confidence"))
+        {
+            confidence = AudioSourceConfidence.Low;
+        }
+
+        var observedAtUtc = TryGetJsonDateTimeOffset(audioSourceNode, "ObservedAtUtc", "observedAtUtc")
+            ?? DateTimeOffset.MinValue;
+
+        return NormalizeDetectedAudioSource(new DetectedAudioSource(
+            appName,
+            NormalizeOptionalMetadataValue(GetJsonString(audioSourceNode, "WindowTitle", "windowTitle")),
+            NormalizeOptionalMetadataValue(GetJsonString(audioSourceNode, "BrowserTabTitle", "browserTabTitle")),
+            matchKind,
+            confidence,
+            observedAtUtc));
+    }
+
     private static string? GetJsonString(JsonObject node, params string[] propertyNames)
     {
         foreach (var propertyName in propertyNames)
@@ -880,10 +1520,78 @@ public sealed class MeetingOutputCatalogService
         return null;
     }
 
+    private static DateTimeOffset? TryGetJsonDateTimeOffset(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is not JsonValue value)
+            {
+                continue;
+            }
+
+            if (value.TryGetValue<DateTimeOffset>(out var timestamp))
+            {
+                return timestamp;
+            }
+
+            if (value.TryGetValue<string>(out var text) &&
+                DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out timestamp))
+            {
+                return timestamp;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseJsonEnum<TEnum>(JsonObject node, out TEnum value, params string[] propertyNames)
+        where TEnum : struct, Enum
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is not JsonValue jsonValue)
+            {
+                continue;
+            }
+
+            if (jsonValue.TryGetValue<string>(out var text) &&
+                Enum.TryParse<TEnum>(text, ignoreCase: true, out value))
+            {
+                return true;
+            }
+
+            if (jsonValue.TryGetValue<int>(out var numericValue) &&
+                Enum.IsDefined(typeof(TEnum), numericValue))
+            {
+                value = (TEnum)Enum.ToObject(typeof(TEnum), numericValue);
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     private async Task UpdateManifestTitleAsync(
         string? workDir,
         string existingStem,
         string newTitle,
+        CancellationToken cancellationToken)
+    {
+        await UpdateManifestAsync(
+            workDir,
+            existingStem,
+            manifest => manifest with
+            {
+                DetectedTitle = newTitle,
+            },
+            cancellationToken);
+    }
+
+    private async Task UpdateManifestAsync(
+        string? workDir,
+        string existingStem,
+        Func<MeetingSessionManifest, MeetingSessionManifest> update,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
@@ -913,10 +1621,13 @@ public sealed class MeetingOutputCatalogService
                 continue;
             }
 
-            await manifestStore.SaveAsync(manifest with
+            var updatedManifest = update(manifest);
+            if (ReferenceEquals(updatedManifest, manifest) || updatedManifest == manifest)
             {
-                DetectedTitle = newTitle,
-            }, manifestPath, cancellationToken);
+                return;
+            }
+
+            await manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
             return;
         }
     }
@@ -939,12 +1650,145 @@ public sealed class MeetingOutputCatalogService
         public string? ReadyMarkerPath { get; set; }
     }
 
+    private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<MeetingAttendee>? attendees)
+    {
+        if (attendees is null || attendees.Count == 0)
+        {
+            return Array.Empty<MeetingAttendee>();
+        }
+
+        var merged = new List<(string Name, List<MeetingAttendeeSource> Sources)>();
+        foreach (var attendee in attendees)
+        {
+            if (string.IsNullOrWhiteSpace(attendee.Name))
+            {
+                continue;
+            }
+
+            var normalizedName = MeetingMetadataNameMatcher.NormalizeDisplayName(attendee.Name);
+            var existingIndex = merged.FindIndex(existing =>
+                MeetingMetadataNameMatcher.AreReasonableMatch(existing.Name, normalizedName));
+            if (existingIndex < 0)
+            {
+                var newSources = attendee.Sources.Distinct().ToList();
+                if (newSources.Count == 0)
+                {
+                    newSources.Add(MeetingAttendeeSource.Unknown);
+                }
+
+                merged.Add((normalizedName, newSources));
+                continue;
+            }
+
+            var existing = merged[existingIndex];
+            var preferredName = MeetingMetadataNameMatcher.ChoosePreferredDisplayName(existing.Name, normalizedName);
+            var existingSources = existing.Sources;
+            foreach (var source in attendee.Sources.Distinct())
+            {
+                if (!existingSources.Contains(source))
+                {
+                    existingSources.Add(source);
+                }
+            }
+
+            if (existingSources.Count == 0)
+            {
+                existingSources.Add(MeetingAttendeeSource.Unknown);
+            }
+
+            merged[existingIndex] = (preferredName, existingSources);
+        }
+
+        return merged
+            .Select(item => new MeetingAttendee(item.Name, item.Sources.ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> NormalizeKeyAttendees(IReadOnlyList<string>? keyAttendees)
+    {
+        return MeetingMetadataNameMatcher.MergeNames(keyAttendees, Array.Empty<string>());
+    }
+
+    private static bool AreEquivalent(
+        IReadOnlyList<MeetingAttendee> left,
+        IReadOnlyList<MeetingAttendee> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            if (!string.Equals(left[index].Name, right[index].Name, StringComparison.Ordinal) ||
+                !left[index].Sources.SequenceEqual(right[index].Sources))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string? NormalizeOptionalMetadataValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim();
+    }
+
+    private static JsonArray BuildKeyAttendeesJsonArray(IReadOnlyList<string> keyAttendees)
+    {
+        var array = new JsonArray();
+        foreach (var attendee in NormalizeKeyAttendees(keyAttendees))
+        {
+            array.Add(attendee);
+        }
+
+        return array;
+    }
+
+    private static DetectedAudioSource? NormalizeDetectedAudioSource(DetectedAudioSource? audioSource)
+    {
+        if (audioSource is null)
+        {
+            return null;
+        }
+
+        var appName = NormalizeOptionalMetadataValue(audioSource.AppName);
+        if (string.IsNullOrWhiteSpace(appName))
+        {
+            return null;
+        }
+
+        return audioSource with
+        {
+            AppName = appName,
+            WindowTitle = NormalizeOptionalMetadataValue(audioSource.WindowTitle),
+            BrowserTabTitle = NormalizeOptionalMetadataValue(audioSource.BrowserTabTitle),
+        };
+    }
+
     private sealed record ManifestInfo(
         string Title,
         string ManifestPath,
         SessionState State,
         DateTimeOffset StartedAtUtc,
-        DateTimeOffset? EndedAtUtc);
+        DateTimeOffset? EndedAtUtc,
+        string? ProjectName,
+        IReadOnlyList<string> KeyAttendees,
+        IReadOnlyList<MeetingAttendee> Attendees,
+        MeetingProcessingMetadata? ProcessingMetadata,
+        DetectedAudioSource? DetectedAudioSource);
+
+    private sealed record JsonTranscriptMetadata(
+        string? Title,
+        IReadOnlyList<MeetingAttendee> Attendees,
+        string? TranscriptionModelFileName,
+        string? ProjectName,
+        IReadOnlyList<string> KeyAttendees,
+        bool HasSpeakerLabels,
+        DetectedAudioSource? DetectedAudioSource);
 
     private readonly record struct StemInfo(DateTimeOffset StartedAtUtc, MeetingPlatform Platform, string TitleSlug);
 
@@ -962,6 +1806,19 @@ public sealed class MeetingOutputCatalogService
             ? distinctPlatforms[0]
             : MeetingPlatform.Manual;
     }
+
+    private static string? GetMergedProjectName(IReadOnlyList<MeetingOutputRecord> records)
+    {
+        var distinctProjectNames = records
+            .Select(record => NormalizeOptionalMetadataValue(record.ProjectName))
+            .Where(projectName => !string.IsNullOrWhiteSpace(projectName))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return distinctProjectNames.Length == 1
+            ? distinctProjectNames[0]
+            : null;
+    }
 }
 
 public sealed record MeetingOutputRecord(
@@ -975,7 +1832,13 @@ public sealed record MeetingOutputRecord(
     string? JsonPath,
     string? ReadyMarkerPath,
     string? ManifestPath,
-    SessionState? ManifestState);
+    SessionState? ManifestState,
+    IReadOnlyList<MeetingAttendee> Attendees,
+    bool HasSpeakerLabels,
+    string? TranscriptionModelFileName,
+    string? ProjectName = null,
+    DetectedAudioSource? DetectedAudioSource = null,
+    IReadOnlyList<string>? KeyAttendees = null);
 
 public sealed record MergedMeetingResult(
     string ManifestPath,

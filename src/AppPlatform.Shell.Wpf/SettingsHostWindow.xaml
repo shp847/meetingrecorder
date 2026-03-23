@@ -1,0 +1,104 @@
+<Window x:Class="AppPlatform.Shell.Wpf.SettingsHostWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Width="860"
+        Height="780"
+        MinWidth="780"
+        MinHeight="620"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppCanvasBrush}">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AppPlatform.Shell.Wpf;component/ShellTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock FontFamily="{StaticResource AppUiFontFamily}"
+                       FontSize="24"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource AppTextBrush}"
+                       Text="Settings" />
+            <TextBlock Margin="0,8,0,0"
+                       Style="{StaticResource DialogBodyTextStyle}"
+                       Text="Use Settings to manage setup, recording behavior, file locations, updates, and troubleshooting." />
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Margin="0,18,0,0"
+                BorderBrush="{StaticResource AppOutlineBrush}"
+                BorderThickness="0,0,0,1">
+            <UniformGrid x:Name="SettingsSectionButtonStrip"
+                         Columns="5"
+                         Rows="1">
+                <Button x:Name="SettingsSetupSectionButton"
+                        Uid="setup"
+                        Tag="Active"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="Setup" />
+                <Button x:Name="SettingsGeneralSectionButton"
+                        Uid="general"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="General" />
+                <Button x:Name="SettingsFilesSectionButton"
+                        Uid="files"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="Files" />
+                <Button x:Name="SettingsUpdatesSectionButton"
+                        Uid="updates"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="Updates" />
+                <Button x:Name="SettingsAdvancedSectionButton"
+                        Uid="advanced"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="Advanced" />
+            </UniformGrid>
+        </Border>
+
+        <Border Grid.Row="2"
+                Margin="0,16,0,0"
+                Style="{StaticResource DialogCardStyle}">
+            <ContentControl x:Name="SettingsBodyHost" />
+        </Border>
+
+        <Grid Grid.Row="3"
+              Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock x:Name="FooterStatusTextBlock"
+                       VerticalAlignment="Center"
+                       Style="{StaticResource DialogBodyTextStyle}" />
+
+            <Button x:Name="SaveChangesButton"
+                    Grid.Column="1"
+                    Margin="12,0,12,0"
+                    Style="{StaticResource PrimaryActionButtonStyle}"
+                    Click="SaveChangesButton_OnClick"
+                    Content="Save Changes" />
+            <Button Grid.Column="2"
+                    Style="{StaticResource SecondaryActionButtonStyle}"
+                    Click="CloseButton_OnClick"
+                    Content="Close" />
+        </Grid>
+    </Grid>
+</Window>

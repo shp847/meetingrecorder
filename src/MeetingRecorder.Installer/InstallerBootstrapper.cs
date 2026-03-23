@@ -1,144 +1,168 @@
 using MeetingRecorder.Core.Branding;
 using MeetingRecorder.Core.Services;
+using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MeetingRecorder.Installer;
 
 internal sealed class InstallerBootstrapper
 {
     private const double BytesPerMegabyte = 1024d * 1024d;
+
     private readonly GitHubReleaseBootstrapService _bootstrapService;
     private readonly HttpFileDownloader _fileDownloader;
-    private readonly PortableInstallService _portableInstallService;
+    private readonly IInstallerProcessLauncher _processLauncher;
+    private readonly string? _bootstrapAssetRootOverride;
 
     public InstallerBootstrapper(
         GitHubReleaseBootstrapService bootstrapService,
+        HttpFileDownloader fileDownloader)
+        : this(
+            bootstrapService,
+            fileDownloader,
+            new InstallerProcessLauncher(),
+            bootstrapAssetRootOverride: null)
+    {
+    }
+
+    internal InstallerBootstrapper(
+        GitHubReleaseBootstrapService bootstrapService,
         HttpFileDownloader fileDownloader,
-        PortableInstallService portableInstallService)
+        IInstallerProcessLauncher processLauncher)
+        : this(
+            bootstrapService,
+            fileDownloader,
+            processLauncher,
+            bootstrapAssetRootOverride: null)
+    {
+    }
+
+    internal InstallerBootstrapper(
+        GitHubReleaseBootstrapService bootstrapService,
+        HttpFileDownloader fileDownloader,
+        IInstallerProcessLauncher processLauncher,
+        string? bootstrapAssetRootOverride)
     {
         _bootstrapService = bootstrapService;
         _fileDownloader = fileDownloader;
-        _portableInstallService = portableInstallService;
+        _processLauncher = processLauncher;
+        _bootstrapAssetRootOverride = bootstrapAssetRootOverride;
     }
 
-    public async Task<InstallerSessionResult> InstallLatestAsync(
+    public Task<InstallerSessionResult> InstallLatestAsync(
         IProgress<InstallerProgressInfo>? progress,
         CancellationToken cancellationToken)
     {
+        return InstallLatestAsync(
+            Array.Empty<string>(),
+            progress,
+            cancellationToken);
+    }
+
+    public async Task<InstallerSessionResult> InstallLatestAsync(
+        IReadOnlyList<string> forwardedArguments,
+        IProgress<InstallerProgressInfo>? progress,
+        CancellationToken cancellationToken)
+    {
+        var installRoot = AppDataPaths.GetManagedInstallRoot();
+        var localAssetSet = TryResolveLocalBootstrapAssetSet(_bootstrapAssetRootOverride ?? AppContext.BaseDirectory);
+        if (localAssetSet is not null)
+        {
+            progress?.Report(new InstallerProgressInfo(
+                "Using local installer assets",
+                $"Installing the colocated {localAssetSet.ReleaseInfo.Version} package instead of querying GitHub.",
+                18,
+                BuildReleaseSummary(localAssetSet.ReleaseInfo)));
+
+            var localDiagnosticLogPath = CreateInstallerLogPath("bootstrap-handoff");
+            var localBootstrapArguments = BuildBootstrapForwardedArguments(
+                forwardedArguments,
+                packageZipPath: localAssetSet.PackageZipPath,
+                releaseInfo: localAssetSet.ReleaseInfo);
+            WriteBootstrapHandoffLog(localDiagnosticLogPath, localAssetSet.ReleaseInfo, localAssetSet.AssetSet, localBootstrapArguments);
+
+            progress?.Report(new InstallerProgressInfo(
+                "Launching the command bootstrapper",
+                "Continue in the command window that opens next. This EXE launcher is handing off to the local packaged installer assets.",
+                100,
+                $"Diagnostic log: {localDiagnosticLogPath}"));
+
+            _processLauncher.Launch(BuildBootstrapHandoffStartInfo(
+                localAssetSet.AssetSet.CommandPath,
+                localAssetSet.AssetSet.WorkingDirectory,
+                localBootstrapArguments));
+
+            return new InstallerSessionResult(
+                InstallRoot: installRoot,
+                BootstrapCommandPath: localAssetSet.AssetSet.CommandPath,
+                DiagnosticLogPath: localDiagnosticLogPath,
+                ReleaseInfo: localAssetSet.ReleaseInfo,
+                ManualSteps: ManualInstallGuideBuilder.Build(localAssetSet.ReleaseInfo, installRoot),
+                ReleasePageUrl: localAssetSet.ReleaseInfo.ReleasePageUrl ?? AppBranding.DefaultReleasePageUrl);
+        }
+
         progress?.Report(new InstallerProgressInfo(
             "Checking GitHub for the latest release",
             "Reading the current release metadata.",
-            5));
+            8));
 
         var release = await _bootstrapService.GetLatestReleaseAsync(
             AppBranding.DefaultUpdateFeedUrl,
             cancellationToken);
-        var installRoot = _portableInstallService.GetDefaultInstallRoot();
         var manualSteps = ManualInstallGuideBuilder.Build(release, installRoot);
 
         progress?.Report(new InstallerProgressInfo(
             "Latest release found",
-            $"Preparing to install {release.Version} into {installRoot}.",
-            10,
+            $"Preparing a thin handoff for {release.Version}.",
+            18,
             BuildReleaseSummary(release)));
 
-        var tempRoot = Path.Combine(
-            Path.GetTempPath(),
-            "MeetingRecorderInstaller-" + Guid.NewGuid().ToString("N"));
-        var downloadPath = Path.Combine(tempRoot, release.AppZipAsset.Name);
-        var extractPath = Path.Combine(tempRoot, "bundle");
+        var assetSet = await DownloadBootstrapAssetSetAsync(release, progress, cancellationToken);
+        var diagnosticLogPath = CreateInstallerLogPath("bootstrap-handoff");
+        var bootstrapArguments = BuildBootstrapForwardedArguments(forwardedArguments);
+        WriteBootstrapHandoffLog(diagnosticLogPath, release, assetSet, bootstrapArguments);
 
-        try
-        {
-            Directory.CreateDirectory(tempRoot);
+        progress?.Report(new InstallerProgressInfo(
+            "Launching the command bootstrapper",
+            "Continue in the command window that opens next. This EXE launcher now steps aside after the handoff.",
+            100,
+            $"Diagnostic log: {diagnosticLogPath}"));
 
-            progress?.Report(new InstallerProgressInfo(
-                "Downloading the installer package",
-                $"Downloading {release.AppZipAsset.Name}.",
-                12));
+        _processLauncher.Launch(BuildBootstrapHandoffStartInfo(
+            assetSet.CommandPath,
+            assetSet.WorkingDirectory,
+            bootstrapArguments));
 
-            await _fileDownloader.DownloadFileAsync(
-                release.AppZipAsset.DownloadUrl,
-                downloadPath,
-                (bytesReceived, totalBytes, estimatedRemaining) =>
-                {
-                    var percent = totalBytes.HasValue && totalBytes.Value > 0
-                        ? 12 + ((double)bytesReceived / totalBytes.Value * 58)
-                        : (double?)null;
-                    var detail = BuildDownloadDetail(bytesReceived, totalBytes, estimatedRemaining);
-                    progress?.Report(new InstallerProgressInfo(
-                        "Downloading the installer package",
-                        $"Downloading {release.AppZipAsset.Name}.",
-                        percent,
-                        detail));
-                },
-                cancellationToken);
-
-            progress?.Report(new InstallerProgressInfo(
-                "Extracting the installer package",
-                "Unpacking the downloaded files.",
-                72));
-
-            Directory.CreateDirectory(extractPath);
-            ZipFile.ExtractToDirectory(downloadPath, extractPath, overwriteFiles: true);
-
-            var sourceBundleRoot = ResolveSourceBundleRoot(extractPath);
-            var executablePath = await _portableInstallService.InstallAsync(
-                sourceBundleRoot,
-                installRoot,
-                release,
-                progress,
-                cancellationToken);
-
-            LaunchInstalledApp(executablePath, installRoot);
-
-            return new InstallerSessionResult(
-                installRoot,
-                executablePath,
-                release,
-                manualSteps,
-                release.ReleasePageUrl ?? AppBranding.DefaultReleasePageUrl);
-        }
-        finally
-        {
-            TryDeleteDirectory(tempRoot);
-        }
+        return new InstallerSessionResult(
+            InstallRoot: installRoot,
+            BootstrapCommandPath: assetSet.CommandPath,
+            DiagnosticLogPath: diagnosticLogPath,
+            ReleaseInfo: release,
+            ManualSteps: manualSteps,
+            ReleasePageUrl: release.ReleasePageUrl ?? AppBranding.DefaultReleasePageUrl);
     }
 
     public async Task<string> DownloadBackupInstallerAsync(
         GitHubReleaseBootstrapInfo? releaseInfo,
         CancellationToken cancellationToken)
     {
-        var tempRoot = Path.Combine(
-            Path.GetTempPath(),
-            "MeetingRecorderInstallerBackup-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempRoot);
+        var localAssetSet = TryResolveLocalBootstrapAssetSet(_bootstrapAssetRootOverride ?? AppContext.BaseDirectory);
+        if (localAssetSet is not null)
+        {
+            return localAssetSet.AssetSet.CommandPath;
+        }
 
-        var commandUrl = releaseInfo?.BackupCommandAsset?.DownloadUrl ?? BuildStableReleaseAssetUrl("Install-LatestFromGitHub.cmd");
-        var powerShellUrl = releaseInfo?.BackupPowerShellAsset?.DownloadUrl ?? BuildStableReleaseAssetUrl("Install-LatestFromGitHub.ps1");
-        var commandPath = Path.Combine(tempRoot, "Install-LatestFromGitHub.cmd");
-        var powerShellPath = Path.Combine(tempRoot, "Install-LatestFromGitHub.ps1");
-
-        await _fileDownloader.DownloadFileAsync(
-            commandUrl,
-            commandPath,
-            (_, _, _) => { },
-            cancellationToken);
-        await _fileDownloader.DownloadFileAsync(
-            powerShellUrl,
-            powerShellPath,
-            (_, _, _) => { },
-            cancellationToken);
-
-        return commandPath;
+        var assetSet = await DownloadBootstrapAssetSetAsync(releaseInfo, progress: null, cancellationToken);
+        return assetSet.CommandPath;
     }
 
     public string BuildManualSteps(GitHubReleaseBootstrapInfo? releaseInfo)
     {
         return ManualInstallGuideBuilder.Build(
             releaseInfo,
-            _portableInstallService.GetDefaultInstallRoot());
+            AppDataPaths.GetManagedInstallRoot());
     }
 
     public string GetReleasePageUrl(GitHubReleaseBootstrapInfo? releaseInfo)
@@ -146,25 +170,144 @@ internal sealed class InstallerBootstrapper
         return releaseInfo?.ReleasePageUrl ?? AppBranding.DefaultReleasePageUrl;
     }
 
+    internal static ProcessStartInfo BuildBootstrapHandoffStartInfo(
+        string commandPath,
+        string workingDirectory,
+        IReadOnlyList<string> forwardedArguments)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(commandPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(workingDirectory);
+
+        return new ProcessStartInfo
+        {
+            FileName = commandPath,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = true,
+            Arguments = string.Join(" ", forwardedArguments.Select(QuoteCommandArgument)),
+        };
+    }
+
+    internal static ProcessStartInfo BuildLaunchStartInfo(string executablePath, string workingDirectory)
+    {
+        return new ProcessStartInfo
+        {
+            FileName = executablePath,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = true,
+        };
+    }
+
+    private async Task<BootstrapAssetSet> DownloadBootstrapAssetSetAsync(
+        GitHubReleaseBootstrapInfo? releaseInfo,
+        IProgress<InstallerProgressInfo>? progress,
+        CancellationToken cancellationToken)
+    {
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "MeetingRecorderBootstrap-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        var commandUrl = releaseInfo?.BackupCommandAsset?.DownloadUrl ?? BuildStableReleaseAssetUrl("Install-LatestFromGitHub.cmd");
+        var powerShellUrl = releaseInfo?.BackupPowerShellAsset?.DownloadUrl ?? BuildStableReleaseAssetUrl("Install-LatestFromGitHub.ps1");
+        var commandPath = Path.Combine(tempRoot, "Install-LatestFromGitHub.cmd");
+        var powerShellPath = Path.Combine(tempRoot, "Install-LatestFromGitHub.ps1");
+
+        progress?.Report(new InstallerProgressInfo(
+            "Downloading the command bootstrapper",
+            "Fetching the CMD and PowerShell fallback assets that own the real install flow.",
+            34));
+
+        await _fileDownloader.DownloadFileAsync(commandUrl, commandPath, (_, _, _) => { }, cancellationToken);
+
+        progress?.Report(new InstallerProgressInfo(
+            "Downloading the command bootstrapper",
+            "Fetching the PowerShell implementation behind the CMD launcher.",
+            62));
+
+        await _fileDownloader.DownloadFileAsync(powerShellUrl, powerShellPath, (_, _, _) => { }, cancellationToken);
+
+        return new BootstrapAssetSet(commandPath, powerShellPath, tempRoot);
+    }
+
     private static string BuildStableReleaseAssetUrl(string assetName)
     {
         return $"https://github.com/{AppBranding.GitHubRepositoryOwner}/{AppBranding.GitHubRepositoryName}/releases/latest/download/{assetName}";
     }
 
-    private static string ResolveSourceBundleRoot(string extractedRoot)
+    private static IReadOnlyList<string> BuildBootstrapForwardedArguments(
+        IReadOnlyList<string> forwardedArguments,
+        string? packageZipPath = null,
+        GitHubReleaseBootstrapInfo? releaseInfo = null)
     {
-        var nestedBundleRoot = Path.Combine(extractedRoot, "MeetingRecorder");
-        if (File.Exists(Path.Combine(nestedBundleRoot, "MeetingRecorder.App.exe")))
+        var effectiveArguments = new List<string>(forwardedArguments);
+        if (!effectiveArguments.Any(argument =>
+                string.Equals(argument, "-InstallChannel", StringComparison.OrdinalIgnoreCase)))
         {
-            return nestedBundleRoot;
+            effectiveArguments.Add("-InstallChannel");
+            effectiveArguments.Add("ExecutableBootstrap");
         }
 
-        if (File.Exists(Path.Combine(extractedRoot, "MeetingRecorder.App.exe")))
+        if (!string.IsNullOrWhiteSpace(packageZipPath))
         {
-            return extractedRoot;
+            effectiveArguments.Add("-PackageZipPath");
+            effectiveArguments.Add(packageZipPath);
         }
 
-        throw new InvalidOperationException("The downloaded release did not contain a portable Meeting Recorder bundle.");
+        if (releaseInfo is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(releaseInfo.Version))
+            {
+                effectiveArguments.Add("-ReleaseVersion");
+                effectiveArguments.Add(releaseInfo.Version);
+            }
+
+            if (releaseInfo.PublishedAtUtc.HasValue)
+            {
+                effectiveArguments.Add("-ReleasePublishedAtUtc");
+                effectiveArguments.Add(releaseInfo.PublishedAtUtc.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            if (releaseInfo.AppZipAsset.SizeBytes.HasValue && releaseInfo.AppZipAsset.SizeBytes.Value > 0)
+            {
+                effectiveArguments.Add("-ReleaseAssetSizeBytes");
+                effectiveArguments.Add(releaseInfo.AppZipAsset.SizeBytes.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+
+        return effectiveArguments;
+    }
+
+    private static string CreateInstallerLogPath(string operationName)
+    {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderInstaller");
+        Directory.CreateDirectory(logDirectory);
+        return Path.Combine(
+            logDirectory,
+            $"{operationName}-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.log");
+    }
+
+    private static void WriteBootstrapHandoffLog(
+        string logPath,
+        GitHubReleaseBootstrapInfo release,
+        BootstrapAssetSet assetSet,
+        IReadOnlyList<string> bootstrapArguments)
+    {
+        var lines = new List<string>
+        {
+            $"{DateTimeOffset.Now:O} Thin EXE launcher preparing command-bootstrap handoff.",
+            $"{DateTimeOffset.Now:O} Release version: {release.Version}",
+            $"{DateTimeOffset.Now:O} Command bootstrap path: {assetSet.CommandPath}",
+            $"{DateTimeOffset.Now:O} PowerShell bootstrap path: {assetSet.PowerShellPath}",
+            $"{DateTimeOffset.Now:O} Working directory: {assetSet.WorkingDirectory}",
+            $"{DateTimeOffset.Now:O} Forwarded arguments: {string.Join(" ", bootstrapArguments.Select(QuoteCommandArgument))}",
+        };
+
+        if (!string.IsNullOrWhiteSpace(assetSet.PackageZipPath))
+        {
+            lines.Add($"{DateTimeOffset.Now:O} Local package zip path: {assetSet.PackageZipPath}");
+        }
+
+        File.WriteAllLines(logPath, lines, Encoding.UTF8);
     }
 
     private static string BuildReleaseSummary(GitHubReleaseBootstrapInfo release)
@@ -178,47 +321,95 @@ internal sealed class InstallerBootstrapper
         return $"Version {release.Version} | {sizeText} | published {publishedText}";
     }
 
-    private static string BuildDownloadDetail(long bytesReceived, long? totalBytes, TimeSpan? estimatedRemaining)
+    private static string QuoteCommandArgument(string argument)
     {
-        var downloadedText = FormatMegabytes(bytesReceived);
-        var totalText = totalBytes.HasValue ? FormatMegabytes(totalBytes.Value) : "unknown total";
-        var etaText = estimatedRemaining.HasValue && estimatedRemaining.Value > TimeSpan.Zero
-            ? $" | about {Math.Ceiling(estimatedRemaining.Value.TotalSeconds)}s remaining"
-            : string.Empty;
-        return $"{downloadedText} of {totalText}{etaText}";
-    }
-
-    private static string FormatMegabytes(long bytes)
-    {
-        return $"{Math.Round(bytes / BytesPerMegabyte, 1):0.0} MB";
-    }
-
-    private static void LaunchInstalledApp(string executablePath, string workingDirectory)
-    {
-        var startInfo = new System.Diagnostics.ProcessStartInfo
+        if (string.IsNullOrEmpty(argument))
         {
-            FileName = executablePath,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-        };
-
-        System.Diagnostics.Process.Start(startInfo);
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        if (!Directory.Exists(path))
-        {
-            return;
+            return "\"\"";
         }
 
-        try
+        return "\"" + argument.Replace("\"", "\"\"") + "\"";
+    }
+
+    internal static LocalBootstrapAssetSet? TryResolveLocalBootstrapAssetSet(string bootstrapAssetRoot)
+    {
+        if (string.IsNullOrWhiteSpace(bootstrapAssetRoot) || !Directory.Exists(bootstrapAssetRoot))
         {
-            Directory.Delete(path, recursive: true);
+            return null;
         }
-        catch
+
+        var commandPath = Path.Combine(bootstrapAssetRoot, "Install-LatestFromGitHub.cmd");
+        var powerShellPath = Path.Combine(bootstrapAssetRoot, "Install-LatestFromGitHub.ps1");
+        if (!File.Exists(commandPath) || !File.Exists(powerShellPath))
         {
-            // Best effort cleanup only.
+            return null;
+        }
+
+        var packageZipPath = Directory.EnumerateFiles(bootstrapAssetRoot, "MeetingRecorder-*.zip", SearchOption.TopDirectoryOnly)
+            .Select(path => new FileInfo(path))
+            .OrderByDescending(static file => file.Name.Contains("win-x64", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static file => file.LastWriteTimeUtc)
+            .Select(static file => file.FullName)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(packageZipPath))
+        {
+            return null;
+        }
+
+        var packageZipFile = new FileInfo(packageZipPath);
+        var releaseVersionLabel = ResolveLocalPackageVersionLabel(packageZipFile.Name);
+        var publishedAtUtc = packageZipFile.LastWriteTimeUtc == DateTime.MinValue
+            ? (DateTimeOffset?)null
+            : new DateTimeOffset(packageZipFile.LastWriteTimeUtc, TimeSpan.Zero);
+        var releaseInfo = new GitHubReleaseBootstrapInfo(
+            releaseVersionLabel,
+            AppBranding.DefaultReleasePageUrl,
+            publishedAtUtc,
+            new GitHubReleaseAssetInfo("MeetingRecorderInstaller.exe", string.Empty, null, null),
+            new GitHubReleaseAssetInfo(packageZipFile.Name, packageZipFile.FullName, packageZipFile.Length, publishedAtUtc),
+            new GitHubReleaseAssetInfo(Path.GetFileName(commandPath), commandPath, new FileInfo(commandPath).Length, null),
+            new GitHubReleaseAssetInfo(Path.GetFileName(powerShellPath), powerShellPath, new FileInfo(powerShellPath).Length, null));
+
+        return new LocalBootstrapAssetSet(
+            new BootstrapAssetSet(commandPath, powerShellPath, bootstrapAssetRoot, packageZipFile.FullName),
+            packageZipFile.FullName,
+            releaseInfo);
+    }
+
+    private static string ResolveLocalPackageVersionLabel(string packageFileName)
+    {
+        var match = Regex.Match(
+            packageFileName ?? string.Empty,
+            @"(?<version>\d+\.\d+(?:\.\d+)?)",
+            RegexOptions.CultureInvariant);
+
+        return match.Success ? match.Groups["version"].Value : "local";
+    }
+}
+
+internal sealed record BootstrapAssetSet(
+    string CommandPath,
+    string PowerShellPath,
+    string WorkingDirectory,
+    string? PackageZipPath = null);
+
+internal sealed record LocalBootstrapAssetSet(
+    BootstrapAssetSet AssetSet,
+    string PackageZipPath,
+    GitHubReleaseBootstrapInfo ReleaseInfo);
+
+internal interface IInstallerProcessLauncher
+{
+    void Launch(ProcessStartInfo startInfo);
+}
+
+internal sealed class InstallerProcessLauncher : IInstallerProcessLauncher
+{
+    public void Launch(ProcessStartInfo startInfo)
+    {
+        if (Process.Start(startInfo) is null)
+        {
+            throw new InvalidOperationException("The command bootstrapper could not be started.");
         }
     }
 }

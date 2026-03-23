@@ -5,3 +5,4 @@ restore-output.log
 src/MeetingRecorder.Setup/Generated/
 **/bin/
 **/obj/
+scripts/Upload-ReleaseAssets.local.cmd

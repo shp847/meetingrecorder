@@ -1,27 +1,31 @@
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using System.Globalization;
 
 namespace MeetingRecorder.Core.Tests;
 
 public sealed class MainWindowInteractionLogicTests
 {
     [Fact]
-    public void BuildDashboardPrimaryAction_Prioritizes_Model_Setup_When_No_Valid_Model_Is_Configured()
+    public void BuildShellStatus_Prioritizes_Model_Setup_When_No_Valid_Model_Is_Configured()
     {
-        var result = MainWindowInteractionLogic.BuildDashboardPrimaryAction(
+        var result = MainWindowInteractionLogic.BuildShellStatus(
             hasValidModel: false,
             isRecording: false,
+            micCaptureEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
 
-        Assert.Equal(DashboardPrimaryActionTarget.Models, result.Target);
-        Assert.Equal("Open Models", result.ActionLabel);
+        Assert.Equal(ShellStatusTarget.SettingsSetup, result.Target);
+        Assert.Equal("Setup", result.ActionLabel);
+        Assert.Equal("SETUP", result.Headline);
+        Assert.Equal("Model required", result.Body);
     }
 
     [Fact]
-    public void BuildDashboardPrimaryAction_Points_To_Updates_When_Manual_Update_Is_Available()
+    public void BuildShellStatus_Points_To_Updates_When_Manual_Update_Is_Available()
     {
         var updateResult = new AppUpdateCheckResult(
             AppUpdateStatusKind.UpdateAvailable,
@@ -36,37 +40,44 @@ public sealed class MainWindowInteractionLogicTests
             false,
             "Version 0.2 is available.");
 
-        var result = MainWindowInteractionLogic.BuildDashboardPrimaryAction(
+        var result = MainWindowInteractionLogic.BuildShellStatus(
             hasValidModel: true,
             isRecording: false,
+            micCaptureEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: false,
             updateResult: updateResult);
 
-        Assert.Equal(DashboardPrimaryActionTarget.Updates, result.Target);
-        Assert.Equal("Open Updates", result.ActionLabel);
+        Assert.Equal(ShellStatusTarget.SettingsUpdates, result.Target);
+        Assert.Equal("Updates", result.ActionLabel);
+        Assert.Equal("UPDATE", result.Headline);
+        Assert.Equal("Version available", result.Body);
     }
 
     [Fact]
-    public void BuildDashboardPrimaryAction_Points_To_Config_When_Update_Checks_Are_Disabled()
+    public void BuildShellStatus_Points_To_General_Settings_When_Update_Checks_Are_Disabled()
     {
-        var result = MainWindowInteractionLogic.BuildDashboardPrimaryAction(
+        var result = MainWindowInteractionLogic.BuildShellStatus(
             hasValidModel: true,
             isRecording: false,
+            micCaptureEnabled: true,
             updateChecksEnabled: false,
             autoInstallUpdatesEnabled: false,
             updateResult: null);
 
-        Assert.Equal(DashboardPrimaryActionTarget.Config, result.Target);
-        Assert.Equal("Open Config", result.ActionLabel);
+        Assert.Equal(ShellStatusTarget.SettingsGeneral, result.Target);
+        Assert.Equal("Settings", result.ActionLabel);
+        Assert.Equal("CHECKS OFF", result.Headline);
+        Assert.Equal("Manual only", result.Body);
     }
 
     [Fact]
-    public void BuildDashboardPrimaryAction_Returns_Ready_State_When_Core_Setup_Is_Healthy()
+    public void BuildShellStatus_Returns_Ready_State_When_Core_Setup_Is_Healthy()
     {
-        var result = MainWindowInteractionLogic.BuildDashboardPrimaryAction(
+        var result = MainWindowInteractionLogic.BuildShellStatus(
             hasValidModel: true,
             isRecording: false,
+            micCaptureEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: new AppUpdateCheckResult(
@@ -82,8 +93,226 @@ public sealed class MainWindowInteractionLogicTests
                 false,
                 "You are already on version 0.1."));
 
-        Assert.Equal(DashboardPrimaryActionTarget.None, result.Target);
+        Assert.Equal(ShellStatusTarget.None, result.Target);
         Assert.Null(result.ActionLabel);
+        Assert.Equal("READY", result.Headline);
+        Assert.Equal("Manual or auto-detect", result.Body);
+    }
+
+    [Fact]
+    public void BuildShellStatus_Points_To_General_Settings_When_Microphone_Capture_Is_Off()
+    {
+        var result = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: true,
+            isRecording: false,
+            micCaptureEnabled: false,
+            updateChecksEnabled: true,
+            autoInstallUpdatesEnabled: true,
+            updateResult: null);
+
+        Assert.Equal(ShellStatusTarget.SettingsGeneral, result.Target);
+        Assert.Equal("Settings", result.ActionLabel);
+        Assert.Equal("MIC OFF", result.Headline);
+        Assert.Equal("Own voice omitted", result.Body);
+    }
+
+    [Fact]
+    public void BuildShellStatus_Returns_Informational_State_When_Recording_Is_Already_In_Progress()
+    {
+        var result = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: true,
+            isRecording: true,
+            micCaptureEnabled: true,
+            updateChecksEnabled: true,
+            autoInstallUpdatesEnabled: true,
+            updateResult: null);
+
+        Assert.Equal(ShellStatusTarget.None, result.Target);
+        Assert.Null(result.ActionLabel);
+        Assert.Equal("RECORDING", result.Headline);
+        Assert.Equal("Audio live", result.Body);
+    }
+
+    [Fact]
+    public void BuildShellStatus_Uses_Setup_For_Model_Gaps_And_Settings_For_Maintenance_Actions()
+    {
+        var setupResult = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: false,
+            isRecording: false,
+            micCaptureEnabled: true,
+            updateChecksEnabled: true,
+            autoInstallUpdatesEnabled: true,
+            updateResult: null);
+        var settingsResult = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: true,
+            isRecording: false,
+            micCaptureEnabled: true,
+            updateChecksEnabled: false,
+            autoInstallUpdatesEnabled: false,
+            updateResult: null);
+
+        Assert.Equal(ShellStatusTarget.SettingsSetup, setupResult.Target);
+        Assert.Equal(ShellStatusTarget.SettingsGeneral, settingsResult.Target);
+    }
+
+    [Fact]
+    public void BuildShellStatus_Uses_Compact_Copy_Suitable_For_The_Header_Capsule()
+    {
+        var result = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: true,
+            isRecording: false,
+            micCaptureEnabled: true,
+            updateChecksEnabled: true,
+            autoInstallUpdatesEnabled: true,
+            updateResult: null);
+
+        Assert.True(result.Headline.Length <= 12, $"Expected a compact shell label, but got '{result.Headline}'.");
+        Assert.True(result.Body.Length <= 24, $"Expected compact shell detail text, but got '{result.Body}'.");
+        Assert.DoesNotContain("Start from Home", result.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("auto-detection watch", result.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildModelsTabTranscriptionSetupState_Prefers_Download_When_No_Valid_Model_Is_Configured()
+    {
+        var recommendedModel = new WhisperRemoteModelAsset(
+            "ggml-base.en-q8_0.bin",
+            "https://example.com/base",
+            152_000_000,
+            true,
+            "Best balance of quality, size, and speed.");
+
+        var result = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
+            hasValidModel: false,
+            activeModelFileName: null,
+            recommendedModel);
+
+        Assert.Equal("Needs setup", result.Status);
+        Assert.Equal("Download Recommended Model", result.PrimaryActionLabel);
+        Assert.Equal(
+            "Choose one Whisper model to activate transcription. Download the recommended model below, or import an approved local file if GitHub is blocked.",
+            result.Body);
+    }
+
+    [Fact]
+    public void BuildModelsTabTranscriptionSetupState_Points_To_Model_Management_When_A_Model_Is_Ready()
+    {
+        var recommendedModel = new WhisperRemoteModelAsset(
+            "ggml-base.en-q8_0.bin",
+            "https://example.com/base",
+            152_000_000,
+            true,
+            "Best balance of quality, size, and speed.");
+
+        var result = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
+            hasValidModel: true,
+            activeModelFileName: "ggml-small.en-q8_0.bin",
+            recommendedModel);
+
+        Assert.Equal("Ready", result.Status);
+        Assert.Equal("Change Active Model", result.PrimaryActionLabel);
+        Assert.Equal(
+            "'ggml-small.en-q8_0.bin' is active. Change the active model below if you want to trade speed for accuracy.",
+            result.Body);
+    }
+
+    [Fact]
+    public void BuildModelsTabSpeakerLabelingSetupState_Uses_Recommended_Bundle_When_Sidecar_Is_Not_Ready()
+    {
+        var recommendedAsset = new DiarizationRemoteAsset(
+            "diarization-sidecar-win-x64.zip",
+            "https://example.com/diarization.zip",
+            55_000_000,
+            DiarizationRemoteAssetKind.Bundle,
+            true,
+            "Recommended bundle");
+
+        var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            isReady: false,
+            configuredAssetPath: @"C:\Models\Diarization",
+            recommendedAsset);
+
+        Assert.Equal("Optional add-on", result.Status);
+        Assert.Equal("Download Recommended Bundle", result.PrimaryActionLabel);
+        Assert.Equal(
+            "Speaker labeling is optional. Download the recommended diarization model bundle from GitHub, open the local setup guide, or review the alternate public download locations below.",
+            result.Body);
+    }
+
+    [Fact]
+    public void BuildMeetingInspectorState_Includes_Detected_Audio_Source_Summary()
+    {
+        var startedAtUtc = DateTimeOffset.Parse("2026-03-23T16:10:00Z", null, DateTimeStyles.RoundtripKind);
+        var meeting = new MeetingOutputRecord(
+            "2026-03-23_161000_teams_client-sync",
+            "Client Sync",
+            startedAtUtc,
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(30),
+            @"C:\audio.wav",
+            @"C:\transcript.md",
+            @"C:\transcript.json",
+            ReadyMarkerPath: null,
+            ManifestPath: null,
+            ManifestState: SessionState.Published,
+            Attendees: Array.Empty<MeetingAttendee>(),
+            HasSpeakerLabels: false,
+            TranscriptionModelFileName: null,
+            ProjectName: "Alpha",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Client Sync | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.High,
+                startedAtUtc));
+
+        var inspectorState = MainWindowInteractionLogic.BuildMeetingInspectorState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            CultureInfo.InvariantCulture,
+            TimeZoneInfo.Utc);
+
+        Assert.Contains("Microsoft Teams", inspectorState.DetectedAudioSourceSummary, StringComparison.Ordinal);
+        Assert.Contains("Client Sync", inspectorState.DetectedAudioSourceSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildModelsTabSpeakerLabelingSetupState_Shows_Setup_Options_When_No_Recommended_Bundle_Is_Loaded()
+    {
+        var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            isReady: false,
+            configuredAssetPath: @"C:\Models\Diarization",
+            recommendedAsset: null);
+
+        Assert.Equal("Optional add-on", result.Status);
+        Assert.Equal("Show Setup Options", result.PrimaryActionLabel);
+        Assert.Equal(
+            "Speaker labeling is optional. No recommended GitHub diarization model bundle is loaded right now, so open the local setup guide or review the setup options below.",
+            result.Body);
+    }
+
+    [Fact]
+    public void BuildModelsTabSpeakerLabelingSetupState_Points_To_Management_When_Sidecar_Is_Ready()
+    {
+        var recommendedAsset = new DiarizationRemoteAsset(
+            "diarization-sidecar-win-x64.zip",
+            "https://example.com/diarization.zip",
+            55_000_000,
+            DiarizationRemoteAssetKind.Bundle,
+            true,
+            "Recommended bundle");
+
+        var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            isReady: true,
+            configuredAssetPath: @"C:\Models\Diarization",
+            recommendedAsset);
+
+        Assert.Equal("Ready", result.Status);
+        Assert.Equal("Review Speaker Labeling Setup", result.PrimaryActionLabel);
+        Assert.Equal(
+            @"Speaker labeling is ready from 'C:\Models\Diarization'. Review the setup details below if you need to replace or repair it.",
+            result.Body);
     }
 
     [Fact]
@@ -212,11 +441,209 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void GetAppShutdownMode_Returns_Immediate_When_Installer_Requested_Shutdown()
+    {
+        var result = MainWindowInteractionLogic.GetAppShutdownMode(
+            installerRequestedShutdown: true,
+            isRecording: false,
+            isProcessingInProgress: false);
+
+        Assert.Equal(AppShutdownMode.Immediate, result);
+    }
+
+    [Fact]
+    public void GetAppShutdownMode_Returns_Deferred_When_Installer_Requested_Shutdown_During_Active_Work()
+    {
+        var recordingResult = MainWindowInteractionLogic.GetAppShutdownMode(
+            installerRequestedShutdown: true,
+            isRecording: true,
+            isProcessingInProgress: false);
+        var processingResult = MainWindowInteractionLogic.GetAppShutdownMode(
+            installerRequestedShutdown: true,
+            isRecording: false,
+            isProcessingInProgress: true);
+
+        Assert.Equal(AppShutdownMode.Deferred, recordingResult);
+        Assert.Equal(AppShutdownMode.Deferred, processingResult);
+    }
+
+    [Fact]
+    public void GetPreferredRemoteModelSelectionFileName_Preserves_Previously_Selected_Model_When_Still_Available()
+    {
+        var remoteModels = new[]
+        {
+            new WhisperRemoteModelAsset("ggml-base.en-q8_0.bin", "https://example.com/base", 10, true, "base"),
+            new WhisperRemoteModelAsset("ggml-small.en-q8_0.bin", "https://example.com/small", 20, false, "small"),
+        };
+
+        var result = MainWindowInteractionLogic.GetPreferredRemoteModelSelectionFileName(
+            remoteModels,
+            previouslySelectedFileName: "ggml-small.en-q8_0.bin");
+
+        Assert.Equal("ggml-small.en-q8_0.bin", result);
+    }
+
+    [Fact]
+    public void GetPreferredRemoteModelSelectionFileName_Falls_Back_To_Recommended_Model_When_Previous_Selection_Is_Missing()
+    {
+        var remoteModels = new[]
+        {
+            new WhisperRemoteModelAsset("ggml-base.en-q8_0.bin", "https://example.com/base", 10, true, "base"),
+            new WhisperRemoteModelAsset("ggml-small.en-q8_0.bin", "https://example.com/small", 20, false, "small"),
+        };
+
+        var result = MainWindowInteractionLogic.GetPreferredRemoteModelSelectionFileName(
+            remoteModels,
+            previouslySelectedFileName: "ggml-medium.en-q8_0.bin");
+
+        Assert.Equal("ggml-base.en-q8_0.bin", result);
+    }
+
+    [Fact]
     public void BuildAutoDetectSettingsHint_Explains_When_Auto_Detect_Is_Off()
     {
         var result = MainWindowInteractionLogic.BuildAutoDetectSettingsHint(autoDetectEnabled: false);
 
         Assert.Contains("ignored", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMicCaptureWarning_Returns_Clear_Warning_When_Microphone_Is_Disabled()
+    {
+        var result = MainWindowInteractionLogic.BuildMicCaptureWarning(
+            savedMicCaptureEnabled: false,
+            isRecording: true,
+            hasPendingMicCaptureChange: false,
+            pendingMicCaptureEnabled: false);
+
+        Assert.Contains("microphone", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("voice", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("recording", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMicCaptureWarning_Explains_When_Config_Checkbox_Is_On_But_Saved_Setting_Is_Still_Off()
+    {
+        var result = MainWindowInteractionLogic.BuildMicCaptureWarning(
+            savedMicCaptureEnabled: false,
+            isRecording: false,
+            hasPendingMicCaptureChange: true,
+            pendingMicCaptureEnabled: true);
+
+        Assert.Contains("still off", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("save", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("future recordings", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMicCapturePendingBadgeText_Shows_Unsaved_Enablement_State()
+    {
+        var result = MainWindowInteractionLogic.BuildMicCapturePendingBadgeText(
+            savedMicCaptureEnabled: false,
+            hasPendingMicCaptureChange: true,
+            pendingMicCaptureEnabled: true);
+
+        Assert.Contains("Unsaved", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("turn on", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildConfigDependencyState_Combines_Existing_Dependency_And_Warning_Outputs_For_Sectioned_Config_Layout()
+    {
+        var result = MainWindowInteractionLogic.BuildConfigDependencyState(
+            updateChecksEnabled: false,
+            autoDetectEnabled: false,
+            savedMicCaptureEnabled: false,
+            pendingMicCaptureEnabled: true,
+            isRecording: false);
+
+        Assert.False(result.AutoInstallUpdatesEnabled);
+        Assert.Equal(
+            "Turn on daily GitHub checks first. Automatic install only works after update checks are enabled.",
+            result.AutoInstallUpdatesHint);
+        Assert.False(result.AutoDetectTuningEnabled);
+        Assert.Equal(
+            "Auto-detection is off, so the threshold and timeout fields below are ignored until you turn it back on.",
+            result.AutoDetectSettingsHint);
+        Assert.Equal(
+            "Microphone capture is still off in the saved config. Save Config to turn it on for future recordings.",
+            result.MicCaptureWarning);
+        Assert.Equal(
+            "Unsaved: will turn on after Save Config",
+            result.MicCapturePendingBadgeText);
+    }
+
+    [Fact]
+    public void ShouldPromptToEnableMicCapture_Returns_True_When_Microphone_Is_Disabled_And_Activity_Is_Detected()
+    {
+        var result = MainWindowInteractionLogic.ShouldPromptToEnableMicCapture(
+            micCaptureEnabled: false,
+            isRecording: true,
+            hasDetectedMicrophoneActivity: true,
+            alreadyPromptedForSession: false);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldPromptToEnableMicCapture_Returns_False_After_The_Current_Session_Was_Already_Prompted()
+    {
+        var result = MainWindowInteractionLogic.ShouldPromptToEnableMicCapture(
+            micCaptureEnabled: false,
+            isRecording: true,
+            hasDetectedMicrophoneActivity: true,
+            alreadyPromptedForSession: true);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void BuildEnableMicCapturePromptMessage_Explains_That_Only_Future_Recordings_Are_Affected()
+    {
+        var result = MainWindowInteractionLogic.BuildEnableMicCapturePromptMessage("Chao Adam");
+
+        Assert.Contains("future recordings", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Chao Adam", result, StringComparison.Ordinal);
+        Assert.Contains("microphone", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ShouldAutoPromoteActiveMeetingTitle_Returns_True_For_Attendee_Title_When_Current_Title_Is_Generic()
+    {
+        var result = MainWindowInteractionLogic.ShouldAutoPromoteActiveMeetingTitle(
+            MeetingPlatform.Teams,
+            currentDetectedTitle: "Microsoft Teams",
+            currentEditorTitle: "Microsoft Teams",
+            proposedTitle: "Chao, Adam",
+            proposalCameFromCalendarFallback: false);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldAutoPromoteActiveMeetingTitle_Returns_True_For_Calendar_Title_When_Current_Title_Is_Generic()
+    {
+        var result = MainWindowInteractionLogic.ShouldAutoPromoteActiveMeetingTitle(
+            MeetingPlatform.Teams,
+            currentDetectedTitle: "Search",
+            currentEditorTitle: "Search",
+            proposedTitle: "Intel CIO Discussion",
+            proposalCameFromCalendarFallback: true);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldAutoPromoteActiveMeetingTitle_Returns_False_When_User_Has_A_Pending_Title_Edit()
+    {
+        var result = MainWindowInteractionLogic.ShouldAutoPromoteActiveMeetingTitle(
+            MeetingPlatform.Teams,
+            currentDetectedTitle: "Microsoft Teams",
+            currentEditorTitle: "My custom title",
+            proposedTitle: "Chao, Adam",
+            proposalCameFromCalendarFallback: false);
+
+        Assert.False(result);
     }
 
     [Fact]
@@ -270,12 +697,14 @@ public sealed class MainWindowInteractionLogicTests
             @" C:\Models ",
             @" C:\Models\ggml-base.en-q8_0.bin ",
             @" C:\Models\diarizer.onnx ",
+            true,
             "0.125",
             "15",
             true,
             true,
             true,
             false,
+            true,
             true,
             false,
             " https://example.com/releases/latest ");
@@ -312,6 +741,7 @@ public sealed class MainWindowInteractionLogicTests
             @"C:\Models",
             @"C:\Models\ggml-base.en-q8_0.bin",
             @"C:\Models\diarizer.onnx",
+            true,
             "0.125",
             "15",
             true,
@@ -319,11 +749,585 @@ public sealed class MainWindowInteractionLogicTests
             true,
             false,
             true,
+            true,
             false,
             "https://example.com/releases/latest");
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
         Assert.True(result);
+    }
+
+    [Fact]
+    public void BuildMeetingCleanupBadgeText_Uses_Top_Action_And_Count()
+    {
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "archive-1",
+                MeetingCleanupAction.Archive,
+                MeetingCleanupConfidence.High,
+                "Archive obvious false start",
+                "This looks like a false start.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+            new MeetingCleanupRecommendation(
+                "rename-1",
+                MeetingCleanupAction.Rename,
+                MeetingCleanupConfidence.Medium,
+                "Rename generic title",
+                "A better title is available.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                false,
+                "Better Title",
+                null),
+        };
+
+        var result = MainWindowInteractionLogic.BuildMeetingCleanupBadgeText(recommendations);
+
+        Assert.Equal("Archive +1", result);
+    }
+
+    [Fact]
+    public void GetPrimaryMeetingCleanupRecommendation_Returns_Highest_Priority_Item()
+    {
+        var rename = new MeetingCleanupRecommendation(
+            "rename-1",
+            MeetingCleanupAction.Rename,
+            MeetingCleanupConfidence.Medium,
+            "Rename generic title",
+            "A better title is available.",
+            "meeting-1",
+            new[] { "meeting-1" },
+            false,
+            "Better Title",
+            null);
+        var archive = new MeetingCleanupRecommendation(
+            "archive-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            "Archive obvious false start",
+            "This looks like a false start.",
+            "meeting-1",
+            new[] { "meeting-1" },
+            true,
+            null,
+            null);
+
+        var result = MainWindowInteractionLogic.GetPrimaryMeetingCleanupRecommendation(new[] { rename, archive });
+
+        Assert.NotNull(result);
+        Assert.Equal("archive-1", result!.Fingerprint);
+    }
+
+    [Fact]
+    public void FilterMeetingCleanupRecommendations_Returns_All_When_No_Meeting_Is_Selected()
+    {
+        var archive = new MeetingCleanupRecommendation(
+            "archive-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            "Archive obvious false start",
+            "This looks like a false start.",
+            "meeting-1",
+            new[] { "meeting-1" },
+            true,
+            null,
+            null);
+        var merge = new MeetingCleanupRecommendation(
+            "merge-1",
+            MeetingCleanupAction.Merge,
+            MeetingCleanupConfidence.High,
+            "Merge split pair",
+            "These two meetings should be merged.",
+            "meeting-2",
+            new[] { "meeting-2", "meeting-3" },
+            true,
+            null,
+            null);
+
+        var result = MainWindowInteractionLogic.FilterMeetingCleanupRecommendations(
+            new[] { archive, merge },
+            Array.Empty<string>());
+
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void FilterMeetingCleanupRecommendations_Prioritizes_Selected_Meeting_Items_For_Multi_Select()
+    {
+        var archive = new MeetingCleanupRecommendation(
+            "archive-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            "Archive obvious false start",
+            "This looks like a false start.",
+            "meeting-1",
+            new[] { "meeting-1" },
+            true,
+            null,
+            null);
+        var merge = new MeetingCleanupRecommendation(
+            "merge-1",
+            MeetingCleanupAction.Merge,
+            MeetingCleanupConfidence.High,
+            "Merge split pair",
+            "These two meetings should be merged.",
+            "meeting-2",
+            new[] { "meeting-2", "meeting-3" },
+            true,
+            null,
+            null);
+
+        var result = MainWindowInteractionLogic.FilterMeetingCleanupRecommendations(
+            new[] { archive, merge },
+            new[] { "meeting-2", "meeting-3" });
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("merge-1", result[0].Fingerprint);
+        Assert.Equal("archive-1", result[1].Fingerprint);
+    }
+
+    [Fact]
+    public void GetAutoApplicableMeetingCleanupRecommendations_Excludes_Split_And_Low_Confidence_Items()
+    {
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "archive-1",
+                MeetingCleanupAction.Archive,
+                MeetingCleanupConfidence.High,
+                "Archive obvious false start",
+                "This looks like a false start.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+            new MeetingCleanupRecommendation(
+                "split-1",
+                MeetingCleanupAction.Split,
+                MeetingCleanupConfidence.High,
+                "Split combined meeting",
+                "A split point was found.",
+                "meeting-2",
+                new[] { "meeting-2" },
+                false,
+                null,
+                TimeSpan.FromMinutes(5)),
+            new MeetingCleanupRecommendation(
+                "rename-1",
+                MeetingCleanupAction.Rename,
+                MeetingCleanupConfidence.Medium,
+                "Rename generic title",
+                "A better title is available.",
+                "meeting-3",
+                new[] { "meeting-3" },
+                false,
+                "Better Title",
+                null),
+        };
+
+        var result = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(recommendations);
+
+        Assert.Single(result);
+        Assert.Equal("archive-1", result[0].Fingerprint);
+    }
+
+    [Fact]
+    public void GetAutoApplicableMeetingCleanupRecommendations_Includes_GenerateSpeakerLabels_When_Deterministic()
+    {
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "labels-1",
+                MeetingCleanupAction.GenerateSpeakerLabels,
+                MeetingCleanupConfidence.High,
+                "Add missing speaker labels",
+                "Speaker labels can be added safely.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+            new MeetingCleanupRecommendation(
+                "rename-1",
+                MeetingCleanupAction.Rename,
+                MeetingCleanupConfidence.Medium,
+                "Rename generic title",
+                "A better title is available.",
+                "meeting-2",
+                new[] { "meeting-2" },
+                false,
+                "Better Title",
+                null),
+        };
+
+        var result = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(recommendations);
+
+        Assert.Single(result);
+        Assert.Equal("labels-1", result[0].Fingerprint);
+    }
+
+    [Fact]
+    public void BuildMeetingCleanupSafetyLabel_Matches_Safe_Fix_Rules()
+    {
+        var safeRecommendation = new MeetingCleanupRecommendation(
+            "archive-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            "Archive obvious false start",
+            "This looks like a false start.",
+            "meeting-1",
+            new[] { "meeting-1" },
+            true,
+            null,
+            null);
+        var reviewRecommendation = new MeetingCleanupRecommendation(
+            "rename-1",
+            MeetingCleanupAction.Rename,
+            MeetingCleanupConfidence.Medium,
+            "Rename generic title",
+            "A better title is available.",
+            "meeting-2",
+            new[] { "meeting-2" },
+            false,
+            "Better Title",
+            null);
+        var speakerLabelRecommendation = new MeetingCleanupRecommendation(
+            "labels-1",
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            "Add missing speaker labels",
+            "Speaker labels can be added safely.",
+            "meeting-3",
+            new[] { "meeting-3" },
+            true,
+            null,
+            null);
+
+        Assert.Equal("Safe Fix", MainWindowInteractionLogic.BuildMeetingCleanupSafetyLabel(safeRecommendation));
+        Assert.Equal("Safe Fix", MainWindowInteractionLogic.BuildMeetingCleanupSafetyLabel(speakerLabelRecommendation));
+        Assert.Equal("Review First", MainWindowInteractionLogic.BuildMeetingCleanupSafetyLabel(reviewRecommendation));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("delete")]
+    [InlineData(" DELETE ")]
+    public void IsValidPermanentDeleteConfirmationText_Returns_False_When_Text_Is_Not_Exact_DELETE(string? confirmationText)
+    {
+        var result = MainWindowInteractionLogic.IsValidPermanentDeleteConfirmationText(confirmationText);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void IsValidPermanentDeleteConfirmationText_Returns_True_For_Exact_DELETE()
+    {
+        var result = MainWindowInteractionLogic.IsValidPermanentDeleteConfirmationText("DELETE");
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void BuildMeetingInspectorState_Uses_Persisted_Attendees_Recommendations_And_Metadata()
+    {
+        var meeting = new MeetingOutputRecord(
+            "meeting-1",
+            "Intel CIO Discussion",
+            DateTimeOffset.Parse("2026-03-20T16:01:31Z"),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(34) + TimeSpan.FromSeconds(55),
+            @"C:\meetings\audio.wav",
+            @"C:\meetings\transcript.md",
+            @"C:\meetings\transcript.json",
+            @"C:\meetings\transcript.ready",
+            @"C:\meetings\manifest.json",
+            SessionState.Published,
+            new[]
+            {
+                new MeetingAttendee("Pranav Sharma", new[] { MeetingAttendeeSource.OutlookCalendar }),
+                new MeetingAttendee("Nick Gallina", new[] { MeetingAttendeeSource.TeamsLiveRoster }),
+            },
+            true,
+            "ggml-small.bin");
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "rename-1",
+                MeetingCleanupAction.Rename,
+                MeetingCleanupConfidence.Medium,
+                "Rename generic title",
+                "A better title is available.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                false,
+                "Better Title",
+                null),
+            new MeetingCleanupRecommendation(
+                "retry-1",
+                MeetingCleanupAction.RegenerateTranscript,
+                MeetingCleanupConfidence.High,
+                "Retry transcript with current audio",
+                "Transcript can be rebuilt safely.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+        };
+
+        var result = MainWindowInteractionLogic.BuildMeetingInspectorState(
+            meeting,
+            recommendations,
+            CultureInfo.GetCultureInfo("en-US"),
+            TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time"));
+
+        Assert.Equal("Intel CIO Discussion", result.Title);
+        Assert.Equal("3/20/2026 12:01 PM", result.StartedAtUtc);
+        Assert.Equal("34:55", result.Duration);
+        Assert.Equal("Teams", result.Platform);
+        Assert.Equal("Published", result.Status);
+        Assert.Equal("ggml-small.bin", result.TranscriptionModelFileName);
+        Assert.Equal("Speaker labels are present.", result.SpeakerLabelState);
+        Assert.Equal(new[] { "Pranav Sharma", "Nick Gallina" }, result.AttendeeNames);
+        Assert.Equal(new[] { "Rename", "Retry Transcript" }, result.RecommendationBadges);
+    }
+
+    [Fact]
+    public void BuildMeetingContextActionState_Enables_Single_Meeting_Actions_For_Focused_Row()
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingContextActionState(
+            selectedMeetingCount: 1,
+            hasFocusedMeeting: true,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            hasRecommendedAction: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: true,
+            isBusy: false);
+
+        Assert.True(result.ShowSingleMeetingActionGroup);
+        Assert.False(result.ShowBulkMeetingActionGroup);
+        Assert.True(result.CanOpenAudio);
+        Assert.True(result.CanOpenTranscript);
+        Assert.True(result.CanOpenContainingFolder);
+        Assert.True(result.CanCopyAudioPath);
+        Assert.True(result.CanCopyTranscriptPath);
+        Assert.True(result.CanApplyRecommendedAction);
+        Assert.True(result.CanRename);
+        Assert.True(result.CanSuggestTitle);
+        Assert.True(result.CanRegenerateTranscript);
+        Assert.True(result.CanReTranscribeWithDifferentModel);
+        Assert.True(result.CanAddSpeakerLabels);
+        Assert.True(result.CanSplit);
+        Assert.True(result.CanArchive);
+        Assert.True(result.CanDeletePermanently);
+        Assert.False(result.CanApplyRecommendationsForSelection);
+        Assert.False(result.CanMergeSelected);
+    }
+
+    [Fact]
+    public void BuildMeetingContextActionState_Enables_Bulk_Actions_For_Multi_Select()
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingContextActionState(
+            selectedMeetingCount: 3,
+            hasFocusedMeeting: true,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            hasRecommendedAction: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: true,
+            isBusy: false);
+
+        Assert.False(result.ShowSingleMeetingActionGroup);
+        Assert.True(result.ShowBulkMeetingActionGroup);
+        Assert.False(result.CanOpenAudio);
+        Assert.False(result.CanOpenTranscript);
+        Assert.False(result.CanRename);
+        Assert.False(result.CanSuggestTitle);
+        Assert.False(result.CanSplit);
+        Assert.True(result.CanApplyRecommendationsForSelection);
+        Assert.True(result.CanMergeSelected);
+        Assert.True(result.CanReTranscribeSelectedWithModel);
+        Assert.True(result.CanAddSpeakerLabelsToSelected);
+        Assert.True(result.CanArchiveSelected);
+        Assert.True(result.CanDeleteSelectedPermanently);
+    }
+
+    [Fact]
+    public void BuildMeetingWorkspaceToolState_Shows_Contextual_Single_And_Multi_Meeting_Tools()
+    {
+        var singleSelection = MainWindowInteractionLogic.BuildMeetingWorkspaceToolState(
+            selectedMeetingCount: 1,
+            hasSpeakerLabels: true,
+            hasCleanupRecommendations: true);
+
+        Assert.True(singleSelection.ShowWorkspaceTools);
+        Assert.True(singleSelection.ShowSingleMeetingActions);
+        Assert.False(singleSelection.ShowMultiMeetingActions);
+        Assert.True(singleSelection.ShowTitleAndTranscriptTool);
+        Assert.True(singleSelection.ShowSplitTool);
+        Assert.True(singleSelection.ShowSpeakerLabelsTool);
+        Assert.False(singleSelection.ShowMergeTool);
+        Assert.True(singleSelection.ShowCleanupTray);
+
+        var multiSelection = MainWindowInteractionLogic.BuildMeetingWorkspaceToolState(
+            selectedMeetingCount: 3,
+            hasSpeakerLabels: false,
+            hasCleanupRecommendations: true);
+
+        Assert.True(multiSelection.ShowWorkspaceTools);
+        Assert.False(multiSelection.ShowSingleMeetingActions);
+        Assert.True(multiSelection.ShowMultiMeetingActions);
+        Assert.False(multiSelection.ShowTitleAndTranscriptTool);
+        Assert.False(multiSelection.ShowSplitTool);
+        Assert.False(multiSelection.ShowSpeakerLabelsTool);
+        Assert.True(multiSelection.ShowMergeTool);
+        Assert.True(multiSelection.ShowCleanupTray);
+    }
+
+    [Fact]
+    public void BuildMeetingInspectorState_Uses_Same_Recommendation_Labels_As_Row_And_Cleanup_Workflows()
+    {
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "archive-1",
+                MeetingCleanupAction.Archive,
+                MeetingCleanupConfidence.High,
+                "Archive obvious false start",
+                "This looks like a false start.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+            new MeetingCleanupRecommendation(
+                "labels-1",
+                MeetingCleanupAction.GenerateSpeakerLabels,
+                MeetingCleanupConfidence.High,
+                "Add missing speaker labels",
+                "Speaker labels can be added safely.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+        };
+        var meeting = new MeetingOutputRecord(
+            "meeting-1",
+            "Weekly Sync",
+            DateTimeOffset.Parse("2026-03-20T18:00:00Z"),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(30),
+            @"C:\audio.wav",
+            @"C:\transcript.md",
+            @"C:\transcript.json",
+            @"C:\transcript.ready",
+            @"C:\manifest.json",
+            SessionState.Published,
+            Array.Empty<MeetingAttendee>(),
+            false,
+            null);
+
+        var inspector = MainWindowInteractionLogic.BuildMeetingInspectorState(meeting, recommendations);
+        var badgeText = MainWindowInteractionLogic.BuildMeetingCleanupBadgeText(recommendations);
+
+        Assert.Contains("Archive", inspector.RecommendationBadges);
+        Assert.Contains("Add Speaker Labels", inspector.RecommendationBadges);
+        Assert.StartsWith("Archive", badgeText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MeetingMatchesWorkspaceSearch_Returns_True_For_Attendee_Name()
+    {
+        var attendees = new[]
+        {
+            new MeetingAttendee("Pranav Sharma", new[] { MeetingAttendeeSource.OutlookCalendar }),
+        };
+
+        var result = MainWindowInteractionLogic.MeetingMatchesWorkspaceSearch(
+            "pranav",
+            "Intel CIO Discussion",
+            "Teams",
+            "Published",
+            attendees);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void MeetingMatchesWorkspaceSearch_Returns_True_For_Key_Attendee_Name()
+    {
+        var result = MainWindowInteractionLogic.MeetingMatchesWorkspaceSearch(
+            "pranav",
+            "Intel CIO Discussion",
+            "Project Atlas",
+            "Teams",
+            "Published",
+            Array.Empty<MeetingAttendee>(),
+            ["Pranav Sharma"]);
+
+        Assert.True(result);
+    }
+
+    [Theory]
+    [InlineData(MeetingsGroupKey.Week, "2026-03-18T14:00:00Z", "Week of 2026-03-16")]
+    [InlineData(MeetingsGroupKey.Month, "2026-03-18T14:00:00Z", "March 2026")]
+    [InlineData(MeetingsGroupKey.Platform, "2026-03-18T14:00:00Z", "Teams")]
+    [InlineData(MeetingsGroupKey.Status, "2026-03-18T14:00:00Z", "Published")]
+    public void BuildMeetingWorkspaceGroupLabel_Returns_Expected_Label(
+        MeetingsGroupKey groupKey,
+        string startedAtUtcText,
+        string expectedLabel)
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
+            groupKey,
+            DateTimeOffset.Parse(startedAtUtcText),
+            "Teams",
+            "Published");
+
+        Assert.Equal(expectedLabel, result);
+    }
+
+    [Fact]
+    public void GetMeetingWorkspaceGroupPropertyName_Returns_Group_Specific_Property()
+    {
+        var result = MainWindowInteractionLogic.GetMeetingWorkspaceGroupPropertyName(MeetingsGroupKey.Month);
+
+        Assert.Equal("MonthGroupLabel", result);
+    }
+
+    [Fact]
+    public void PromotePendingUpdateToInstalledReleaseMetadata_Copies_Pending_Metadata_And_Clears_Pending_State()
+    {
+        var pendingPublishedAtUtc = DateTimeOffset.Parse("2026-03-20T21:51:12Z");
+        var config = new AppConfig
+        {
+            InstalledReleaseVersion = "0.2",
+            InstalledReleasePublishedAtUtc = DateTimeOffset.Parse("2026-03-17T19:28:22Z"),
+            InstalledReleaseAssetSizeBytes = 74290000,
+            PendingUpdateZipPath = @"C:\Downloads\MeetingRecorder-v0.2-win-x64.zip",
+            PendingUpdateVersion = "0.2",
+            PendingUpdatePublishedAtUtc = pendingPublishedAtUtc,
+            PendingUpdateAssetSizeBytes = 74294567,
+        };
+
+        var result = MainWindowInteractionLogic.PromotePendingUpdateToInstalledReleaseMetadata(config, "0.2");
+
+        Assert.Equal("0.2", result.InstalledReleaseVersion);
+        Assert.Equal(pendingPublishedAtUtc, result.InstalledReleasePublishedAtUtc);
+        Assert.Equal(74294567, result.InstalledReleaseAssetSizeBytes);
+        Assert.Equal(string.Empty, result.PendingUpdateZipPath);
+        Assert.Equal(string.Empty, result.PendingUpdateVersion);
+        Assert.Null(result.PendingUpdatePublishedAtUtc);
+        Assert.Null(result.PendingUpdateAssetSizeBytes);
     }
 }

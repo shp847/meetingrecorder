@@ -1,15 +1,22 @@
 using MeetingRecorder.Core.Branding;
+using System.Reflection;
 
 namespace MeetingRecorder.Core.Tests;
 
 public sealed class AppBrandingTests
 {
     [Fact]
-    public void Branding_Exposes_Release_0_2_Metadata()
+    public void Branding_Exposes_Release_0_3_Metadata_From_Assembly_Metadata()
     {
+        var informationalVersion = typeof(AppBranding).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+
         Assert.Equal("Meeting Recorder", AppBranding.ProductName);
-        Assert.Equal("0.2", AppBranding.Version);
-        Assert.Equal("Meeting Recorder v0.2", AppBranding.DisplayNameWithVersion);
+        Assert.Equal("0.3", AppBranding.Version);
+        Assert.Equal("0.3", informationalVersion);
+        Assert.Equal(AppBranding.Version, informationalVersion);
+        Assert.Equal("Meeting Recorder v0.3", AppBranding.DisplayNameWithVersion);
         Assert.Equal("Pranav Sharma", AppBranding.AuthorName);
         Assert.Equal("shp847@gmail.com", AppBranding.AuthorEmail);
     }

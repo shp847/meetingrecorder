@@ -7,4 +7,5 @@ public sealed record DetectionDecision(
     double Confidence,
     string SessionTitle,
     IReadOnlyList<DetectionSignal> Signals,
-    string Reason);
+    string Reason,
+    DetectedAudioSource? DetectedAudioSource = null);
