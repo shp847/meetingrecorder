@@ -418,6 +418,7 @@ That bootstrap path:
 - runs `AppPlatform.Deployment.Cli` from the downloaded bundle
 - expects the WPF shell itself to be present as a single-file `MeetingRecorder.App.exe` rather than a loose `MeetingRecorder.App.dll/.deps.json/.runtimeconfig.json` trio
 - resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so a single-file app launch does not look for `AppPlatform.Deployment.Cli.exe` under the transient `.net` extraction directory
+- only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt
 - validates `bundle-integrity.json` before the managed install root is changed
 - persists install provenance under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`
 - preserves the existing install `data` folder on update installs instead of reimplementing install logic in PowerShell

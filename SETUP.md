@@ -229,6 +229,7 @@ The shared deployment CLI now updates the managed install in place instead of re
 The actual apply/install work is now delegated to the shipped `AppPlatform.Deployment.Cli` helper so the script layer stays thin and reusable.
 That same CLI-first rule also applies after MSI-origin installs, so the app can update through the shared ZIP/CLI path without switching to MSI-based in-app patching.
 The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory instead of the temporary single-file extraction folder, so the updater can still launch correctly from the packaged managed install.
+Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches.
 Automatic updates are still allowed, but the app now refuses installer shutdown handoff while a recording or background transcript-processing job is active, so an update cannot forcibly close the app in the middle of active work.
 The `Run-MeetingRecorder.cmd` launcher now waits briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, which helps during short install or update handoff windows.
 The EXE shell keeps the `Try backup CMD installer` action available after a handoff so you can still trigger the fallback path if the command window fails later.
@@ -579,7 +580,7 @@ What the current app does:
 - if a recording or background transcript-processing job is active, the app now defers installer shutdown instead of letting an update forcibly close the current session
 - if queued transcript processing faults while the app is closing, shutdown now logs and ignores that queued-worker failure instead of leaving a headless background process behind
 - when shutdown cleanup finishes, the app now explicitly tears down any header surfaces and requests full WPF application shutdown instead of relying only on the main window close path
-- same-version pending update metadata is promoted to the installed state on restart so the app does not keep retrying the same build
+- same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt
 
 If you still see the warning:
 

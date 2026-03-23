@@ -73,6 +73,7 @@ This release turns Meeting Recorder into a complete day-to-day product for pract
 - Self-contained releases now ship the WPF shell as a single-file `MeetingRecorder.App.exe`, which avoids the loose-file `WindowsBase` startup failure that could surface as a downstream `WerFault.exe` restricted-access popup on launch
 - EXE bootstrapper now uses the shared app shell styling for status, progress, fallback guidance, and actions, with a scrollable layout and cleaner grouped buttons at the default window size
 - In-app `Install Available Update` handoff now resolves the updater CLI from the installed app directory instead of the transient single-file extraction folder, fixing failed update launches that could report the helper missing
+- Same-version pending updates now compare published-at and asset-size identity before they are treated as already installed, so refreshed `0.3` builds do not get skipped just because the semantic version text stayed the same
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory instead of the transient single-file extraction folder, fixing queued sessions that could otherwise stay unpublished after recording stops
 - Script fallback: `Install-LatestFromGitHub.cmd` or `Install-LatestFromGitHub.ps1`
 - Manual fallback: `MeetingRecorder-v0.3-win-x64.zip` with `Install-MeetingRecorder.cmd`

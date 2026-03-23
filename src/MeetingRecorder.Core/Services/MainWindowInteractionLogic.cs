@@ -367,6 +367,36 @@ internal static class MainWindowInteractionLogic
         };
     }
 
+    public static bool IsPendingUpdateAlreadyInstalled(AppConfig config, string currentVersion)
+    {
+        if (string.IsNullOrWhiteSpace(config.PendingUpdateVersion) ||
+            string.IsNullOrWhiteSpace(currentVersion) ||
+            !string.Equals(config.PendingUpdateVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (config.PendingUpdatePublishedAtUtc.HasValue)
+        {
+            if (!config.InstalledReleasePublishedAtUtc.HasValue ||
+                config.PendingUpdatePublishedAtUtc.Value != config.InstalledReleasePublishedAtUtc.Value)
+            {
+                return false;
+            }
+        }
+
+        if (config.PendingUpdateAssetSizeBytes.HasValue)
+        {
+            if (!config.InstalledReleaseAssetSizeBytes.HasValue ||
+                config.PendingUpdateAssetSizeBytes.Value != config.InstalledReleaseAssetSizeBytes.Value)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static string BuildAutoInstallUpdatesHint(bool updateChecksEnabled)
     {
         return updateChecksEnabled

@@ -1330,4 +1330,41 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Null(result.PendingUpdatePublishedAtUtc);
         Assert.Null(result.PendingUpdateAssetSizeBytes);
     }
+
+    [Fact]
+    public void IsPendingUpdateAlreadyInstalled_Returns_False_When_Same_Version_Metadata_Differs()
+    {
+        var config = new AppConfig
+        {
+            InstalledReleaseVersion = "0.3",
+            InstalledReleasePublishedAtUtc = DateTimeOffset.Parse("2026-03-22T12:00:00Z"),
+            InstalledReleaseAssetSizeBytes = 100_000_000,
+            PendingUpdateVersion = "0.3",
+            PendingUpdatePublishedAtUtc = DateTimeOffset.Parse("2026-03-23T12:00:00Z"),
+            PendingUpdateAssetSizeBytes = 101_000_000,
+        };
+
+        var result = MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, "0.3");
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void IsPendingUpdateAlreadyInstalled_Returns_True_When_Same_Version_Metadata_Matches()
+    {
+        var publishedAtUtc = DateTimeOffset.Parse("2026-03-23T12:00:00Z");
+        var config = new AppConfig
+        {
+            InstalledReleaseVersion = "0.3",
+            InstalledReleasePublishedAtUtc = publishedAtUtc,
+            InstalledReleaseAssetSizeBytes = 101_000_000,
+            PendingUpdateVersion = "0.3",
+            PendingUpdatePublishedAtUtc = publishedAtUtc,
+            PendingUpdateAssetSizeBytes = 101_000_000,
+        };
+
+        var result = MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, "0.3");
+
+        Assert.True(result);
+    }
 }

@@ -155,7 +155,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - CLI-only update apply flow for MSI, EXE, script, and ZIP-origin installs
 - In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so single-file app launches do not accidentally look for the updater helper inside the temporary `.net` extraction folder
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory via the running process path, so queued sessions still publish correctly from single-file installs
-- Same-version pending update metadata is reconciled on restart so the app does not loop on an already installed build
+- Same-version pending updates are only cleared when their published-at and asset-size identity matches the installed build, so rebuilt releases can still replace older binaries that report the same semantic version
 - A second launch now waits briefly for a winding-down prior instance before it reports that the app is still running
 - MSI, EXE, ZIP, and command bootstrap release assets
 

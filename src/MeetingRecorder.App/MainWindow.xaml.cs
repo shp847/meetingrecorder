@@ -4753,8 +4753,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(config.PendingUpdateVersion) &&
-            string.Equals(config.PendingUpdateVersion, AppBranding.Version, StringComparison.OrdinalIgnoreCase))
+        if (MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, AppBranding.Version))
         {
             AppendActivity($"Clearing pending update {FormatVersionLabel(config.PendingUpdateVersion)} because this app version is already installed.");
             var promotedConfig = MainWindowInteractionLogic.PromotePendingUpdateToInstalledReleaseMetadata(config, AppBranding.Version);
