@@ -7,7 +7,6 @@ This guide is the repeatable release path for GitHub-based first installs and fu
 Publish the app installer assets plus any separate model assets you want users to download from the Models tab.
 
 - `MeetingRecorderInstaller.msi`
-- `MeetingRecorderInstaller.exe`
 - `MeetingRecorder-v<version>-win-x64.zip`
 - `Install-LatestFromGitHub.cmd`
 - `Install-LatestFromGitHub.ps1`
@@ -24,14 +23,8 @@ The stable bootstrap command remains the backup path:
 - download `Install-LatestFromGitHub.cmd`
 - run it directly
 
-The custom EXE remains optional:
-
-- download `MeetingRecorderInstaller.exe`
-- run it directly if the environment allows custom bootstrap executables
-
 If the companion PowerShell script is not next to it, the command downloads `Install-LatestFromGitHub.ps1` from the latest GitHub release automatically.
 That PowerShell bootstrap then downloads the release ZIP and delegates actual install/apply work to the bundled `AppPlatform.Deployment.Cli` executable inside the extracted bundle.
-The EXE launcher should only hand off into that same bootstrap path.
 
 That same command can be reused later for updates.
 
@@ -96,9 +89,9 @@ Packaging validation notes:
 - `App.OnExit` should not synchronously block on the activation or installer-shutdown monitor tasks, because a close/update handoff can otherwise leave a headless process stuck during exit
 - script/bootstrap installers and updater helpers should write diagnostic logs under `%TEMP%\MeetingRecorderInstaller`, suppress raw PowerShell download progress, forward `--pause-on-error` into the deployment CLI, and pause on any failed CLI command path
 - the updater apply path should not wait forever for the app to close; it should signal shutdown, escalate install-path release if needed, and then fail clearly if the process still will not exit
-- the EXE installer path should avoid cross-process inspection and control APIs on the app process so endpoint tools do not flag it as restricted process-memory access
-- the EXE installer should remain a thin launcher over `Install-LatestFromGitHub.cmd/.ps1`; it should not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts itself
-- the EXE installer UI should explain the split between app files in `%USERPROFILE%\Documents\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
+- avoid cross-process inspection and control APIs in all installer paths so endpoint tools do not flag the flow as restricted process-memory access
+- keep non-MSI fallbacks thin; they should hand off into `Install-LatestFromGitHub.cmd/.ps1` and should not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts themselves
+- keep install messaging explicit about the split between app files in `%USERPROFILE%\Documents\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
 - the shared deployment CLI should reject bundles that fail `bundle-integrity.json` validation before it touches the managed install root
 - the shared deployment CLI and managed-install repair path should treat the worker sidecar dependency set as required, not just `MeetingRecorder.ProcessingWorker.exe`
 - the shared deployment CLI should persist install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`
@@ -252,7 +245,6 @@ Root-level `ggml-*.bin` model assets are preserved between builds and only recop
 
 Expected outputs:
 
-- `MeetingRecorderInstaller.exe`
 - `MeetingRecorderInstaller.msi`
 - `MeetingRecorder-v<version>-win-x64.zip`
 - `Install-LatestFromGitHub.cmd`
@@ -309,7 +301,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runti
 3. Create or select the tag `v<version>`.
 4. Upload:
    - `MeetingRecorderInstaller.msi`
-   - `MeetingRecorderInstaller.exe`
    - `MeetingRecorder-v<version>-win-x64.zip`
    - `Install-LatestFromGitHub.cmd`
    - `Install-LatestFromGitHub.ps1`
@@ -367,12 +358,6 @@ Backup path:
 1. Download `Install-LatestFromGitHub.cmd`
 2. Run it directly
 
-Optional EXE path:
-
-1. Download `MeetingRecorderInstaller.exe`
-2. Run it directly if the endpoint policy allows custom bootstrap executables
-3. Confirm it launches the command bootstrap window and then gets out of the way instead of performing deployment itself
-
-Later updates can reuse the MSI, EXE, or script bootstrap paths, with the script bootstrap still available as the lowest-friction fallback.
+Later updates can reuse the MSI or script bootstrap paths, with the script bootstrap still available as the lowest-friction fallback.
 Existing installs keep their saved config values on update.
 An MSI uninstall is also data-preserving by design: it removes the managed app files and current-user shortcuts, while leaving `%LOCALAPPDATA%\MeetingRecorder` and the published meetings folders in place for a later fresh install.

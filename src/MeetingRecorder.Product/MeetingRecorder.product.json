@@ -4,7 +4,7 @@
   "displayName": "Meeting Recorder",
   "executableName": "MeetingRecorder.App.exe",
   "portableLauncherFileName": "Run-MeetingRecorder.cmd",
-  "installerExecutableName": "MeetingRecorderInstaller.exe",
+  "installerExecutableName": "",
   "installerMsiName": "MeetingRecorderInstaller.msi",
   "portableArchivePrefix": "MeetingRecorder",
   "updateFeedUrl": "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
@@ -23,7 +23,7 @@
     "supportsPerUserMsi": true,
     "supportsPortableZip": true,
     "supportsCommandBootstrap": true,
-    "supportsExecutableBootstrap": true,
+    "supportsExecutableBootstrap": false,
     "supportsAutoUpgrade": true
   },
   "shortcutPolicy": {

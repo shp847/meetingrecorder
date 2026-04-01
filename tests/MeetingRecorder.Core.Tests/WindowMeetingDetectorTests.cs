@@ -215,6 +215,42 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Does_Not_Enumerate_Tabs_For_NonBrowser_Chrome_Widget_Window()
+    {
+        var enumerationCount = 0;
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "codex",
+                    "Codex",
+                    "Chrome_WidgetWin_1",
+                    (nint)9001,
+                    9001),
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Chat | Alex Johnson | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)101,
+                    101),
+            ],
+            candidate =>
+            {
+                if (candidate.ProcessId == 9001)
+                {
+                    Interlocked.Increment(ref enumerationCount);
+                }
+
+                return Array.Empty<string>();
+            });
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.Equal(0, enumerationCount);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Ignores_Unsupported_Window_Classes_Even_When_Their_Window_Title_Looks_Like_A_Meeting()
     {
         var detector = await CreateDetectorAsync(

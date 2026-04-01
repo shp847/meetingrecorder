@@ -61,6 +61,16 @@ public sealed class ManagedInstallLayoutTests
     }
 
     [Fact]
+    public void ProductModule_Disables_ExecutableBootstrap_And_Uses_Msi_As_The_Only_Installer_Metadata()
+    {
+        var manifest = MeetingRecorderProductModule.Instance.GetManifest();
+
+        Assert.False(manifest.ReleaseChannelPolicy.SupportsExecutableBootstrap);
+        Assert.Equal(string.Empty, manifest.InstallerExecutableName);
+        Assert.Equal("MeetingRecorderInstaller.msi", manifest.InstallerMsiName);
+    }
+
+    [Fact]
     public void ProductManifest_Declares_LocalPrograms_As_A_Legacy_Install_Root()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -97,6 +107,25 @@ public sealed class ManagedInstallLayoutTests
 
         Assert.Equal("Meeting Recorder.lnk", shortcutPolicy.GetProperty("desktopShortcutFileName").GetString());
         Assert.Equal("Meeting Recorder.lnk", shortcutPolicy.GetProperty("startMenuShortcutFileName").GetString());
+    }
+
+    [Fact]
+    public void ProductManifest_Disables_ExecutableBootstrap_And_Leaves_Msi_As_The_Supported_Installer()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var manifestPath = Path.Combine(repoRoot, "src", "MeetingRecorder.Product", "MeetingRecorder.product.json");
+
+        Assert.True(File.Exists(manifestPath), $"Expected product manifest at '{manifestPath}'.");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        var releaseChannelPolicy = root.GetProperty("releaseChannelPolicy");
+
+        Assert.Equal(string.Empty, root.GetProperty("installerExecutableName").GetString());
+        Assert.Equal("MeetingRecorderInstaller.msi", root.GetProperty("installerMsiName").GetString());
+        Assert.False(releaseChannelPolicy.GetProperty("supportsExecutableBootstrap").GetBoolean());
     }
 
     [Fact]

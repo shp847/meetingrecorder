@@ -534,6 +534,23 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void BuildInstallerScript_No_Longer_Builds_Or_Publishes_The_Deprecated_Exe_Installer()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Installer.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected installer build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.DoesNotContain("MeetingRecorderInstaller.exe", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("MeetingRecorder.Installer.csproj", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("$installerTemp", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void UploadReleaseAssetsScript_Derives_UserAgent_Version_From_DirectoryBuildProps()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -602,6 +619,24 @@ public sealed class InstallerScriptTests
         Assert.Contains("git status --short", scriptContents, StringComparison.Ordinal);
         Assert.Contains("git rev-parse HEAD", scriptContents, StringComparison.Ordinal);
         Assert.Contains("must be rebuilt from the current clean repo state", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UploadReleaseAssetsScript_Uses_Msi_Only_For_Installer_Uploads_And_Removes_The_Deprecated_Exe_Asset()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Upload-ReleaseAssets.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected release upload script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorderInstaller.exe", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Get-DeprecatedReleaseAssetNames", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Remove-GitHubReleaseAsset", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -694,6 +729,22 @@ public sealed class InstallerScriptTests
         Assert.Contains("release-source.json", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Assert-ReleaseAssetsMatchCurrentRepoState", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Sync-ReleaseAssetsToGitHubLatestRelease", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildReleaseScript_No_Longer_Stages_Or_Advertises_The_Deprecated_Exe_Installer()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Release.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected release build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.DoesNotContain("Installer executable:", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Upload MeetingRecorderInstaller.exe", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]

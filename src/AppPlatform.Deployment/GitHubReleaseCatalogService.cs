@@ -59,20 +59,17 @@ public sealed class GitHubReleaseCatalogService
             string.Equals(asset.Name, "Install-LatestFromGitHub.cmd", StringComparison.OrdinalIgnoreCase));
         var backupPowerShellAsset = assets.FirstOrDefault(asset =>
             string.Equals(asset.Name, "Install-LatestFromGitHub.ps1", StringComparison.OrdinalIgnoreCase));
-        var installerExecutableAsset = assets.FirstOrDefault(asset =>
-            string.Equals(asset.Name, "MeetingRecorderInstaller.exe", StringComparison.OrdinalIgnoreCase));
-
         var version = NormalizeVersion(tagName);
         var releasePublishedAtUtc = TryGetDateTimeOffset(root, "published_at");
         var publishedAtUtc = ResolveEffectivePublishedAtUtc(releasePublishedAtUtc, appZipAsset.UpdatedAtUtc);
         _logger.Info(
-            $"Selected release version '{version}' with app ZIP asset '{appZipAsset.Name}' and installer asset '{installerExecutableAsset?.Name ?? "<none>"}'.");
+            $"Selected release version '{version}' with app ZIP asset '{appZipAsset.Name}' and no executable bootstrap asset.");
 
         return new ReleaseAssetSet(
             Version: version,
             ReleasePageUrl: TryGetString(root, "html_url"),
             PublishedAtUtc: publishedAtUtc,
-            InstallerExecutableAsset: installerExecutableAsset,
+            InstallerExecutableAsset: null,
             AppZipAsset: appZipAsset,
             BackupCommandAsset: backupCommandAsset,
             BackupPowerShellAsset: backupPowerShellAsset);

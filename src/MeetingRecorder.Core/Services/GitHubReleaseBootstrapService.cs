@@ -56,9 +56,6 @@ public sealed class GitHubReleaseBootstrapService
             string.Equals(asset.Name, "Install-LatestFromGitHub.cmd", StringComparison.OrdinalIgnoreCase));
         var backupPowerShellAsset = assets.FirstOrDefault(asset =>
             string.Equals(asset.Name, "Install-LatestFromGitHub.ps1", StringComparison.OrdinalIgnoreCase));
-        var installerExecutableAsset = assets.FirstOrDefault(asset =>
-            string.Equals(asset.Name, "MeetingRecorderInstaller.exe", StringComparison.OrdinalIgnoreCase));
-
         var version = ReleaseVersionParsing.ResolveVersionInfo(
             tagName,
             tagName,
@@ -70,7 +67,7 @@ public sealed class GitHubReleaseBootstrapService
             version.DisplayLabel,
             releasePageUrl,
             publishedAtUtc,
-            installerExecutableAsset,
+            InstallerExecutableAsset: null,
             appZipAsset,
             backupCommandAsset,
             backupPowerShellAsset);

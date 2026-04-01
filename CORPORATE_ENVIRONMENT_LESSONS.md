@@ -9,7 +9,6 @@ The intended audience is future app teams that want to reuse the same platform-l
 - `AppPlatform.Deployment.WpfHost`
 - `AppPlatform.Deployment.Wix`
 - `Install-LatestFromGitHub.cmd/.ps1`
-- `MeetingRecorderInstaller.exe`-style thin launchers
 - per-user MSI plus ZIP/bootstrap release flows
 
 The goal is to preserve the parts that worked, avoid the parts that caused friction, and give future apps a safer default architecture from day one.

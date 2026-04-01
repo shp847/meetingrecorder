@@ -46,10 +46,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $packagePath = Join-Path $repoRoot $PackageRoot
 $stagingPath = Join-Path $packagePath "staging"
 $bundleRoot = Join-Path $stagingPath "MeetingRecorder"
-$installerTemp = Join-Path $packagePath "installer-temp"
 $versionLabel = Get-ReleaseVersionLabel -RepoRoot $repoRoot
 $zipPath = Join-Path $packagePath "MeetingRecorder-$versionLabel-$Runtime.zip"
-$installerExecutablePath = Join-Path $packagePath "MeetingRecorderInstaller.exe"
 $installerMsiPath = Join-Path $packagePath "MeetingRecorderInstaller.msi"
 $bootstrapCommandPath = Join-Path $packagePath "Install-LatestFromGitHub.cmd"
 $bootstrapScriptPath = Join-Path $packagePath "Install-LatestFromGitHub.ps1"
@@ -57,7 +55,6 @@ $releaseSourceMetadataPath = Join-Path $packagePath "release-source.json"
 $publishScript = Join-Path $PSScriptRoot "Publish-Portable.ps1"
 $publishedAppPath = Join-Path $repoRoot ".artifacts\publish\$Runtime\MeetingRecorder"
 $modelCatalogSourcePath = Join-Path $repoRoot "src\MeetingRecorder.Core\Assets\model-catalog.json"
-$installerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Installer\MeetingRecorder.Installer.csproj"
 $msiProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Setup\MeetingRecorder.Setup.wixproj"
 $msiTemp = Join-Path $packagePath "msi-temp"
 $msiGeneratedAuthoringPath = Join-Path $msiTemp "generated\AppFiles.wxs"
@@ -557,60 +554,6 @@ function Set-MsiPerUserNoElevationSummaryInfo {
     }
 }
 
-function Invoke-DotnetPublishSingleFile {
-    param(
-        [string]$ProjectPath,
-        [string]$PublishOutput,
-        [string]$ExecutableName
-    )
-
-    $restoreArgs = @(
-        "restore",
-        $ProjectPath,
-        "-r",
-        $Runtime,
-        "-p:RestoreIgnoreFailedSources=true",
-        "-p:NuGetAudit=false"
-    )
-
-    & dotnet @restoreArgs | Out-Host
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet restore failed for $ProjectPath"
-    }
-
-    $publishArgs = @(
-        "publish",
-        $ProjectPath,
-        "-c",
-        $Configuration,
-        "-r",
-        $Runtime,
-        "--self-contained",
-        "true",
-        "-p:PublishSingleFile=true",
-        "-p:EnableCompressionInSingleFile=true",
-        "-p:IncludeNativeLibrariesForSelfExtract=true",
-        "-p:RestoreIgnoreFailedSources=true",
-        "-p:NuGetAudit=false",
-        "-o",
-        $PublishOutput
-    )
-
-    & dotnet @publishArgs | Out-Host
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet publish failed for $ProjectPath"
-    }
-
-    $executablePath = Join-Path $PublishOutput $ExecutableName
-    if (-not (Test-Path $executablePath)) {
-        throw "Published single-file executable was not found at $executablePath"
-    }
-
-    return $executablePath
-}
-
 function Get-FileSizeSummary {
     param(
         [string]$FilePath
@@ -642,7 +585,6 @@ $signingConfiguration = Resolve-CodeSigningConfiguration `
     -ExplicitTimestampUrl $CodeSigningTimestampUrl
 
 Reset-PackageOutputDirectory -DirectoryPath $packagePath
-Remove-Item -Recurse -Force $installerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiBuildOutputPath -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
@@ -652,11 +594,6 @@ Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) {
     throw "Portable publish failed while building the installer bundle."
 }
-
-$installerPublishedExecutable = Invoke-DotnetPublishSingleFile `
-    -ProjectPath $installerProjectPath `
-    -PublishOutput $installerTemp `
-    -ExecutableName "MeetingRecorderInstaller.exe"
 
 Copy-MsiPayload -SourceRoot $publishedAppPath -DestinationRoot $msiStagingPath
 Write-MsiHarvestAuthoring -SourceRoot $msiStagingPath -OutputPath $msiGeneratedAuthoringPath
@@ -678,7 +615,6 @@ Sign-ArtifactFiles `
 $publishedPowerShellScripts = Get-ChildItem -Path $publishedAppPath -Filter "*.ps1" -File -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty FullName
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths $publishedPowerShellScripts
-Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($installerPublishedExecutable)
 
 $publishedReleaseSourceMetadataPath = Join-Path $publishedAppPath "release-source.json"
 if (-not (Test-Path $publishedReleaseSourceMetadataPath)) {
@@ -700,7 +636,6 @@ $stagedPowerShellScripts = Get-ChildItem -Path $stagingPath -Filter "*.ps1" -Fil
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths $stagedPowerShellScripts
 
 $zipPath = New-ZipAsset -SourceRoot $stagingPath -PreferredPath $zipPath
-$installerExecutablePath = Publish-StableAsset -SourcePath $installerPublishedExecutable -PreferredPath $installerExecutablePath
 $installerMsiPath = Publish-StableAsset -SourcePath $installerMsiBuiltPath -PreferredPath $installerMsiPath
 $bootstrapCommandPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.cmd") -PreferredPath $bootstrapCommandPath
 $bootstrapScriptPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.ps1") -PreferredPath $bootstrapScriptPath
@@ -710,7 +645,6 @@ Publish-HighAccuracyReleaseAssets -RepoRoot $repoRoot -CatalogPath $modelCatalog
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($bootstrapScriptPath)
 
 $mainZipSummary = Get-FileSizeSummary -FilePath $zipPath
-$installerSummary = Get-FileSizeSummary -FilePath $installerExecutablePath
 $installerMsiSummary = Get-FileSizeSummary -FilePath $installerMsiPath
 $bootstrapCommandSummary = Get-FileSizeSummary -FilePath $bootstrapCommandPath
 $bootstrapScriptSummary = Get-FileSizeSummary -FilePath $bootstrapScriptPath
@@ -718,7 +652,6 @@ $bootstrapScriptSummary = Get-FileSizeSummary -FilePath $bootstrapScriptPath
 Assert-WithinGitHubReleaseLimit -FileSummary $mainZipSummary -LimitBytes $gitHubReleaseLimitBytes
 
 Write-Host "Main installer bundle assembled at $($mainZipSummary.Path) [$($mainZipSummary.MB) MB]"
-Write-Host "Installer executable assembled at $($installerSummary.Path) [$($installerSummary.MB) MB]"
 Write-Host "Installer MSI assembled at $($installerMsiSummary.Path) [$($installerMsiSummary.MB) MB]"
 Write-Host "Bootstrap command assembled at $($bootstrapCommandSummary.Path) [$($bootstrapCommandSummary.MB) MB]"
 Write-Host "Bootstrap PowerShell script assembled at $($bootstrapScriptSummary.Path) [$($bootstrapScriptSummary.MB) MB]"
@@ -732,5 +665,4 @@ if (-not $KeepStaging.IsPresent) {
     Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
 }
 
-Remove-Item -Recurse -Force $installerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiTemp -ErrorAction SilentlyContinue

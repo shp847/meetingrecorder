@@ -46,7 +46,7 @@ public sealed class MeetingRecorderProductModule :
             DisplayName: AppBranding.DisplayNameWithVersion,
             ExecutableName: "MeetingRecorder.App.exe",
             PortableLauncherFileName: "Run-MeetingRecorder.cmd",
-            InstallerExecutableName: "MeetingRecorderInstaller.exe",
+            InstallerExecutableName: string.Empty,
             InstallerMsiName: "MeetingRecorderInstaller.msi",
             PortableArchivePrefix: "MeetingRecorder",
             UpdateFeedUrl: AppBranding.DefaultUpdateFeedUrl,
@@ -58,7 +58,7 @@ public sealed class MeetingRecorderProductModule :
                 SupportsPerUserMsi: true,
                 SupportsPortableZip: true,
                 SupportsCommandBootstrap: true,
-                SupportsExecutableBootstrap: true,
+                SupportsExecutableBootstrap: false,
                 SupportsAutoUpgrade: true),
             ShortcutPolicy: new ShellShortcutPolicy(
                 DisplayName: "Meeting Recorder",

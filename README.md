@@ -44,7 +44,7 @@ Maintenance and support actions live in the header instead of the main navigatio
 - Lets you rename meetings, regenerate transcripts, merge meetings, split meetings, and edit diarized speaker names from the Meetings tab
 - Flags likely errant meetings with cleanup recommendations such as archive, merge, split, rename, retry-transcript, and add-speaker-label actions
 - Offers a one-time historical cleanup review plus ongoing row badges, a lighter cleanup review banner, and compact action drafts that stay tucked away until needed
-- On first launch after the updated build, the one-time published-meeting repair pass can now collapse a heavily stop/start-fragmented same-call chain into one merged publish and archive the tiny originals instead of only healing one adjacent pair
+- On first launch after the updated build, the one-time published-meeting repair pass can now collapse a heavily stop/start-fragmented same-call chain into one merged publish and archive the tiny originals instead of only healing one adjacent pair, and it can also auto-merge a short-gap exact-title split when the preserved work manifests agree on the same specific meeting identity
 - Repaired published meetings now derive their displayed duration from the repaired merged artifact payload when that payload no longer matches the original work-manifest timing for the reused stem
 - Can ingest dropped audio files such as phone voice memos and queue them for automatic transcription
 - Can download or import Whisper models from inside the app
@@ -66,13 +66,9 @@ This is the preferred Windows installer for the current release flow, especially
 ### Other supported install paths
 
 - `Install-LatestFromGitHub.cmd`
-  - script-based fallback when MSI or EXE installation is blocked by local security policy
+  - script-based fallback when MSI installation is blocked by local security policy
 - `Install-LatestFromGitHub.ps1`
-  - direct PowerShell fallback for environments that allow signed scripts more readily than custom executables
-- `MeetingRecorderInstaller.exe`
-  - optional thin launcher if you still want a one-click EXE path
-  - prefers the colocated release ZIP and bootstrap scripts when they ship beside the EXE
-  - otherwise downloads the command bootstrap assets, launches `Install-LatestFromGitHub.cmd`, and then steps aside
+  - direct PowerShell fallback for environments that allow signed scripts more readily than MSI or extracted ZIP installs
 - `MeetingRecorder-v0.3-win-x64.zip`
   - manual extract-and-run fallback
 
@@ -81,7 +77,7 @@ Current installer/update authority:
 - `AppPlatform.Deployment.Cli` is the only engine that writes or updates the managed install tree
 - `Install-LatestFromGitHub.cmd/.ps1` are the canonical interactive bootstrap/update path
 - in-app updates stay CLI-only even when the app was first installed through the MSI
-- `MeetingRecorderInstaller.exe` is a branded launcher over that same bootstrap path, not a peer deployment engine
+- current releases no longer ship the deprecated EXE launcher; MSI, ZIP, and the command/bootstrap scripts are the supported install assets
 - the default self-contained release now ships the WPF shell as a single-file `MeetingRecorder.App.exe`; the deployment CLI, worker, scripts, and product manifest remain external sidecars in the bundle
 - the portable/installer bundle now copies the full processing-worker publish output, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so queued sessions can still publish after restart instead of crashing on a missing sidecar dependency
 
@@ -106,12 +102,12 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Manual Start and Stop controls
 - Auto-detection for Teams desktop and Google Meet, off by default on new installs and reset off once for older configs to avoid extra permission prompts on some systems
 - Google Meet detection now also inspects visible Chromium tab titles, so a Meet tab can still be recognized when the main browser title is a shared Slides or Docs page
-- Chromium tab inspection now uses a short timeout and backoff window, so a stuck browser automation query cannot stall Teams or Google Meet detection for minutes while unrelated browser windows are open
+- Chromium tab inspection now uses a short timeout and backoff window and only runs against real browser processes, so a stuck Edge or Chrome automation query cannot stall Teams or Google Meet detection for minutes while unrelated Electron-style `Chrome_WidgetWin_*` windows are open
 - Windows audio-session probing now also uses a short timeout and backoff window, so a hung render-session query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
 - Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or Chromium Meet tab and uses that source as a strong tie-breaker instead of a single shared audio bonus
 - Google Meet auto-start now prefers Meet-specific browser-audio attribution when Chromium render sessions are available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
 - Google Meet auto-start can now also begin from a high-confidence explicit Meet window even before render audio becomes active, including `Meet - ...` browser surfaces and `meet.google.com is sharing ...` share surfaces; generic browser windows or tab-only Meet hints still wait for stronger evidence
-- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session; a stale remembered Teams window title on its own is no longer enough to start a recording
+- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session, including a quiet matched Teams session that is still present at `peak=0.000`; a stale remembered Teams window title on its own is no longer enough to start a recording
 - Auto-started Teams recordings no longer treat a stale same-title quiet window as a forever-positive signal; instead they use a bounded quiet grace period before auto-stop, and matching Teams shell/chat/share surfaces only keep the session alive when there is still recent Teams render activity, so ended calls stop instead of recording unrelated post-call silence or microphone-only activity indefinitely
 - When a validated official Teams path is enabled, stale same-title Teams shells also stop refreshing continuity once the official lookup reports that no current meeting is active, but a current official match can still preserve the bounded quiet grace period during real low-audio patches
 - Google Meet continuity now normalizes title variants that share the same Meet code, so browser captions like `...and 1 more page`, `...Work - Microsoft Edge`, and `...Camera and microphone recording...` stay attached to one live call instead of being treated as separate meetings

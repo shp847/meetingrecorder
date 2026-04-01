@@ -533,7 +533,8 @@ public sealed class AutoRecordingContinuityPolicy
     {
         foreach (var signal in decision.Signals)
         {
-            if (string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(signal.Source, "audio-session-match", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

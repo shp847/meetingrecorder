@@ -44,6 +44,7 @@ internal sealed record MeetingInspectionRecord(
 internal static class MeetingCleanupRecommendationEngine
 {
     private static readonly TimeSpan MaximumMergeGap = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaximumStrongContinuityMergeGap = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan MaximumShortGenericTeamsDuration = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan MaximumShortSplitSegmentDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MinimumSplitEligibleDuration = TimeSpan.FromMinutes(10);
@@ -268,22 +269,22 @@ internal static class MeetingCleanupRecommendationEngine
 
         for (var index = 1; index < ordered.Length; index++)
         {
-            var previous = ordered[index - 1].Meeting;
-            var current = ordered[index].Meeting;
+            var previous = ordered[index - 1];
+            var current = ordered[index];
             if (!TryGetMergeConfidence(previous, current, out var confidence))
             {
                 continue;
             }
 
             recommendations.Add(BuildRecommendation(
-                previous.Stem,
+                previous.Meeting.Stem,
                 MeetingCleanupAction.Merge,
                 confidence,
                 "Merge likely split meeting pair",
-                $"These meetings look like the same call split into two publishes: '{previous.Title}' and '{current.Title}'.",
-                [previous.Stem, current.Stem],
+                $"These meetings look like the same call split into two publishes: '{previous.Meeting.Title}' and '{current.Meeting.Title}'.",
+                [previous.Meeting.Stem, current.Meeting.Stem],
                 canApplyAutomatically: confidence == MeetingCleanupConfidence.High,
-                suggestedTitle: ChoosePreferredTitle(previous.Title, current.Title),
+                suggestedTitle: ChoosePreferredTitle(previous.Meeting.Title, current.Meeting.Title),
                 suggestedSplitPoint: null,
                 reasonCode: "merge-split-pair"));
         }
@@ -435,11 +436,13 @@ internal static class MeetingCleanupRecommendationEngine
     }
 
     private static bool TryGetMergeConfidence(
-        MeetingOutputRecord previous,
-        MeetingOutputRecord current,
+        MeetingInspectionRecord previousInspection,
+        MeetingInspectionRecord currentInspection,
         out MeetingCleanupConfidence confidence)
     {
         confidence = MeetingCleanupConfidence.Low;
+        var previous = previousInspection.Meeting;
+        var current = currentInspection.Meeting;
         if (previous.Platform == MeetingPlatform.Unknown ||
             previous.Platform != current.Platform ||
             previous.Duration is not { } previousDuration ||
@@ -471,10 +474,63 @@ internal static class MeetingCleanupRecommendationEngine
 
         var titlesDiffer = !string.Equals(previous.Title.Trim(), current.Title.Trim(), StringComparison.OrdinalIgnoreCase);
         var hasShortSegment = previousDuration <= MaximumShortSplitSegmentDuration || currentDuration <= MaximumShortSplitSegmentDuration;
-        confidence = titlesDiffer || hasShortSegment
+        var hasStrongManifestContinuity = HasStrongManifestContinuityEvidence(previousInspection, currentInspection, gap);
+        confidence = titlesDiffer || hasShortSegment || hasStrongManifestContinuity
             ? MeetingCleanupConfidence.High
             : MeetingCleanupConfidence.Medium;
         return true;
+    }
+
+    private static bool HasStrongManifestContinuityEvidence(
+        MeetingInspectionRecord previousInspection,
+        MeetingInspectionRecord currentInspection,
+        TimeSpan gap)
+    {
+        if (gap > MaximumStrongContinuityMergeGap ||
+            previousInspection.Manifest is null ||
+            currentInspection.Manifest is null)
+        {
+            return false;
+        }
+
+        var previousDetectedTitle = NormalizeSpecificManifestTitle(previousInspection.Manifest);
+        var currentDetectedTitle = NormalizeSpecificManifestTitle(currentInspection.Manifest);
+        if (string.IsNullOrWhiteSpace(previousDetectedTitle) ||
+            !string.Equals(previousDetectedTitle, currentDetectedTitle, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var previousWindowTitle = TryGetSpecificComparableWindowTitle(previousInspection.Manifest);
+        var currentWindowTitle = TryGetSpecificComparableWindowTitle(currentInspection.Manifest);
+        return !string.IsNullOrWhiteSpace(previousWindowTitle) &&
+               string.Equals(previousWindowTitle, currentWindowTitle, StringComparison.Ordinal);
+    }
+
+    private static string? NormalizeSpecificManifestTitle(MeetingSessionManifest manifest)
+    {
+        var comparableTitle = MeetingTitleNormalizer.NormalizeForComparison(manifest.DetectedTitle);
+        return string.IsNullOrWhiteSpace(comparableTitle) || IsGenericTitle(manifest.Platform, comparableTitle)
+            ? null
+            : comparableTitle;
+    }
+
+    private static string? TryGetSpecificComparableWindowTitle(MeetingSessionManifest manifest)
+    {
+        foreach (var candidate in manifest.DetectionEvidence
+                     .Where(signal => string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase))
+                     .Select(signal => ExtractComparableSignalTitle(signal.Value))
+                     .Append(ExtractComparableSignalTitle(manifest.DetectedAudioSource?.WindowTitle ?? string.Empty)))
+        {
+            var comparableTitle = MeetingTitleNormalizer.NormalizeForComparison(candidate);
+            if (!string.IsNullOrWhiteSpace(comparableTitle) &&
+                !IsGenericTitle(manifest.Platform, comparableTitle))
+            {
+                return comparableTitle;
+            }
+        }
+
+        return null;
     }
 
     private static string BuildFingerprint(

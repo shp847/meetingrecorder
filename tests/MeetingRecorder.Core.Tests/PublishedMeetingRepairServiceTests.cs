@@ -214,6 +214,89 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RepairKnownIssuesAsync_Reruns_Current_Repair_When_A_Legacy_V4_Marker_Already_Exists_And_Merges_ManifestBacked_SameTitle_Splits()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var appRoot = CreateDirectory("app");
+        var workDir = Path.Combine(appRoot, "work");
+        Directory.CreateDirectory(workDir);
+        var repairsDir = Path.Combine(appRoot, "repairs");
+        Directory.CreateDirectory(repairsDir);
+        await File.WriteAllTextAsync(Path.Combine(repairsDir, "published-meeting-repair-v4.done"), "legacy");
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var firstStem = "2026-04-01_103307_teams_ionq-connect";
+        var secondStem = "2026-04-01_105114_teams_ionq-connect";
+        var firstDuration = TimeSpan.FromMinutes(16) + TimeSpan.FromSeconds(55);
+        var secondDuration = TimeSpan.FromMinutes(22) + TimeSpan.FromSeconds(51);
+        var firstStartedAtUtc = DateTimeOffset.Parse("2026-04-01T10:33:07Z");
+        var secondStartedAtUtc = DateTimeOffset.Parse("2026-04-01T10:51:14Z");
+
+        await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{firstStem}.wav"), firstDuration);
+        await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{secondStem}.wav"), secondDuration);
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptDir, $"{firstStem}.md"),
+            string.Join(
+                Environment.NewLine,
+                "# IonQ connect",
+                string.Empty,
+                "- Session ID: first",
+                "- Platform: Teams",
+                "- Started (UTC): 2026-04-01T10:33:07.0000000+00:00",
+                string.Empty,
+                "## Transcript",
+                string.Empty,
+                "[00:00:00 - 00:16:55] **Speaker:** First segment"));
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptDir, $"{secondStem}.md"),
+            string.Join(
+                Environment.NewLine,
+                "# IonQ connect",
+                string.Empty,
+                "- Session ID: second",
+                "- Platform: Teams",
+                "- Started (UTC): 2026-04-01T10:51:14.0000000+00:00",
+                string.Empty,
+                "## Transcript",
+                string.Empty,
+                "[00:00:00 - 00:22:51] **Speaker:** Second segment"));
+
+        await SaveManifestAsync(
+            manifestStore,
+            workDir,
+            CreateTeamsManifest(
+                "20260401103307-first",
+                "IonQ connect",
+                firstStartedAtUtc,
+                firstStartedAtUtc + firstDuration,
+                "IonQ connect | Microsoft Teams"));
+        await SaveManifestAsync(
+            manifestStore,
+            workDir,
+            CreateTeamsManifest(
+                "20260401105114-second",
+                "IonQ connect",
+                secondStartedAtUtc,
+                secondStartedAtUtc + secondDuration,
+                "IonQ connect | Microsoft Teams"));
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
+
+        Assert.False(result.AlreadyApplied);
+        Assert.Equal(1, result.MergedSplitPairCount);
+        Assert.True(File.Exists(Path.Combine(repairsDir, "published-meeting-repair-v4.done")));
+        Assert.True(File.Exists(result.MarkerPath));
+        var mergedMarkdownPath = Path.Combine(transcriptDir, $"{firstStem}.md");
+        Assert.True(File.Exists(mergedMarkdownPath));
+        Assert.False(File.Exists(Path.Combine(audioDir, $"{secondStem}.wav")));
+        Assert.False(File.Exists(Path.Combine(transcriptDir, $"{secondStem}.md")));
+        var markdown = await File.ReadAllTextAsync(mergedMarkdownPath);
+        Assert.Contains("[00:16:55 - 00:39:46] **Speaker:** Second segment", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RepairKnownIssuesAsync_Archives_Short_Generic_Teams_False_Start()
     {
         var audioDir = CreateDirectory("audio");
@@ -285,5 +368,44 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    private static MeetingSessionManifest CreateTeamsManifest(
+        string sessionId,
+        string detectedTitle,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset endedAtUtc,
+        string windowTitle)
+    {
+        return new MeetingSessionManifest
+        {
+            SessionId = sessionId,
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = detectedTitle,
+            StartedAtUtc = startedAtUtc,
+            EndedAtUtc = endedAtUtc,
+            State = SessionState.Published,
+            DetectionEvidence =
+            [
+                new DetectionSignal("window-title", windowTitle, 0.85, startedAtUtc),
+            ],
+            DetectedAudioSource = new DetectedAudioSource(
+                "Microsoft Teams",
+                windowTitle,
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                startedAtUtc),
+        };
+    }
+
+    private static Task SaveManifestAsync(
+        SessionManifestStore manifestStore,
+        string workDir,
+        MeetingSessionManifest manifest)
+    {
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
+        return manifestStore.SaveAsync(manifest, manifestPath);
     }
 }

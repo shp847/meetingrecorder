@@ -340,6 +340,11 @@ internal sealed class WindowMeetingDetector
             return titles;
         }
 
+        if (!ShouldInspectBrowserTabs(candidateWindow.ProcessName))
+        {
+            return titles;
+        }
+
         foreach (var tabTitle in TryEnumerateBrowserTabTitles(candidateWindow))
         {
             if (!LooksLikeGoogleMeetWindowTitle(tabTitle))
@@ -953,6 +958,21 @@ internal sealed class WindowMeetingDetector
             "msedge" or "chrome" or "brave" or "vivaldi" or "opera" => string.Equals(candidateProcessName, sessionProcessName, StringComparison.OrdinalIgnoreCase),
             _ => false,
         };
+    }
+
+    private static bool ShouldInspectBrowserTabs(string? processName)
+    {
+        var normalized = NormalizeProcessName(processName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return true;
+        }
+
+        return normalized.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("brave", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("vivaldi", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("opera", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeProcessName(string? processName)

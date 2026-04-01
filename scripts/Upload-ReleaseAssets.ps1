@@ -708,8 +708,7 @@ function Get-InstallerAssetFiles {
 
     if ($Installers.IsPresent) {
         $assetPatterns = @(
-            "MeetingRecorderInstaller.msi",
-            "MeetingRecorderInstaller.exe"
+            "MeetingRecorderInstaller.msi"
         ) + $assetPatterns
     }
 
@@ -725,6 +724,12 @@ function Get-InstallerAssetFiles {
     }
 
     return @($uniqueFiles)
+}
+
+function Get-DeprecatedReleaseAssetNames {
+    return @(
+        "MeetingRecorderInstaller.exe"
+    )
 }
 
 function Sync-InstallerAssetsToGitHubLatestRelease {
@@ -747,6 +752,16 @@ function Sync-InstallerAssetsToGitHubLatestRelease {
     $remoteAssetsByName = @{}
     foreach ($asset in @($release.assets)) {
         $remoteAssetsByName[[string]$asset.name] = $asset
+    }
+
+    foreach ($deprecatedAssetName in Get-DeprecatedReleaseAssetNames) {
+        $deprecatedAsset = $remoteAssetsByName[$deprecatedAssetName]
+        if ($null -eq $deprecatedAsset) {
+            continue
+        }
+
+        Write-Host ("Removing deprecated GitHub release asset: " + $deprecatedAssetName)
+        Remove-GitHubReleaseAsset -Owner $Owner -Name $Name -Token $Token -Asset $deprecatedAsset -DryRun:$DryRun
     }
 
     $uploadJobs = New-Object System.Collections.ArrayList

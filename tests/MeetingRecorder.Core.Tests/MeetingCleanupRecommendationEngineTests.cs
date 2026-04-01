@@ -122,6 +122,60 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Returns_HighConfidence_Merge_For_SameTitle_Teams_Pair_With_Strong_Manifest_Continuity()
+    {
+        var firstStem = "2026-04-01_103307_teams_ionq-connect";
+        var secondStem = "2026-04-01_105114_teams_ionq-connect";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        var firstDuration = TimeSpan.FromMinutes(16) + TimeSpan.FromSeconds(55);
+        var secondDuration = TimeSpan.FromMinutes(22) + TimeSpan.FromSeconds(51);
+        var firstStartedAtUtc = DateTimeOffset.Parse("2026-04-01T10:33:07Z");
+        var secondStartedAtUtc = DateTimeOffset.Parse("2026-04-01T10:51:14Z");
+        await WriteSilentWaveFileAsync(firstAudioPath, firstDuration);
+        await WriteSilentWaveFileAsync(secondAudioPath, secondDuration);
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    firstStem,
+                    "IonQ connect",
+                    firstStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    firstDuration,
+                    firstAudioPath,
+                    Path.Combine(_root, $"{firstStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "first-session",
+                        "IonQ connect",
+                        firstStartedAtUtc,
+                        firstStartedAtUtc + firstDuration,
+                        "IonQ connect | Microsoft Teams")),
+                CreateInspection(
+                    secondStem,
+                    "IonQ connect",
+                    secondStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    secondDuration,
+                    secondAudioPath,
+                    Path.Combine(_root, $"{secondStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "second-session",
+                        "IonQ connect",
+                        secondStartedAtUtc,
+                        secondStartedAtUtc + secondDuration,
+                        "IonQ connect | Microsoft Teams")),
+            });
+
+        var recommendation = Assert.Single(recommendations, item => item.Action == MeetingCleanupAction.Merge);
+        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
+        Assert.True(recommendation.CanApplyAutomatically);
+        Assert.Contains(firstStem, recommendation.RelatedStems);
+        Assert.Contains(secondStem, recommendation.RelatedStems);
+    }
+
+    [Fact]
     public void Analyze_Returns_Rename_For_Generic_Title_With_Suggested_Title()
     {
         var recommendation = AnalyzeSingle(
@@ -305,6 +359,35 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
             suggestedTitle,
             suggestedTitleSource,
             diarizationReady);
+    }
+
+    private static MeetingSessionManifest CreateTeamsManifest(
+        string sessionId,
+        string detectedTitle,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset endedAtUtc,
+        string windowTitle)
+    {
+        return new MeetingSessionManifest
+        {
+            SessionId = sessionId,
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = detectedTitle,
+            StartedAtUtc = startedAtUtc,
+            EndedAtUtc = endedAtUtc,
+            State = SessionState.Published,
+            DetectionEvidence =
+            [
+                new DetectionSignal("window-title", windowTitle, 0.85, startedAtUtc),
+            ],
+            DetectedAudioSource = new DetectedAudioSource(
+                "Microsoft Teams",
+                windowTitle,
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                startedAtUtc),
+        };
     }
 
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)

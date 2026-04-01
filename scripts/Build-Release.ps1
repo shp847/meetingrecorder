@@ -382,6 +382,16 @@ function Sync-ReleaseAssetsToGitHubLatestRelease {
         $remoteAssetsByName[[string]$asset.name] = $asset
     }
 
+    foreach ($deprecatedAssetName in Get-DeprecatedReleaseAssetNames) {
+        $deprecatedAsset = $remoteAssetsByName[$deprecatedAssetName]
+        if ($null -eq $deprecatedAsset) {
+            continue
+        }
+
+        Write-Host ("Removing deprecated GitHub release asset: " + $deprecatedAssetName)
+        Remove-GitHubReleaseAsset -Owner $Owner -Name $Name -Token $Token -Asset $deprecatedAsset -DryRun:$DryRun
+    }
+
     foreach ($assetFile in $Assets) {
         $remoteAsset = $remoteAssetsByName[$assetFile.Name]
         $matches = Test-GitHubReleaseAssetMatchesLocalFile -Asset $remoteAsset -LocalFile $assetFile
@@ -414,6 +424,12 @@ function Sync-ReleaseAssetsToGitHubLatestRelease {
     }
 }
 
+function Get-DeprecatedReleaseAssetNames {
+    return @(
+        "MeetingRecorderInstaller.exe"
+    )
+}
+
 if (-not $SkipTests.IsPresent) {
     Write-Host "Running the release verification suite..."
     & $testScript -Configuration $Configuration
@@ -441,7 +457,6 @@ $mainZip = Get-ChildItem -Path $releaseRoot -Filter "MeetingRecorder-$versionLab
     Where-Object { $_.Name -notmatch "^MeetingRecorder-bootstrap-" } |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
-$installerExecutable = Get-Item -Path (Join-Path $releaseRoot "MeetingRecorderInstaller.exe") -ErrorAction SilentlyContinue
 $installerMsi = Get-Item -Path (Join-Path $releaseRoot "MeetingRecorderInstaller.msi") -ErrorAction SilentlyContinue
 $bootstrapCommand = Get-Item -Path (Join-Path $releaseRoot "Install-LatestFromGitHub.cmd") -ErrorAction SilentlyContinue
 $bootstrapScript = Get-Item -Path (Join-Path $releaseRoot "Install-LatestFromGitHub.ps1") -ErrorAction SilentlyContinue
@@ -449,17 +464,13 @@ $modelAssetPaths = Publish-ReleasePayloadAssets -SourcePath $bundledAsrModelsPat
 $diarizationAssetPaths = Publish-ReleasePayloadAssets -SourcePath $bundledDiarizationAssetsPath -DestinationPath $releaseRoot -AllowedExtensions @(".zip", ".exe", ".onnx", ".bin", ".json", ".yaml", ".yml")
 $modelAssets = $modelAssetPaths | ForEach-Object { Get-Item -Path $_ -ErrorAction SilentlyContinue } | Where-Object { $_ -ne $null }
 $diarizationAssets = $diarizationAssetPaths | ForEach-Object { Get-Item -Path $_ -ErrorAction SilentlyContinue } | Where-Object { $_ -ne $null }
-$localReleaseAssets = @($mainZip, $installerExecutable, $installerMsi, $bootstrapCommand, $bootstrapScript) + @($modelAssets) + @($diarizationAssets) | Where-Object { $_ -ne $null }
+$localReleaseAssets = @($mainZip, $installerMsi, $bootstrapCommand, $bootstrapScript) + @($modelAssets) + @($diarizationAssets) | Where-Object { $_ -ne $null }
 
 Write-Host ""
 Write-Host "Release assets are ready to upload to GitHub Releases:"
 
 if ($null -ne $mainZip) {
     Write-Host ("- Main installer: " + $mainZip.FullName)
-}
-
-if ($null -ne $installerExecutable) {
-    Write-Host ("- Installer executable: " + $installerExecutable.FullName)
 }
 
 if ($null -ne $installerMsi) {
@@ -485,7 +496,6 @@ foreach ($diarizationAsset in $diarizationAssets) {
 Write-Host ""
 Write-Host "Recommended GitHub release flow:"
 Write-Host "- Upload MeetingRecorderInstaller.msi as the preferred corporate-friendly install/update asset."
-Write-Host "- Upload MeetingRecorderInstaller.exe only if you still want the custom bootstrapper available."
 Write-Host "- Upload the main installer ZIP so manual download/install still works."
 Write-Host "- Upload Install-LatestFromGitHub.cmd so end users can download one file and run it without extracting a ZIP."
 Write-Host "- Upload Install-LatestFromGitHub.ps1 as the stable companion asset for the command bootstrap path."

@@ -31,21 +31,7 @@ That installer path:
 - is the preferred release asset in the current build and release flow
 - keeps shell integration limited to the current user rather than requiring per-machine shortcuts
 
-If you still want the custom bootstrapper path, the EXE remains available:
-
-- `MeetingRecorderInstaller.exe`
-
-That installer EXE:
-
-- prefers a colocated `MeetingRecorder-*.zip` package plus local bootstrap scripts when they ship beside the EXE
-- otherwise downloads `Install-LatestFromGitHub.cmd` plus its companion PowerShell script
-- launches that command bootstrap path and then steps aside
-- does not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts itself
-- explains in the UI that app files land in `%USERPROFILE%\Documents\MeetingRecorder` while writable config, logs, models, and work files live in `%LOCALAPPDATA%\MeetingRecorder`
-- uses the same Technical Studio visual system as the main desktop app so setup, status, logs, and fallback actions read consistently
-- is now the optional convenience path rather than the preferred MSI install path
-
-If the EXE path is blocked, the fallback path is still available:
+If MSI is blocked, the fallback path is still available:
 
 - `Install-LatestFromGitHub.cmd`
 - `Install-LatestFromGitHub.ps1`
@@ -69,8 +55,8 @@ User-facing installer and updater rule:
 - forward `--pause-on-error` into the deployment CLI so the final child console also stays open on any failed CLI command, not only thrown exceptions
 - pause on error so users can read the failure and note the diagnostic log path
 - do not wait forever on app shutdown during update apply; if the running app does not exit promptly, the updater should escalate the release sequence and then fail with a clear message instead of hanging indefinitely
-- do not enumerate, close, or kill Meeting Recorder processes from the installer EXE path; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
-- the installer EXE should remain a thin launcher only; all actual install and update writes flow through `AppPlatform.Deployment.Cli`
+- do not enumerate, close, or kill Meeting Recorder processes from installer flows; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
+- all actual install and update writes flow through `AppPlatform.Deployment.Cli`
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
 
 For newer managed installs:
@@ -144,7 +130,7 @@ The portable bundle also includes:
 
 ## 3. First Launch Checklist
 
-1. Install with `MeetingRecorderInstaller.msi`, `MeetingRecorderInstaller.exe`, `Install-LatestFromGitHub.cmd`, `Install-MeetingRecorder.cmd`, or run `Run-MeetingRecorder.cmd` from the portable folder.
+1. Install with `MeetingRecorderInstaller.msi`, `Install-LatestFromGitHub.cmd`, `Install-MeetingRecorder.cmd`, or run `Run-MeetingRecorder.cmd` from the portable folder.
 2. If the dependency checker reports a missing runtime, run `Install-Dependencies.cmd`.
 3. Open `Settings` from the header and review `Setup`.
 4. Confirm `Transcription` shows either `Standard ready` or `Higher Accuracy ready`.
@@ -215,8 +201,7 @@ For the default self-contained portable bundle, the .NET download is usually not
 
 `Install-MeetingRecorder.cmd` and `Install-LatestFromGitHub.cmd` can both forward PowerShell arguments to the thin wrapper script when you need a custom location or behavior.
 
-`MeetingRecorderInstaller.msi` is the preferred install path for current releases. It now ends on an explicit success screen instead of closing silently, and that screen can launch the app immediately after a fresh install. `MeetingRecorderInstaller.exe` remains available as the optional thin launcher path, and the script installers remain the canonical bootstrap path when MSI is blocked or a user wants a more explicit script-based install. The EXE shell shares the same Technical Studio visual language as the main app, including a scrollable shell layout and grouped actions so progress, retry paths, and fallback steps stay readable at the default window size, while the MSI still uses the native Windows Installer dialog style.
-The EXE launcher no longer deploys the managed app itself. Its job is to launch the current command bootstrapper, preferring the bundled local package when one is present beside the EXE and otherwise falling back to the GitHub bootstrap path, then let the shared deployment CLI own the actual install/update work.
+`MeetingRecorderInstaller.msi` is the preferred install path for current releases. It now ends on an explicit success screen instead of closing silently, and that screen can launch the app immediately after a fresh install. Current releases no longer ship the deprecated EXE launcher, and the script installers remain the canonical bootstrap path when MSI is blocked or a user wants a more explicit script-based install.
 
 The MSI welcome flow now skips the license-agreement screen entirely and goes straight from welcome to ready-to-install.
 If the MSI launches the app immediately after an install or update while the previous app instance is still open, it now launches through `Launch-MeetingRecorder-AfterInstall.vbs`. That wrapper writes a short-lived relaunch marker under `%LOCALAPPDATA%\MeetingRecorder`, lets the app request a cooperative installer shutdown of the running instance, waits for the primary-instance lock to clear, and then starts the fresh app instance. If the app is still busy recording or processing, the restart request is deferred and the current instance stays alive.
@@ -270,11 +255,7 @@ Fresh reinstall:
 
 The same GitHub bootstrap path can be used later for updates.
 
-If Meeting Recorder is already installed and you want to apply the latest GitHub release without manually moving ZIP files around, run:
-
-- `MeetingRecorderInstaller.exe`
-
-or the script fallback:
+If Meeting Recorder is already installed and you want to apply the latest GitHub release without manually moving ZIP files around, run the script fallback:
 
 - `Install-LatestFromGitHub.cmd`
 - `Install-LatestFromGitHub.ps1`
@@ -522,7 +503,7 @@ Important behavior:
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, and retry-transcript actions
 - split and lower-confidence actions stay manual
-- on first launch after the updated build, the one-time published repair pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, not just a single adjacent pair
+- on first launch after the updated build, the one-time published repair pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, not just a single adjacent pair, and it can also auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence
 - repaired merged publishes now show duration from the repaired artifact itself when the preserved original stem would otherwise point back to stale manifest timing
 - dismissed recommendations stay hidden until the underlying meeting data changes enough to produce a new recommendation fingerprint
 
@@ -635,8 +616,7 @@ Common causes:
 What to do:
 
 - retry `MeetingRecorderInstaller.msi` if that path is allowed on the laptop
-- if you prefer the bootstrapper, retry `MeetingRecorderInstaller.exe`
-- if the EXE path is blocked, retry `Install-LatestFromGitHub.cmd`
+- if MSI is blocked, retry `Install-LatestFromGitHub.cmd`
 - if that still fails, download the full `MeetingRecorder-v<version>-win-x64.zip` asset and run `Install-MeetingRecorder.cmd`
 
 ### The app says it is already running, but the existing instance did not respond

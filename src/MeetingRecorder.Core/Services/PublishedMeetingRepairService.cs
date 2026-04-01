@@ -4,8 +4,8 @@ namespace MeetingRecorder.Core.Services;
 
 public static partial class PublishedMeetingRepairService
 {
-    private const string RepairMarkerFileName = "published-meeting-repair-v4.done";
-    private const string RepairArchiveDirectoryName = "published-meeting-repair-v4";
+    private const string RepairMarkerFileName = "published-meeting-repair-v5.done";
+    private const string RepairArchiveDirectoryName = "published-meeting-repair-v5";
     private static readonly TimeSpan MaximumRepeatedSplitChainGap = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumRepeatedSplitChainSegmentDuration = TimeSpan.FromMinutes(3);
     private const int MinimumRepeatedSplitChainLength = 3;
@@ -25,6 +25,7 @@ public static partial class PublishedMeetingRepairService
         }
 
         MeetingCleanupExecutionService.ConsolidateLegacyArchiveRoots(audioOutputDir);
+        var workDir = Path.Combine(appRoot, "work");
         var archiveDirectory = Path.Combine(
             MeetingCleanupExecutionService.GetArchiveRoot(audioOutputDir),
             RepairArchiveDirectoryName);
@@ -34,7 +35,7 @@ public static partial class PublishedMeetingRepairService
         var catalog = new MeetingOutputCatalogService(pathBuilder);
         var executionService = new MeetingCleanupExecutionService(pathBuilder, catalog);
         var manifestStore = new SessionManifestStore(pathBuilder);
-        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null)
+        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
             .OrderBy(record => record.StartedAtUtc)
             .ToArray();
 
@@ -67,6 +68,7 @@ public static partial class PublishedMeetingRepairService
                     manifestStore,
                     audioOutputDir,
                     transcriptOutputDir,
+                    workDir,
                     cancellationToken)))
             .ToArray();
 
@@ -74,7 +76,7 @@ public static partial class PublishedMeetingRepairService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var meetingsByStem = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null)
+            var meetingsByStem = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
                 .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase);
 
             switch (recommendation.Action)
@@ -148,9 +150,10 @@ public static partial class PublishedMeetingRepairService
         SessionManifestStore manifestStore,
         string audioOutputDir,
         string transcriptOutputDir,
+        string workDir,
         CancellationToken cancellationToken)
     {
-        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null)
+        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
             .OrderBy(record => record.StartedAtUtc)
             .ToArray();
         var inspections = new List<MeetingInspectionRecord>(meetings.Length);

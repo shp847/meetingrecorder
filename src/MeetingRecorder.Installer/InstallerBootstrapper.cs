@@ -365,7 +365,7 @@ internal sealed class InstallerBootstrapper
             releaseVersionLabel,
             AppBranding.DefaultReleasePageUrl,
             publishedAtUtc,
-            new GitHubReleaseAssetInfo("MeetingRecorderInstaller.exe", string.Empty, null, null),
+            InstallerExecutableAsset: null,
             new GitHubReleaseAssetInfo(packageZipFile.Name, packageZipFile.FullName, packageZipFile.Length, publishedAtUtc),
             new GitHubReleaseAssetInfo(Path.GetFileName(commandPath), commandPath, new FileInfo(commandPath).Length, null),
             new GitHubReleaseAssetInfo(Path.GetFileName(powerShellPath), powerShellPath, new FileInfo(powerShellPath).Length, null));

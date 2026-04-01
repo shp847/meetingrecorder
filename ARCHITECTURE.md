@@ -34,7 +34,7 @@ The app is now split between reusable platform projects and Meeting Recorder-spe
   - reusable WiX-facing packaging assets for per-user installs
 - `AppPlatform.Shell.Wpf`
   - shared WPF shell resources plus Settings and Help host windows
-  - also provides the Technical Studio brushes, lines, typography, and action styles reused by the EXE installer shell
+  - also provides the Technical Studio brushes, lines, typography, and action styles reused by shared deployment-facing shell surfaces
 - `MeetingRecorder.Product`
   - product adapter that owns the manifest, shell registrations, about/support content, and default install/data layout
 
@@ -52,9 +52,9 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - continued background detection during manual recordings so a user-started session can still reclassify in place when a stronger live Teams or Google Meet signal appears later, while auto-stop remains limited to auto-started sessions
 - same-platform live meeting takeovers for manual or already-managed sessions when a clearly different specific Teams or Google Meet call becomes the stronger detected identity later, so stale old titles do not remain pinned to the active recording
 - continuity protection for active auto-started Teams sessions when a weak unrelated Google Meet browser candidate is also visible, so quiet patches do not falsely age the Teams session into auto-stop
-- sustained specific Teams meeting-window evidence can now auto-start a quiet desktop call even before render audio rises above the normal auto-start threshold, but only when the detector can still attribute a quiet Windows audio session back to Teams instead of relying on title evidence alone
+- sustained specific Teams meeting-window evidence can now auto-start a quiet desktop call even before render audio rises above the normal auto-start threshold, including when the matched Teams render session is still present but currently reports `peak=0.000`, so the detector does not rely on title evidence alone
 - once an auto-started Teams session is already live, a stale same-title quiet Teams window now extends the stop timeout only for a bounded grace period instead of resetting the positive-signal clock forever, and weaker matching Teams shell/chat/share surfaces only refresh continuity when recent capture activity still exists
-- Chromium browser tab-title inspection now runs behind a short timeout and cooldown so a stuck UI Automation query on an unrelated browser window cannot starve later detection cycles
+- Chromium browser tab-title inspection now runs behind a short timeout and cooldown and is limited to actual browser-family processes, so a stuck UI Automation query on Edge or Chrome cannot starve later detection cycles and unrelated Electron-style `Chrome_WidgetWin_*` shells are skipped entirely
 - Windows render-session audio probing now also runs behind a short timeout and cooldown so a hung Core Audio query cannot starve later detection cycles before Teams auto-start has a chance to react
   - resilient Teams shell-title parsing so bare navigation surfaces like `Chat | Microsoft Teams` do not crash the background detection loop
   - config editing and hot reload
@@ -279,7 +279,7 @@ Core pieces:
 - `MeetingCleanupExecutionService`
   - executes archive, merge, rename, and other recommended cleanup actions
 - `PublishedMeetingRepairService`
-- runs a versioned one-time repair pass on startup, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, and relies on repaired artifact duration instead of stale reused-stem manifest timing when cataloging those repaired publishes
+- runs a versioned one-time repair pass on startup, loads preserved work manifests for stronger continuity evidence, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, can also auto-merge a short-gap exact-title split when those manifests still agree on the same specific meeting identity, and relies on repaired artifact duration instead of stale reused-stem manifest timing when cataloging those repaired publishes
 - persistent dismissed recommendation state in `AppConfig`
   - keeps the system unobtrusive until the underlying meeting changes enough to produce a new fingerprint
 
@@ -463,21 +463,18 @@ That bootstrap path:
 - writes a diagnostic log under `%TEMP%\MeetingRecorderInstaller`
 - suppresses raw PowerShell transfer progress noise in the user-facing bootstrap scripts
 - pauses on error for user-facing console helpers so users can review the failure before the window closes
-- avoids cross-process inspection and force-close behavior in the installer EXE flow; cooperative shutdown plus normal file-replacement retries are the intended user-safe path
+- avoids cross-process inspection and force-close behavior in installer flows; cooperative shutdown plus normal file-replacement retries are the intended user-safe path
+- current releases no longer ship the deprecated thin EXE launcher; MSI plus the script bootstrap assets are the supported release paths
 
-### Thin EXE launcher
+Deprecated thin-launcher responsibilities were intentionally limited to:
 
-`MeetingRecorderInstaller.exe` is no longer treated as a peer deployment engine.
-
-Current EXE responsibilities:
-
-- prefer colocated bootstrap assets and a sibling `MeetingRecorder-*.zip` package when they exist beside the EXE
+- prefer colocated bootstrap assets and a sibling `MeetingRecorder-*.zip` package when they exist beside the launcher
 - otherwise resolve the latest release asset set and download `Install-LatestFromGitHub.cmd` plus `Install-LatestFromGitHub.ps1`
 - write a small handoff diagnostic log
 - launch the CMD bootstrapper with forwarded arguments
 - stop there
 
-It no longer:
+That deprecated path no longer:
 
 - extracts ZIPs
 - copies app files into `Documents\MeetingRecorder`

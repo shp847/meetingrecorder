@@ -5,7 +5,7 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class GitHubReleaseBootstrapServiceTests
 {
     [Fact]
-    public async Task GetLatestReleaseAsync_Returns_Main_Zip_And_Backup_Script_Assets()
+    public async Task GetLatestReleaseAsync_Returns_Main_Zip_And_Backup_Script_Assets_While_Ignoring_Deprecated_Exe_Assets()
     {
         var service = new GitHubReleaseBootstrapService(new FakeFeedClient("""
             {
@@ -41,8 +41,7 @@ public sealed class GitHubReleaseBootstrapServiceTests
 
         Assert.Equal("0.2", release.Version);
         Assert.Equal("https://github.com/shp847/meetingrecorder/releases/tag/alpha", release.ReleasePageUrl);
-        Assert.Equal("MeetingRecorderInstaller.exe", release.InstallerExecutableAsset?.Name);
-        Assert.Equal("https://example.com/MeetingRecorderInstaller.exe", release.InstallerExecutableAsset?.DownloadUrl);
+        Assert.Null(release.InstallerExecutableAsset);
         Assert.Equal("MeetingRecorder-v0.2-win-x64.zip", release.AppZipAsset.Name);
         Assert.Equal("https://example.com/MeetingRecorder-v0.2-win-x64.zip", release.AppZipAsset.DownloadUrl);
         Assert.Equal("Install-LatestFromGitHub.cmd", release.BackupCommandAsset?.Name);
