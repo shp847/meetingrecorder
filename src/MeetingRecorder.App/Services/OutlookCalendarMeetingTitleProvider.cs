@@ -22,24 +22,35 @@ internal sealed record OutlookCalendarAppointmentDetails(
 
 internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitleProvider
 {
-    private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan AppointmentCacheLifetime = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan FailureBackoff = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan DefaultAppointmentReadTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PointLookupBucket = TimeSpan.FromMinutes(1);
+    private const int MaxCacheEntries = 32;
+    private const int MaxAppointmentCacheEntries = 16;
     private readonly object _cacheGate = new();
     private readonly IOutlookCalendarAppointmentSource _appointmentSource;
+    private readonly TimeSpan _appointmentReadTimeout;
 
-    private DateTimeOffset _cacheExpiresUtc;
-    private MeetingPlatform _cachedPlatform = MeetingPlatform.Unknown;
-    private DateTimeOffset _cachedStartedAtUtc;
-    private DateTimeOffset? _cachedEndedAtUtc;
-    private CalendarMeetingDetailsCandidate? _cachedCandidate;
+    private readonly Dictionary<LookupCacheKey, CachedLookupEntry> _cache = new();
+    private readonly Dictionary<AppointmentDayCacheKey, CachedAppointmentEntry> _appointmentCache = new();
+    private readonly Dictionary<AppointmentDayCacheKey, Task<IReadOnlyList<OutlookCalendarAppointmentDetails>>> _appointmentReadsInFlight = new();
+    private DateTimeOffset _disabledUntilUtc;
 
     public OutlookCalendarMeetingTitleProvider()
         : this(new OutlookCalendarAppointmentSource())
     {
     }
 
-    internal OutlookCalendarMeetingTitleProvider(IOutlookCalendarAppointmentSource appointmentSource)
+    internal OutlookCalendarMeetingTitleProvider(
+        IOutlookCalendarAppointmentSource appointmentSource,
+        TimeSpan? appointmentReadTimeout = null)
     {
         _appointmentSource = appointmentSource;
+        _appointmentReadTimeout = appointmentReadTimeout is { } timeout && timeout > TimeSpan.Zero
+            ? timeout
+            : DefaultAppointmentReadTimeout;
     }
 
     public CalendarMeetingDetailsCandidate? TryGetMeetingTitle(
@@ -52,14 +63,22 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
             return null;
         }
 
+        var lookupKey = LookupCacheKey.Create(platform, startedAtUtc, endedAtUtc);
+        var nowUtc = DateTimeOffset.UtcNow;
+
         lock (_cacheGate)
         {
-            if (platform == _cachedPlatform &&
-                startedAtUtc == _cachedStartedAtUtc &&
-                Nullable.Equals(endedAtUtc, _cachedEndedAtUtc) &&
-                DateTimeOffset.UtcNow < _cacheExpiresUtc)
+            PruneExpiredCacheEntries(nowUtc);
+            PruneExpiredAppointmentCacheEntries(nowUtc);
+            if (_cache.TryGetValue(lookupKey, out var cachedEntry) &&
+                nowUtc < cachedEntry.ExpiresAtUtc)
             {
-                return _cachedCandidate;
+                return cachedEntry.Candidate;
+            }
+
+            if (nowUtc < _disabledUntilUtc)
+            {
+                return null;
             }
         }
 
@@ -75,14 +94,83 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
 
         lock (_cacheGate)
         {
-            _cachedPlatform = platform;
-            _cachedStartedAtUtc = startedAtUtc;
-            _cachedEndedAtUtc = endedAtUtc;
-            _cachedCandidate = resolved;
-            _cacheExpiresUtc = DateTimeOffset.UtcNow.Add(CacheLifetime);
+            PruneExpiredCacheEntries(nowUtc);
+            PruneExpiredAppointmentCacheEntries(nowUtc);
+            _cache[lookupKey] = new CachedLookupEntry(nowUtc.Add(CacheLifetime), resolved);
+            EnforceCacheLimit();
         }
 
         return resolved;
+    }
+
+    private void PruneExpiredCacheEntries(DateTimeOffset nowUtc)
+    {
+        if (_cache.Count == 0)
+        {
+            return;
+        }
+
+        var expiredKeys = _cache
+            .Where(pair => nowUtc >= pair.Value.ExpiresAtUtc)
+            .Select(pair => pair.Key)
+            .ToArray();
+
+        foreach (var expiredKey in expiredKeys)
+        {
+            _cache.Remove(expiredKey);
+        }
+    }
+
+    private void PruneExpiredAppointmentCacheEntries(DateTimeOffset nowUtc)
+    {
+        if (_appointmentCache.Count == 0)
+        {
+            return;
+        }
+
+        var expiredKeys = _appointmentCache
+            .Where(pair => nowUtc >= pair.Value.ExpiresAtUtc)
+            .Select(pair => pair.Key)
+            .ToArray();
+
+        foreach (var expiredKey in expiredKeys)
+        {
+            _appointmentCache.Remove(expiredKey);
+        }
+    }
+
+    private void EnforceCacheLimit()
+    {
+        if (_cache.Count <= MaxCacheEntries)
+        {
+            return;
+        }
+
+        foreach (var key in _cache
+                     .OrderBy(pair => pair.Value.ExpiresAtUtc)
+                     .Select(pair => pair.Key)
+                     .Take(_cache.Count - MaxCacheEntries)
+                     .ToArray())
+        {
+            _cache.Remove(key);
+        }
+    }
+
+    private void EnforceAppointmentCacheLimit()
+    {
+        if (_appointmentCache.Count <= MaxAppointmentCacheEntries)
+        {
+            return;
+        }
+
+        foreach (var key in _appointmentCache
+                     .OrderBy(pair => pair.Value.ExpiresAtUtc)
+                     .Select(pair => pair.Key)
+                     .Take(_appointmentCache.Count - MaxAppointmentCacheEntries)
+                     .ToArray())
+        {
+            _appointmentCache.Remove(key);
+        }
     }
 
     private CalendarMeetingDetailsCandidate? QueryMeetingTitle(
@@ -90,7 +178,7 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
         DateTimeOffset startedAtUtc,
         DateTimeOffset? endedAtUtc)
     {
-        var candidates = _appointmentSource.ReadOverlappingAppointments(platform, startedAtUtc, endedAtUtc);
+        var candidates = ReadAppointmentsForLookup(platform, startedAtUtc, endedAtUtc);
         if (candidates.Count == 0)
         {
             return null;
@@ -110,6 +198,146 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
         return candidates.Count == 1
             ? BuildCalendarCandidate(candidates[0])
             : null;
+    }
+
+    private IReadOnlyList<OutlookCalendarAppointmentDetails> ReadAppointmentsForLookup(
+        MeetingPlatform platform,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset? endedAtUtc)
+    {
+        var normalizedEndedAtUtc = endedAtUtc.HasValue && endedAtUtc.Value >= startedAtUtc
+            ? endedAtUtc.Value
+            : startedAtUtc;
+        var startDay = DateOnly.FromDateTime(startedAtUtc.LocalDateTime);
+        var endDay = DateOnly.FromDateTime(normalizedEndedAtUtc.LocalDateTime);
+
+        if (startDay == endDay)
+        {
+            return GetAppointmentsForLocalDay(platform, startDay);
+        }
+
+        var combined = new List<OutlookCalendarAppointmentDetails>();
+        for (var localDay = startDay;
+             localDay <= endDay;
+             localDay = localDay.AddDays(1))
+        {
+            combined.AddRange(GetAppointmentsForLocalDay(platform, localDay));
+        }
+
+        return combined;
+    }
+
+    private IReadOnlyList<OutlookCalendarAppointmentDetails> GetAppointmentsForLocalDay(
+        MeetingPlatform platform,
+        DateOnly localDay)
+    {
+        var cacheKey = new AppointmentDayCacheKey(platform, localDay);
+        var nowUtc = DateTimeOffset.UtcNow;
+        Task<IReadOnlyList<OutlookCalendarAppointmentDetails>> readTask;
+
+        lock (_cacheGate)
+        {
+            PruneExpiredAppointmentCacheEntries(nowUtc);
+            if (_appointmentCache.TryGetValue(cacheKey, out var cachedEntry) &&
+                nowUtc < cachedEntry.ExpiresAtUtc)
+            {
+                return cachedEntry.Appointments;
+            }
+
+            if (nowUtc < _disabledUntilUtc)
+            {
+                return Array.Empty<OutlookCalendarAppointmentDetails>();
+            }
+
+            if (!_appointmentReadsInFlight.TryGetValue(cacheKey, out readTask!))
+            {
+                readTask = StaThreadRunner.RunAsync(
+                    () => _appointmentSource.ReadOverlappingAppointments(
+                        platform,
+                        CreateLocalDayStart(localDay),
+                        CreateLocalDayEnd(localDay)),
+                    CancellationToken.None);
+                _appointmentReadsInFlight[cacheKey] = readTask;
+            }
+        }
+
+        IReadOnlyList<OutlookCalendarAppointmentDetails> appointments;
+        try
+        {
+            if (!readTask.Wait(_appointmentReadTimeout))
+            {
+                BackOffAfterAppointmentReadFailure(cacheKey, nowUtc, readTask);
+                return Array.Empty<OutlookCalendarAppointmentDetails>();
+            }
+
+            appointments = readTask.GetAwaiter().GetResult();
+        }
+        catch
+        {
+            BackOffAfterAppointmentReadFailure(cacheKey, nowUtc, readTask);
+            return Array.Empty<OutlookCalendarAppointmentDetails>();
+        }
+
+        lock (_cacheGate)
+        {
+            RemoveInFlightAppointmentRead(cacheKey, readTask);
+            PruneExpiredAppointmentCacheEntries(nowUtc);
+            _appointmentCache[cacheKey] = new CachedAppointmentEntry(
+                nowUtc.Add(AppointmentCacheLifetime),
+                appointments);
+            EnforceAppointmentCacheLimit();
+        }
+
+        return appointments;
+    }
+
+    private void BackOffAfterAppointmentReadFailure(
+        AppointmentDayCacheKey cacheKey,
+        DateTimeOffset nowUtc,
+        Task<IReadOnlyList<OutlookCalendarAppointmentDetails>> readTask)
+    {
+        lock (_cacheGate)
+        {
+            RemoveInFlightAppointmentRead(cacheKey, readTask);
+            _disabledUntilUtc = nowUtc.Add(FailureBackoff);
+        }
+    }
+
+    private void RemoveInFlightAppointmentRead(
+        AppointmentDayCacheKey cacheKey,
+        Task<IReadOnlyList<OutlookCalendarAppointmentDetails>> readTask)
+    {
+        if (_appointmentReadsInFlight.TryGetValue(cacheKey, out var existingTask) &&
+            ReferenceEquals(existingTask, readTask))
+        {
+            _appointmentReadsInFlight.Remove(cacheKey);
+        }
+    }
+
+    private static DateTimeOffset CreateLocalDayStart(DateOnly localDay)
+    {
+        return new DateTimeOffset(new DateTime(
+            localDay.Year,
+            localDay.Month,
+            localDay.Day,
+            0,
+            0,
+            0,
+            DateTimeKind.Local));
+    }
+
+    private static DateTimeOffset CreateLocalDayEnd(DateOnly localDay)
+    {
+        return new DateTimeOffset(new DateTime(
+                localDay.Year,
+                localDay.Month,
+                localDay.Day,
+                0,
+                0,
+                0,
+                DateTimeKind.Local)
+            .AddDays(1)
+            .AddTicks(-1));
     }
 
     private static CalendarMeetingDetailsCandidate BuildCalendarCandidate(OutlookCalendarAppointmentDetails appointment)
@@ -156,25 +384,18 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
             DateTimeOffset startedAtUtc,
             DateTimeOffset? endedAtUtc)
         {
-            var outlookType = Type.GetTypeFromProgID("Outlook.Application", throwOnError: false);
-            if (outlookType is null)
+            var outlookApplication = TryGetActiveOutlookApplication();
+            if (outlookApplication is null)
             {
                 return Array.Empty<OutlookCalendarAppointmentDetails>();
             }
 
-            object? outlookApplication = null;
             object? outlookNamespace = null;
             object? calendarFolder = null;
             object? calendarItems = null;
 
             try
             {
-                outlookApplication = Activator.CreateInstance(outlookType);
-                if (outlookApplication is null)
-                {
-                    return Array.Empty<OutlookCalendarAppointmentDetails>();
-                }
-
                 outlookNamespace = InvokeComMethod(outlookApplication, "GetNamespace", "MAPI");
                 if (outlookNamespace is null)
                 {
@@ -206,6 +427,36 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
                 ReleaseComObject(outlookApplication);
             }
         }
+
+        private static object? TryGetActiveOutlookApplication()
+        {
+            try
+            {
+                var lookupResult = CLSIDFromProgID("Outlook.Application", out var clsid);
+                if (lookupResult < 0)
+                {
+                    return null;
+                }
+
+                var activationResult = GetActiveObject(ref clsid, nint.Zero, out var activeObject);
+                return activationResult >= 0
+                    ? activeObject
+                    : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        [DllImport("ole32.dll", CharSet = CharSet.Unicode)]
+        private static extern int CLSIDFromProgID(string lpszProgID, out Guid pclsid);
+
+        [DllImport("oleaut32.dll")]
+        private static extern int GetActiveObject(
+            ref Guid rclsid,
+            nint reserved,
+            [MarshalAs(UnmanagedType.IUnknown)] out object? ppunk);
 
         private static IReadOnlyList<OutlookCalendarAppointmentDetails> ReadAppointmentsFromItems(
             object calendarItems,
@@ -416,7 +667,65 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
     {
         if (instance is not null && Marshal.IsComObject(instance))
         {
-            Marshal.ReleaseComObject(instance);
+            try
+            {
+                Marshal.FinalReleaseComObject(instance);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
         }
     }
+
+    private readonly record struct LookupCacheKey(
+        MeetingPlatform Platform,
+        DateTimeOffset StartedAtUtc,
+        DateTimeOffset? EndedAtUtc)
+    {
+        public static LookupCacheKey Create(
+            MeetingPlatform platform,
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset? endedAtUtc)
+        {
+            var normalizedStartedAtUtc = NormalizeUtc(startedAtUtc);
+            DateTimeOffset? normalizedEndedAtUtc = endedAtUtc.HasValue
+                ? NormalizeUtc(endedAtUtc.Value)
+                : null;
+            if (!normalizedEndedAtUtc.HasValue ||
+                normalizedEndedAtUtc.Value == normalizedStartedAtUtc)
+            {
+                var pointBucket = FloorToBucket(normalizedStartedAtUtc, PointLookupBucket);
+                return new LookupCacheKey(platform, pointBucket, pointBucket);
+            }
+
+            return new LookupCacheKey(platform, normalizedStartedAtUtc, normalizedEndedAtUtc);
+        }
+
+        private static DateTimeOffset NormalizeUtc(DateTimeOffset value)
+        {
+            return value.ToUniversalTime();
+        }
+
+        private static DateTimeOffset FloorToBucket(DateTimeOffset value, TimeSpan bucket)
+        {
+            var utcValue = value.ToUniversalTime();
+            var ticks = utcValue.UtcDateTime.Ticks;
+            var bucketTicks = bucket.Ticks;
+            var flooredTicks = ticks - (ticks % bucketTicks);
+            return new DateTimeOffset(flooredTicks, TimeSpan.Zero);
+        }
+    }
+
+    private sealed record CachedLookupEntry(
+        DateTimeOffset ExpiresAtUtc,
+        CalendarMeetingDetailsCandidate? Candidate);
+
+    private readonly record struct AppointmentDayCacheKey(
+        MeetingPlatform Platform,
+        DateOnly LocalDay);
+
+    private sealed record CachedAppointmentEntry(
+        DateTimeOffset ExpiresAtUtc,
+        IReadOnlyList<OutlookCalendarAppointmentDetails> Appointments);
 }

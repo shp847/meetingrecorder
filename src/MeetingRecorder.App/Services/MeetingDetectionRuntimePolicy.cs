@@ -12,6 +12,6 @@ internal static class MeetingDetectionRuntimePolicy
             return false;
         }
 
-        return !isRecording || activeSessionWasAutoStarted;
+        return true;
     }
 }

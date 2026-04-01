@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.IO.Pipelines" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AppPlatform.Abstractions\AppPlatform.Abstractions.csproj" />
     <ProjectReference Include="..\AppPlatform.Configuration\AppPlatform.Configuration.csproj" />
   </ItemGroup>

@@ -11,6 +11,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
+    private readonly int _threadCount;
     private readonly FileLogWriter _logger;
     private readonly DiarizationAssetCatalogService _assetCatalogService;
     private readonly TranscriptionAudioPreparer _audioPreparer;
@@ -19,10 +20,12 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     public LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
         InferenceAccelerationPreference accelerationPreference,
+        int threadCount,
         FileLogWriter logger)
         : this(
             diarizationAssetPath,
             accelerationPreference,
+            threadCount,
             logger,
             new DiarizationAssetCatalogService(),
             new TranscriptionAudioPreparer(),
@@ -33,6 +36,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     internal LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
         InferenceAccelerationPreference accelerationPreference,
+        int threadCount,
         FileLogWriter logger,
         DiarizationAssetCatalogService assetCatalogService,
         TranscriptionAudioPreparer audioPreparer,
@@ -40,6 +44,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     {
         _diarizationAssetPath = diarizationAssetPath;
         _accelerationPreference = accelerationPreference;
+        _threadCount = Math.Max(1, threadCount);
         _logger = logger;
         _assetCatalogService = assetCatalogService;
         _audioPreparer = audioPreparer;
@@ -163,7 +168,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             ?? throw new InvalidOperationException("The diarization segmentation model file name could not be resolved.");
         var embeddingModelFileName = Path.GetFileName(installedAssets.EmbeddingModelPath)
             ?? throw new InvalidOperationException("The diarization embedding model file name could not be resolved.");
-        var diarizationSegments = ProcessSpeakerTurns(preparedAudioPath, installedAssets, providerName, cancellationToken);
+        var diarizationSegments = ProcessSpeakerTurns(preparedAudioPath, installedAssets, providerName, _threadCount, cancellationToken);
         var speakerTurns = diarizationSegments
             .Where(segment => segment.End > segment.Start)
             .Select(segment => new SpeakerTurn(
@@ -222,7 +227,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 
         try
         {
-            using var diarizer = CreateDiarizer(installedAssets, provider: "directml");
+            using var diarizer = CreateDiarizer(installedAssets, provider: "directml", _threadCount);
             _logger.Log("DirectML diarization probe succeeded.");
             return new ProviderProbeResult(true, null);
         }
@@ -237,9 +242,10 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         string preparedAudioPath,
         DiarizationAssetInstallStatus installedAssets,
         string provider,
+        int threadCount,
         CancellationToken cancellationToken)
     {
-        using var diarizer = CreateDiarizer(installedAssets, provider);
+        using var diarizer = CreateDiarizer(installedAssets, provider, threadCount);
         using var reader = new AudioFileReader(preparedAudioPath);
         if (reader.WaveFormat.SampleRate != diarizer.SampleRate)
         {
@@ -267,18 +273,19 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 
     private static OfflineSpeakerDiarization CreateDiarizer(
         DiarizationAssetInstallStatus installedAssets,
-        string provider)
+        string provider,
+        int threadCount)
     {
         var config = new OfflineSpeakerDiarizationConfig();
         config.Segmentation.Pyannote.Model = installedAssets.SegmentationModelPath
             ?? throw new InvalidOperationException("Diarization segmentation model path was missing.");
         config.Segmentation.Provider = provider;
-        config.Segmentation.NumThreads = Math.Max(1, Environment.ProcessorCount);
+        config.Segmentation.NumThreads = Math.Max(1, threadCount);
         config.Segmentation.Debug = 0;
         config.Embedding.Model = installedAssets.EmbeddingModelPath
             ?? throw new InvalidOperationException("Diarization embedding model path was missing.");
         config.Embedding.Provider = provider;
-        config.Embedding.NumThreads = Math.Max(1, Environment.ProcessorCount);
+        config.Embedding.NumThreads = Math.Max(1, threadCount);
         config.Embedding.Debug = 0;
         config.Clustering.Threshold = 0.5f;
         config.Clustering.NumClusters = -1;

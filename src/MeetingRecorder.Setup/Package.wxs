@@ -21,6 +21,8 @@
     <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
     <Property Id="ARPINSTALLLOCATION" Secure="yes" />
     <Property Id="MsiLogging" Value="voicewarmup!" />
+    <Property Id="MODEL_OPTION_TRANSCRIPTION" Value="standard" Secure="yes" />
+    <Property Id="MODEL_OPTION_SPEAKER_LABELING" Value="standard" Secure="yes" />
     <Property Id="PHYSICALUSERPROFILE" Secure="yes">
       <RegistrySearch
         Id="SearchPhysicalUserProfile"
@@ -29,12 +31,18 @@
         Name="USERPROFILE"
         Type="raw" />
     </Property>
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Meeting Recorder is installed and ready to use." />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Meeting Recorder is installed and ready to use. The included Standard transcription and speaker-labeling options are ready, and any optional Higher Accuracy download can be retried later from Settings > Setup if needed." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Meeting Recorder" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <SetProperty Id="INSTALLFOLDER" Value="[PHYSICALUSERPROFILE]\Documents\MeetingRecorder" After="AppSearch" Sequence="both" Condition="PHYSICALUSERPROFILE" />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
     <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]Launch-MeetingRecorder-AfterInstall.vbs" After="CostFinalize" Sequence="ui" />
+    <SetProperty
+      Id="WixQuietExecCmdLine"
+      Value="&quot;[INSTALLFOLDER]AppPlatform.Deployment.Cli.exe&quot; provision-models -i &quot;[INSTALLFOLDER]&quot; -m &quot;[INSTALLFOLDER]MeetingRecorder.product.json&quot; -t [MODEL_OPTION_TRANSCRIPTION] -s [MODEL_OPTION_SPEAKER_LABELING] -l &quot;[LocalAppDataFolder]MeetingRecorder\m.log&quot;"
+      After="InstallFiles"
+      Sequence="execute"
+      Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
 
     <CustomAction
       Id="LaunchApplication"
@@ -42,24 +50,74 @@
       DllEntry="WixShellExec"
       Impersonate="yes"
       Return="ignore" />
+    <CustomAction
+      Id="ProvisionModelsCustomAction"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixQuietExec"
+      Execute="immediate"
+      Return="check" />
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <UI>
+      <Dialog Id="ModelOptionsDlg" Width="370" Height="270" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="8" Width="330" Height="18" Transparent="yes" NoPrefix="yes" Text="Choose model options" />
+        <Control Id="Description" Type="Text" X="20" Y="28" Width="330" Height="34" Transparent="yes" NoPrefix="yes" Text="Standard is always installed from this package. You can also ask setup to download one Higher Accuracy option for transcription or speaker labeling. If an optional download does not finish, setup keeps the included Standard option active and you can Retry it later from Settings > Setup." />
+        <Control Id="TranscriptionLabel" Type="Text" X="20" Y="72" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Text="Transcription" />
+        <Control Id="TranscriptionOptions" Type="RadioButtonGroup" X="20" Y="86" Width="330" Height="36" Property="MODEL_OPTION_TRANSCRIPTION">
+          <RadioButtonGroup Property="MODEL_OPTION_TRANSCRIPTION">
+            <RadioButton X="0" Y="0" Width="300" Height="16" Text="Standard only (included with this package)" Value="standard" />
+            <RadioButton X="0" Y="18" Width="300" Height="16" Text="Standard + Higher Accuracy download" Value="highAccuracy" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="SpeakerLabelingLabel" Type="Text" X="20" Y="132" Width="330" Height="12" Transparent="yes" NoPrefix="yes" Text="Speaker labeling" />
+        <Control Id="SpeakerLabelingOptions" Type="RadioButtonGroup" X="20" Y="146" Width="330" Height="36" Property="MODEL_OPTION_SPEAKER_LABELING">
+          <RadioButtonGroup Property="MODEL_OPTION_SPEAKER_LABELING">
+            <RadioButton X="0" Y="0" Width="300" Height="16" Text="Standard only (included with this package)" Value="standard" />
+            <RadioButton X="0" Y="18" Width="300" Height="16" Text="Standard + Higher Accuracy download" Value="highAccuracy" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="HelpText" Type="Text" X="20" Y="194" Width="330" Height="26" Transparent="yes" NoPrefix="yes" Text="You do not need to do anything else to keep Standard ready. Choose Higher Accuracy only when you want setup to try the optional download now." />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="[ButtonText_Back]">
+          <Publish Event="NewDialog" Value="WelcomeDlg" Condition="1" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="[ButtonText_Next]">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Condition="1" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="[ButtonText_Cancel]">
+          <Publish Event="SpawnDialog" Value="CancelDlg" Condition="1" />
+        </Control>
+      </Dialog>
+
+      <Publish
+        Dialog="WelcomeDlg"
+        Control="Next"
+        Event="NewDialog"
+        Value="ModelOptionsDlg"
+        Order="999"
+        Condition="NOT Installed" />
       <Publish
         Dialog="WelcomeDlg"
         Control="Next"
         Event="NewDialog"
         Value="VerifyReadyDlg"
+        Order="1000"
+        Condition="Installed" />
+      <Publish
+        Dialog="VerifyReadyDlg"
+        Control="Back"
+        Event="NewDialog"
+        Value="ModelOptionsDlg"
         Order="999"
-        Condition="1" />
+        Condition="NOT Installed" />
       <Publish
         Dialog="VerifyReadyDlg"
         Control="Back"
         Event="NewDialog"
         Value="WelcomeDlg"
-        Order="999"
-        Condition="1" />
+        Order="1000"
+        Condition="Installed" />
       <Publish
         Dialog="ExitDialog"
         Control="Finish"
@@ -67,6 +125,10 @@
         Value="LaunchApplication"
         Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
     </UI>
+
+    <InstallExecuteSequence>
+      <Custom Action="ProvisionModelsCustomAction" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
 
     <StandardDirectory Id="TARGETDIR">
       <Directory Id="INSTALLFOLDER" Name="MeetingRecorder" />

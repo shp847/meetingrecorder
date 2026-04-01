@@ -200,22 +200,7 @@ public sealed class DiarizationAssetCatalogService
         }
 
         var managedDirectory = GetManagedAssetDirectory(modelCacheDir);
-        Directory.CreateDirectory(managedDirectory);
-
-        var sourceExtension = Path.GetExtension(sourcePath);
-        if (sourceExtension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-        {
-            await ExtractArchiveIntoDirectoryAsync(sourcePath, managedDirectory, cancellationToken);
-        }
-        else
-        {
-            var destinationPath = Path.Combine(managedDirectory, Path.GetFileName(sourcePath));
-            await using var sourceStream = File.OpenRead(sourcePath);
-            await using var destinationStream = File.Create(destinationPath);
-            await sourceStream.CopyToAsync(destinationStream, cancellationToken);
-        }
-
-        return InspectInstalledAssets(managedDirectory);
+        return await ImportAssetIntoDirectoryAsync(sourcePath, managedDirectory, cancellationToken);
     }
 
     public string GetManagedAssetDirectory(string modelCacheDir)
@@ -226,6 +211,44 @@ public sealed class DiarizationAssetCatalogService
         }
 
         return Path.Combine(modelCacheDir, "diarization");
+    }
+
+    public async Task<DiarizationAssetInstallStatus> ImportAssetIntoDirectoryAsync(
+        string sourcePath,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            throw new ArgumentException("A source asset path is required.", nameof(sourcePath));
+        }
+
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException("The selected diarization asset does not exist.", sourcePath);
+        }
+
+        if (string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            throw new ArgumentException("A destination directory is required.", nameof(destinationDirectory));
+        }
+
+        PrepareDestinationDirectory(destinationDirectory);
+
+        var sourceExtension = Path.GetExtension(sourcePath);
+        if (sourceExtension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            await ExtractArchiveIntoDirectoryAsync(sourcePath, destinationDirectory, cancellationToken);
+        }
+        else
+        {
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(sourcePath));
+            await using var sourceStream = File.OpenRead(sourcePath);
+            await using var destinationStream = File.Create(destinationPath);
+            await sourceStream.CopyToAsync(destinationStream, cancellationToken);
+        }
+
+        return InspectInstalledAssets(destinationDirectory);
     }
 
     internal Task ExtractArchiveIntoDirectoryAsync(string archivePath, string destinationDirectory, CancellationToken cancellationToken)
@@ -319,6 +342,16 @@ public sealed class DiarizationAssetCatalogService
         {
             return null;
         }
+    }
+
+    private static void PrepareDestinationDirectory(string destinationDirectory)
+    {
+        if (Directory.Exists(destinationDirectory))
+        {
+            Directory.Delete(destinationDirectory, recursive: true);
+        }
+
+        Directory.CreateDirectory(destinationDirectory);
     }
 }
 

@@ -79,7 +79,7 @@ Verification rules:
 - smoke test the built bundle by launching `<AppExecutableName>` directly
 - smoke test the installed copy by launching `<AppExecutableName>` from the managed install root
 - fail on new `.NET Runtime`, `Application Error`, or `Windows Error Reporting` events that mention `<AppExecutableName>`
-- verify the installed executable hash matches the built bundle when using the local deploy path
+- verify the installed executable hash matches the built bundle when validating a managed install through the MSI or another supported release path
 
 Security and trust rules:
 

@@ -85,8 +85,16 @@ public sealed class MeetingDetectionEvaluator
             !suppressedTeamsWindowDetected &&
             !genericTeamsShellDetected;
         var shouldStart = shouldKeepRecording && hasAudioActivity;
+        if (!shouldStart &&
+            shouldKeepRecording &&
+            platform == MeetingPlatform.GoogleMeet &&
+            HasSpecificGoogleMeetIdentity(title, signals))
+        {
+            shouldStart = true;
+        }
+
         var reason = shouldStart
-            ? "Detection confidence met the recording threshold and active system audio was present."
+            ? BuildStartReason(platform, hasAudioActivity)
             : BuildReason(confidence, platform, hasAudioActivity, hasUnverifiedBrowserAudio, suppressedTeamsWindowDetected, genericTeamsShellDetected);
 
         return new DetectionDecision(
@@ -135,11 +143,104 @@ public sealed class MeetingDetectionEvaluator
         return "Detection did not meet the recording criteria.";
     }
 
+    private static string BuildStartReason(MeetingPlatform platform, bool hasAudioActivity)
+    {
+        if (hasAudioActivity)
+        {
+            return "Detection confidence met the recording threshold and active system audio was present.";
+        }
+
+        return platform == MeetingPlatform.GoogleMeet
+            ? "Specific Google Meet identity evidence was present, so auto-start proceeded before render audio became active."
+            : "Detection confidence met the recording threshold.";
+    }
+
     private static bool IsActiveAudioSignal(DetectionSignal signal)
     {
         return signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) &&
             signal.Weight > 0d;
+    }
+
+    private static bool HasSpecificGoogleMeetIdentity(string? title, IReadOnlyList<DetectionSignal> signals)
+    {
+        if (string.IsNullOrWhiteSpace(title) || !HasBrowserSurfaceEvidence(signals))
+        {
+            return false;
+        }
+
+        if (HasSpecificGoogleMeetWindowTitle(signals))
+        {
+            return true;
+        }
+
+        foreach (var signal in signals)
+        {
+            if (string.Equals(signal.Source, "browser-url", StringComparison.OrdinalIgnoreCase) &&
+                signal.Value.Contains("meet.google.com/", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasBrowserSurfaceEvidence(IReadOnlyList<DetectionSignal> signals)
+    {
+        foreach (var signal in signals)
+        {
+            if (string.Equals(signal.Source, "browser-window", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(signal.Source, "browser-tab", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(signal.Source, "browser-url", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasSpecificGoogleMeetWindowTitle(IReadOnlyList<DetectionSignal> signals)
+    {
+        foreach (var signal in signals)
+        {
+            if (!string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) ||
+                signal.Weight < 0.85d)
+            {
+                continue;
+            }
+
+            var trimmedTitle = signal.Value.Trim();
+            if (trimmedTitle.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase) ||
+                trimmedTitle.StartsWith("meet.google.com is sharing ", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(trimmedTitle);
+            if (LooksLikeGoogleMeetCode(normalizedTitle))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeGoogleMeetCode(string normalizedTitle)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            return false;
+        }
+
+        var tokens = normalizedTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length == 3 &&
+            tokens[0].Length == 3 &&
+            tokens[1].Length == 4 &&
+            tokens[2].Length == 3 &&
+            tokens.All(static token => token.All(char.IsLetter));
     }
 
     private static string CleanTitle(string value, string suffix)
@@ -182,7 +283,15 @@ public sealed class MeetingDetectionEvaluator
             return null;
         }
 
-        var attendeeTitle = trimmed[chatPrefix.Length..^teamsSuffix.Length].Trim().Trim('|', ' ');
+        if (trimmed.Length <= chatPrefix.Length + teamsSuffix.Length)
+        {
+            return null;
+        }
+
+        var attendeeTitle = trimmed
+            .Substring(chatPrefix.Length, trimmed.Length - chatPrefix.Length - teamsSuffix.Length)
+            .Trim()
+            .Trim('|', ' ');
         return string.IsNullOrWhiteSpace(attendeeTitle) ? null : attendeeTitle;
     }
 }

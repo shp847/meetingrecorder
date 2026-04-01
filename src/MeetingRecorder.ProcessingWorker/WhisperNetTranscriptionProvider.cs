@@ -8,13 +8,15 @@ namespace MeetingRecorder.ProcessingWorker;
 internal sealed class WhisperNetTranscriptionProvider : ITranscriptionProvider
 {
     private readonly string _modelPath;
+    private readonly int _threadCount;
     private readonly FileLogWriter _logger;
     private readonly WhisperModelService _modelService;
     private readonly TranscriptionAudioPreparer _audioPreparer;
 
-    public WhisperNetTranscriptionProvider(string modelPath, FileLogWriter logger)
+    public WhisperNetTranscriptionProvider(string modelPath, int threadCount, FileLogWriter logger)
     {
         _modelPath = modelPath;
+        _threadCount = Math.Max(1, threadCount);
         _logger = logger;
         _modelService = new WhisperModelService(new WhisperNetModelDownloader());
         _audioPreparer = new TranscriptionAudioPreparer();
@@ -43,6 +45,7 @@ internal sealed class WhisperNetTranscriptionProvider : ITranscriptionProvider
             using var processor = whisperFactory
                 .CreateBuilder()
                 .WithLanguage("auto")
+                .WithThreads(_threadCount)
                 .Build();
 
             await using var audioStream = File.OpenRead(preparedAudioPath);

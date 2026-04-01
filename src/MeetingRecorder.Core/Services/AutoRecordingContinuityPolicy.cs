@@ -7,6 +7,7 @@ public sealed class AutoRecordingContinuityPolicy
     private static readonly TimeSpan MinimumWeakSignalTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumTeamsShellContinuationTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan RecentAutoStopRecoveryWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan QuietSpecificTeamsAutoStartDelay = TimeSpan.FromSeconds(20);
 
     public TimeSpan GetAutoStopTimeout(
         DetectionDecision? decision,
@@ -39,6 +40,16 @@ public sealed class AutoRecordingContinuityPolicy
             return scaledTimeout >= MinimumWeakSignalTimeout
                 ? scaledTimeout
                 : MinimumWeakSignalTimeout;
+        }
+
+        if (HasTeamsSpecificQuietContinuation(decision, activePlatform, activeSessionTitle) ||
+            (decision is not null && HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle)) ||
+            (decision is not null && HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle)))
+        {
+            var scaledTimeout = TimeSpan.FromSeconds(configuredTimeout.TotalSeconds * 3d);
+            return scaledTimeout >= MinimumTeamsShellContinuationTimeout
+                ? scaledTimeout
+                : MinimumTeamsShellContinuationTimeout;
         }
 
         if (HasTeamsShellContinuation(decision, activePlatform, activeSessionTitle))
@@ -75,6 +86,24 @@ public sealed class AutoRecordingContinuityPolicy
         return nowUtc - recentAutoStop.StoppedAtUtc <= RecentAutoStopRecoveryWindow;
     }
 
+    internal bool ShouldAutoStartQuietSpecificTeamsMeeting(
+        DetectionDecision? decision,
+        DateTimeOffset firstObservedUtc,
+        DateTimeOffset nowUtc)
+    {
+        if (!IsQuietSpecificTeamsMeetingCandidate(decision))
+        {
+            return false;
+        }
+
+        return nowUtc - firstObservedUtc >= QuietSpecificTeamsAutoStartDelay;
+    }
+
+    internal bool IsQuietSpecificTeamsMeetingCandidate(DetectionDecision? decision)
+    {
+        return IsQuietSpecificTeamsMeetingCandidateCore(decision);
+    }
+
     public bool ShouldRefreshLastPositiveSignal(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
@@ -88,37 +117,39 @@ public sealed class AutoRecordingContinuityPolicy
             hasRecentMicrophoneActivity: false);
     }
 
-    public bool ShouldReclassifyAutoStartedSession(
+    public bool ShouldReclassifyActiveSession(
         DetectionDecision? decision,
-        MeetingPlatform activePlatform)
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
     {
         if (decision is null ||
             !decision.ShouldStart ||
             activePlatform == MeetingPlatform.Unknown ||
-            decision.Platform == MeetingPlatform.Unknown ||
-            decision.Platform == activePlatform)
+            decision.Platform == MeetingPlatform.Unknown)
         {
             return false;
         }
 
         var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
-        if (HasStrongAttributedAudioMatch(decision) &&
-            !IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform))
+        if (IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform) ||
+            !HasMeetingIdentityEvidence(decision))
+        {
+            return false;
+        }
+
+        if (decision.Platform != activePlatform)
         {
             return true;
         }
 
-        if (activePlatform != MeetingPlatform.GoogleMeet || decision.Platform != MeetingPlatform.Teams)
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(normalizedActiveTitle) ||
+            IsGenericMeetingTitle(normalizedActiveTitle, activePlatform))
         {
-            return false;
+            return true;
         }
 
-        if (!HasWindowTitleEvidence(decision) || !HasTeamsHostEvidence(decision))
-        {
-            return false;
-        }
-
-        return !IsGenericMeetingTitle(normalizedDetectedTitle, MeetingPlatform.Teams);
+        return !string.Equals(normalizedDetectedTitle, normalizedActiveTitle, StringComparison.OrdinalIgnoreCase);
     }
 
     public bool ShouldRefreshLastPositiveSignal(
@@ -128,9 +159,18 @@ public sealed class AutoRecordingContinuityPolicy
         bool hasRecentLoopbackActivity,
         bool hasRecentMicrophoneActivity)
     {
-        if (decision is null || activePlatform == MeetingPlatform.Unknown || decision.Platform != activePlatform)
+        if (decision is null || activePlatform == MeetingPlatform.Unknown)
         {
             return false;
+        }
+
+        if (decision.Platform != activePlatform)
+        {
+            return HasCrossPlatformBrowserContinuation(
+                decision,
+                activePlatform,
+                activeSessionTitle,
+                hasRecentLoopbackActivity);
         }
 
         if (decision.ShouldStart)
@@ -138,17 +178,33 @@ public sealed class AutoRecordingContinuityPolicy
             return true;
         }
 
+        if (decision.Platform == MeetingPlatform.Teams &&
+            HasOfficialTeamsNoCurrentMatchSignal(decision))
+        {
+            return false;
+        }
+
+        var hasRecentCaptureActivity = hasRecentLoopbackActivity || hasRecentMicrophoneActivity;
+        if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentLoopbackActivity &&
+            HasOfficialTeamsMatchSignal(decision))
+        {
+            return true;
+        }
+
         if (HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
         {
-            return true;
+            return decision.Platform != MeetingPlatform.Teams || hasRecentLoopbackActivity;
         }
 
-        if (HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle))
+        if (hasRecentLoopbackActivity &&
+            HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle))
         {
             return true;
         }
 
-        if (HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
+        if (hasRecentLoopbackActivity &&
+            HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
         {
             return true;
         }
@@ -159,6 +215,42 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return HasWeakSamePlatformSignal(decision, activePlatform);
+    }
+
+    private static bool HasTeamsSpecificQuietContinuation(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        return activePlatform == MeetingPlatform.Teams &&
+            decision is not null &&
+            decision.Platform == MeetingPlatform.Teams &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle);
+    }
+
+    private static bool HasCrossPlatformBrowserContinuation(
+        DetectionDecision decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
+        bool hasRecentLoopbackActivity)
+    {
+        if (!hasRecentLoopbackActivity ||
+            decision.ShouldStart ||
+            HasStrongAttributedAudioMatch(decision))
+        {
+            return false;
+        }
+
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
+        if (IsGenericMeetingTitle(normalizedActiveTitle, activePlatform))
+        {
+            return false;
+        }
+
+        return activePlatform == MeetingPlatform.Teams &&
+            decision.Platform == MeetingPlatform.GoogleMeet &&
+            HasWindowTitleEvidence(decision) &&
+            HasBrowserSurfaceEvidence(decision);
     }
 
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
@@ -188,6 +280,20 @@ public sealed class AutoRecordingContinuityPolicy
         return false;
     }
 
+    private static bool HasBrowserSurfaceEvidence(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (string.Equals(signal.Source, "browser-window", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(signal.Source, "browser-tab", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool HasStrongAttributedAudioMatch(DetectionDecision decision)
     {
         return decision.DetectedAudioSource is
@@ -195,6 +301,55 @@ public sealed class AutoRecordingContinuityPolicy
             Confidence: AudioSourceConfidence.High,
             MatchKind: not AudioSourceMatchKind.EndpointFallback,
         };
+    }
+
+    private static bool HasSupportedMeetingAudioAttribution(DetectionDecision decision)
+    {
+        return decision.DetectedAudioSource is { MatchKind: not AudioSourceMatchKind.EndpointFallback } detectedAudioSource &&
+            decision.Platform switch
+            {
+                MeetingPlatform.Teams => string.Equals(detectedAudioSource.AppName, "Microsoft Teams", StringComparison.OrdinalIgnoreCase),
+                MeetingPlatform.GoogleMeet => string.Equals(detectedAudioSource.AppName, "Google Meet", StringComparison.OrdinalIgnoreCase),
+                _ => false,
+            };
+    }
+
+    private static bool HasMeetingIdentityEvidence(DetectionDecision decision)
+    {
+        if (HasStrongAttributedAudioMatch(decision))
+        {
+            return true;
+        }
+
+        return decision.Platform switch
+        {
+            MeetingPlatform.Teams => HasWindowTitleEvidence(decision) && HasTeamsHostEvidence(decision),
+            MeetingPlatform.GoogleMeet => HasWindowTitleEvidence(decision) || HasBrowserSurfaceEvidence(decision),
+            _ => false,
+        };
+    }
+
+    private static bool IsQuietSpecificTeamsMeetingCandidateCore(DetectionDecision? decision)
+    {
+        if (decision is null ||
+            decision.Platform != MeetingPlatform.Teams ||
+            decision.ShouldStart ||
+            !decision.ShouldKeepRecording)
+        {
+            return false;
+        }
+
+        var normalizedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        if (IsGenericMeetingTitle(normalizedTitle, MeetingPlatform.Teams) ||
+            HasSuppressedTeamsNavigationSignal(decision) ||
+            !HasMeetingIdentityEvidence(decision) ||
+            !HasSupportedMeetingAudioAttribution(decision) ||
+            !HasSilentAudioSignal(decision))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static bool HasTeamsShellContinuation(
@@ -244,13 +399,21 @@ public sealed class AutoRecordingContinuityPolicy
         var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
         var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle);
         if (string.IsNullOrWhiteSpace(normalizedDetectedTitle) ||
-            string.IsNullOrWhiteSpace(normalizedActiveTitle) ||
-            !string.Equals(normalizedDetectedTitle, normalizedActiveTitle, StringComparison.OrdinalIgnoreCase))
+            string.IsNullOrWhiteSpace(normalizedActiveTitle))
         {
             return false;
         }
 
-        return !IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform);
+        if (string.Equals(normalizedDetectedTitle, normalizedActiveTitle, StringComparison.OrdinalIgnoreCase))
+        {
+            return !IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform);
+        }
+
+        return decision.Platform == MeetingPlatform.GoogleMeet &&
+            !IsGenericMeetingTitle(normalizedActiveTitle, MeetingPlatform.GoogleMeet) &&
+            HasGoogleMeetSharingSurfaceTitle(decision.SessionTitle) &&
+            HasWindowTitleEvidence(decision) &&
+            HasBrowserSurfaceEvidence(decision);
     }
 
     private static bool HasSuppressedTeamsTitleContinuation(DetectionDecision decision, string? activeSessionTitle)
@@ -358,6 +521,53 @@ public sealed class AutoRecordingContinuityPolicy
         foreach (var signal in decision.Signals)
         {
             if (string.Equals(signal.Source, "teams-host", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasSilentAudioSignal(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasGoogleMeetSharingSurfaceTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim().ToLowerInvariant();
+        return normalized.StartsWith("meet.google.com is sharing ", StringComparison.Ordinal);
+    }
+
+    private static bool HasOfficialTeamsMatchSignal(DetectionDecision decision)
+    {
+        return HasSignal(decision, "official-teams-match");
+    }
+
+    private static bool HasOfficialTeamsNoCurrentMatchSignal(DetectionDecision decision)
+    {
+        return HasSignal(decision, "official-teams-no-current-match");
+    }
+
+    private static bool HasSignal(DetectionDecision decision, string source)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (string.Equals(signal.Source, source, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

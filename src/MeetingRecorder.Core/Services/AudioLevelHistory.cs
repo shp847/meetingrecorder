@@ -3,8 +3,10 @@ namespace MeetingRecorder.Core.Services;
 public sealed class AudioLevelHistory
 {
     private readonly int _capacity;
-    private readonly Queue<double> _samples;
+    private readonly double[] _samples;
     private readonly object _syncRoot = new();
+    private int _count;
+    private int _nextWriteIndex;
 
     public AudioLevelHistory(int capacity)
     {
@@ -14,7 +16,7 @@ public sealed class AudioLevelHistory
         }
 
         _capacity = capacity;
-        _samples = new Queue<double>(capacity);
+        _samples = new double[capacity];
     }
 
     public void AddSample(double level)
@@ -23,12 +25,12 @@ public sealed class AudioLevelHistory
 
         lock (_syncRoot)
         {
-            if (_samples.Count == _capacity)
+            _samples[_nextWriteIndex] = clamped;
+            _nextWriteIndex = (_nextWriteIndex + 1) % _capacity;
+            if (_count < _capacity)
             {
-                _samples.Dequeue();
+                _count++;
             }
-
-            _samples.Enqueue(clamped);
         }
     }
 
@@ -39,17 +41,42 @@ public sealed class AudioLevelHistory
             throw new ArgumentOutOfRangeException(nameof(sampleCount), "Sample count must be greater than zero.");
         }
 
+        var snapshot = new double[sampleCount];
+        CopySnapshot(snapshot);
+        return snapshot;
+    }
+
+    public void CopySnapshot(double[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        CopySnapshot(destination.AsSpan());
+    }
+
+    public void CopySnapshot(Span<double> destination)
+    {
+        if (destination.Length == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(destination), "Destination must not be empty.");
+        }
+
         lock (_syncRoot)
         {
-            var current = _samples.ToArray();
-            if (current.Length >= sampleCount)
+            destination.Clear();
+
+            var valuesToCopy = Math.Min(_count, destination.Length);
+            if (valuesToCopy == 0)
             {
-                return current[^sampleCount..];
+                return;
             }
 
-            var snapshot = new double[sampleCount];
-            Array.Copy(current, 0, snapshot, sampleCount - current.Length, current.Length);
-            return snapshot;
+            var oldestIndex = _count == _capacity ? _nextWriteIndex : 0;
+            var startOffset = _count > destination.Length ? _count - destination.Length : 0;
+            var destinationOffset = destination.Length - valuesToCopy;
+            for (var index = 0; index < valuesToCopy; index++)
+            {
+                var sourceIndex = (oldestIndex + startOffset + index) % _capacity;
+                destination[destinationOffset + index] = _samples[sourceIndex];
+            }
         }
     }
 
@@ -61,12 +88,16 @@ public sealed class AudioLevelHistory
         }
 
         var normalizedThreshold = Math.Clamp(threshold, 0d, 1d);
-        var snapshot = Snapshot(sampleCount);
-        for (var index = snapshot.Length - 1; index >= 0; index--)
+        lock (_syncRoot)
         {
-            if (snapshot[index] >= normalizedThreshold)
+            var valuesToInspect = Math.Min(sampleCount, _count);
+            for (var offset = 0; offset < valuesToInspect; offset++)
             {
-                return true;
+                var sourceIndex = (_nextWriteIndex - 1 - offset + _capacity) % _capacity;
+                if (_samples[sourceIndex] >= normalizedThreshold)
+                {
+                    return true;
+                }
             }
         }
 

@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AppPlatform.Abstractions\AppPlatform.Abstractions.csproj" />
     <ProjectReference Include="..\AppPlatform.Deployment\AppPlatform.Deployment.csproj" />
+    <ProjectReference Include="..\MeetingRecorder.Core\MeetingRecorder.Core.csproj" />
   </ItemGroup>
 
 </Project>

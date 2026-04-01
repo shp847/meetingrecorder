@@ -4,7 +4,11 @@ namespace MeetingRecorder.Core.Services;
 
 public static partial class PublishedMeetingRepairService
 {
-    private const string RepairMarkerFileName = "published-meeting-repair-v3.done";
+    private const string RepairMarkerFileName = "published-meeting-repair-v4.done";
+    private const string RepairArchiveDirectoryName = "published-meeting-repair-v4";
+    private static readonly TimeSpan MaximumRepeatedSplitChainGap = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumRepeatedSplitChainSegmentDuration = TimeSpan.FromMinutes(3);
+    private const int MinimumRepeatedSplitChainLength = 3;
 
     public static async Task<PublishedMeetingRepairResult> RepairKnownIssuesAsync(
         string audioOutputDir,
@@ -23,7 +27,7 @@ public static partial class PublishedMeetingRepairService
         MeetingCleanupExecutionService.ConsolidateLegacyArchiveRoots(audioOutputDir);
         var archiveDirectory = Path.Combine(
             MeetingCleanupExecutionService.GetArchiveRoot(audioOutputDir),
-            "published-meeting-repair-v3");
+            RepairArchiveDirectoryName);
         Directory.CreateDirectory(archiveDirectory);
 
         var pathBuilder = new ArtifactPathBuilder();
@@ -33,34 +37,38 @@ public static partial class PublishedMeetingRepairService
         var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null)
             .OrderBy(record => record.StartedAtUtc)
             .ToArray();
-        var inspections = new List<MeetingInspectionRecord>(meetings.Length);
 
-        foreach (var meeting in meetings)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            MeetingSessionManifest? manifest = null;
-            if (!string.IsNullOrWhiteSpace(meeting.ManifestPath) && File.Exists(meeting.ManifestPath))
-            {
-                try
-                {
-                    manifest = await manifestStore.LoadAsync(meeting.ManifestPath, cancellationToken);
-                }
-                catch
-                {
-                    manifest = null;
-                }
-            }
-
-            inspections.Add(new MeetingInspectionRecord(meeting, manifest, SuggestedTitle: null, SuggestedTitleSource: null));
-        }
-
-        var recommendations = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(
-                MeetingCleanupRecommendationEngine.Analyze(inspections))
-            .ToArray();
         var archivedMeetingStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var mergedSplitPairCount = 0;
         var archivedEditorArtifactCount = 0;
         var archivedShortGenericTeamsMeetingCount = 0;
+
+        foreach (var splitChain in FindRepeatedSplitChains(meetings))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await executionService.MergeMeetingsAsync(
+                splitChain,
+                ChoosePreferredTitle(splitChain),
+                audioOutputDir,
+                transcriptOutputDir,
+                archiveDirectory,
+                cancellationToken);
+            foreach (var meeting in splitChain)
+            {
+                archivedMeetingStems.Add(meeting.Stem);
+            }
+
+            mergedSplitPairCount += splitChain.Count - 1;
+        }
+
+        var recommendations = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(
+                MeetingCleanupRecommendationEngine.Analyze(await BuildInspections(
+                    catalog,
+                    manifestStore,
+                    audioOutputDir,
+                    transcriptOutputDir,
+                    cancellationToken)))
+            .ToArray();
 
         foreach (var recommendation in recommendations)
         {
@@ -133,6 +141,134 @@ public static partial class PublishedMeetingRepairService
             archivedEditorArtifactCount,
             archivedShortGenericTeamsMeetingCount,
             false);
+    }
+
+    private static async Task<IReadOnlyList<MeetingInspectionRecord>> BuildInspections(
+        MeetingOutputCatalogService catalog,
+        SessionManifestStore manifestStore,
+        string audioOutputDir,
+        string transcriptOutputDir,
+        CancellationToken cancellationToken)
+    {
+        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null)
+            .OrderBy(record => record.StartedAtUtc)
+            .ToArray();
+        var inspections = new List<MeetingInspectionRecord>(meetings.Length);
+
+        foreach (var meeting in meetings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            MeetingSessionManifest? manifest = null;
+            if (!string.IsNullOrWhiteSpace(meeting.ManifestPath) && File.Exists(meeting.ManifestPath))
+            {
+                try
+                {
+                    manifest = await manifestStore.LoadAsync(meeting.ManifestPath, cancellationToken);
+                }
+                catch
+                {
+                    manifest = null;
+                }
+            }
+
+            inspections.Add(new MeetingInspectionRecord(meeting, manifest, SuggestedTitle: null, SuggestedTitleSource: null));
+        }
+
+        return inspections;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<MeetingOutputRecord>> FindRepeatedSplitChains(
+        IReadOnlyList<MeetingOutputRecord> meetings)
+    {
+        var chains = new List<IReadOnlyList<MeetingOutputRecord>>();
+
+        foreach (var groupedMeetings in meetings
+                     .Where(IsEligibleRepeatedSplitChainMeeting)
+                     .GroupBy(
+                         meeting => new
+                         {
+                             meeting.Platform,
+                             ComparableTitle = MeetingTitleNormalizer.NormalizeForComparison(meeting.Title),
+                             Day = meeting.StartedAtUtc.UtcDateTime.Date,
+                         }))
+        {
+            var ordered = groupedMeetings
+                .OrderBy(meeting => meeting.StartedAtUtc)
+                .ThenBy(meeting => meeting.Stem, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (ordered.Length < MinimumRepeatedSplitChainLength)
+            {
+                continue;
+            }
+
+            var currentChain = new List<MeetingOutputRecord> { ordered[0] };
+            for (var index = 1; index < ordered.Length; index++)
+            {
+                var previous = currentChain[^1];
+                var current = ordered[index];
+                var previousEnd = previous.StartedAtUtc + (previous.Duration ?? TimeSpan.Zero);
+                var gap = current.StartedAtUtc - previousEnd;
+                if (gap < TimeSpan.Zero || gap > MaximumRepeatedSplitChainGap)
+                {
+                    AddChainIfEligible(chains, currentChain);
+                    currentChain = new List<MeetingOutputRecord> { current };
+                    continue;
+                }
+
+                currentChain.Add(current);
+            }
+
+            AddChainIfEligible(chains, currentChain);
+        }
+
+        return chains;
+    }
+
+    private static void AddChainIfEligible(
+        ICollection<IReadOnlyList<MeetingOutputRecord>> chains,
+        IReadOnlyList<MeetingOutputRecord> candidateChain)
+    {
+        if (candidateChain.Count < MinimumRepeatedSplitChainLength)
+        {
+            return;
+        }
+
+        chains.Add(candidateChain.ToArray());
+    }
+
+    private static bool IsEligibleRepeatedSplitChainMeeting(MeetingOutputRecord meeting)
+    {
+        return meeting.Platform != MeetingPlatform.Unknown &&
+            meeting.StartedAtUtc != DateTimeOffset.MinValue &&
+            meeting.Duration is { } duration &&
+            duration <= MaximumRepeatedSplitChainSegmentDuration &&
+            !string.IsNullOrWhiteSpace(meeting.AudioPath) &&
+            !string.IsNullOrWhiteSpace(meeting.MarkdownPath) &&
+            File.Exists(meeting.AudioPath) &&
+            File.Exists(meeting.MarkdownPath) &&
+            !string.IsNullOrWhiteSpace(MeetingTitleNormalizer.NormalizeForComparison(meeting.Title));
+    }
+
+    private static string ChoosePreferredTitle(IReadOnlyList<MeetingOutputRecord> meetings)
+    {
+        return meetings
+            .Select(meeting => meeting.Title)
+            .Aggregate((bestTitle, candidateTitle) =>
+            {
+                var bestPunctuationScore = CountHelpfulPunctuation(bestTitle);
+                var candidatePunctuationScore = CountHelpfulPunctuation(candidateTitle);
+                if (candidatePunctuationScore != bestPunctuationScore)
+                {
+                    return candidatePunctuationScore > bestPunctuationScore ? candidateTitle.Trim() : bestTitle.Trim();
+                }
+
+                return candidateTitle.Length > bestTitle.Length ? candidateTitle.Trim() : bestTitle.Trim();
+            });
+    }
+
+    private static int CountHelpfulPunctuation(string title)
+    {
+        return title.Count(character => character is ',' or '&' or '/' or '(' or ')');
     }
 }
 

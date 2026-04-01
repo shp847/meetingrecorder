@@ -7,6 +7,9 @@ internal static partial class MeetingTitleNormalizer
     [GeneratedRegex("[^\\p{L}\\p{N}]+", RegexOptions.CultureInvariant)]
     private static partial Regex NonAlphaNumericPattern();
 
+    [GeneratedRegex("\\b([a-z]{3}-[a-z]{4}-[a-z]{3})\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex GoogleMeetCodePattern();
+
     public static string NormalizeForComparison(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -25,6 +28,12 @@ internal static partial class MeetingTitleNormalizer
         if (normalized.EndsWith("| Pinned window", StringComparison.OrdinalIgnoreCase))
         {
             normalized = normalized[..^"| Pinned window".Length].Trim();
+        }
+
+        var meetCodeMatch = GoogleMeetCodePattern().Match(normalized);
+        if (meetCodeMatch.Success)
+        {
+            normalized = meetCodeMatch.Groups[1].Value;
         }
 
         normalized = normalized.Trim('|', ' ');

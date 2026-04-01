@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -5,6 +6,13 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class WaveChunkMerger
 {
+    private const float LoopbackBleedDetectionThreshold = 0.015f;
+    private const float LoopbackBleedMaximumMicRatio = 1.15f;
+    private const float ReducedMicrophoneGain = 0.18f;
+    private const double MicGainAttackSeconds = 0.010d;
+    private const double MicGainReleaseSeconds = 0.180d;
+    private const int MixBufferFrameCount = 2048;
+
     public Task<string> MergeAsync(
         IReadOnlyList<string> chunkPaths,
         string outputPath,
@@ -48,6 +56,72 @@ public sealed class WaveChunkMerger
         {
             TryDelete(loopbackMergedPath);
             TryDelete(microphoneMergedPath);
+        }
+    }
+
+    public async Task<string> MergeAsync(
+        IReadOnlyList<string> loopbackChunkPaths,
+        IReadOnlyList<MicrophoneCaptureSegment> microphoneCaptureSegments,
+        DateTimeOffset sessionStartedAtUtc,
+        DateTimeOffset? sessionEndedAtUtc,
+        string outputPath,
+        CancellationToken cancellationToken = default)
+    {
+        if (microphoneCaptureSegments.Count == 0)
+        {
+            return await MergeWaveChunksAsync(loopbackChunkPaths, outputPath, cancellationToken);
+        }
+
+        if (loopbackChunkPaths.Count == 0)
+        {
+            var mergedMicrophoneChunks = microphoneCaptureSegments
+                .SelectMany(segment => segment.ChunkPaths)
+                .ToArray();
+            return await MergeWaveChunksAsync(mergedMicrophoneChunks, outputPath, cancellationToken);
+        }
+
+        var outputDirectory = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("Output path must have a directory.");
+        Directory.CreateDirectory(outputDirectory);
+
+        var outputFileName = Path.GetFileNameWithoutExtension(outputPath);
+        var loopbackMergedPath = Path.Combine(outputDirectory, $"{outputFileName}.loopback.tmp.wav");
+        var microphoneSegmentArtifacts = new List<(string Path, MicrophoneCaptureSegment Segment)>(microphoneCaptureSegments.Count);
+
+        try
+        {
+            await MergeWaveChunksAsync(loopbackChunkPaths, loopbackMergedPath, cancellationToken);
+
+            for (var index = 0; index < microphoneCaptureSegments.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var segment = microphoneCaptureSegments[index];
+                if (segment.ChunkPaths.Count == 0)
+                {
+                    continue;
+                }
+
+                var microphoneSegmentPath = Path.Combine(outputDirectory, $"{outputFileName}.microphone-segment-{index:0000}.tmp.wav");
+                await MergeWaveChunksAsync(segment.ChunkPaths, microphoneSegmentPath, cancellationToken);
+                microphoneSegmentArtifacts.Add((microphoneSegmentPath, segment));
+            }
+
+            MixWaveFiles(
+                loopbackMergedPath,
+                microphoneSegmentArtifacts,
+                sessionStartedAtUtc,
+                sessionEndedAtUtc,
+                outputPath,
+                cancellationToken);
+            return outputPath;
+        }
+        finally
+        {
+            TryDelete(loopbackMergedPath);
+            foreach (var microphoneMergedPath in microphoneSegmentArtifacts)
+            {
+                TryDelete(microphoneMergedPath.Path);
+            }
         }
     }
 
@@ -181,17 +255,65 @@ public sealed class WaveChunkMerger
         loopbackProvider = MatchWaveFormat(loopbackProvider, targetFormat.SampleRate, targetFormat.Channels);
         microphoneProvider = MatchWaveFormat(microphoneProvider, targetFormat.SampleRate, targetFormat.Channels);
 
-        var mixer = new MixingSampleProvider(targetFormat);
-        mixer.AddMixerInput(loopbackProvider);
-        mixer.AddMixerInput(microphoneProvider);
+        WriteBleedAwareMix(loopbackProvider, microphoneProvider, outputPath, cancellationToken);
+    }
 
-        using var writer = new WaveFileWriter(outputPath, targetFormat);
-        var buffer = new float[8192];
-        int samplesRead;
-        while ((samplesRead = mixer.Read(buffer, 0, buffer.Length)) > 0)
+    private static void MixWaveFiles(
+        string loopbackPath,
+        IReadOnlyList<(string Path, MicrophoneCaptureSegment Segment)> microphoneSegments,
+        DateTimeOffset sessionStartedAtUtc,
+        DateTimeOffset? sessionEndedAtUtc,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        using var loopbackReader = new AudioFileReader(loopbackPath);
+        var targetFormat = loopbackReader.WaveFormat;
+
+        var microphoneReaders = new List<AudioFileReader>(microphoneSegments.Count);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            writer.WriteSamples(buffer, 0, samplesRead);
+            var loopbackProvider = MatchWaveFormat(loopbackReader, targetFormat.SampleRate, targetFormat.Channels);
+            var microphoneMixer = new MixingSampleProvider(targetFormat);
+
+            var boundedEndUtc = sessionEndedAtUtc.GetValueOrDefault(sessionStartedAtUtc);
+            foreach (var microphoneSegment in microphoneSegments)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var microphoneReader = new AudioFileReader(microphoneSegment.Path);
+                microphoneReaders.Add(microphoneReader);
+
+                var matchedProvider = MatchWaveFormat(microphoneReader, targetFormat.SampleRate, targetFormat.Channels);
+                var boundedStartUtc = microphoneSegment.Segment.StartedAtUtc < sessionStartedAtUtc
+                    ? sessionStartedAtUtc
+                    : microphoneSegment.Segment.StartedAtUtc;
+                var delay = boundedStartUtc <= sessionStartedAtUtc
+                    ? TimeSpan.Zero
+                    : boundedStartUtc - sessionStartedAtUtc;
+                var offsetProvider = new OffsetSampleProvider(matchedProvider)
+                {
+                    DelayBy = delay,
+                };
+
+                if (microphoneSegment.Segment.EndedAtUtc is { } segmentEndedAtUtc && boundedEndUtc > sessionStartedAtUtc)
+                {
+                    var boundedSegmentEndUtc = segmentEndedAtUtc > boundedEndUtc ? boundedEndUtc : segmentEndedAtUtc;
+                    if (boundedSegmentEndUtc > boundedStartUtc)
+                    {
+                        offsetProvider.Take = boundedSegmentEndUtc - boundedStartUtc;
+                    }
+                }
+
+                microphoneMixer.AddMixerInput(offsetProvider);
+            }
+
+            WriteBleedAwareMix(loopbackProvider, microphoneMixer, outputPath, cancellationToken);
+        }
+        finally
+        {
+            foreach (var microphoneReader in microphoneReaders)
+            {
+                microphoneReader.Dispose();
+            }
         }
     }
 
@@ -204,6 +326,99 @@ public sealed class WaveChunkMerger
             cancellationToken.ThrowIfCancellationRequested();
             writer.Write(buffer, 0, bytesRead);
         }
+    }
+
+    private static void WriteBleedAwareMix(
+        ISampleProvider loopbackProvider,
+        ISampleProvider microphoneProvider,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var outputDirectory = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("Output path must have a directory.");
+        Directory.CreateDirectory(outputDirectory);
+
+        var format = loopbackProvider.WaveFormat;
+        var channelCount = format.Channels;
+        var samplesPerBuffer = MixBufferFrameCount * channelCount;
+        var loopbackBuffer = new float[samplesPerBuffer];
+        var microphoneBuffer = new float[samplesPerBuffer];
+        var mixedBuffer = new float[samplesPerBuffer];
+        var attackFactor = CalculateMicGainSmoothingFactor(format.SampleRate, MicGainAttackSeconds);
+        var releaseFactor = CalculateMicGainSmoothingFactor(format.SampleRate, MicGainReleaseSeconds);
+        var currentMicrophoneGain = 1f;
+
+        using var writer = new WaveFileWriter(
+            outputPath,
+            WaveFormat.CreateIeeeFloatWaveFormat(format.SampleRate, format.Channels));
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var loopbackRead = loopbackProvider.Read(loopbackBuffer, 0, loopbackBuffer.Length);
+            var microphoneRead = microphoneProvider.Read(microphoneBuffer, 0, microphoneBuffer.Length);
+            var samplesToWrite = Math.Max(loopbackRead, microphoneRead);
+            if (samplesToWrite == 0)
+            {
+                break;
+            }
+
+            if (loopbackRead < samplesToWrite)
+            {
+                Array.Clear(loopbackBuffer, loopbackRead, samplesToWrite - loopbackRead);
+            }
+
+            if (microphoneRead < samplesToWrite)
+            {
+                Array.Clear(microphoneBuffer, microphoneRead, samplesToWrite - microphoneRead);
+            }
+
+            samplesToWrite -= samplesToWrite % channelCount;
+            if (samplesToWrite == 0)
+            {
+                continue;
+            }
+
+            for (var sampleIndex = 0; sampleIndex < samplesToWrite; sampleIndex += channelCount)
+            {
+                var loopbackMagnitude = 0f;
+                var microphoneMagnitude = 0f;
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+                {
+                    loopbackMagnitude = Math.Max(loopbackMagnitude, Math.Abs(loopbackBuffer[sampleIndex + channelIndex]));
+                    microphoneMagnitude = Math.Max(microphoneMagnitude, Math.Abs(microphoneBuffer[sampleIndex + channelIndex]));
+                }
+
+                var likelyLoopbackBleed = loopbackMagnitude >= LoopbackBleedDetectionThreshold &&
+                    microphoneMagnitude > 0f &&
+                    microphoneMagnitude <= loopbackMagnitude * LoopbackBleedMaximumMicRatio;
+                var targetMicrophoneGain = likelyLoopbackBleed ? ReducedMicrophoneGain : 1f;
+                var smoothingFactor = targetMicrophoneGain < currentMicrophoneGain
+                    ? attackFactor
+                    : releaseFactor;
+                currentMicrophoneGain += (targetMicrophoneGain - currentMicrophoneGain) * smoothingFactor;
+
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+                {
+                    var mixedSample = loopbackBuffer[sampleIndex + channelIndex] +
+                        (microphoneBuffer[sampleIndex + channelIndex] * currentMicrophoneGain);
+                    mixedBuffer[sampleIndex + channelIndex] = Math.Clamp(mixedSample, -1f, 1f);
+                }
+            }
+
+            writer.WriteSamples(mixedBuffer, 0, samplesToWrite);
+        }
+    }
+
+    private static float CalculateMicGainSmoothingFactor(int sampleRate, double timeSeconds)
+    {
+        if (sampleRate <= 0 || timeSeconds <= 0d)
+        {
+            return 1f;
+        }
+
+        return 1f - (float)Math.Exp(-1d / (sampleRate * timeSeconds));
     }
 
     private static ISampleProvider MatchWaveFormat(ISampleProvider provider, int sampleRate, int channels)

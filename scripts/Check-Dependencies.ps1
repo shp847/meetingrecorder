@@ -1,5 +1,7 @@
 param(
-    [string]$AppRoot = $PSScriptRoot
+    [string]$AppRoot = $PSScriptRoot,
+    [switch]$SuppressOptionalWarnings,
+    [switch]$QuietSuccess
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +22,9 @@ $resolvedAppRoot = [System.IO.Path]::GetFullPath($normalizedAppRoot)
 $appExePath = Join-Path $resolvedAppRoot "MeetingRecorder.App.exe"
 $workerExePath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.exe"
 $workerDllPath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.dll"
+$workerDepsPath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.deps.json"
+$workerRuntimeConfigPath = Join-Path $resolvedAppRoot "MeetingRecorder.ProcessingWorker.runtimeconfig.json"
+$workerCorePath = Join-Path $resolvedAppRoot "MeetingRecorder.Core.dll"
 $setupPath = Join-Path $resolvedAppRoot "SETUP.md"
 $bundleModePath = Join-Path $resolvedAppRoot "bundle-mode.txt"
 $modelDirectory = Join-Path $resolvedAppRoot "data\models\asr"
@@ -60,14 +65,23 @@ if (-not (Test-Path $appExePath)) {
     exit 1
 }
 
-if ((-not (Test-Path $workerExePath)) -and (-not (Test-Path $workerDllPath))) {
-    Write-Host "Missing required processing worker output: $workerExePath or $workerDllPath"
+$missingWorkerPayload = @(
+    @{ Name = "MeetingRecorder.ProcessingWorker.exe"; Path = $workerExePath },
+    @{ Name = "MeetingRecorder.ProcessingWorker.dll"; Path = $workerDllPath },
+    @{ Name = "MeetingRecorder.ProcessingWorker.deps.json"; Path = $workerDepsPath },
+    @{ Name = "MeetingRecorder.ProcessingWorker.runtimeconfig.json"; Path = $workerRuntimeConfigPath },
+    @{ Name = "MeetingRecorder.Core.dll"; Path = $workerCorePath }
+) |
+    Where-Object { -not (Test-Path $_.Path) } |
+    ForEach-Object { $_.Name }
+
+if ($missingWorkerPayload.Count -gt 0) {
+    Write-Host "Missing required processing worker payload: $($missingWorkerPayload -join ', ')"
     exit 1
 }
 
 $bundleMode = Get-BundleMode -Path $bundleModePath
-$workerRequiresDotNetRuntime = (-not (Test-Path $workerExePath)) -and (Test-Path $workerDllPath)
-$requiresDotNetRuntime = ($bundleMode -eq "framework-dependent") -or $workerRequiresDotNetRuntime
+$requiresDotNetRuntime = $bundleMode -eq "framework-dependent"
 
 if ($requiresDotNetRuntime -and -not (Test-WindowsDesktopRuntime)) {
     Write-Host "This Meeting Recorder bundle requires the .NET 8 Desktop Runtime, but it was not detected."
@@ -81,8 +95,10 @@ if ($requiresDotNetRuntime -and -not (Test-WindowsDesktopRuntime)) {
 }
 
 if (-not (Test-VisualCppRuntime)) {
-    Write-Host "Note: Microsoft Visual C++ x64 runtime was not detected."
-    Write-Host "If the app launches but the transcription worker fails immediately, run Install-Dependencies.cmd."
+    if (-not $SuppressOptionalWarnings) {
+        Write-Host "Note: Microsoft Visual C++ x64 runtime was not detected."
+        Write-Host "If the app launches but the transcription worker fails immediately, run Install-Dependencies.cmd."
+    }
 }
 
 $bundledModelCount = if (Test-Path $modelDirectory) {
@@ -93,13 +109,13 @@ else {
 }
 
 if ($bundledModelCount -eq 0) {
-    Write-Host "Note: no Whisper model files were found under $modelDirectory."
-    Write-Host "The app can still launch, but transcription will require downloading or importing a model from the Models tab."
+    if (-not $SuppressOptionalWarnings) {
+        Write-Host "Note: no Whisper model files were found under $modelDirectory."
+        Write-Host "The app can still launch, but transcription will require downloading or importing a model from the Models tab."
+    }
 }
 
-if ($workerRequiresDotNetRuntime) {
-    Write-Host "Note: MeetingRecorder.ProcessingWorker.exe was not found, so transcription will fall back to MeetingRecorder.ProcessingWorker.dll through dotnet."
+if (-not $QuietSuccess) {
+    Write-Host "Dependency check passed. Bundle mode: $bundleMode."
 }
-
-Write-Host "Dependency check passed. Bundle mode: $bundleMode."
 exit 0

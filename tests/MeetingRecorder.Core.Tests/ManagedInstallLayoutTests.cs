@@ -100,6 +100,41 @@ public sealed class ManagedInstallLayoutTests
     }
 
     [Fact]
+    public void ProductManifest_Preserves_User_Data_Outside_The_Msi_Install_Root_For_Uninstall_And_Reinstall()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var manifestPath = Path.Combine(repoRoot, "src", "MeetingRecorder.Product", "MeetingRecorder.product.json");
+
+        Assert.True(File.Exists(manifestPath), $"Expected product manifest at '{manifestPath}'.");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var layout = document.RootElement.GetProperty("managedInstallLayout");
+        var preservedDirectories = layout
+            .GetProperty("preservedDataDirectories")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        var mergeWithoutOverwriteDirectories = layout
+            .GetProperty("mergeWithoutOverwriteDirectories")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        Assert.Equal("%LOCALAPPDATA%\\MeetingRecorder", layout.GetProperty("dataRoot").GetString());
+        Assert.Equal("%LOCALAPPDATA%\\MeetingRecorder\\config\\appsettings.json", layout.GetProperty("configPath").GetString());
+        Assert.Contains("config", preservedDirectories);
+        Assert.Contains("logs", preservedDirectories);
+        Assert.Contains("audio", preservedDirectories);
+        Assert.Contains("transcripts", preservedDirectories);
+        Assert.Contains("work", preservedDirectories);
+        Assert.Contains("models", mergeWithoutOverwriteDirectories);
+    }
+
+    [Fact]
     public void AutomaticUpdateCycle_Reconciles_Pending_Update_Metadata_Before_Checking_For_Updates()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

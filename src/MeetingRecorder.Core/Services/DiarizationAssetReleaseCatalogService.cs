@@ -55,6 +55,19 @@ public sealed class DiarizationAssetReleaseCatalogService
         }
 
         var destinationDirectory = _catalogService.GetManagedAssetDirectory(modelCacheDir);
+        return await DownloadRemoteAssetIntoDirectoryAsync(asset, destinationDirectory, cancellationToken);
+    }
+
+    public async Task<DiarizationAssetInstallStatus> DownloadRemoteAssetIntoDirectoryAsync(
+        DiarizationRemoteAsset asset,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        if (asset is null)
+        {
+            throw new ArgumentNullException(nameof(asset));
+        }
+
         Directory.CreateDirectory(destinationDirectory);
 
         var tempDownloadPath = Path.Combine(
@@ -66,7 +79,7 @@ public sealed class DiarizationAssetReleaseCatalogService
         try
         {
             await _feedClient.DownloadFileAsync(asset.DownloadUrl, tempDownloadPath, cancellationToken);
-            return await _catalogService.ImportAssetIntoManagedDirectoryAsync(tempDownloadPath, modelCacheDir, cancellationToken);
+            return await _catalogService.ImportAssetIntoDirectoryAsync(tempDownloadPath, destinationDirectory, cancellationToken);
         }
         finally
         {

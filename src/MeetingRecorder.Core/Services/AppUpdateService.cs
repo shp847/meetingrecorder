@@ -320,11 +320,17 @@ public sealed class AppUpdateInstallPolicy
 
     public bool ShouldRetryPendingInstall(
         string? pendingUpdateZipPath,
+        string? pendingUpdateVersion,
+        string currentVersion,
         bool hasActiveRecording,
         bool isProcessingInProgress,
         bool isUpdateAlreadyInProgress)
     {
         return !string.IsNullOrWhiteSpace(pendingUpdateZipPath) &&
+            !string.Equals(
+                pendingUpdateVersion?.Trim(),
+                currentVersion.Trim(),
+                StringComparison.OrdinalIgnoreCase) &&
             GetInstallBlockReason(
                 hasActiveRecording,
                 isProcessingInProgress,
@@ -339,7 +345,7 @@ public sealed class AppUpdateInstallPolicy
         bool isUpdateAlreadyInProgress)
     {
         return autoInstallEnabled &&
-            result is { Status: AppUpdateStatusKind.UpdateAvailable, DownloadUrl: not null and not "" } &&
+            result is { Status: AppUpdateStatusKind.UpdateAvailable, DownloadUrl: not null and not "", IsNewerByVersion: true } &&
             GetInstallBlockReason(
                 hasActiveRecording,
                 isProcessingInProgress,

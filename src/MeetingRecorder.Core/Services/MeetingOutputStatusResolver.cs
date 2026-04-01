@@ -6,11 +6,6 @@ internal static class MeetingOutputStatusResolver
 {
     public static string ResolveDisplayStatus(MeetingOutputRecord record)
     {
-        if (record.ManifestState is { } manifestState)
-        {
-            return manifestState.ToString();
-        }
-
         var hasAudio = !string.IsNullOrWhiteSpace(record.AudioPath);
         var hasTranscript = !string.IsNullOrWhiteSpace(record.MarkdownPath) ||
             !string.IsNullOrWhiteSpace(record.JsonPath);
@@ -23,6 +18,11 @@ internal static class MeetingOutputStatusResolver
         if (hasAudio && hasTranscript)
         {
             return SessionState.Published.ToString();
+        }
+
+        if (record.ManifestState is { } manifestState)
+        {
+            return manifestState.ToString();
         }
 
         if (hasTranscript)

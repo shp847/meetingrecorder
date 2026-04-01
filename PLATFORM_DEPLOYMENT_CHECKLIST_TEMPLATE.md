@@ -61,7 +61,7 @@ Replace the placeholders:
 - Run the desktop shell again from the installed managed root.
 - Keep each run alive for a defined smoke window.
 - Fail on new `.NET Runtime`, `Application Error`, or `Windows Error Reporting` events mentioning `<AppExecutableName>`.
-- Verify the installed executable hash matches the built bundle when using the local deploy path.
+- Verify the installed executable hash matches the built bundle when validating a managed install through the MSI or another supported release path.
 - Verify launcher shortcuts point at the canonical managed install root.
 
 ## Logging And Diagnostics

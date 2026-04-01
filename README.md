@@ -17,8 +17,9 @@ Legal notice: You are responsible for complying with applicable recording, priva
 
 The app now uses a task-first shell with two main destinations in one visible segmented navigation strip:
 
-- `Home` for the recording console: editable title, client/project, and key-attendee metadata, plus the live audio graph, start/stop controls, and quick microphone/auto-detect settings
-- `Meetings` for the published meetings workspace and maintenance actions
+- `Home` for the recording console: editable title, client/project, and key-attendee metadata, a live recording timer, the live audio graph, start/stop controls, and quick microphone/auto-detect settings
+- `Meetings` for the recent-and-published meetings workspace and maintenance actions
+- backlog processing now also surfaces through a compact mono queue chip in the header and a denser processing strip at the top of `Meetings`, so you can see whether the queue is `Processing`, `Paused`, `Queued`, or `Idle`, why it is paused, and approximate current-item / overall ETAs without opening extra tools
 Capability setup is still first-class, but it now lives inside `Settings > Setup` instead of the primary navigation.
 
 `Key attendees` is intentionally stored separately from the full raw attendee list. That keeps it useful as a searchable, user-curated field in `Meetings`, while Outlook and Teams enrichment can still upgrade short partial names to fuller matches when better attendee names are discovered.
@@ -36,12 +37,15 @@ Maintenance and support actions live in the header instead of the main navigatio
 - Records system audio and optional microphone audio on Windows
 - Supports manual recording for Teams, Google Meet, Zoom, Webex, and other conferencing apps that use the normal Windows audio stack
 - Uses assisted auto-detection for Microsoft Teams desktop and Google Meet browser meetings when you turn it on
+- `Settings > Setup` now includes a Teams integration probe that captures the current local detector baseline, checks whether the Teams third-party API candidate exposes anything beyond manual controls on this machine, promotes that path only when readable meeting state is actually available, and otherwise keeps the current local Teams detector as the fallback
 - Transcribes recordings offline with local Whisper models
 - Publishes transcript artifacts in Markdown, JSON, and ready-marker form for automation
 - Makes title, project, key-attendee, and attendee metadata searchable from the Meetings workspace
 - Lets you rename meetings, regenerate transcripts, merge meetings, split meetings, and edit diarized speaker names from the Meetings tab
 - Flags likely errant meetings with cleanup recommendations such as archive, merge, split, rename, retry-transcript, and add-speaker-label actions
 - Offers a one-time historical cleanup review plus ongoing row badges, a lighter cleanup review banner, and compact action drafts that stay tucked away until needed
+- On first launch after the updated build, the one-time published-meeting repair pass can now collapse a heavily stop/start-fragmented same-call chain into one merged publish and archive the tiny originals instead of only healing one adjacent pair
+- Repaired published meetings now derive their displayed duration from the repaired merged artifact payload when that payload no longer matches the original work-manifest timing for the reused stem
 - Can ingest dropped audio files such as phone voice memos and queue them for automatic transcription
 - Can download or import Whisper models from inside the app
 - Guides model setup with a recommended Whisper download path and an optional speaker-labeling checklist
@@ -57,7 +61,7 @@ The current documented release line is **v0.3**.
 
 - `MeetingRecorderInstaller.msi`
 
-This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files.
+This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files. A fresh MSI install always seeds the included Standard transcription and Standard speaker-labeling assets locally, then offers a first-install-only choice to keep Standard or also try the optional Higher Accuracy download for each capability.
 
 ### Other supported install paths
 
@@ -79,6 +83,7 @@ Current installer/update authority:
 - in-app updates stay CLI-only even when the app was first installed through the MSI
 - `MeetingRecorderInstaller.exe` is a branded launcher over that same bootstrap path, not a peer deployment engine
 - the default self-contained release now ships the WPF shell as a single-file `MeetingRecorder.App.exe`; the deployment CLI, worker, scripts, and product manifest remain external sidecars in the bundle
+- the portable/installer bundle now copies the full processing-worker publish output, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so queued sessions can still publish after restart instead of crashing on a missing sidecar dependency
 
 ## Runtime Model
 
@@ -101,13 +106,26 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Manual Start and Stop controls
 - Auto-detection for Teams desktop and Google Meet, off by default on new installs and reset off once for older configs to avoid extra permission prompts on some systems
 - Google Meet detection now also inspects visible Chromium tab titles, so a Meet tab can still be recognized when the main browser title is a shared Slides or Docs page
+- Chromium tab inspection now uses a short timeout and backoff window, so a stuck browser automation query cannot stall Teams or Google Meet detection for minutes while unrelated browser windows are open
+- Windows audio-session probing now also uses a short timeout and backoff window, so a hung render-session query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
 - Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or Chromium Meet tab and uses that source as a strong tie-breaker instead of a single shared audio bonus
-- Google Meet auto-start now requires Meet-specific browser-audio attribution when Chromium render sessions are available, so unrelated browser playback such as music or video does not get credited to an open Meet tab
+- Google Meet auto-start now prefers Meet-specific browser-audio attribution when Chromium render sessions are available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
+- Google Meet auto-start can now also begin from a high-confidence explicit Meet window even before render audio becomes active, including `Meet - ...` browser surfaces and `meet.google.com is sharing ...` share surfaces; generic browser windows or tab-only Meet hints still wait for stronger evidence
+- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session; a stale remembered Teams window title on its own is no longer enough to start a recording
+- Auto-started Teams recordings no longer treat a stale same-title quiet window as a forever-positive signal; instead they use a bounded quiet grace period before auto-stop, and matching Teams shell/chat/share surfaces only keep the session alive when there is still recent Teams render activity, so ended calls stop instead of recording unrelated post-call silence or microphone-only activity indefinitely
+- When a validated official Teams path is enabled, stale same-title Teams shells also stop refreshing continuity once the official lookup reports that no current meeting is active, but a current official match can still preserve the bounded quiet grace period during real low-audio patches
+- Google Meet continuity now normalizes title variants that share the same Meet code, so browser captions like `...and 1 more page`, `...Work - Microsoft Edge`, and `...Camera and microphone recording...` stay attached to one live call instead of being treated as separate meetings
+- Google Meet continuity now also treats browser share-surface titles such as `meet.google.com is sharing a window.` as part of the active call when the session is already pinned to a specific Meet meeting, which prevents screen sharing from prematurely aging an auto-started recording into auto-stop
+- When microphone capture is enabled, the publish pipeline now reduces low-level mic bleed while strong loopback audio is present, which helps avoid speaker echo when the mic can hear meeting audio from speakers
 - If an auto-started recording is first classified from stale Google Meet browser evidence and a stronger Teams in-call window appears afterward, the app now reclassifies that live session in place instead of stopping and starting a second recording
+- Manual recordings now keep assisted detection running in the background, so a session you started yourself can still reclassify in place when a stronger Teams or Google Meet meeting window appears later without opting that session into auto-stop
+- Manual recordings now also switch in place when a clearly different specific Teams or Google Meet call takes over later, even if the replacement audio attribution is only medium-confidence, and the stale old title draft is reset to the new detected meeting title
+- An active auto-started Teams recording now ignores weak unrelated Google Meet browser candidates during quiet patches, so a stale Meet tab can no longer trigger repeated stop/start churn on the live Teams call
 - Auto-stop when meeting signals disappear
 - Auto-stop now surfaces a live countdown on `Home` for auto-started sessions and switches immediately into an `Auto-stopping` state when the timeout expires, so controls disable before background finalization finishes
 - Continuity handling for quiet patches, compact-view surfaces, and sharing-control surfaces in Teams
 - Teams chat-thread playback surfaces are now deprioritized so recording playback is less likely to auto-start as if it were a live meeting
+- Bare Teams shell or navigation titles such as `Chat | Microsoft Teams` and `Activity | Microsoft Teams` are now ignored safely instead of crashing the background detection loop
 - Lingering Teams background processes or weak process-only signals no longer keep an auto-started recording alive after the actual meeting window disappears
 - Live audio activity graph during active capture
 
@@ -120,8 +138,10 @@ For newer managed installs, the app can also migrate prior portable data forward
 
 ### Meeting Management
 
-- Meetings workspace with a search/sort/group toolbar, a default grouped view for existing and new users, grouped browsing by week, month, platform, or status, and a calmer focused-detail area beneath the list
+- Meetings workspace with a search/sort/group toolbar, a default grouped view for existing and new users, grouped browsing by week, month, platform, status, client / project, or attendee, and a calmer focused-detail area beneath the list
 - Meetings workspace now publishes the current list first, then loads cleanup suggestions and recent attendee backfill in the background so the tab stays responsive on larger histories
+- Recent ended sessions that are still queued, processing, finalizing, or failed in the work queue now remain visible in `Meetings` even before publish artifacts land
+- Published audio/transcript artifacts now win over stale queued imported-source reprocessing manifests, so already-published meetings stay openable instead of regressing to false `Queued` / `Missing` rows
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges
 - Grouped browsing now opens the first visible group by default, keeps other groups collapsed initially, and exposes quick `Expand All` and `Collapse All` controls
 - Selected-meeting inspector showing attendees, project, recommendation badges, transcript model metadata, speaker-label state, and the persisted detected audio source summary
@@ -155,7 +175,18 @@ For newer managed installs, the app can also migrate prior portable data forward
 - CLI-only update apply flow for MSI, EXE, script, and ZIP-origin installs
 - In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so single-file app launches do not accidentally look for the updater helper inside the temporary `.net` extraction folder
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory via the running process path, so queued sessions still publish correctly from single-file installs
-- Same-version pending updates are only cleared when their published-at and asset-size identity matches the installed build, so rebuilt releases can still replace older binaries that report the same semantic version
+- Managed install repair now restores the required worker sidecar payload if any of those files are missing from an existing install, instead of only checking for the worker `.exe`
+- Same-version pending updates are only cleared when their published-at and asset-size identity matches the installed build, so rebuilt releases can still replace older binaries that report the same semantic version when you install them manually
+- Background auto-install and pending-update retry are limited to true semantic-version upgrades, so a republished same-version build does not immediately try to update a freshly relaunched app against itself
+- If the processing worker crashes inside optional speaker labeling, the queue now stamps that manifest with an internal skip-label override, retries it once without diarization, persists a durable per-session transcript snapshot before speaker labeling begins, repairs older stale post-transcription sessions on startup, and prioritizes those already-transcribed repaired sessions ahead of untouched queue items so audio and transcript publishing can still complete instead of leaving meetings stranded in the backlog
+- `Settings > Advanced` now exposes `Background processing mode` (`Responsive`, `Balanced`, `FastestDrain`) and `Speaker labeling mode` (`Deferred`, `Throttled`, `Inline`) so you can trade backlog drain speed against overall machine responsiveness
+- The default performance profile is `Responsive` plus `Deferred`, which pauses new background queue work while a live recording is active, launches the worker at reduced OS priority, caps worker thread usage, and lets audio/transcript publish finish before optional speaker labeling
+- The shell now exposes queue-state visibility for that throttled backlog: the header chip stays visible whenever backlog exists, and the Meetings processing strip shows pause reasons such as `Paused by live recording`, the active item, current stage, elapsed processing time, and approximate per-item plus overall queue ETAs
+- Startup and pre-worker maintenance now clean up stale unlocked temp files under `%LOCALAPPDATA%\\Temp\\MeetingRecorderDiarization` and `%LOCALAPPDATA%\\Temp\\MeetingRecorderTranscription`, including a one-time more aggressive recovery pass after upgrade so orphaned worker temp files do not keep filling the disk
+- Startup now also archives superseded imported-source reprocessing work folders under `%LOCALAPPDATA%\\MeetingRecorder\\maintenance\\archived-imported-source-work` when the original published transcript artifacts already exist, so false backlog rows do not keep reappearing in `Meetings`
+- Meeting detection now runs its heavy window/audio scan off the WPF dispatcher, skips overlapping scans instead of stacking them, and bounds both browser-tab inspection and audio-session probing so supported-call detection no longer freezes the shell or wait minutes for one stuck probe to finish
+- Non-urgent Meetings refreshes are now coalesced while `Home` is active or a recording is still live, then caught up automatically when `Meetings` becomes visible again, so config saves and stop-time publish no longer interrupt typing or start/stop transitions
+- The Home screen now uses a wider full-canvas recording layout that stretches across the available tab width, keeps the quick settings underneath the main console, and uses fixed toggle widths so the setting cards do not resize when states change
 - A second launch now waits briefly for a winding-down prior instance before it reports that the app is still running
 - MSI, EXE, ZIP, and command bootstrap release assets
 
@@ -247,7 +278,12 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - Diarization is optional and remains best-effort
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
 - GPU acceleration for diarization is user-controlled and defaults to `Auto`, which tries DirectML on compatible Windows GPUs and falls back to CPU automatically
-- `Settings > Setup` separates `Transcription` and `Speaker labeling` into dedicated sections while keeping the same compact readiness guidance and `Local Help First` fallback behavior
+- The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
+- `Standard` transcription (`ggml-base.en-q8_0.bin`) and `Standard` speaker labeling (`meeting-recorder-diarization-bundle-standard-win-x64.zip`) are bundled into the main app payload for offline-first installs
+- `Higher Accuracy` transcription (`ggml-small.en-q8_0.bin`) and `Higher Accuracy` speaker labeling (`meeting-recorder-diarization-bundle-accurate-win-x64.zip`) remain separate GitHub release downloads
+- The MSI can offer those optional Higher Accuracy downloads during first install, but if downloads fail the included Standard assets stay active and the user can retry later from `Settings > Setup`
+- `Settings > Setup` separates `Transcription` and `Speaker labeling` into dedicated sections with curated `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics actions for lay users
+- `Settings > Setup` now also includes `Teams integration`, where you can choose `Auto`, `Fallback only`, or `Third-party API`, then run a probe that saves the last probe time, strongest promotable path, and any block reason alongside the current Teams capability snapshot
 - Built-in automatic model and speaker-labeling downloads use GitHub release assets only
 - Alternate public speaker-labeling download locations are curated links and may currently be unavailable
 - The speaker-labeling help path opens the bundled local `SETUP.md` first and falls back to GitHub only when the local guide cannot be found
@@ -261,7 +297,7 @@ The app exposes settings in the header-level `Settings` surface for:
 - setup
 - output locations
 - work folder
-- model and diarization asset selection
+- curated transcription and speaker-labeling profile selection
 - diarization GPU acceleration preference
 - microphone capture
 - launch on login
@@ -271,15 +307,20 @@ The app exposes settings in the header-level `Settings` surface for:
 - attendee enrichment from Outlook and Teams when available
 - audio threshold and meeting stop timeout
 
-The app keeps only `Home` and `Meetings` in the primary navigation. `Settings > Setup` is where you make transcription or optional speaker labeling ready. `Settings > General`, `Files`, `Updates`, and `Advanced` handle recording behavior, storage, release behavior, and troubleshooting.
+The app keeps only `Home` and `Meetings` in the primary navigation. `Settings > Setup` is where you make transcription, optional speaker labeling, and the Teams integration probe ready. The normal setup flow now stays on curated `Standard` vs `Higher Accuracy` choices plus approved-file import, while raw storage paths are read-only diagnostics in `Advanced`. `Settings > General`, `Files`, `Updates`, and `Advanced` handle recording behavior, storage, release behavior, and troubleshooting.
 
-The `Home` console is intentionally minimal. It keeps only the meeting title editor, detected audio source summary, live audio graph, start/stop controls, and quick `Microphone capture` / `Automatic detection` controls, while the shell header status capsule surfaces setup or update actions when needed.
+The `Home` console is intentionally minimal. It uses a wider full-width recording canvas, keeps `Microphone capture` and `Automatic detection` underneath the main panel, treats `Client / project` and `Key attendees` as optional metadata next to the required title, shows a live elapsed recording timer while capture is active, and keeps setup or update actions in the shell header status capsule when needed. `Key attendees` accepts comma- or semicolon-delimited names, stores them as separate attendee entries, and later reconciles them against richer Outlook or Teams attendee names when those are discovered. Microphone capture can also be turned on or off during an active recording, with the change applying from that moment forward while also updating the saved default.
+While a recording is active, edits to `Client / project` and `Key attendees` are now saved back into the live session shortly after you type instead of waiting until stop.
+If a manual recording is later strongly reclassified to a supported Teams or Google Meet call, that session now also adopts meeting-end auto-stop behavior so it does not keep recording unrelated system audio after the call closes. If a clearly different specific supported call takes over later on the same platform, the active session now switches to that new meeting identity instead of staying pinned to the stale earlier title.
+When automatic detection is turned off, the header status now switches into an explicit manual-mode state instead of continuing to imply that auto-detection is available.
+The packaged startup launcher now stays quiet on normal success. If no Whisper model is installed yet, that remains an in-app setup state instead of printing a recurring startup console warning every time you launch the app.
+Approximate queue ETA now also works for imported audio sessions that have not populated `EndedAtUtc` yet, as long as the merged WAV is available for duration inspection.
 
 The `Settings` surface opens as a dedicated dialog from the header, keeps capability setup first under `Setup`, keeps everyday defaults under `General`, groups output paths under `Files`, keeps release behavior in `Updates`, and tucks infrastructure and troubleshooting paths under `Advanced`.
 
 The header-level `Help` surface now opens as a dedicated dialog and owns About details, setup/help entry points, logs/data folder shortcuts, and release-page links.
 
-Calendar title fallback is optional and soft-fail by design. Separately, attendee enrichment now defaults on and can merge Outlook appointment attendees plus best-effort live Teams roster names into meeting metadata when those sources are available. If Outlook access or Teams automation is unavailable, recording and detection continue normally.
+Calendar title fallback is optional and soft-fail by design. Separately, attendee enrichment now defaults on and can merge Outlook appointment attendees plus best-effort live Teams roster names into meeting metadata when those sources are available. Outlook attendee enrichment now requires a reasonable meeting-identity match before it stamps names into the meeting, so a 1:1 recording does not inherit attendees from an unrelated overlapping calendar item. The Outlook lookup path now reuses a per-day in-memory appointment cache, coalesces concurrent same-day reads, only binds to an already-running Outlook session, performs the COM read on an STA thread, and enters a temporary backoff after short lookup timeouts or other Outlook failures. That keeps generic-title detection and attendee backfill from repeatedly reopening calendar automation work, reduces the chance of Outlook shared-resource warnings, and lets queue processing continue when Outlook is unhealthy. If Outlook access or Teams automation is unavailable, recording and detection continue normally.
 
 ## Designed for Practical Windows Use
 

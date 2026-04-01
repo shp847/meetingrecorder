@@ -4,6 +4,7 @@ using NAudio.CoreAudioApi;
 using System.Globalization;
 using System.Diagnostics;
 using System.Windows.Automation;
+using System.Threading;
 
 namespace MeetingRecorder.App.Services;
 
@@ -33,6 +34,15 @@ internal sealed class WindowMeetingDetector
     private readonly MeetingTitleEnricher _meetingTitleEnricher;
     private readonly Func<IReadOnlyList<MeetingWindowCandidate>> _enumerateCandidates;
     private readonly Func<MeetingWindowCandidate, IReadOnlyList<string>> _enumerateBrowserTabTitles;
+    private readonly TimeSpan _browserTabEnumerationTimeout;
+    private readonly TimeSpan _browserTabEnumerationBackoff;
+    private readonly TimeSpan _audioProbeTimeout;
+    private readonly TimeSpan _audioProbeBackoff;
+    private readonly Action<string>? _log;
+    private long _browserTabEnumerationDisabledUntilUtcTicks;
+    private long _audioProbeDisabledUntilUtcTicks;
+    private readonly object _audioProbeTaskGate = new();
+    private Task<AudioSourceAttributionSnapshot>? _activeAudioProbeTask;
 
     public WindowMeetingDetector(
         LiveAppConfig config,
@@ -45,7 +55,12 @@ internal sealed class WindowMeetingDetector
             audioActivityProbe,
             meetingTitleEnricher,
             EnumerateCandidateWindows,
-            EnumerateBrowserTabTitles)
+            EnumerateBrowserTabTitles,
+            TimeSpan.FromMilliseconds(750),
+            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMilliseconds(750),
+            TimeSpan.FromMinutes(2),
+            null)
     {
     }
 
@@ -55,7 +70,12 @@ internal sealed class WindowMeetingDetector
         IAudioActivityProbe audioActivityProbe,
         MeetingTitleEnricher meetingTitleEnricher,
         Func<IReadOnlyList<MeetingWindowCandidate>> enumerateCandidates,
-        Func<MeetingWindowCandidate, IReadOnlyList<string>> enumerateBrowserTabTitles)
+        Func<MeetingWindowCandidate, IReadOnlyList<string>> enumerateBrowserTabTitles,
+        TimeSpan browserTabEnumerationTimeout,
+        TimeSpan browserTabEnumerationBackoff,
+        TimeSpan audioProbeTimeout,
+        TimeSpan audioProbeBackoff,
+        Action<string>? log = null)
     {
         _config = config;
         _evaluator = evaluator;
@@ -63,12 +83,25 @@ internal sealed class WindowMeetingDetector
         _meetingTitleEnricher = meetingTitleEnricher;
         _enumerateCandidates = enumerateCandidates ?? throw new ArgumentNullException(nameof(enumerateCandidates));
         _enumerateBrowserTabTitles = enumerateBrowserTabTitles ?? throw new ArgumentNullException(nameof(enumerateBrowserTabTitles));
+        _browserTabEnumerationTimeout = browserTabEnumerationTimeout > TimeSpan.Zero
+            ? browserTabEnumerationTimeout
+            : throw new ArgumentOutOfRangeException(nameof(browserTabEnumerationTimeout), "The browser tab enumeration timeout must be greater than zero.");
+        _browserTabEnumerationBackoff = browserTabEnumerationBackoff > TimeSpan.Zero
+            ? browserTabEnumerationBackoff
+            : throw new ArgumentOutOfRangeException(nameof(browserTabEnumerationBackoff), "The browser tab enumeration backoff must be greater than zero.");
+        _audioProbeTimeout = audioProbeTimeout > TimeSpan.Zero
+            ? audioProbeTimeout
+            : throw new ArgumentOutOfRangeException(nameof(audioProbeTimeout), "The audio probe timeout must be greater than zero.");
+        _audioProbeBackoff = audioProbeBackoff > TimeSpan.Zero
+            ? audioProbeBackoff
+            : throw new ArgumentOutOfRangeException(nameof(audioProbeBackoff), "The audio probe backoff must be greater than zero.");
+        _log = log;
     }
 
     public DetectionDecision? DetectBestCandidate()
     {
         var candidates = new List<DetectionDecision>();
-        var audioAttribution = _audioActivityProbe.Capture(_config.Current.AutoDetectAudioPeakThreshold);
+        var audioAttribution = TryCaptureAudioAttribution();
 
         foreach (var candidateWindow in _enumerateCandidates())
         {
@@ -121,6 +154,11 @@ internal sealed class WindowMeetingDetector
         return bestCandidate;
     }
 
+    public Task<DetectionDecision?> DetectBestCandidateAsync(CancellationToken cancellationToken)
+    {
+        return Task.Run(DetectBestCandidate, cancellationToken);
+    }
+
     internal static DetectionDecision ApplyTeamsPlaybackHeuristic(
         DetectionDecision candidate,
         IReadOnlyList<DetectionDecision> allCandidates)
@@ -129,17 +167,22 @@ internal sealed class WindowMeetingDetector
         ArgumentNullException.ThrowIfNull(allCandidates);
 
         if (!IsAmbiguousPlainTeamsContentWindow(candidate) ||
-            !HasMatchingSuppressedTeamsChatCandidate(candidate, allCandidates))
+            HasTeamsRenderEvidence(candidate) ||
+            HasUnavailableAudioProbeSignal(candidate))
         {
             return candidate;
         }
+
+        var hasMatchingSuppressedChatCandidate = HasMatchingSuppressedTeamsChatCandidate(candidate, allCandidates);
 
         return candidate with
         {
             ShouldStart = false,
             ShouldKeepRecording = false,
             Confidence = Math.Min(candidate.Confidence, 0.15d),
-            Reason = "The detected Teams window appears to be playback or chat-thread media, not a live meeting.",
+            Reason = hasMatchingSuppressedChatCandidate
+                ? "The detected Teams window appears to be playback or chat-thread media, not a live meeting."
+                : "The detected Teams window appears to be Teams content without recent Teams render audio, not a live meeting.",
         };
     }
 
@@ -169,7 +212,7 @@ internal sealed class WindowMeetingDetector
         return candidatePriority.SignalCount > currentBestPriority.SignalCount;
     }
 
-    private static IReadOnlyList<MeetingWindowCandidate> EnumerateCandidateWindows()
+    internal static IReadOnlyList<MeetingWindowCandidate> EnumerateCandidateWindows()
     {
         return TopLevelWindowEnumerator.EnumerateVisibleWindowsByClass(SupportedMeetingWindowClasses)
             .Select(window => new MeetingWindowCandidate(
@@ -245,19 +288,33 @@ internal sealed class WindowMeetingDetector
         if (audioMatch is not null)
         {
             signals.Add(new DetectionSignal(
-                GetAudioSignalSource(audioMatch.Source.MatchKind),
+                audioAttribution.IsActive
+                    ? GetAudioSignalSource(audioMatch.Source.MatchKind)
+                    : "audio-session-match",
                 BuildAudioSignalValue(audioMatch),
-                GetAudioSignalWeight(audioMatch.Source.MatchKind, audioMatch.Source.Confidence),
+                audioAttribution.IsActive
+                    ? GetAudioSignalWeight(audioMatch.Source.MatchKind, audioMatch.Source.Confidence)
+                    : 0d,
                 now));
         }
         else
         {
-            var audioSource = ShouldRequireGoogleMeetAudioAttribution(isGoogleMeetCandidate, audioAttribution)
+            var shouldTrustExplicitGoogleMeetBrowserAudio = ShouldTrustExplicitGoogleMeetBrowserAudio(
+                candidateWindow,
+                detectionTitle,
+                audioAttribution);
+            var audioSource = shouldTrustExplicitGoogleMeetBrowserAudio
+                ? "audio-browser-unverified"
+                : ShouldRequireGoogleMeetAudioAttribution(isGoogleMeetCandidate, audioAttribution)
                 ? "audio-browser-unverified"
                 : audioAttribution.IsActive
                     ? "audio-activity"
                     : "audio-silence";
-            var audioWeight = audioSource == "audio-activity" ? 0.1d : 0d;
+            var audioWeight = shouldTrustExplicitGoogleMeetBrowserAudio
+                ? 0.20d
+                : audioSource == "audio-activity"
+                    ? 0.1d
+                    : 0d;
             var audioValue = string.IsNullOrWhiteSpace(audioAttribution.DeviceName)
                 ? $"peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "unknown"}"
                 : $"{audioAttribution.DeviceName}; peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "ok"}";
@@ -283,7 +340,7 @@ internal sealed class WindowMeetingDetector
             return titles;
         }
 
-        foreach (var tabTitle in _enumerateBrowserTabTitles(candidateWindow))
+        foreach (var tabTitle in TryEnumerateBrowserTabTitles(candidateWindow))
         {
             if (!LooksLikeGoogleMeetWindowTitle(tabTitle))
             {
@@ -302,12 +359,135 @@ internal sealed class WindowMeetingDetector
         return titles;
     }
 
+    private AudioSourceAttributionSnapshot TryCaptureAudioAttribution()
+    {
+        var disabledUntilUtcTicks = Interlocked.Read(ref _audioProbeDisabledUntilUtcTicks);
+        if (disabledUntilUtcTicks > 0 && DateTimeOffset.UtcNow.UtcTicks < disabledUntilUtcTicks)
+        {
+            return CreateUnavailableAudioSnapshot("audio probe temporarily skipped after a previous timeout");
+        }
+
+        var threshold = _config.Current.AutoDetectAudioPeakThreshold;
+        var audioProbeTask = GetOrStartAudioProbeTask(threshold, out var startedNewProbe);
+        if (!startedNewProbe)
+        {
+            var disabledUntilUtc = DateTimeOffset.UtcNow + _audioProbeBackoff;
+            Interlocked.Exchange(ref _audioProbeDisabledUntilUtcTicks, disabledUntilUtc.UtcTicks);
+            _log?.Invoke(
+                $"Skipped audio activity probe because the previous probe is still running. " +
+                $"Skipping audio attribution until {disabledUntilUtc:O}.");
+            return CreateUnavailableAudioSnapshot("audio probe still running");
+        }
+
+        if (!audioProbeTask.Wait(_audioProbeTimeout))
+        {
+            var disabledUntilUtc = DateTimeOffset.UtcNow + _audioProbeBackoff;
+            Interlocked.Exchange(ref _audioProbeDisabledUntilUtcTicks, disabledUntilUtc.UtcTicks);
+            _log?.Invoke(
+                $"Audio activity probe timed out after {_audioProbeTimeout.TotalMilliseconds:0}ms. " +
+                $"Skipping audio attribution until {disabledUntilUtc:O}.");
+            return CreateUnavailableAudioSnapshot("audio probe timed out");
+        }
+
+        Interlocked.Exchange(ref _audioProbeDisabledUntilUtcTicks, 0);
+        try
+        {
+            return audioProbeTask.GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            _log?.Invoke($"Audio activity probe failed: {exception.Message}");
+            return CreateUnavailableAudioSnapshot(exception.Message);
+        }
+    }
+
+    private Task<AudioSourceAttributionSnapshot> GetOrStartAudioProbeTask(double threshold, out bool startedNewProbe)
+    {
+        lock (_audioProbeTaskGate)
+        {
+            if (_activeAudioProbeTask is null || _activeAudioProbeTask.IsCompleted)
+            {
+                _activeAudioProbeTask = Task.Run(() => _audioActivityProbe.Capture(threshold));
+                startedNewProbe = true;
+                return _activeAudioProbeTask;
+            }
+
+            startedNewProbe = false;
+            return _activeAudioProbeTask;
+        }
+    }
+
+    private static AudioSourceAttributionSnapshot CreateUnavailableAudioSnapshot(string statusDetail)
+    {
+        return new AudioSourceAttributionSnapshot(
+            null,
+            0d,
+            false,
+            statusDetail,
+            Array.Empty<AudioSourceSessionSnapshot>(),
+            null);
+    }
+
+    private IReadOnlyList<string> TryEnumerateBrowserTabTitles(MeetingWindowCandidate candidateWindow)
+    {
+        var disabledUntilUtcTicks = Interlocked.Read(ref _browserTabEnumerationDisabledUntilUtcTicks);
+        if (disabledUntilUtcTicks > 0 && DateTimeOffset.UtcNow.UtcTicks < disabledUntilUtcTicks)
+        {
+            return Array.Empty<string>();
+        }
+
+        IReadOnlyList<string>? titles = null;
+        Exception? enumerationException = null;
+        using var completed = new ManualResetEventSlim(false);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                titles = _enumerateBrowserTabTitles(candidateWindow);
+            }
+            catch (Exception exception)
+            {
+                enumerationException = exception;
+            }
+            finally
+            {
+                completed.Set();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "MeetingRecorder Browser Tab Enumeration",
+        };
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        if (!completed.Wait(_browserTabEnumerationTimeout))
+        {
+            var disabledUntilUtc = DateTimeOffset.UtcNow + _browserTabEnumerationBackoff;
+            Interlocked.Exchange(ref _browserTabEnumerationDisabledUntilUtcTicks, disabledUntilUtc.UtcTicks);
+            _log?.Invoke(
+                $"Browser tab enumeration timed out after {_browserTabEnumerationTimeout.TotalMilliseconds:0}ms for window '{candidateWindow.MainWindowTitle}'. " +
+                $"Skipping browser tab inspection until {disabledUntilUtc:O}.");
+            return Array.Empty<string>();
+        }
+
+        if (enumerationException is not null)
+        {
+            _log?.Invoke(
+                $"Browser tab enumeration failed for window '{candidateWindow.MainWindowTitle}': {enumerationException.Message}");
+            return Array.Empty<string>();
+        }
+
+        return titles ?? Array.Empty<string>();
+    }
+
     private static AudioSourceAttributionMatch? MatchAudioSource(
         MeetingWindowCandidate candidateWindow,
         CandidateDetectionTitle detectionTitle,
         AudioSourceAttributionSnapshot audioAttribution)
     {
-        if (!audioAttribution.IsActive || audioAttribution.Sessions.Count == 0)
+        if (audioAttribution.Sessions.Count == 0)
         {
             return null;
         }
@@ -415,6 +595,42 @@ internal sealed class WindowMeetingDetector
         return isGoogleMeetCandidate &&
             audioAttribution.IsActive &&
             audioAttribution.Sessions.Count > 0;
+    }
+
+    private static bool ShouldTrustExplicitGoogleMeetBrowserAudio(
+        MeetingWindowCandidate candidateWindow,
+        CandidateDetectionTitle detectionTitle,
+        AudioSourceAttributionSnapshot audioAttribution)
+    {
+        if (!audioAttribution.IsActive ||
+            detectionTitle.FromBrowserTab ||
+            !LooksLikeBrowserWindowClass(candidateWindow.WindowClassName) ||
+            !LooksLikeGoogleMeetWindowTitle(candidateWindow.MainWindowTitle) ||
+            !string.Equals(candidateWindow.MainWindowTitle, detectionTitle.Title, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var candidateProcessName = NormalizeProcessName(candidateWindow.ProcessName);
+        if (string.IsNullOrWhiteSpace(candidateProcessName))
+        {
+            return false;
+        }
+
+        foreach (var session in audioAttribution.Sessions)
+        {
+            if (!session.IsActive || session.IsCurrentProcess || session.IsSystemSounds)
+            {
+                continue;
+            }
+
+            if (IsBrowserFamilyMatch(candidateProcessName, NormalizeProcessName(session.ProcessName)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool CanMatchGoogleMeetAudioSource(
@@ -619,7 +835,7 @@ internal sealed class WindowMeetingDetector
         return string.Join("; ", details);
     }
 
-    private static IReadOnlyList<string> EnumerateBrowserTabTitles(MeetingWindowCandidate candidateWindow)
+    internal static IReadOnlyList<string> EnumerateBrowserTabTitles(MeetingWindowCandidate candidateWindow)
     {
         if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName) ||
             candidateWindow.WindowHandle == nint.Zero)
@@ -817,6 +1033,63 @@ internal sealed class WindowMeetingDetector
                 {
                     return true;
                 }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasTeamsRenderEvidence(DetectionDecision candidate)
+    {
+        if (candidate.Platform != MeetingPlatform.Teams)
+        {
+            return false;
+        }
+
+        if (candidate.DetectedAudioSource is
+            {
+                AppName: var appName,
+                MatchKind: not AudioSourceMatchKind.EndpointFallback,
+            } &&
+            string.Equals(appName, "Microsoft Teams", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (var signal in candidate.Signals)
+        {
+            if (!signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!signal.Value.Contains("Microsoft Teams", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return signal.Source.Equals("audio-session-match", StringComparison.OrdinalIgnoreCase) ||
+                signal.Source.Equals("audio-window", StringComparison.OrdinalIgnoreCase) ||
+                signal.Source.Equals("audio-process", StringComparison.OrdinalIgnoreCase) ||
+                signal.Source.Equals("audio-browser-window", StringComparison.OrdinalIgnoreCase) ||
+                signal.Source.Equals("audio-browser-tab", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static bool HasUnavailableAudioProbeSignal(DetectionDecision candidate)
+    {
+        foreach (var signal in candidate.Signals)
+        {
+            if (!signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (signal.Value.Contains("audio probe", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
         }
 

@@ -55,6 +55,16 @@ internal sealed class CalendarMeetingMetadataEnricher
             return manifest;
         }
 
+        if (!CalendarMeetingAttendeeMergePolicy.ShouldMergeAttendees(
+                manifest.Platform,
+                manifest.DetectedTitle,
+                manifest.Attendees,
+                manifest.KeyAttendees,
+                candidate))
+        {
+            return manifest;
+        }
+
         var mergedAttendees = MergeAttendees(manifest.Attendees, candidate.Attendees);
         var mergedKeyAttendees = MeetingMetadataNameMatcher.MergeNames(
             manifest.KeyAttendees,

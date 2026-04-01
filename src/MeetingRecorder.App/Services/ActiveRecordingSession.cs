@@ -10,7 +10,13 @@ internal sealed class ActiveRecordingSession
 
     public required ChunkedWaveRecorder LoopbackRecorder { get; init; }
 
-    public ChunkedWaveRecorder? MicrophoneRecorder { get; init; }
+    public ChunkedWaveRecorder? MicrophoneRecorder { get; set; }
+
+    public DateTimeOffset? ActiveMicrophoneSegmentStartedAtUtc { get; set; }
+
+    public List<MicrophoneCaptureSegment> CompletedMicrophoneCaptureSegments { get; init; } = [];
 
     public required bool AutoStarted { get; init; }
+
+    public bool MeetingLifecycleManaged { get; set; }
 }

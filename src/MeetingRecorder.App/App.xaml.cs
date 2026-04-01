@@ -1,5 +1,6 @@
 using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Branding;
+using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Services;
 using System.Windows;
 using System.Windows.Threading;
@@ -87,8 +88,6 @@ public partial class App : Application
 
         Exception? migrationFailure = null;
         var migratedLegacyData = false;
-        Exception? transcriptSidecarMigrationFailure = null;
-        TranscriptSidecarLayoutMigrationResult? transcriptSidecarMigrationResult = null;
         try
         {
             migratedLegacyData = LegacyPortableDataMigrationService.TryMigrateFromLegacyPortableInstall();
@@ -133,32 +132,6 @@ public partial class App : Application
                 _logger.Log("Refreshed installed release metadata from the legacy installer config so the Updates tab reflects the current package.");
             }
 
-            try
-            {
-                transcriptSidecarMigrationResult = TranscriptSidecarLayoutMigrationService.Migrate(config.TranscriptOutputDir);
-            }
-            catch (Exception exception)
-            {
-                transcriptSidecarMigrationFailure = exception;
-            }
-
-            if (transcriptSidecarMigrationResult is { MovedArtifactCount: > 0 } movedResult)
-            {
-                _logger.Log(
-                    $"Moved {movedResult.MovedArtifactCount} legacy transcript sidecar artifact(s) into '{movedResult.SidecarDirectory}'.");
-            }
-
-            if (transcriptSidecarMigrationResult is { SkippedArtifactCount: > 0 } skippedResult)
-            {
-                _logger.Log(
-                    $"Skipped {skippedResult.SkippedArtifactCount} transcript sidecar artifact migration(s) because the destination file already existed in '{skippedResult.SidecarDirectory}'.");
-            }
-
-            if (transcriptSidecarMigrationFailure is not null)
-            {
-                _logger.Log($"Transcript sidecar migration failed: {transcriptSidecarMigrationFailure}");
-            }
-
             var liveConfig = new LiveAppConfig(configStore, config);
             var mainWindow = new MainWindow(liveConfig, _logger);
             MainWindow = mainWindow;
@@ -169,11 +142,74 @@ public partial class App : Application
                 BringMainWindowToFront();
             }
             StartInstallerShutdownMonitor();
+            _ = RunPostWindowStartupMaintenanceAsync(config);
         }
         catch (Exception exception)
         {
             _logger.Log($"Startup failure: {exception}");
             throw;
+        }
+    }
+
+    private async Task RunPostWindowStartupMaintenanceAsync(AppConfig config)
+    {
+        await Task.Yield();
+
+        TranscriptSidecarLayoutMigrationResult? transcriptSidecarMigrationResult = null;
+        Exception? transcriptSidecarMigrationFailure = null;
+        PublishedMeetingRepairResult? publishedMeetingRepairResult = null;
+        Exception? publishedMeetingRepairFailure = null;
+
+        try
+        {
+            transcriptSidecarMigrationResult = await Task.Run(
+                () => TranscriptSidecarLayoutMigrationService.Migrate(config.TranscriptOutputDir));
+        }
+        catch (Exception exception)
+        {
+            transcriptSidecarMigrationFailure = exception;
+        }
+
+        if (transcriptSidecarMigrationResult is { MovedArtifactCount: > 0 } movedResult)
+        {
+            _logger?.Log(
+                $"Moved {movedResult.MovedArtifactCount} legacy transcript sidecar artifact(s) into '{movedResult.SidecarDirectory}'.");
+        }
+
+        if (transcriptSidecarMigrationResult is { SkippedArtifactCount: > 0 } skippedResult)
+        {
+            _logger?.Log(
+                $"Skipped {skippedResult.SkippedArtifactCount} transcript sidecar artifact migration(s) because the destination file already existed in '{skippedResult.SidecarDirectory}'.");
+        }
+
+        if (transcriptSidecarMigrationFailure is not null)
+        {
+            _logger?.Log($"Transcript sidecar migration failed: {transcriptSidecarMigrationFailure}");
+        }
+
+        try
+        {
+            var installRoot = UpdateInstallerLaunchBuilder.ResolveInstalledAppRoot(Environment.ProcessPath, AppContext.BaseDirectory);
+            publishedMeetingRepairResult = await Task.Run(
+                () => PublishedMeetingRepairService.RepairKnownIssuesAsync(
+                    config.AudioOutputDir,
+                    config.TranscriptOutputDir,
+                    installRoot));
+        }
+        catch (Exception exception)
+        {
+            publishedMeetingRepairFailure = exception;
+        }
+
+        if (publishedMeetingRepairResult is { AlreadyApplied: false } repairResult)
+        {
+            _logger?.Log(
+                $"Published meeting repair completed: mergedSplitPairCount={repairResult.MergedSplitPairCount}; archivedArtifactCount={repairResult.ArchivedArtifactCount}; archiveDirectory='{repairResult.ArchiveDirectory}'.");
+        }
+
+        if (publishedMeetingRepairFailure is not null)
+        {
+            _logger?.Log($"Published meeting repair failed: {publishedMeetingRepairFailure}");
         }
     }
 
@@ -189,22 +225,39 @@ public partial class App : Application
             _installerShutdownMonitorCts.Cancel();
         }
 
+        ObserveCompletedMonitorTask(_activationMonitorTask);
+        ObserveCompletedMonitorTask(_installerShutdownMonitorTask);
+
+        _activationMonitorCts?.Dispose();
+        if (_activationMonitorTask is null or { IsCompleted: true })
+        {
+            _activationSignal?.Dispose();
+        }
+
+        _installerShutdownMonitorCts?.Dispose();
+        if (_installerShutdownMonitorTask is null or { IsCompleted: true })
+        {
+            _installerShutdownSignal?.Dispose();
+        }
+        _instanceCoordinator?.Dispose();
+
+        base.OnExit(e);
+    }
+
+    private static void ObserveCompletedMonitorTask(Task? monitorTask)
+    {
+        if (monitorTask is not { IsCompleted: true })
+        {
+            return;
+        }
+
         try
         {
-            _activationMonitorTask?.GetAwaiter().GetResult();
-            _installerShutdownMonitorTask?.GetAwaiter().GetResult();
+            monitorTask.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
         {
         }
-
-        _activationMonitorCts?.Dispose();
-        _activationSignal?.Dispose();
-        _installerShutdownMonitorCts?.Dispose();
-        _installerShutdownSignal?.Dispose();
-        _instanceCoordinator?.Dispose();
-
-        base.OnExit(e);
     }
 
     private void StartInstallerShutdownMonitor()

@@ -140,6 +140,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     private static AppConfig BuildDefaultConfig(string rootDirectory, string documentsDirectory)
     {
         var modelCache = Path.Combine(rootDirectory, "models");
+        var catalog = MeetingRecorderModelCatalog.CreateDefault();
+        var defaultTranscriptionModelPath = Path.Combine(
+            modelCache,
+            catalog.Transcription.StandardIncluded.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        var defaultDiarizationAssetPath = Path.Combine(
+            modelCache,
+            catalog.SpeakerLabeling.StandardIncluded.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
         return new AppConfig
         {
@@ -147,8 +154,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             TranscriptOutputDir = AppDataPaths.GetManagedTranscriptsRoot(documentsDirectory),
             WorkDir = Path.Combine(rootDirectory, "work"),
             ModelCacheDir = modelCache,
-            TranscriptionModelPath = Path.Combine(modelCache, "asr", "ggml-base.bin"),
-            DiarizationAssetPath = Path.Combine(modelCache, "diarization"),
+            TranscriptionModelPath = defaultTranscriptionModelPath,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.StandardIncluded,
+            DiarizationAssetPath = defaultDiarizationAssetPath,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.StandardIncluded,
             DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
             MicCaptureEnabled = true,
             LaunchOnLoginEnabled = true,
@@ -159,6 +168,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateCheckEnabled = true,
             AutoInstallUpdatesEnabled = true,
             UpdateFeedUrl = AppBranding.DefaultUpdateFeedUrl,
+            BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+            BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
             LastUpdateCheckUtc = null,
             InstalledReleaseVersion = AppBranding.Version,
             InstalledReleasePublishedAtUtc = null,
@@ -169,6 +180,15 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             PendingUpdateAssetSizeBytes = null,
             AutoDetectAudioPeakThreshold = 0.02d,
             MeetingStopTimeoutSeconds = 30,
+            PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.Auto,
+            TeamsGraphTenantId = "organizations",
+            TeamsGraphClientId = string.Empty,
+            TeamsCapabilitySnapshot = new TeamsCapabilitySnapshot
+            {
+                Status = TeamsCapabilityStatus.FallbackOnly,
+                Summary = "Fallback only.",
+                Detail = "The local Teams detector remains active until you validate a stronger integration path.",
+            },
             MeetingsViewMode = MeetingsViewMode.Grouped,
             MeetingsGroupedViewMigrationApplied = true,
             MeetingsSortKey = MeetingsSortKey.Started,
@@ -181,6 +201,15 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     private static AppConfig Normalize(AppConfig config, string rootDirectory, string documentsDirectory)
     {
         var defaults = BuildDefaultConfig(rootDirectory, documentsDirectory);
+        var normalizedModelCacheDir = string.IsNullOrWhiteSpace(config.ModelCacheDir)
+            ? defaults.ModelCacheDir
+            : config.ModelCacheDir;
+        var normalizedTranscriptionModelPath = string.IsNullOrWhiteSpace(config.TranscriptionModelPath)
+            ? defaults.TranscriptionModelPath
+            : config.TranscriptionModelPath;
+        var normalizedDiarizationAssetPath = string.IsNullOrWhiteSpace(config.DiarizationAssetPath)
+            ? defaults.DiarizationAssetPath
+            : config.DiarizationAssetPath;
         var isLegacyMeetingsWorkspaceConfig = !config.MeetingsGroupedViewMigrationApplied;
         var groupedViewMigrationApplied = config.MeetingsGroupedViewMigrationApplied;
         var meetingsViewMode = NormalizeEnum(config.MeetingsViewMode, defaults.MeetingsViewMode);
@@ -205,18 +234,34 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             AudioOutputDir = NormalizePublishedOutputPath(config.AudioOutputDir, defaults.AudioOutputDir, GetLegacyAudioOutputDirectories(rootDirectory, documentsDirectory)),
             TranscriptOutputDir = NormalizePublishedOutputPath(config.TranscriptOutputDir, defaults.TranscriptOutputDir, GetLegacyTranscriptOutputDirectories(rootDirectory, documentsDirectory)),
             WorkDir = string.IsNullOrWhiteSpace(config.WorkDir) ? defaults.WorkDir : config.WorkDir,
-            ModelCacheDir = string.IsNullOrWhiteSpace(config.ModelCacheDir) ? defaults.ModelCacheDir : config.ModelCacheDir,
-            TranscriptionModelPath = string.IsNullOrWhiteSpace(config.TranscriptionModelPath) ? defaults.TranscriptionModelPath : config.TranscriptionModelPath,
-            DiarizationAssetPath = string.IsNullOrWhiteSpace(config.DiarizationAssetPath) ? defaults.DiarizationAssetPath : config.DiarizationAssetPath,
+            ModelCacheDir = normalizedModelCacheDir,
+            TranscriptionModelPath = normalizedTranscriptionModelPath,
+            TranscriptionModelProfilePreference = InferTranscriptionModelProfilePreference(
+                config.TranscriptionModelProfilePreference,
+                normalizedModelCacheDir,
+                normalizedTranscriptionModelPath,
+                defaults.TranscriptionModelPath),
+            DiarizationAssetPath = normalizedDiarizationAssetPath,
+            SpeakerLabelingModelProfilePreference = InferSpeakerLabelingModelProfilePreference(
+                config.SpeakerLabelingModelProfilePreference,
+                normalizedModelCacheDir,
+                normalizedDiarizationAssetPath,
+                defaults.DiarizationAssetPath),
             DiarizationAccelerationPreference = NormalizeEnum(config.DiarizationAccelerationPreference, defaults.DiarizationAccelerationPreference),
             AutoDetectEnabled = autoDetectEnabled,
             AutoDetectSecurityPromptMigrationApplied = autoDetectSecurityPromptMigrationApplied,
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
+            BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
+            BackgroundSpeakerLabelingMode = NormalizeEnum(config.BackgroundSpeakerLabelingMode, defaults.BackgroundSpeakerLabelingMode),
             InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
             PendingUpdateZipPath = string.IsNullOrWhiteSpace(config.PendingUpdateZipPath) ? string.Empty : config.PendingUpdateZipPath,
             PendingUpdateVersion = string.IsNullOrWhiteSpace(config.PendingUpdateVersion) ? string.Empty : config.PendingUpdateVersion,
             AutoDetectAudioPeakThreshold = config.AutoDetectAudioPeakThreshold <= 0d ? defaults.AutoDetectAudioPeakThreshold : config.AutoDetectAudioPeakThreshold,
             MeetingStopTimeoutSeconds = config.MeetingStopTimeoutSeconds <= 0 ? defaults.MeetingStopTimeoutSeconds : config.MeetingStopTimeoutSeconds,
+            PreferredTeamsIntegrationMode = NormalizeEnum(config.PreferredTeamsIntegrationMode, defaults.PreferredTeamsIntegrationMode),
+            TeamsGraphTenantId = string.IsNullOrWhiteSpace(config.TeamsGraphTenantId) ? defaults.TeamsGraphTenantId : config.TeamsGraphTenantId.Trim(),
+            TeamsGraphClientId = string.IsNullOrWhiteSpace(config.TeamsGraphClientId) ? string.Empty : config.TeamsGraphClientId.Trim(),
+            TeamsCapabilitySnapshot = config.TeamsCapabilitySnapshot ?? defaults.TeamsCapabilitySnapshot,
             MeetingAttendeeEnrichmentEnabled = meetingAttendeeEnrichmentEnabled,
             MeetingsViewMode = meetingsViewMode,
             MeetingsGroupedViewMigrationApplied = groupedViewMigrationApplied,
@@ -255,6 +300,113 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             .OrderBy(item => item.DismissedAtUtc)
             .TakeLast(256)
             .ToArray();
+    }
+
+    private static TranscriptionModelProfilePreference InferTranscriptionModelProfilePreference(
+        TranscriptionModelProfilePreference configuredPreference,
+        string modelCacheDir,
+        string transcriptionModelPath,
+        string defaultTranscriptionModelPath)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptionModelPath))
+        {
+            return TranscriptionModelProfilePreference.StandardIncluded;
+        }
+
+        var normalizedPath = NormalizeComparablePath(transcriptionModelPath);
+        var normalizedDefaultPath = NormalizeComparablePath(defaultTranscriptionModelPath);
+        var normalizedManagedAsrDirectory = NormalizeComparablePath(Path.Combine(modelCacheDir, "asr"));
+        var fileName = Path.GetFileName(normalizedPath);
+
+        if (configuredPreference == TranscriptionModelProfilePreference.HighAccuracyDownloaded)
+        {
+            return configuredPreference;
+        }
+
+        if (configuredPreference == TranscriptionModelProfilePreference.Custom &&
+            !string.Equals(normalizedPath, normalizedDefaultPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return configuredPreference;
+        }
+
+        if (string.Equals(normalizedPath, normalizedDefaultPath, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileName, "ggml-base.en-q8_0.bin", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileName, "ggml-base.bin", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileName, "ggml-base.en.bin", StringComparison.OrdinalIgnoreCase))
+        {
+            return TranscriptionModelProfilePreference.StandardIncluded;
+        }
+
+        if (normalizedPath.StartsWith(normalizedManagedAsrDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetDirectoryName(normalizedPath), normalizedManagedAsrDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            if (configuredPreference == TranscriptionModelProfilePreference.Custom)
+            {
+                return configuredPreference;
+            }
+
+            return fileName.Contains("small", StringComparison.OrdinalIgnoreCase)
+                ? TranscriptionModelProfilePreference.HighAccuracyDownloaded
+                : TranscriptionModelProfilePreference.Custom;
+        }
+
+        return TranscriptionModelProfilePreference.Custom;
+    }
+
+    private static SpeakerLabelingModelProfilePreference InferSpeakerLabelingModelProfilePreference(
+        SpeakerLabelingModelProfilePreference configuredPreference,
+        string modelCacheDir,
+        string diarizationAssetPath,
+        string defaultDiarizationAssetPath)
+    {
+        if (string.IsNullOrWhiteSpace(diarizationAssetPath))
+        {
+            return SpeakerLabelingModelProfilePreference.StandardIncluded;
+        }
+
+        var normalizedPath = NormalizeComparablePath(diarizationAssetPath);
+        var normalizedDefaultPath = NormalizeComparablePath(defaultDiarizationAssetPath);
+        var normalizedManagedDiarizationDirectory = NormalizeComparablePath(Path.Combine(modelCacheDir, "diarization"));
+        var legacyManagedDiarizationPath = normalizedManagedDiarizationDirectory;
+
+        if (configuredPreference == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded)
+        {
+            return configuredPreference;
+        }
+
+        if (string.Equals(normalizedPath, normalizedDefaultPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return SpeakerLabelingModelProfilePreference.StandardIncluded;
+        }
+
+        if (string.Equals(normalizedPath, legacyManagedDiarizationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return configuredPreference == SpeakerLabelingModelProfilePreference.StandardIncluded
+                ? SpeakerLabelingModelProfilePreference.StandardIncluded
+                : configuredPreference;
+        }
+
+        if (normalizedPath.Contains(
+                $"{Path.DirectorySeparatorChar}high-accuracy",
+                StringComparison.OrdinalIgnoreCase) ||
+            normalizedPath.Contains(
+                $"{Path.DirectorySeparatorChar}accurate",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded;
+        }
+
+        if (normalizedPath.StartsWith(normalizedManagedDiarizationDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            if (configuredPreference == SpeakerLabelingModelProfilePreference.Custom)
+            {
+                return configuredPreference;
+            }
+
+            return SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded;
+        }
+
+        return SpeakerLabelingModelProfilePreference.Custom;
     }
 
     private static string NormalizePublishedOutputPath(
@@ -344,9 +496,14 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     private static bool PathsEqual(string left, string right)
     {
         return string.Equals(
-            Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar),
-            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar),
+            NormalizeComparablePath(left),
+            NormalizeComparablePath(right),
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeComparablePath(string path)
+    {
+        return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
     private static void EnsureDirectories(AppConfig config)

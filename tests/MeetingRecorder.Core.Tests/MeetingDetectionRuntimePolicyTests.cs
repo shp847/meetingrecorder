@@ -27,14 +27,14 @@ public sealed class MeetingDetectionRuntimePolicyTests
     }
 
     [Fact]
-    public void ShouldRun_Returns_False_During_Manual_Recording()
+    public void ShouldRun_Returns_True_During_Manual_Recording_When_AutoDetect_Is_Enabled()
     {
         var result = MeetingDetectionRuntimePolicy.ShouldRun(
             autoDetectEnabled: true,
             isRecording: true,
             activeSessionWasAutoStarted: false);
 
-        Assert.False(result);
+        Assert.True(result);
     }
 
     [Fact]

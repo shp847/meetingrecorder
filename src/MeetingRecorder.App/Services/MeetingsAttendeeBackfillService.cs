@@ -74,6 +74,17 @@ internal sealed class MeetingsAttendeeBackfillService
                 continue;
             }
 
+            if (!CalendarMeetingAttendeeMergePolicy.ShouldMergeAttendees(
+                    candidate.Platform,
+                    candidate.Title,
+                    candidate.Attendees,
+                    candidate.KeyAttendees,
+                    calendarCandidate))
+            {
+                _cacheService.RecordNoMatch(candidate, nowUtc);
+                continue;
+            }
+
             var updatedMeeting = await _meetingOutputCatalogService.MergeMeetingAttendeesAsync(
                 config.AudioOutputDir,
                 config.TranscriptOutputDir,

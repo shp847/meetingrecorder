@@ -7,4 +7,5 @@ public sealed record UpdateRequest(
     string? ReleaseVersion,
     DateTimeOffset? ReleasePublishedAtUtc,
     long? ReleaseAssetSizeBytes,
-    InstallChannel Channel = InstallChannel.Unknown);
+    InstallChannel Channel = InstallChannel.Unknown,
+    bool LaunchAfterInstall = true);

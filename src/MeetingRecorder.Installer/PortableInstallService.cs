@@ -15,6 +15,10 @@ internal sealed class PortableInstallService
         ExecutableFileName,
         "AppPlatform.Deployment.Cli.exe",
         "MeetingRecorder.ProcessingWorker.exe",
+        "MeetingRecorder.ProcessingWorker.dll",
+        "MeetingRecorder.ProcessingWorker.deps.json",
+        "MeetingRecorder.ProcessingWorker.runtimeconfig.json",
+        "MeetingRecorder.Core.dll",
     ];
     private static readonly string[] PortableBundleMarkerFiles =
     [

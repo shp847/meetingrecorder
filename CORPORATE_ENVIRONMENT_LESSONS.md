@@ -233,7 +233,7 @@ Recommended packaging verification:
 - run the desktop shell again from the installed managed root
 - keep each alive for a meaningful smoke window
 - fail on new crash-related Windows events for the app executable
-- verify the installed executable hash matches the built bundle when using the local deploy path
+- verify the installed executable hash matches the built bundle when you intentionally validate a managed install through the MSI or another supported release path
 
 This catches:
 

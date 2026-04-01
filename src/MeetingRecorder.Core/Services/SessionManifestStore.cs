@@ -1,4 +1,5 @@
 using MeetingRecorder.Core.Domain;
+using System.Linq;
 using System.Text.Json;
 
 namespace MeetingRecorder.Core.Services;
@@ -86,7 +87,7 @@ public sealed class SessionManifestStore
         }
 
         var manifestPaths = Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories).ToArray();
-        var pending = new List<string>(manifestPaths.Length);
+        var pending = new List<(string Path, MeetingSessionManifest Manifest)>(manifestPaths.Length);
 
         foreach (var manifestPath in manifestPaths)
         {
@@ -94,11 +95,31 @@ public sealed class SessionManifestStore
             var manifest = await LoadAsync(manifestPath, cancellationToken);
             if (manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing)
             {
-                pending.Add(manifestPath);
+                pending.Add((manifestPath, manifest));
             }
         }
 
-        return pending;
+        return pending
+            .OrderBy(candidate => GetPendingResumePriority(candidate.Manifest))
+            .ThenBy(candidate => candidate.Manifest.StartedAtUtc)
+            .Select(candidate => candidate.Path)
+            .ToArray();
+    }
+
+    internal static int GetPendingResumePriority(MeetingSessionManifest manifest)
+    {
+        if (manifest.TranscriptionStatus.State == StageExecutionState.Succeeded &&
+            manifest.PublishStatus.State != StageExecutionState.Succeeded)
+        {
+            return 0;
+        }
+
+        if (manifest.State is SessionState.Processing or SessionState.Finalizing)
+        {
+            return 1;
+        }
+
+        return 2;
     }
 
     private async Task<MeetingSessionManifest> SaveAndReturnAsync(
@@ -112,11 +133,37 @@ public sealed class SessionManifestStore
 
     private static MeetingSessionManifest NormalizeManifest(MeetingSessionManifest manifest)
     {
+        var normalizedMicrophoneCaptureSegments = NormalizeMicrophoneCaptureSegments(manifest);
         return manifest with
         {
+            MicrophoneCaptureSegments = normalizedMicrophoneCaptureSegments,
+            MicrophoneChunkPaths = normalizedMicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
             KeyAttendees = MeetingMetadataNameMatcher.MergeNames(manifest.KeyAttendees, Array.Empty<string>()),
             Attendees = NormalizeAttendees(manifest.Attendees),
         };
+    }
+
+    private static IReadOnlyList<MicrophoneCaptureSegment> NormalizeMicrophoneCaptureSegments(MeetingSessionManifest manifest)
+    {
+        if (manifest.MicrophoneCaptureSegments.Count > 0)
+        {
+            return manifest.MicrophoneCaptureSegments
+                .Where(segment => segment.ChunkPaths.Count > 0)
+                .ToArray();
+        }
+
+        if (manifest.MicrophoneChunkPaths.Count == 0)
+        {
+            return Array.Empty<MicrophoneCaptureSegment>();
+        }
+
+        return
+        [
+            new MicrophoneCaptureSegment(
+                manifest.StartedAtUtc,
+                manifest.EndedAtUtc,
+                manifest.MicrophoneChunkPaths.ToArray()),
+        ];
     }
 
     private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<MeetingAttendee>? attendees)

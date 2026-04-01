@@ -32,6 +32,26 @@ public sealed class UserFacingCopyTests
         }
     }
 
+    [Fact]
+    public void Setup_And_Releasing_Guides_Explain_That_Msi_Uninstall_Preserves_User_Data_For_Fresh_Reinstall()
+    {
+        var repoRoot = GetRepoRoot();
+        var setupPath = Path.Combine(repoRoot, "SETUP.md");
+        var releasingPath = Path.Combine(repoRoot, "RELEASING.md");
+
+        var setupContents = File.ReadAllText(setupPath);
+        var releasingContents = File.ReadAllText(releasingPath);
+
+        Assert.Contains("uninstall", setupContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("preserve", setupContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("%LOCALAPPDATA%\\MeetingRecorder", setupContents, StringComparison.Ordinal);
+        Assert.Contains("fresh install", setupContents, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("uninstall", releasingContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fresh install", releasingContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("preserve", releasingContents, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static IReadOnlyList<string> GetUserFacingPaths()
     {
         var repoRoot = GetRepoRoot();

@@ -27,14 +27,17 @@ internal static class Program
             var config = await configStore.LoadOrCreateAsync();
             var pathBuilder = new ArtifactPathBuilder();
             var manifestStore = new SessionManifestStore(pathBuilder);
+            var transcriptionThreadCount = BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, Environment.ProcessorCount);
+            var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
             var processor = new SessionProcessor(
                 manifestStore,
                 pathBuilder,
                 new WaveChunkMerger(),
-                new WhisperNetTranscriptionProvider(config.TranscriptionModelPath, logger),
+                new WhisperNetTranscriptionProvider(config.TranscriptionModelPath, transcriptionThreadCount, logger),
                 new LocalSpeakerDiarizationProvider(
                     config.DiarizationAssetPath,
                     config.DiarizationAccelerationPreference,
+                    diarizationThreadCount,
                     logger),
                 new TranscriptRenderer(),
                 new FilePublishService());

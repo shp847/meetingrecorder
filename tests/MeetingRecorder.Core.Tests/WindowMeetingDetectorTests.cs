@@ -2,6 +2,8 @@ using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using System.Diagnostics;
+using System.Threading;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -128,6 +130,54 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public void ApplyTeamsPlaybackHeuristic_Demotes_Plain_Teams_Content_Window_When_No_Teams_Render_Evidence_Exists()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var plainCandidate = new DetectionDecision(
+            MeetingPlatform.Teams,
+            false,
+            true,
+            1d,
+            "Jain, Himanshu",
+            new[]
+            {
+                new DetectionSignal("window-title", "Jain, Himanshu | Microsoft Teams", 0.85d, timestamp),
+                new DetectionSignal("process-name", "ms-teams", 0.15d, timestamp),
+                new DetectionSignal("audio-silence", "peak=0.000", 0d, timestamp),
+            },
+            "Meeting-like window detected, but no active system audio was observed.");
+
+        var result = WindowMeetingDetector.ApplyTeamsPlaybackHeuristic(plainCandidate, new[] { plainCandidate });
+
+        Assert.False(result.ShouldStart);
+        Assert.False(result.ShouldKeepRecording);
+        Assert.Contains("not a live meeting", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ApplyTeamsPlaybackHeuristic_Does_Not_Demote_Plain_Teams_Content_Window_When_Teams_Render_Evidence_Still_Exists()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var plainCandidate = new DetectionDecision(
+            MeetingPlatform.Teams,
+            false,
+            true,
+            1d,
+            "Jain, Himanshu",
+            new[]
+            {
+                new DetectionSignal("window-title", "Jain, Himanshu | Microsoft Teams", 0.85d, timestamp),
+                new DetectionSignal("process-name", "ms-teams", 0.15d, timestamp),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; process=ms-teams; peak=0.000; confidence=Medium", 0d, timestamp),
+            },
+            "Meeting-like window detected, but no active system audio was observed.");
+
+        var result = WindowMeetingDetector.ApplyTeamsPlaybackHeuristic(plainCandidate, new[] { plainCandidate });
+
+        Assert.True(result.ShouldKeepRecording);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Uses_Window_Title_When_Process_Metadata_Is_Unavailable()
     {
         var detector = await CreateDetectorAsync(
@@ -243,6 +293,47 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Preserves_A_Matched_Teams_Audio_Source_When_The_Endpoint_Is_Quiet()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "[INT] GlobalFoundries AI SC daily | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)200,
+                    2000),
+            ],
+            _ => Array.Empty<string>(),
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                [
+                    new AudioSourceSessionSnapshot(
+                        2000,
+                        "ms-teams",
+                        0d,
+                        true,
+                        false,
+                        false,
+                        "Microsoft Teams",
+                        "teams-session"),
+                ],
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.False(result.ShouldStart);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.NotNull(result.DetectedAudioSource);
+        Assert.Equal("Microsoft Teams", result.DetectedAudioSource!.AppName);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Maps_Browser_Audio_Process_To_GoogleMeet_Browser_Tab()
     {
         var detector = await CreateDetectorAsync(
@@ -282,6 +373,81 @@ public sealed class WindowMeetingDetectorTests
         Assert.NotNull(result.DetectedAudioSource);
         Assert.Equal(AudioSourceMatchKind.BrowserTab, result.DetectedAudioSource!.MatchKind);
         Assert.Equal("Meet - yzz-yeqg-mdc", result.DetectedAudioSource.BrowserTabTitle);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Starts_GoogleMeet_When_Explicit_Meet_Window_Has_Active_Browser_Audio_But_Tab_Attribution_Is_Ambiguous()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "msedge",
+                    "Meet - vwt-vyrn-bas and 14 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)8124,
+                    1000),
+            ],
+            candidate => candidate.WindowHandle == (nint)8124
+                ? ["Meet - vwt-vyrn-bas - Camera and microphone recording - Memory usage - 514 MB"]
+                : Array.Empty<string>(),
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.34d,
+                true,
+                "active",
+                [
+                    new AudioSourceSessionSnapshot(
+                        3456,
+                        "msedge",
+                        0.34d,
+                        true,
+                        false,
+                        false,
+                        null,
+                        null),
+                ],
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
+        Assert.True(result.ShouldStart);
+        Assert.Equal("Meet - vwt-vyrn-bas and 14 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Null(result.DetectedAudioSource);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Starts_GoogleMeet_When_A_Specific_Meet_Window_Is_Present_But_Render_Audio_Is_Quiet()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "msedge",
+                    "Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)8124,
+                    1000),
+            ],
+            candidate => candidate.WindowHandle == (nint)8124
+                ? ["Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge"]
+                : Array.Empty<string>(),
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
+        Assert.True(result.ShouldStart);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.Equal("Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Null(result.DetectedAudioSource);
     }
 
     [Fact]
@@ -325,6 +491,74 @@ public sealed class WindowMeetingDetectorTests
         Assert.Null(result.DetectedAudioSource);
     }
 
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Block_For_Minutes_When_Browser_Tab_Enumeration_Hangs()
+    {
+        using var releaseEnumeration = new ManualResetEventSlim(false);
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Ducey-Gallina, Nick | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)101,
+                    101),
+                new MeetingWindowCandidate(
+                    "msedge",
+                    "Quarterly Slides - Google Slides and 8 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)8124,
+                    8124),
+            ],
+            candidate =>
+            {
+                if (candidate.ProcessId == 8124)
+                {
+                    releaseEnumeration.Wait();
+                }
+
+                return Array.Empty<string>();
+            },
+            timeout: TimeSpan.FromMilliseconds(50),
+            backoff: TimeSpan.FromMinutes(1));
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = detector.DetectBestCandidate();
+        stopwatch.Stop();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"Expected detector to time out browser tab enumeration quickly, but it took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Block_For_Minutes_When_Audio_Activity_Probe_Hangs()
+    {
+        using var releaseAudioProbe = new ManualResetEventSlim(false);
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Meeting in IonQ + Kearney | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)101,
+                    101),
+            ],
+            audioActivityProbe: new BlockingAudioActivityProbe(releaseAudioProbe),
+            audioTimeout: TimeSpan.FromMilliseconds(50),
+            audioBackoff: TimeSpan.FromMinutes(1));
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = detector.DetectBestCandidate();
+        stopwatch.Stop();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.False(result.ShouldStart);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"Expected detector to time out audio probing quickly, but it took {stopwatch.Elapsed}.");
+    }
+
     private static Task<WindowMeetingDetector> CreateDetectorAsync(params MeetingWindowCandidate[] candidates)
     {
         return CreateDetectorAsync(candidates, null);
@@ -333,7 +567,11 @@ public sealed class WindowMeetingDetectorTests
     private static async Task<WindowMeetingDetector> CreateDetectorAsync(
         MeetingWindowCandidate[] candidates,
         Func<MeetingWindowCandidate, IReadOnlyList<string>>? enumerateBrowserTabTitles = null,
-        IAudioActivityProbe? audioActivityProbe = null)
+        IAudioActivityProbe? audioActivityProbe = null,
+        TimeSpan? timeout = null,
+        TimeSpan? backoff = null,
+        TimeSpan? audioTimeout = null,
+        TimeSpan? audioBackoff = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var configPath = Path.Combine(root, "config", "appsettings.json");
@@ -350,7 +588,11 @@ public sealed class WindowMeetingDetectorTests
             audioActivityProbe ?? new StubAudioActivityProbe(),
             new MeetingTitleEnricher(new StubCalendarMeetingTitleProvider()),
             () => candidates,
-            enumerateBrowserTabTitles ?? (_ => Array.Empty<string>()));
+            enumerateBrowserTabTitles ?? (_ => Array.Empty<string>()),
+            timeout ?? TimeSpan.FromMilliseconds(750),
+            backoff ?? TimeSpan.FromMinutes(2),
+            audioTimeout ?? TimeSpan.FromMilliseconds(750),
+            audioBackoff ?? TimeSpan.FromMinutes(2));
     }
 
     private sealed class StubAudioActivityProbe : IAudioActivityProbe
@@ -387,6 +629,28 @@ public sealed class WindowMeetingDetectorTests
             DateTimeOffset? endedAtUtc)
         {
             return null;
+        }
+    }
+
+    private sealed class BlockingAudioActivityProbe : IAudioActivityProbe
+    {
+        private readonly ManualResetEventSlim _release;
+
+        public BlockingAudioActivityProbe(ManualResetEventSlim release)
+        {
+            _release = release;
+        }
+
+        public AudioSourceAttributionSnapshot Capture(double threshold)
+        {
+            _release.Wait();
+            return new AudioSourceAttributionSnapshot(
+                "Blocked Device",
+                threshold,
+                true,
+                "active",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null);
         }
     }
 }

@@ -9,6 +9,7 @@ namespace MeetingRecorder.Core.Services;
 public sealed class MeetingOutputCatalogService
 {
     private const int MaxJsonTitlePreviewBytes = 64 * 1024;
+    private const string CleanupSessionIdPrefix = "- Session ID: cleanup-";
 
     private static readonly Regex StemPattern = new(
         "^(?<date>\\d{4}-\\d{2}-\\d{2})_(?<time>\\d{6})_(?<platform>[a-z]+)_(?<slug>.+)$",
@@ -37,7 +38,8 @@ public sealed class MeetingOutputCatalogService
         var pathsByStem = new Dictionary<string, MeetingOutputMutableRecord>(StringComparer.OrdinalIgnoreCase);
         AddArtifacts(pathsByStem, audioOutputDir);
         AddArtifacts(pathsByStem, transcriptOutputDir);
-        var manifestInfoByStem = LoadManifestInfoByStem(workDir, pathsByStem.Keys);
+        var manifestInfoByStem = LoadManifestInfoByStem(workDir);
+        AddManifestOnlyRecords(pathsByStem, manifestInfoByStem);
 
         return pathsByStem.Values
             .Select(record => BuildRecord(
@@ -538,6 +540,7 @@ public sealed class MeetingOutputCatalogService
     private static MeetingOutputRecord BuildRecord(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
     {
         var jsonMetadata = TryReadJsonMetadata(record.JsonPath);
+        var manifestState = ResolveManifestState(record, manifestInfo);
 
         if (TryParseStem(record.Stem, out var stemInfo))
         {
@@ -549,13 +552,13 @@ public sealed class MeetingOutputCatalogService
                 string.IsNullOrWhiteSpace(storedTitle) ? HumanizeSlug(stemInfo.TitleSlug) : storedTitle,
                 stemInfo.StartedAtUtc,
                 stemInfo.Platform,
-                ResolveDuration(stemInfo.StartedAtUtc, record.AudioPath, manifestInfo),
+                ResolveDuration(stemInfo.StartedAtUtc, record.AudioPath, record.MarkdownPath, manifestInfo),
                 record.AudioPath,
                 record.MarkdownPath,
                 record.JsonPath,
                 record.ReadyMarkerPath,
                 manifestInfo?.ManifestPath,
-                manifestInfo?.State,
+                manifestState,
                 manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
                 manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
                 manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
@@ -572,13 +575,13 @@ public sealed class MeetingOutputCatalogService
             record.Stem,
             fallbackTimestamp,
             MeetingPlatform.Unknown,
-            ResolveDuration(fallbackTimestamp, record.AudioPath, manifestInfo),
+            ResolveDuration(fallbackTimestamp, record.AudioPath, record.MarkdownPath, manifestInfo),
             record.AudioPath,
             record.MarkdownPath,
             record.JsonPath,
             record.ReadyMarkerPath,
             manifestInfo?.ManifestPath,
-            manifestInfo?.State,
+            manifestState,
             manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
             manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
             manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
@@ -587,16 +590,43 @@ public sealed class MeetingOutputCatalogService
             manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath));
     }
 
-    private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir, IEnumerable<string> discoveredStems)
+    private static SessionState? ResolveManifestState(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
+    {
+        if (manifestInfo is null)
+        {
+            return null;
+        }
+
+        if (HasPublishedArtifacts(record) &&
+            manifestInfo.IsImportedSource &&
+            manifestInfo.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing or SessionState.Failed)
+        {
+            return null;
+        }
+
+        return manifestInfo.State;
+    }
+
+    private static void AddManifestOnlyRecords(
+        IDictionary<string, MeetingOutputMutableRecord> pathsByStem,
+        IDictionary<string, ManifestInfo> manifestInfoByStem)
+    {
+        foreach (var pair in manifestInfoByStem)
+        {
+            if (pathsByStem.ContainsKey(pair.Key) ||
+                !ShouldIncludeManifestOnlyRecord(pair.Value))
+            {
+                continue;
+            }
+
+            pathsByStem.Add(pair.Key, new MeetingOutputMutableRecord(pair.Key));
+        }
+    }
+
+    private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir)
     {
         var infoByStem = new Dictionary<string, ManifestInfo>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
-        {
-            return infoByStem;
-        }
-
-        var stemSet = new HashSet<string>(discoveredStems, StringComparer.OrdinalIgnoreCase);
-        if (stemSet.Count == 0)
         {
             return infoByStem;
         }
@@ -609,12 +639,7 @@ public sealed class MeetingOutputCatalogService
                 var manifest = manifestStore.LoadAsync(manifestPath).GetAwaiter().GetResult();
                 var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
                 var stem = _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title);
-                if (!stemSet.Contains(stem))
-                {
-                    continue;
-                }
-
-                infoByStem[stem] = new ManifestInfo(
+                var candidate = new ManifestInfo(
                     title,
                     manifestPath,
                     manifest.State,
@@ -624,7 +649,12 @@ public sealed class MeetingOutputCatalogService
                     NormalizeKeyAttendees(manifest.KeyAttendees),
                     NormalizeAttendees(manifest.Attendees),
                     manifest.ProcessingMetadata,
-                    NormalizeDetectedAudioSource(manifest.DetectedAudioSource));
+                    NormalizeDetectedAudioSource(manifest.DetectedAudioSource),
+                    manifest.ImportedSourceAudio is not null);
+                if (!infoByStem.TryGetValue(stem, out var existing) || ShouldReplaceManifestInfo(existing, candidate))
+                {
+                    infoByStem[stem] = candidate;
+                }
             }
             catch
             {
@@ -633,6 +663,63 @@ public sealed class MeetingOutputCatalogService
         }
 
         return infoByStem;
+    }
+
+    private static bool ShouldReplaceManifestInfo(ManifestInfo existing, ManifestInfo candidate)
+    {
+        var existingPriority = GetManifestSelectionPriority(existing);
+        var candidatePriority = GetManifestSelectionPriority(candidate);
+        if (candidatePriority != existingPriority)
+        {
+            return candidatePriority < existingPriority;
+        }
+
+        if (candidate.State != existing.State)
+        {
+            if (candidate.State == SessionState.Published)
+            {
+                return true;
+            }
+
+            if (existing.State == SessionState.Published)
+            {
+                return false;
+            }
+        }
+
+        return string.Compare(candidate.ManifestPath, existing.ManifestPath, StringComparison.OrdinalIgnoreCase) < 0;
+    }
+
+    private static int GetManifestSelectionPriority(ManifestInfo manifestInfo)
+    {
+        if (!manifestInfo.IsImportedSource && manifestInfo.State == SessionState.Published)
+        {
+            return 0;
+        }
+
+        if (!manifestInfo.IsImportedSource)
+        {
+            return 1;
+        }
+
+        if (manifestInfo.State == SessionState.Published)
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static bool HasPublishedArtifacts(MeetingOutputMutableRecord record)
+    {
+        var hasAudio = !string.IsNullOrWhiteSpace(record.AudioPath);
+        var hasTranscript = !string.IsNullOrWhiteSpace(record.MarkdownPath) || !string.IsNullOrWhiteSpace(record.JsonPath);
+        return !string.IsNullOrWhiteSpace(record.ReadyMarkerPath) || (hasAudio && hasTranscript);
+    }
+
+    private static bool ShouldIncludeManifestOnlyRecord(ManifestInfo manifestInfo)
+    {
+        return manifestInfo.State is SessionState.Finalizing or SessionState.Queued or SessionState.Processing or SessionState.Failed;
     }
 
     private static bool TryParseStem(string stem, out StemInfo stemInfo)
@@ -946,8 +1033,15 @@ public sealed class MeetingOutputCatalogService
     private static TimeSpan? ResolveDuration(
         DateTimeOffset startedAtUtc,
         string? audioPath,
+        string? markdownPath,
         ManifestInfo? manifestInfo)
     {
+        var audioDuration = TryReadAudioDuration(audioPath);
+        if (IsRepairGeneratedPublishedArtifact(markdownPath) && audioDuration is not null)
+        {
+            return audioDuration;
+        }
+
         var durationStart = manifestInfo?.StartedAtUtc ?? startedAtUtc;
         if (manifestInfo?.EndedAtUtc is { } endedAtUtc &&
             durationStart != DateTimeOffset.MinValue &&
@@ -956,7 +1050,32 @@ public sealed class MeetingOutputCatalogService
             return endedAtUtc - durationStart;
         }
 
-        return TryReadAudioDuration(audioPath);
+        return audioDuration;
+    }
+
+    private static bool IsRepairGeneratedPublishedArtifact(string? markdownPath)
+    {
+        if (string.IsNullOrWhiteSpace(markdownPath) || !File.Exists(markdownPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (var line in File.ReadLines(markdownPath).Take(12))
+            {
+                if (line.StartsWith(CleanupSessionIdPrefix, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static TimeSpan? TryReadAudioDuration(string? audioPath)
@@ -1779,7 +1898,8 @@ public sealed class MeetingOutputCatalogService
         IReadOnlyList<string> KeyAttendees,
         IReadOnlyList<MeetingAttendee> Attendees,
         MeetingProcessingMetadata? ProcessingMetadata,
-        DetectedAudioSource? DetectedAudioSource);
+        DetectedAudioSource? DetectedAudioSource,
+        bool IsImportedSource);
 
     private sealed record JsonTranscriptMetadata(
         string? Title,

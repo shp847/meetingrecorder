@@ -61,7 +61,7 @@ exit /b 1
 
 :launch
 if exist "%APP_ROOT%\Check-Dependencies.ps1" (
-    powershell -ExecutionPolicy Bypass -File "%APP_ROOT%\Check-Dependencies.ps1" -AppRoot "%APP_ROOT%"
+    powershell -ExecutionPolicy Bypass -File "%APP_ROOT%\Check-Dependencies.ps1" -AppRoot "%APP_ROOT%" -SuppressOptionalWarnings -QuietSuccess
     if errorlevel 1 (
         echo.
         echo Dependency check failed. Run Install-Dependencies.cmd or review SETUP.md in the app folder.

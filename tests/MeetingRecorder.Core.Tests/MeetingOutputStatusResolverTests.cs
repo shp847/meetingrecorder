@@ -6,6 +6,30 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class MeetingOutputStatusResolverTests
 {
     [Fact]
+    public void ResolveDisplayStatus_Prefers_Published_Artifacts_Over_A_Queued_Manifest_State()
+    {
+        var record = new MeetingOutputRecord(
+            "2026-03-24_193115_teams_google-vmo-offsite-deck",
+            "Google Vmo Offsite Deck",
+            new DateTimeOffset(2026, 03, 24, 19, 31, 15, TimeSpan.Zero),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(6),
+            AudioPath: "audio.wav",
+            MarkdownPath: "transcript.md",
+            JsonPath: "transcript.json",
+            ReadyMarkerPath: "transcript.ready",
+            ManifestPath: "manifest.json",
+            ManifestState: SessionState.Queued,
+            Attendees: Array.Empty<MeetingAttendee>(),
+            HasSpeakerLabels: false,
+            TranscriptionModelFileName: null);
+
+        var status = MeetingOutputStatusResolver.ResolveDisplayStatus(record);
+
+        Assert.Equal(SessionState.Published.ToString(), status);
+    }
+
+    [Fact]
     public void ResolveDisplayStatus_Returns_Published_When_Audio_And_Markdown_Are_Present_Without_A_Ready_Marker()
     {
         var record = new MeetingOutputRecord(

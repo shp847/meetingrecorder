@@ -60,15 +60,18 @@ What it does:
 - runs the safe serial build/test flow through `scripts\Test-All.ps1`
 - builds the installer assets through `scripts\Build-Installer.ps1`
 - publishes the WPF shell as a single-file self-contained `MeetingRecorder.App.exe` when the release is self-contained, while leaving `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` as external bundle assets
+- copies the full `MeetingRecorder.ProcessingWorker` publish output into the portable bundle, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so the worker can still publish queued sessions after install/update
 - stages `AppPlatform.Deployment.Cli` into the portable bundle so the script wrappers and in-app updater can delegate install/apply work to one canonical executable
 - emits `bundle-integrity.json` into the portable bundle so the shared deployment CLI can validate required files before promoting a bundle
+- bundles the curated Standard transcription and Standard speaker-labeling seed assets into the main portable/MSI payload under `model-seed\...`
+- publishes the curated Higher Accuracy Whisper and speaker-labeling assets as separate stable GitHub release downloads
 - creates:
   - the per-user installer MSI
   - the lightweight installer EXE
   - the main installer ZIP
   - the stable bootstrap command asset
   - the stable bootstrap PowerShell script asset
-  - separate `ggml-*.bin` model assets copied from `assets\models\asr`
+  - separate Higher Accuracy model assets copied from `assets\models\asr` and `assets\models\diarization`
 - fails fast if the main ZIP is too large for GitHub Releases
 - stamps the portable bundle with `release-source.json` so the packaged assets record the exact source commit and whether they were built from a dirty worktree
 
@@ -78,6 +81,8 @@ Packaging validation notes:
 - `ICE91` is intentionally suppressed for harvested release builds because the MSI is authored as per-user-only and installs into user-profile directories by design
 - the MSI now enables Windows Installer logging by default, so direct MSI troubleshooting should leave a verbose log under `%TEMP%`
 - the MSI now allows refreshed same-version release assets to replace already-installed binaries, so a rebuilt `0.x` package can still overwrite an older apphost on reinstall
+- background auto-install and pending-update retry should only run for true semantic-version upgrades; a republished same-version build must remain a manual reinstall path so the app does not immediately update itself again after an MSI relaunch
+- the Home screen should keep its lower quick-setting cards reachable at the default window size by hosting the recording dashboard in a dedicated scroll viewer
 - the release build should stamp the MSI summary `Word Count` to `10` so the shipped per-user MSI advertises that normal installs do not require UAC elevation
 - the MSI now skips the stock license-agreement page and goes straight from welcome to ready-to-install
 - the MSI now uses the WiX finish dialog so users see an explicit completion screen instead of a silent exit
@@ -87,16 +92,21 @@ Packaging validation notes:
 - manual stop for a long-running recording should offload recorder shutdown off the UI thread so the window stays responsive while audio capture drains and finalizes
 - app shutdown should tolerate queued processing-worker resolution failures during close instead of surfacing a shutdown error and leaving a headless background process behind
 - the final app close path should explicitly close header surfaces and call WPF application shutdown, not rely solely on the main-window close event
+- automatic update handoff should request a full application shutdown rather than only closing the main window, so modeless settings/help surfaces cannot keep the process alive invisibly
+- `App.OnExit` should not synchronously block on the activation or installer-shutdown monitor tasks, because a close/update handoff can otherwise leave a headless process stuck during exit
 - script/bootstrap installers and updater helpers should write diagnostic logs under `%TEMP%\MeetingRecorderInstaller`, suppress raw PowerShell download progress, forward `--pause-on-error` into the deployment CLI, and pause on any failed CLI command path
 - the updater apply path should not wait forever for the app to close; it should signal shutdown, escalate install-path release if needed, and then fail clearly if the process still will not exit
 - the EXE installer path should avoid cross-process inspection and control APIs on the app process so endpoint tools do not flag it as restricted process-memory access
 - the EXE installer should remain a thin launcher over `Install-LatestFromGitHub.cmd/.ps1`; it should not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts itself
 - the EXE installer UI should explain the split between app files in `%USERPROFILE%\Documents\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
 - the shared deployment CLI should reject bundles that fail `bundle-integrity.json` validation before it touches the managed install root
+- the shared deployment CLI and managed-install repair path should treat the worker sidecar dependency set as required, not just `MeetingRecorder.ProcessingWorker.exe`
 - the shared deployment CLI should persist install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`
+- the shared deployment CLI bundle must carry the `System.IO.Pipelines` runtime dependency that `System.Text.Json` loads during provenance save, or `install-bundle` can fail after staging with a runtime assembly-load error
 - the shared deployment CLI should update an existing managed install in place instead of renaming the whole `Documents\MeetingRecorder` root, so locked files under the preserved `data` tree do not block routine updates
 - Desktop and Start Menu launchers created by the shared deployment path should be normal `.lnk` shortcuts that target `Run-MeetingRecorder.cmd`, not raw visible `.cmd` files
 - `Run-MeetingRecorder.cmd` should wait briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, so short install/update handoff gaps do not look like a permanent broken install
+- repo-local deploy is intentionally disabled for publish validation so MSI install testing and in-app upgrade testing stay the canonical managed-install paths
 - the EXE shell should keep the backup CMD action enabled even after a handoff, because the command window can still fail after the EXE has already stepped aside
 - `Install-LatestFromGitHub.cmd` should preserve the real exit code from the local `Install-LatestFromGitHub.ps1` handoff so a successful install does not print a stale generic failure prompt afterward
 - `Run-MeetingRecorder.cmd` and `Check-Dependencies.ps1` should fail clearly and pause if `MeetingRecorder.App.exe` is missing, rather than attempting an invalid WPF DLL fallback
@@ -119,7 +129,7 @@ Size notes:
 
 - the default release build is `self-contained`, so it bundles the .NET desktop runtime and now ships the WPF shell as a single-file `MeetingRecorder.App.exe` for easier first-time installs and safer startup behavior
 - `-FrameworkDependent` produces a smaller app bundle, but target machines must already have the .NET 8 Desktop Runtime
-- the portable publish step merges worker runtime files into the main `runtimes` folder so the bundle does not grow a duplicate `runtimes\runtimes` tree
+- the portable publish step now copies the full worker publish output recursively into the bundle root, so the worker runtimes, `.deps.json`, `.runtimeconfig.json`, and `MeetingRecorder.Core.dll` stay aligned without a brittle whitelist or a nested `runtimes\runtimes` tree
 
 If you want the build script to sync the generated assets straight to the current latest GitHub release, set `GITHUB_TOKEN` or `GH_TOKEN` first and then run:
 
@@ -253,6 +263,11 @@ The portable ZIP now also carries:
 
 - `MeetingRecorder.App.exe`
 - `AppPlatform.Deployment.Cli.exe`
+- `MeetingRecorder.ProcessingWorker.exe`
+- `MeetingRecorder.ProcessingWorker.dll`
+- `MeetingRecorder.ProcessingWorker.deps.json`
+- `MeetingRecorder.ProcessingWorker.runtimeconfig.json`
+- `MeetingRecorder.Core.dll`
 - `MeetingRecorder.product.json`
 - `bundle-integrity.json`
 
@@ -265,14 +280,19 @@ The WPF app host no longer requires these loose published files in the shipped s
 Important local verification note:
 
 - `scripts\Publish-Portable.ps1`, `scripts\Build-Installer.ps1`, and `scripts\Build-Release.ps1` create fresh artifacts under `.artifacts`, but they do not replace the live app already installed under `%USERPROFILE%\Documents\MeetingRecorder`
-- if you want to run the freshly built app from the canonical managed install root, deploy the published bundle explicitly with:
+- if you want to test the canonical managed install root after a rebuild, use the published MSI, EXE bootstrapper, or release scripts instead of the old repo-local deploy shortcut:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Deploy-Local.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1
 ```
 
-- add `-BuildFirst` when you want the script to publish the portable bundle before installing it locally
-- `Deploy-Local.ps1` installs the bundle through `AppPlatform.Deployment.Cli`, verifies `MeetingRecorder.App.exe` and `MeetingRecorder.product.json` hashes, and confirms the `.cmd` shell launchers now point at `%USERPROFILE%\Documents\MeetingRecorder`
+- then install the rebuilt artifacts through one of the supported paths:
+
+```cmd
+MeetingRecorderInstaller.msi
+```
+
+- `scripts\Deploy-Local.ps1` and `scripts\Deploy-Local.cmd` are intentionally disabled so publish validation goes through the same MSI and in-app upgrade paths that end users will exercise
 - `Smoke-Test-Release.ps1` launches the built bundle and the MSI-installed app copy, waits 30 seconds for each, and fails on new `.NET Runtime`, `Application Error`, or `Windows Error Reporting` events that mention `MeetingRecorder.App.exe`
 
 If you want the packaged startup smoke test before publishing, run:
@@ -293,14 +313,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runti
    - `MeetingRecorder-v<version>-win-x64.zip`
    - `Install-LatestFromGitHub.cmd`
    - `Install-LatestFromGitHub.ps1`
-   - any `ggml-*.bin` model assets you want the app to offer in the Models tab
+   - `ggml-small.en-q8_0.bin`
+   - `meeting-recorder-diarization-bundle-accurate-win-x64.zip`
 5. Publish the release.
 
 Important:
 
 - upload the built installer ZIP asset, not only GitHub's automatic source ZIP
 - the bootstrap flow depends on the GitHub release having a real app ZIP asset
-- the Models tab only shows downloadable GitHub models that are uploaded as release assets
+- the Higher Accuracy options only work as built-in downloads when `ggml-small.en-q8_0.bin` and `meeting-recorder-diarization-bundle-accurate-win-x64.zip` are uploaded as release assets
+- the Standard transcription and Standard speaker-labeling assets are now bundled into the MSI/ZIP payload and should not be uploaded as separate fallback release assets
 - `Build-Release.ps1 -UploadToGitHubLatestRelease` can automate the upload step when a GitHub token is available
 - `Upload-ReleaseAssets.cmd` is the lighter-weight helper when you want to update the latest release without rebuilding first
 - `Upload-ReleaseAssets.cmd` skips the EXE and MSI by default unless you pass `-Installers`
@@ -312,14 +334,24 @@ Important:
 2. Download `MeetingRecorderInstaller.msi`
 3. Run `MeetingRecorderInstaller.msi`
 4. Confirm the app installs into `%USERPROFILE%\Documents\MeetingRecorder`
-5. Confirm the MSI skips the license agreement page and shows a success/completion screen
-6. Confirm the completion screen offers `Launch Meeting Recorder`
-7. Confirm `Meeting Recorder.lnk` shortcuts appear for the current user in Start Menu and on Desktop, and that they launch successfully
-8. Confirm published outputs default to `Documents\Meetings\Recordings` and `Documents\Meetings\Transcripts`
-9. Confirm the app launches and the `Setup` page is usable
-10. Confirm the app does not immediately offer the same GitHub release again on first launch after the MSI install
-10. Confirm the `Setup` page lists the uploaded `ggml-*.bin` assets under the GitHub-backed transcription download path
-11. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
+5. Confirm the MSI skips the license agreement page, shows the first-install `Choose model options` page, and makes it clear that `Standard` is always installed from the package
+6. Confirm the first-install dialog lets you choose `Standard` or `Standard + Higher Accuracy download` for both transcription and speaker labeling
+7. Confirm the completion screen offers `Launch Meeting Recorder`
+8. Confirm `Meeting Recorder.lnk` shortcuts appear for the current user in Start Menu and on Desktop, and that they launch successfully
+9. Confirm published outputs default to `Documents\Meetings\Recordings` and `Documents\Meetings\Transcripts`
+10. Confirm the app launches and the `Setup` page is usable
+11. Confirm a no-network or blocked-download MSI install still lands with `Standard ready` for transcription and speaker labeling
+12. Confirm an install where `Higher Accuracy` is selected falls back cleanly to `Standard` if the download fails and surfaces a retry message that points back to `Settings > Setup`
+13. Confirm the app does not immediately offer the same GitHub release again on first launch after the MSI install
+14. Confirm the `Setup` page offers `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics for both transcription and speaker labeling
+15. Confirm only the Higher Accuracy assets are shown as GitHub-backed downloads
+16. Confirm a later CLI/in-app update preserves the current transcription and speaker-labeling profile choice while restoring missing bundled Standard assets if needed
+17. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
+18. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
+19. Confirm `%USERPROFILE%\Documents\MeetingRecorder` and the user-scope shortcuts are removed
+20. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
+21. Run `MeetingRecorderInstaller.msi` again as a fresh install
+22. Confirm the app comes back with the preserved user data still available
 
 ## User-Facing Install Story
 
@@ -327,7 +359,8 @@ Once a release is published, the recommended user path is:
 
 1. Download `MeetingRecorderInstaller.msi` from GitHub Releases
 2. Run it directly
-3. On the MSI completion screen, leave `Launch Meeting Recorder` checked if you want to open the app immediately
+3. On the first-install `Choose model options` page, keep `Standard` for the most reliable setup or add `Higher Accuracy` when downloads are allowed on that machine
+4. On the MSI completion screen, leave `Launch Meeting Recorder` checked if you want to open the app immediately
 
 Backup path:
 
@@ -342,3 +375,4 @@ Optional EXE path:
 
 Later updates can reuse the MSI, EXE, or script bootstrap paths, with the script bootstrap still available as the lowest-friction fallback.
 Existing installs keep their saved config values on update.
+An MSI uninstall is also data-preserving by design: it removes the managed app files and current-user shortcuts, while leaving `%LOCALAPPDATA%\MeetingRecorder` and the published meetings folders in place for a later fresh install.

@@ -125,6 +125,46 @@ public sealed class MeetingTitleSuggestionServiceTests
         Assert.Equal("Teams title history", suggestion.Source);
     }
 
+    [Fact]
+    public void TrySuggestTitle_Does_Not_Throw_For_Suppressed_Teams_Shell_Title_Without_Attendee_Name()
+    {
+        var provider = new StubCalendarMeetingTitleProvider(candidate: null);
+        var service = new MeetingTitleSuggestionService(provider);
+        var capturedAtUtc = DateTimeOffset.Parse("2026-03-24T13:33:20Z");
+        var record = new MeetingOutputRecord(
+            "2026-03-24_133320_teams_microsoft-teams",
+            "Microsoft Teams",
+            capturedAtUtc,
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(5),
+            null,
+            null,
+            null,
+            null,
+            "manifest.json",
+            SessionState.Published,
+            Array.Empty<MeetingAttendee>(),
+            false,
+            null);
+        var manifest = new MeetingSessionManifest
+        {
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = "Microsoft Teams",
+            StartedAtUtc = capturedAtUtc,
+            DetectionEvidence =
+            [
+                new DetectionSignal("window-title", "Activity | Microsoft Teams", 0.85d, capturedAtUtc),
+            ],
+        };
+
+        var suggestion = service.TrySuggestTitle(
+            record,
+            manifest,
+            MeetingTitleSuggestionMode.Passive);
+
+        Assert.Null(suggestion);
+    }
+
     private sealed class StubCalendarMeetingTitleProvider : ICalendarMeetingTitleProvider
     {
         private readonly CalendarMeetingDetailsCandidate? _candidate;

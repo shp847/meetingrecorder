@@ -165,7 +165,7 @@ public sealed class PortableInstallServiceTests : IDisposable
     }
 
     [Fact]
-    public void EnsureInstalledExecutablePayload_Restores_Missing_Executable_Files_From_Source_Bundle()
+    public void EnsureInstalledExecutablePayload_Restores_Missing_Worker_Payload_Files_From_Source_Bundle()
     {
         var sourceBundleRoot = CreateDirectory("source");
         var installRoot = CreateDirectory("install");
@@ -173,6 +173,10 @@ public sealed class PortableInstallServiceTests : IDisposable
         File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.App.exe"), "apphost");
         File.WriteAllText(Path.Combine(sourceBundleRoot, "AppPlatform.Deployment.Cli.exe"), "cli");
         File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.ProcessingWorker.exe"), "worker");
+        File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.ProcessingWorker.dll"), "worker-dll");
+        File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.ProcessingWorker.deps.json"), "{ }");
+        File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.ProcessingWorker.runtimeconfig.json"), "{ }");
+        File.WriteAllText(Path.Combine(sourceBundleRoot, "MeetingRecorder.Core.dll"), "core");
         File.WriteAllText(Path.Combine(installRoot, "Run-MeetingRecorder.cmd"), "@echo off");
 
         PortableInstallService.EnsureInstalledExecutablePayload(sourceBundleRoot, installRoot);
@@ -180,6 +184,10 @@ public sealed class PortableInstallServiceTests : IDisposable
         Assert.Equal("apphost", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
         Assert.Equal("cli", File.ReadAllText(Path.Combine(installRoot, "AppPlatform.Deployment.Cli.exe")));
         Assert.Equal("worker", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.ProcessingWorker.exe")));
+        Assert.Equal("worker-dll", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.ProcessingWorker.dll")));
+        Assert.Equal("{ }", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.ProcessingWorker.deps.json")));
+        Assert.Equal("{ }", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.ProcessingWorker.runtimeconfig.json")));
+        Assert.Equal("core", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.Core.dll")));
     }
 
     [Fact]

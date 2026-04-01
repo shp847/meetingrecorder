@@ -11,17 +11,20 @@ internal sealed class RecordingSessionCoordinator
     private readonly SessionManifestStore _manifestStore;
     private readonly ArtifactPathBuilder _pathBuilder;
     private readonly FileLogWriter _logger;
+    private readonly Func<IWaveIn> _microphoneCaptureFactory;
 
     public RecordingSessionCoordinator(
         LiveAppConfig config,
         SessionManifestStore manifestStore,
         ArtifactPathBuilder pathBuilder,
-        FileLogWriter logger)
+        FileLogWriter logger,
+        Func<IWaveIn>? microphoneCaptureFactory = null)
     {
         _config = config;
         _manifestStore = manifestStore;
         _pathBuilder = pathBuilder;
         _logger = logger;
+        _microphoneCaptureFactory = microphoneCaptureFactory ?? CreateMicrophoneCapture;
     }
 
     public ActiveRecordingSession? ActiveSession { get; private set; }
@@ -62,14 +65,16 @@ internal sealed class RecordingSessionCoordinator
             _logger);
 
         ChunkedWaveRecorder? microphoneRecorder = null;
+        DateTimeOffset? activeMicrophoneSegmentStartedAtUtc = null;
         if (currentConfig.MicCaptureEnabled)
         {
             microphoneRecorder = new ChunkedWaveRecorder(
-                CreateMicrophoneCapture,
+                _microphoneCaptureFactory,
                 rawDir,
                 "microphone",
                 TimeSpan.FromSeconds(30),
                 _logger);
+            activeMicrophoneSegmentStartedAtUtc = initialManifest.StartedAtUtc;
         }
 
         try
@@ -80,6 +85,10 @@ internal sealed class RecordingSessionCoordinator
             var manifest = initialManifest with
             {
                 State = SessionState.Recording,
+                MicrophoneCaptureSegments = BuildMicrophoneCaptureSegments(
+                    completedSegments: [],
+                    microphoneRecorder,
+                    activeMicrophoneSegmentStartedAtUtc),
             };
             await _manifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
@@ -89,7 +98,9 @@ internal sealed class RecordingSessionCoordinator
                 ManifestPath = manifestPath,
                 LoopbackRecorder = loopbackRecorder,
                 MicrophoneRecorder = microphoneRecorder,
+                ActiveMicrophoneSegmentStartedAtUtc = activeMicrophoneSegmentStartedAtUtc,
                 AutoStarted = autoStarted,
+                MeetingLifecycleManaged = autoStarted,
             };
 
             var evidence = detectionEvidence.Count == 0
@@ -116,23 +127,70 @@ internal sealed class RecordingSessionCoordinator
         ActiveSession = null;
 
         active.LoopbackRecorder.Stop();
-        active.MicrophoneRecorder?.Stop();
+        var finalizedMicrophoneCaptureSegments = FinalizeMicrophoneCaptureSegments(active, DateTimeOffset.UtcNow);
 
         var finalized = active.Manifest with
         {
             State = SessionState.Queued,
             EndedAtUtc = DateTimeOffset.UtcNow,
             RawChunkPaths = active.LoopbackRecorder.ChunkPaths.ToArray(),
-            MicrophoneChunkPaths = active.MicrophoneRecorder?.ChunkPaths.ToArray() ?? Array.Empty<string>(),
+            MicrophoneCaptureSegments = finalizedMicrophoneCaptureSegments,
+            MicrophoneChunkPaths = finalizedMicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
         };
 
         await _manifestStore.SaveAsync(finalized, active.ManifestPath, cancellationToken);
         var loopbackDiagnostics = DescribeChunkSet(active.LoopbackRecorder.ChunkPaths, active.LoopbackRecorder.TotalBytesRecorded, "loopback");
-        var microphoneDiagnostics = active.MicrophoneRecorder is null
+        var microphoneDiagnostics = finalizedMicrophoneCaptureSegments.Count == 0
             ? "microphone=disabled"
-            : DescribeChunkSet(active.MicrophoneRecorder.ChunkPaths, active.MicrophoneRecorder.TotalBytesRecorded, "microphone");
+            : DescribeChunkSet(finalized.MicrophoneChunkPaths, finalized.MicrophoneChunkPaths.Sum(GetAudioFileLength), "microphone");
         _logger.Log($"Recording stopped for session '{finalized.SessionId}'. Reason: {reason}. {loopbackDiagnostics}; {microphoneDiagnostics}");
         return active.ManifestPath;
+    }
+
+    public async Task<bool> SetMicrophoneCaptureEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (ActiveSession is null)
+        {
+            return false;
+        }
+
+        if (enabled)
+        {
+            if (ActiveSession.MicrophoneRecorder is not null)
+            {
+                return false;
+            }
+
+            var rawDir = Path.Combine(
+                Path.GetDirectoryName(ActiveSession.ManifestPath)
+                    ?? throw new InvalidOperationException("Active manifest path must include a session directory."),
+                "raw");
+            var microphoneRecorder = new ChunkedWaveRecorder(
+                _microphoneCaptureFactory,
+                rawDir,
+                "microphone",
+                TimeSpan.FromSeconds(30),
+                _logger);
+            microphoneRecorder.Start();
+            ActiveSession.MicrophoneRecorder = microphoneRecorder;
+            ActiveSession.ActiveMicrophoneSegmentStartedAtUtc = DateTimeOffset.UtcNow;
+            await PersistActiveMicrophoneCaptureStateAsync(ActiveSession, cancellationToken);
+            _logger.Log($"Microphone capture enabled for active session '{ActiveSession.Manifest.SessionId}' from now on.");
+            return true;
+        }
+
+        if (ActiveSession.MicrophoneRecorder is null || !ActiveSession.ActiveMicrophoneSegmentStartedAtUtc.HasValue)
+        {
+            return false;
+        }
+
+        var completedSegment = CompleteCurrentMicrophoneSegment(ActiveSession, DateTimeOffset.UtcNow);
+        ActiveSession.CompletedMicrophoneCaptureSegments.Add(completedSegment);
+        await PersistActiveMicrophoneCaptureStateAsync(ActiveSession, cancellationToken);
+        _logger.Log($"Microphone capture disabled for active session '{ActiveSession.Manifest.SessionId}' from now on.");
+        return true;
     }
 
     public async Task<bool> RenameActiveSessionAsync(string newTitle, CancellationToken cancellationToken = default)
@@ -205,6 +263,7 @@ internal sealed class RecordingSessionCoordinator
 
     public async Task<bool> ReclassifyActiveSessionAsync(
         MeetingPlatform platform,
+        string detectedTitle,
         IReadOnlyList<DetectionSignal> detectionEvidence,
         DetectedAudioSource? detectedAudioSource = null,
         CancellationToken cancellationToken = default)
@@ -212,24 +271,35 @@ internal sealed class RecordingSessionCoordinator
         cancellationToken.ThrowIfCancellationRequested();
 
         if (ActiveSession is null ||
-            platform == MeetingPlatform.Unknown ||
-            platform == ActiveSession.Manifest.Platform)
+            platform == MeetingPlatform.Unknown)
         {
             return false;
         }
 
+        var trimmedDetectedTitle = detectedTitle.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedDetectedTitle))
+        {
+            throw new ArgumentException("A detected meeting title is required.", nameof(detectedTitle));
+        }
+
         var previousPlatform = ActiveSession.Manifest.Platform;
+        var previousTitle = ActiveSession.Manifest.DetectedTitle;
         var updatedManifest = ActiveSession.Manifest with
         {
             Platform = platform,
+            DetectedTitle = trimmedDetectedTitle,
             DetectionEvidence = detectionEvidence.ToArray(),
             DetectedAudioSource = detectedAudioSource ?? ActiveSession.Manifest.DetectedAudioSource,
         };
+        if (updatedManifest == ActiveSession.Manifest)
+        {
+            return false;
+        }
 
         await _manifestStore.SaveAsync(updatedManifest, ActiveSession.ManifestPath, cancellationToken);
         ActiveSession.Manifest = updatedManifest;
         _logger.Log(
-            $"Active session '{updatedManifest.SessionId}' reclassified from '{previousPlatform}' to '{platform}'.");
+            $"Active session '{updatedManifest.SessionId}' reclassified from '{previousPlatform}'/'{previousTitle}' to '{platform}'/'{trimmedDetectedTitle}'.");
         return true;
     }
 
@@ -267,6 +337,75 @@ internal sealed class RecordingSessionCoordinator
         _logger.Log(
             $"Updated active session '{updatedManifest.SessionId}' with {updatedManifest.Attendees.Count} persisted attendee(s) from live Teams capture.");
         return true;
+    }
+
+    private async Task PersistActiveMicrophoneCaptureStateAsync(
+        ActiveRecordingSession activeSession,
+        CancellationToken cancellationToken)
+    {
+        var microphoneCaptureSegments = BuildMicrophoneCaptureSegments(
+            activeSession.CompletedMicrophoneCaptureSegments,
+            activeSession.MicrophoneRecorder,
+            activeSession.ActiveMicrophoneSegmentStartedAtUtc);
+        var updatedManifest = activeSession.Manifest with
+        {
+            MicrophoneCaptureSegments = microphoneCaptureSegments,
+            MicrophoneChunkPaths = microphoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+        };
+        await _manifestStore.SaveAsync(updatedManifest, activeSession.ManifestPath, cancellationToken);
+        activeSession.Manifest = updatedManifest;
+    }
+
+    private static IReadOnlyList<MicrophoneCaptureSegment> FinalizeMicrophoneCaptureSegments(
+        ActiveRecordingSession activeSession,
+        DateTimeOffset endedAtUtc)
+    {
+        if (activeSession.MicrophoneRecorder is not null && activeSession.ActiveMicrophoneSegmentStartedAtUtc.HasValue)
+        {
+            var completedSegment = CompleteCurrentMicrophoneSegment(activeSession, endedAtUtc);
+            activeSession.CompletedMicrophoneCaptureSegments.Add(completedSegment);
+        }
+
+        return activeSession.CompletedMicrophoneCaptureSegments.ToArray();
+    }
+
+    private static MicrophoneCaptureSegment CompleteCurrentMicrophoneSegment(
+        ActiveRecordingSession activeSession,
+        DateTimeOffset endedAtUtc)
+    {
+        var microphoneRecorder = activeSession.MicrophoneRecorder
+            ?? throw new InvalidOperationException("An active microphone recorder is required.");
+        var startedAtUtc = activeSession.ActiveMicrophoneSegmentStartedAtUtc
+            ?? throw new InvalidOperationException("An active microphone segment start time is required.");
+        microphoneRecorder.Stop();
+        activeSession.MicrophoneRecorder = null;
+        activeSession.ActiveMicrophoneSegmentStartedAtUtc = null;
+        return new MicrophoneCaptureSegment(
+            startedAtUtc,
+            endedAtUtc,
+            microphoneRecorder.ChunkPaths.ToArray());
+    }
+
+    private static IReadOnlyList<MicrophoneCaptureSegment> BuildMicrophoneCaptureSegments(
+        IReadOnlyList<MicrophoneCaptureSegment> completedSegments,
+        ChunkedWaveRecorder? activeMicrophoneRecorder,
+        DateTimeOffset? activeMicrophoneSegmentStartedAtUtc)
+    {
+        var segments = completedSegments.ToList();
+        if (activeMicrophoneRecorder is not null && activeMicrophoneSegmentStartedAtUtc.HasValue)
+        {
+            segments.Add(new MicrophoneCaptureSegment(
+                activeMicrophoneSegmentStartedAtUtc.Value,
+                null,
+                activeMicrophoneRecorder.ChunkPaths.ToArray()));
+        }
+
+        return segments;
+    }
+
+    private static long GetAudioFileLength(string path)
+    {
+        return File.Exists(path) ? new FileInfo(path).Length : 0L;
     }
 
     private static IWaveIn CreateMicrophoneCapture()

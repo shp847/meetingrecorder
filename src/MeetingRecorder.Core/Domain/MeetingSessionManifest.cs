@@ -20,6 +20,8 @@ public sealed record MeetingSessionManifest
 
     public IReadOnlyList<string> MicrophoneChunkPaths { get; init; } = Array.Empty<string>();
 
+    public IReadOnlyList<MicrophoneCaptureSegment> MicrophoneCaptureSegments { get; init; } = Array.Empty<MicrophoneCaptureSegment>();
+
     public string? MergedAudioPath { get; init; }
 
     public ImportedSourceAudioInfo? ImportedSourceAudio { get; init; }
@@ -52,3 +54,8 @@ public sealed record ImportedSourceAudioInfo(
     string OriginalPath,
     long SourceSizeBytes,
     DateTimeOffset SourceLastWriteUtc);
+
+public sealed record MicrophoneCaptureSegment(
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset? EndedAtUtc,
+    IReadOnlyList<string> ChunkPaths);

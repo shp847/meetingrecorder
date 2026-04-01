@@ -83,25 +83,55 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Active_AutoStarted_Session_Reclassifies_Before_Auto_Stop_Logic_Runs()
+    public void Active_Session_Reclassifies_Before_Auto_Stop_Logic_Runs_While_Auto_Stop_Uses_Meeting_Lifecycle_Management()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
-        var detectionStart = source.IndexOf("var activeAutoStartedSession = _recordingCoordinator.ActiveSession", StringComparison.Ordinal);
+        var detectionStart = source.IndexOf("var activeSession = _recordingCoordinator.ActiveSession;", StringComparison.Ordinal);
         var detectionEnd = source.IndexOf("var activeSessionForMicPrompt = _recordingCoordinator.ActiveSession;", detectionStart, StringComparison.Ordinal);
         var detectionBlock = source[detectionStart..detectionEnd];
 
-        var reclassifyIndex = detectionBlock.IndexOf("TryReclassifyActiveAutoStartedSessionAsync(", StringComparison.Ordinal);
+        var reclassifyIndex = detectionBlock.IndexOf("TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
         var refreshIndex = detectionBlock.IndexOf("_autoRecordingContinuityPolicy.ShouldRefreshLastPositiveSignal(", StringComparison.Ordinal);
+        var lifecycleManagedIndex = detectionBlock.IndexOf("var activeMeetingManagedSession = _recordingCoordinator.ActiveSession is { MeetingLifecycleManaged: true } reclassifiedSession", StringComparison.Ordinal);
         var stopIndex = detectionBlock.IndexOf("AppendAutoStopStatus($\"Auto-stop triggered after", StringComparison.Ordinal);
 
         Assert.True(reclassifyIndex >= 0, "Expected active session reclassification hook in detection loop.");
         Assert.True(refreshIndex > reclassifyIndex, "Reclassification should happen before the positive-signal continuity check.");
+        Assert.True(lifecycleManagedIndex > reclassifyIndex, "Meeting lifecycle gating should be evaluated only after any reclassification completes.");
         Assert.True(stopIndex > reclassifyIndex, "Reclassification should happen before the auto-stop branch.");
     }
 
     [Fact]
-    public void Startup_Warmup_Still_Uses_A_Fast_Refresh_Before_Deferring_Full_Enrichment()
+    public void Active_Session_Reclassification_Uses_The_Current_Title_And_Resets_The_Title_Draft_To_The_New_Meeting()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async void UpdateTimer_OnTick", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("activeSession.Manifest.DetectedTitle", methodBlock);
+        Assert.Contains("_sessionTitleDraftTracker.MarkPersisted(activeSession.Manifest.SessionId, decision.SessionTitle);", methodBlock);
+    }
+
+    [Fact]
+    public void Audio_Graph_Timer_Also_Refreshes_The_Live_Recording_Elapsed_Time_Readout()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var tickStart = source.IndexOf("private void AudioGraphTimer_OnTick", StringComparison.Ordinal);
+        var tickEnd = source.IndexOf("protected override void OnClosing", tickStart, StringComparison.Ordinal);
+        var tickBlock = source[tickStart..tickEnd];
+
+        Assert.Contains("UpdateCurrentRecordingElapsedText();", tickBlock);
+        Assert.Contains("private void UpdateCurrentRecordingElapsedText()", source);
+        Assert.Contains("activeSession.Manifest.StartedAtUtc", source);
+        Assert.Contains("DateTimeOffset.UtcNow", source);
+    }
+
+    [Fact]
+    public void Startup_Warmup_Requests_A_Deferred_Fast_Refresh_Instead_Of_Loading_The_Meetings_Catalog_Inline()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -110,8 +140,8 @@ public sealed class MainWindowStartupSourceTests
         var warmupBlock = source[warmupStart..warmupEnd];
 
         Assert.Contains("await EnsureConfiguredModelPathResolvedAsync(\"startup\", _lifetimeCts.Token);", warmupBlock);
-        Assert.Contains("await RefreshMeetingListAsync(MeetingRefreshMode.Fast);", warmupBlock);
-        Assert.DoesNotContain("ScheduleDeferredMeetingsRefresh();", warmupBlock);
+        Assert.Contains("RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, \"startup warmup\");", warmupBlock);
+        Assert.DoesNotContain("await RefreshMeetingListAsync(MeetingRefreshMode.Fast);", warmupBlock);
         Assert.Contains("ScheduleDeferredStartupMaintenance();", warmupBlock);
     }
 
@@ -126,6 +156,20 @@ public sealed class MainWindowStartupSourceTests
 
         Assert.Contains("RequestMeetingRefreshForCurrentContext(", handlerBlock);
         Assert.DoesNotContain("_ = RefreshMeetingListAsync();", handlerBlock);
+        Assert.Contains("ShouldRefreshMeetingCatalogForConfigChange(", handlerBlock);
+    }
+
+    [Fact]
+    public void Config_Save_And_Snapshot_Include_Background_Processing_Selections()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("InitializeConfigEditorSelectionControls()", source);
+        Assert.Contains("ConfigBackgroundProcessingModeComboBox.SelectedValue", source);
+        Assert.Contains("ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue", source);
+        Assert.Contains("BackgroundProcessingMode =", source);
+        Assert.Contains("BackgroundSpeakerLabelingMode =", source);
     }
 
     [Fact]
@@ -137,10 +181,110 @@ public sealed class MainWindowStartupSourceTests
         var helperEnd = source.IndexOf("private void ApplyConfigToUi", helperStart, StringComparison.Ordinal);
         var helperBlock = source[helperStart..helperEnd];
 
+        Assert.Contains("_recordingCoordinator.IsRecording", helperBlock);
+        Assert.Contains("MainWindowInteractionLogic.ShouldDeferMeetingRefresh(", helperBlock);
         Assert.Contains("ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", helperBlock);
-        Assert.Contains("refreshMode: MeetingRefreshMode.Fast", helperBlock);
+        Assert.Contains("_hasPendingMeetingsRefreshRequest = true;", helperBlock);
+        Assert.Contains("SchedulePendingMeetingsRefreshIfReady();", helperBlock);
         Assert.Contains("_hasCompletedFullMeetingsRefresh = false;", helperBlock);
-        Assert.Contains("ScheduleDeferredMeetingsRefresh();", helperBlock);
+        Assert.Contains("private void SchedulePendingMeetingsRefreshIfReady()", source);
+    }
+
+    [Fact]
+    public void Detection_Timer_Offloads_Window_Scanning_And_Skips_Overlapping_Detection_Cycles()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("if (!TryBeginDetectionCycle())", methodBlock);
+        Assert.Contains("DetectBestCandidateAsync(_lifetimeCts.Token)", methodBlock);
+        Assert.DoesNotContain("? _meetingDetector.DetectBestCandidate()", methodBlock);
+        Assert.Contains("Skipped overlapping detection scan because the previous scan is still running.", source);
+        Assert.Contains("private bool TryBeginDetectionCycle()", source);
+    }
+
+    [Fact]
+    public void Detection_Timer_Can_AutoStart_A_Sustained_Quiet_Teams_Meeting_Without_Waiting_For_Late_Audio()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("var shouldAutoStartQuietTeamsMeeting = ShouldAutoStartQuietTeamsMeeting(decision, nowUtc);", methodBlock);
+        Assert.Contains("if (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop)", methodBlock);
+        Assert.Contains("private bool ShouldAutoStartQuietTeamsMeeting(", source);
+    }
+
+    [Fact]
+    public void Main_Tab_Selection_Changes_Are_Ignored_Until_The_Window_Is_Fully_Initialized()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private void MainTabControl_OnSelectionChanged", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void RequestMeetingRefreshForCurrentContext", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("if (!_isUiReady)", methodBlock);
+        Assert.Contains("return;", methodBlock);
+        Assert.Contains("UpdateAudioGraphTimerState();", methodBlock);
+    }
+
+    [Fact]
+    public void Stop_Current_Recording_Queues_A_Deferred_Meetings_Refresh_Instead_Of_Awaiting_It_On_The_Foreground_Path()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task StopCurrentRecordingAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private Task<string?> StopRecordingSessionAsync(", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.DoesNotContain("await RefreshMeetingListAsync();", methodBlock);
+        Assert.Contains("RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, \"recording stop\");", methodBlock);
+    }
+
+    [Fact]
+    public void Audio_Graph_Updates_Reuse_Buffers_And_Only_Run_While_Home_Is_Visible_Or_Recording_State_Is_Visible()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("_audioGraphCombinedLevels = new double[AudioGraphPointCount];", source);
+        Assert.DoesNotContain("Enumerable.Repeat(0d, AudioGraphPointCount).ToArray()", source);
+        Assert.Contains("private void UpdateAudioGraphTimerState()", source);
+        Assert.DoesNotContain("_audioGraphTimer.Start();", source[source.IndexOf("private async void OnLoaded", StringComparison.Ordinal)..source.IndexOf("private void ScheduleStartupWarmup", StringComparison.Ordinal)]);
+        Assert.Contains("!ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", source);
+    }
+
+    [Fact]
+    public void Main_Window_Subscribes_To_Processing_Queue_Status_Changes_And_Uses_A_Dedicated_Timer_For_Relative_Queue_Status_Refreshes()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("private readonly DispatcherTimer _processingQueueStatusTimer;", source);
+        Assert.Contains("Interval = TimeSpan.FromSeconds(1)", source);
+        Assert.Contains("_processingQueue.StatusChanged += ProcessingQueue_OnStatusChanged;", source);
+        Assert.Contains("private void ProcessingQueue_OnStatusChanged(", source);
+        Assert.Contains("private void ProcessingQueueStatusTimer_OnTick(", source);
+        Assert.Contains("private void UpdateProcessingQueueStatusTimerState()", source);
+    }
+
+    [Fact]
+    public void Main_Window_Refreshes_The_Header_Chip_And_Meetings_Processing_Strip_From_The_Latest_Queue_Snapshot_Without_Hitting_Disk_On_Every_Tick()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("_latestProcessingQueueStatusSnapshot", source);
+        Assert.Contains("UpdateProcessingQueueStatusUi();", source);
+        Assert.Contains("BuildProcessingQueueHeaderState(", source);
+        Assert.Contains("BuildMeetingsProcessingStripState(", source);
+        Assert.DoesNotContain("LoadAsync(", source[source.IndexOf("private void ProcessingQueueStatusTimer_OnTick", StringComparison.Ordinal)..source.IndexOf("protected override void OnClosing", StringComparison.Ordinal)]);
     }
 
     [Fact]
@@ -196,6 +340,19 @@ public sealed class MainWindowStartupSourceTests
 
         Assert.Contains("CloseHeaderSurfaces();", shutdownBlock);
         Assert.Contains("application.Shutdown();", shutdownBlock);
+    }
+
+    [Fact]
+    public void Header_Shell_Status_Action_Slot_Uses_Hidden_Instead_Of_Collapsed_To_Avoid_Layout_Shifts()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var updateStart = source.IndexOf("var shellStatus = _shellStatusOverride ?? MainWindowInteractionLogic.BuildShellStatus(", StringComparison.Ordinal);
+        var updateEnd = source.IndexOf("private static string BuildMicCaptureReadinessText(", updateStart, StringComparison.Ordinal);
+        var updateBlock = source[updateStart..updateEnd];
+
+        Assert.Contains("Visibility.Hidden", updateBlock);
+        Assert.DoesNotContain("Visibility.Collapsed", updateBlock);
     }
 
     private static string GetPath(params string[] segments)

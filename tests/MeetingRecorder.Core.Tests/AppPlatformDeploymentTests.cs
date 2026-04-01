@@ -154,6 +154,10 @@ public sealed class AppPlatformDeploymentTests
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.product.json"), "{ }");
         File.WriteAllText(Path.Combine(bundleRoot, "AppPlatform.Deployment.Cli.exe"), "cli");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.exe"), "worker");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.dll"), "worker-dll");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.deps.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.runtimeconfig.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.Core.dll"), "core");
         File.WriteAllText(
             Path.Combine(bundleRoot, "bundle-integrity.json"),
             """
@@ -163,6 +167,10 @@ public sealed class AppPlatformDeploymentTests
                 { "relativePath": "MeetingRecorder.App.exe", "lengthBytes": 7, "sha256": "83656a19d94db9fdacd5feab3e847869ff93d70bf5989f5212e6a719a24c4e25" },
                 { "relativePath": "AppPlatform.Deployment.Cli.exe", "lengthBytes": 3, "sha256": "99bb88401742848e032fd6f51709415fb6be169a72d2e5d7fc44289255160d3c" },
                 { "relativePath": "MeetingRecorder.ProcessingWorker.exe", "lengthBytes": 6, "sha256": "87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.dll", "lengthBytes": 10, "sha256": "4c58c2d87ddefa51ea622fa9db6a15d03f664fb3b0d9bc6c44aca741144d4aeb" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.deps.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.runtimeconfig.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.Core.dll", "lengthBytes": 4, "sha256": "0d45f5fd462b8c70bffb10021ac1bcff3f58f29b1faf7568595095427d42812c" },
                 { "relativePath": "MeetingRecorder.product.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
                 { "relativePath": "Run-MeetingRecorder.cmd", "lengthBytes": 9, "sha256": "abb30b0a70e39de39ce0790c6c157fd04bcfb998705ec1672fe8070ff2d34573" }
               ]
@@ -325,6 +333,10 @@ public sealed class AppPlatformDeploymentTests
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.App.exe"), "app-exe");
         File.WriteAllText(Path.Combine(bundleRoot, "AppPlatform.Deployment.Cli.exe"), "cli");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.exe"), "worker");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.dll"), "worker-dll");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.deps.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.runtimeconfig.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.Core.dll"), "core");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.product.json"), "{ }");
         File.WriteAllText(Path.Combine(bundleRoot, "Run-MeetingRecorder.cmd"), "@echo off");
         File.WriteAllText(
@@ -336,6 +348,10 @@ public sealed class AppPlatformDeploymentTests
                 { "relativePath": "MeetingRecorder.App.exe", "lengthBytes": 7, "sha256": "83656a19d94db9fdacd5feab3e847869ff93d70bf5989f5212e6a719a24c4e25" },
                 { "relativePath": "AppPlatform.Deployment.Cli.exe", "lengthBytes": 3, "sha256": "99bb88401742848e032fd6f51709415fb6be169a72d2e5d7fc44289255160d3c" },
                 { "relativePath": "MeetingRecorder.ProcessingWorker.exe", "lengthBytes": 6, "sha256": "87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.dll", "lengthBytes": 10, "sha256": "4c58c2d87ddefa51ea622fa9db6a15d03f664fb3b0d9bc6c44aca741144d4aeb" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.deps.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.runtimeconfig.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.Core.dll", "lengthBytes": 4, "sha256": "0d45f5fd462b8c70bffb10021ac1bcff3f58f29b1faf7568595095427d42812c" },
                 { "relativePath": "MeetingRecorder.product.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
                 { "relativePath": "Run-MeetingRecorder.cmd", "lengthBytes": 9, "sha256": "abb30b0a70e39de39ce0790c6c157fd04bcfb998705ec1672fe8070ff2d34573" }
               ]
@@ -422,6 +438,10 @@ public sealed class AppPlatformDeploymentTests
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.App.exe"), "new-app");
         File.WriteAllText(Path.Combine(bundleRoot, "AppPlatform.Deployment.Cli.exe"), "cli");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.exe"), "worker");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.dll"), "worker-dll");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.deps.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.runtimeconfig.json"), "{ }");
+        File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.Core.dll"), "core");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.product.json"), "{ }");
         File.WriteAllText(Path.Combine(bundleRoot, "Run-MeetingRecorder.cmd"), "@echo off");
         Directory.CreateDirectory(Path.Combine(bundleRoot, "data", "models"));
@@ -435,6 +455,10 @@ public sealed class AppPlatformDeploymentTests
                 { "relativePath": "MeetingRecorder.App.exe", "lengthBytes": 7, "sha256": "84e693276868f8699a9400ea321b5e385967b64dc195292d2ebb9c50cace6ff7" },
                 { "relativePath": "AppPlatform.Deployment.Cli.exe", "lengthBytes": 3, "sha256": "99bb88401742848e032fd6f51709415fb6be169a72d2e5d7fc44289255160d3c" },
                 { "relativePath": "MeetingRecorder.ProcessingWorker.exe", "lengthBytes": 6, "sha256": "87eba76e7f3164534045ba922e7770fb58bbd14ad732bbf5ba6f11cc56989e6e" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.dll", "lengthBytes": 10, "sha256": "4c58c2d87ddefa51ea622fa9db6a15d03f664fb3b0d9bc6c44aca741144d4aeb" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.deps.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.ProcessingWorker.runtimeconfig.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
+                { "relativePath": "MeetingRecorder.Core.dll", "lengthBytes": 4, "sha256": "0d45f5fd462b8c70bffb10021ac1bcff3f58f29b1faf7568595095427d42812c" },
                 { "relativePath": "MeetingRecorder.product.json", "lengthBytes": 3, "sha256": "257c1be96ae69f4b01c2c69bdb6d78605f59175819fb007d0bf245bf48444c4a" },
                 { "relativePath": "Run-MeetingRecorder.cmd", "lengthBytes": 9, "sha256": "abb30b0a70e39de39ce0790c6c157fd04bcfb998705ec1672fe8070ff2d34573" }
               ]

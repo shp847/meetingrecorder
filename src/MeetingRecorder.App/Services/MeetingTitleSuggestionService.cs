@@ -153,6 +153,11 @@ internal sealed class MeetingTitleSuggestionService
             return true;
         }
 
+        if (LooksLikeSuppressedTeamsShellTitle(candidate))
+        {
+            return false;
+        }
+
         candidate = candidate
             .Replace("- Microsoft Teams", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("| Microsoft Teams", string.Empty, StringComparison.OrdinalIgnoreCase)
@@ -193,7 +198,15 @@ internal sealed class MeetingTitleSuggestionService
                 continue;
             }
 
-            var candidate = value[prefix.Length..^teamsSuffix.Length].Trim().Trim('|', ' ');
+            if (value.Length <= prefix.Length + teamsSuffix.Length)
+            {
+                return false;
+            }
+
+            var candidate = value
+                .Substring(prefix.Length, value.Length - prefix.Length - teamsSuffix.Length)
+                .Trim()
+                .Trim('|', ' ');
             if (string.IsNullOrWhiteSpace(candidate))
             {
                 return false;
@@ -204,6 +217,17 @@ internal sealed class MeetingTitleSuggestionService
         }
 
         return false;
+    }
+
+    private static bool LooksLikeSuppressedTeamsShellTitle(string value)
+    {
+        var normalized = value.Trim();
+        return normalized.EndsWith("| Microsoft Teams", StringComparison.OrdinalIgnoreCase) &&
+            (normalized.StartsWith("Chat |", StringComparison.OrdinalIgnoreCase) ||
+             normalized.StartsWith("Calls |", StringComparison.OrdinalIgnoreCase) ||
+             normalized.StartsWith("Search |", StringComparison.OrdinalIgnoreCase) ||
+             normalized.StartsWith("Activity |", StringComparison.OrdinalIgnoreCase) ||
+             normalized.StartsWith("Calendar |", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsUsableSuggestion(MeetingPlatform platform, string currentTitle, string candidateTitle)

@@ -42,6 +42,44 @@ public sealed class MeetingDetectionEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_Starts_For_A_Specific_Google_Meet_Window_When_Audio_Is_Silent()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", "Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", 0.85d, DateTimeOffset.UtcNow),
+            new DetectionSignal("browser-window", "Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", 0.15d, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-silence", "peak=0.00", 0d, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.True(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
+        Assert.Equal(MeetingPlatform.GoogleMeet, decision.Platform);
+        Assert.Contains("specific google meet", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Evaluate_Does_Not_Start_For_A_Generic_Google_Meet_Window_When_Audio_Is_Silent()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", "Google Meet and 15 more pages - Work - Microsoft Edge", 0.85d, DateTimeOffset.UtcNow),
+            new DetectionSignal("browser-window", "Google Meet and 15 more pages - Work - Microsoft Edge", 0.15d, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-silence", "peak=0.00", 0d, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.False(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
+        Assert.Equal(MeetingPlatform.GoogleMeet, decision.Platform);
+        Assert.Contains("no active system audio", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Evaluate_Does_Not_Start_For_Teams_Signals_When_Audio_Is_Inactive()
     {
         var evaluator = new MeetingDetectionEvaluator();
@@ -96,6 +134,25 @@ public sealed class MeetingDetectionEvaluatorTests
         Assert.False(decision.ShouldKeepRecording);
         Assert.Equal(MeetingPlatform.Teams, decision.Platform);
         Assert.Equal("Chao, Adam", decision.SessionTitle);
+    }
+
+    [Fact]
+    public void Evaluate_Does_Not_Throw_For_Suppressed_Teams_Chat_Window_Without_Attendee_Name()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", "Chat | Microsoft Teams", 0.85, DateTimeOffset.UtcNow),
+            new DetectionSignal("process-name", "ms-teams", 0.15, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-activity", "peak=0.27", 0.2, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.False(decision.ShouldStart);
+        Assert.False(decision.ShouldKeepRecording);
+        Assert.Equal(MeetingPlatform.Teams, decision.Platform);
+        Assert.Contains("chat", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

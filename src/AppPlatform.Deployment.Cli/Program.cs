@@ -1,6 +1,9 @@
 using AppPlatform.Abstractions;
 using AppPlatform.Deployment;
+using MeetingRecorder.Core.Configuration;
+using MeetingRecorder.Core.Services;
 using System.Globalization;
+using System.Diagnostics;
 
 namespace AppPlatform.Deployment.Cli;
 
@@ -35,6 +38,7 @@ internal static class Program
                 "install-bundle" => await InstallBundleAsync(options, logger),
                 "install-latest" => await InstallLatestAsync(options, logger),
                 "apply-update" => await ApplyUpdateAsync(options, logger),
+                "provision-models" => await ProvisionModelsAsync(options, logger),
                 "repair-shortcuts" => RepairShortcuts(options, logger),
                 "print-layout" => PrintLayout(options, logger),
                 "emit-manual-steps" => EmitManualSteps(options, logger),
@@ -72,8 +76,9 @@ internal static class Program
     {
         var manifest = LoadManifest(options, logger);
         var bundleRoot = GetRequiredOption(options, "--bundle-root");
-        var installRoot = GetOptionalOption(options, "--install-root");
+        var installRoot = GetOptionalOption(options, "--install-root", "-i");
         var installer = CreatePortableBundleInstaller(logger);
+        var launchAfterInstall = !HasSwitch(options, "--no-launch");
 
         var result = await installer.InstallAsync(
             manifest,
@@ -82,12 +87,18 @@ internal static class Program
                 InstallRoot: installRoot,
                 CreateDesktopShortcut: !HasSwitch(options, "--no-desktop-shortcut"),
                 CreateStartMenuShortcut: !HasSwitch(options, "--no-start-menu-shortcut"),
-                LaunchAfterInstall: !HasSwitch(options, "--no-launch"),
+                LaunchAfterInstall: false,
                 ReleaseVersion: GetOptionalOption(options, "--release-version"),
                 ReleasePublishedAtUtc: ParseDateTimeOffset(GetOptionalOption(options, "--release-published-at-utc")),
                 ReleaseAssetSizeBytes: ParseInt64(GetOptionalOption(options, "--release-asset-size-bytes")),
                 Channel: ParseInstallChannel(GetOptionalOption(options, "--install-channel"), InstallChannel.DirectCli)),
             CancellationToken.None);
+
+        await ProvisionInstalledModelsAsync(manifest, result.InstallRoot, logger, CancellationToken.None);
+        if (launchAfterInstall)
+        {
+            LaunchInstalledApp(manifest, result.InstallRoot, logger);
+        }
 
         Console.WriteLine($"Installed to {result.InstallRoot}");
         return 0;
@@ -117,12 +128,18 @@ internal static class Program
             logger);
         var (_, installResult) = await installer.InstallLatestAsync(
             manifest,
-            GetOptionalOption(options, "--install-root"),
+            GetOptionalOption(options, "--install-root", "-i"),
             createDesktopShortcut: !HasSwitch(options, "--no-desktop-shortcut"),
             createStartMenuShortcut: !HasSwitch(options, "--no-start-menu-shortcut"),
-            launchAfterInstall: !HasSwitch(options, "--no-launch"),
+            launchAfterInstall: false,
             installChannel: ParseInstallChannel(GetOptionalOption(options, "--install-channel"), InstallChannel.CommandBootstrap),
             CancellationToken.None);
+
+        await ProvisionInstalledModelsAsync(manifest, installResult.InstallRoot, logger, CancellationToken.None);
+        if (!HasSwitch(options, "--no-launch"))
+        {
+            LaunchInstalledApp(manifest, installResult.InstallRoot, logger);
+        }
 
         Console.WriteLine($"Installed latest release to {installResult.InstallRoot}");
         return 0;
@@ -133,6 +150,7 @@ internal static class Program
         IDeploymentLogger logger)
     {
         var manifest = LoadManifest(options, logger);
+        var launchAfterInstall = !HasSwitch(options, "--no-launch");
         var result = await new UpdatePackageInstaller(
             CreatePortableBundleInstaller(logger),
             new InstallPathProcessManager(new InstallPathProcessController(), logger),
@@ -140,16 +158,73 @@ internal static class Program
             manifest,
             new UpdateRequest(
                 ZipPath: GetRequiredOption(options, "--zip-path"),
-                InstallRoot: GetRequiredOption(options, "--install-root"),
+                InstallRoot: GetRequiredOption(options, "--install-root", "-i"),
                 SourceProcessId: ParseInt32(GetOptionalOption(options, "--source-process-id")) ?? 0,
                 ReleaseVersion: GetOptionalOption(options, "--release-version"),
                 ReleasePublishedAtUtc: ParseDateTimeOffset(GetOptionalOption(options, "--release-published-at-utc")),
                 ReleaseAssetSizeBytes: ParseInt64(GetOptionalOption(options, "--release-asset-size-bytes")),
-                Channel: ParseInstallChannel(GetOptionalOption(options, "--update-channel"), InstallChannel.AutoUpdate)),
+                Channel: ParseInstallChannel(GetOptionalOption(options, "--update-channel"), InstallChannel.AutoUpdate),
+                LaunchAfterInstall: false),
             CancellationToken.None);
+
+        if (result.Succeeded)
+        {
+            await ProvisionInstalledModelsAsync(manifest, result.InstallRoot, logger, CancellationToken.None);
+            if (launchAfterInstall)
+            {
+                LaunchInstalledApp(manifest, result.InstallRoot, logger);
+            }
+        }
 
         Console.WriteLine($"Updated installation at {result.InstallRoot}");
         return result.Succeeded ? 0 : 1;
+    }
+
+    private static async Task<int> ProvisionModelsAsync(
+        IReadOnlyDictionary<string, string?> options,
+        IDeploymentLogger logger)
+    {
+        var manifest = LoadManifest(options, logger);
+        var installRoot = GetRequiredOption(options, "--install-root", "-i");
+        var transcriptionProfile = ParseTranscriptionProfile(GetRequiredOption(options, "--transcription-profile", "-t"));
+        var speakerLabelingProfile = ParseSpeakerLabelingProfile(GetRequiredOption(options, "--speaker-labeling-profile", "-s"));
+        var modelCatalogPath = Path.Combine(installRoot, MeetingRecorderModelCatalogService.CatalogFileName);
+        logger.Info($"Loading curated model catalog from '{modelCatalogPath}'.");
+
+        var configStore = new AppConfigStore(manifest.ManagedInstallLayout.ConfigPath);
+        var resultStore = new ModelProvisioningResultStore(configStore.ConfigPath);
+        var catalogService = new MeetingRecorderModelCatalogService();
+        var whisperModelService = new WhisperModelService(new WhisperNetModelDownloader());
+        var feedClient = new HttpAppUpdateFeedClient();
+        var diarizationCatalogService = new DiarizationAssetCatalogService();
+        var provisioningService = new ModelProvisioningService(
+            configStore,
+            resultStore,
+            catalogService,
+            whisperModelService,
+            new WhisperModelReleaseCatalogService(feedClient, whisperModelService),
+            diarizationCatalogService,
+            new DiarizationAssetReleaseCatalogService(feedClient, diarizationCatalogService));
+
+        var provisioningResult = await provisioningService.ProvisionAsync(
+            new ModelProvisioningRequest(
+                InstallRoot: installRoot,
+                ModelCatalogPath: modelCatalogPath,
+                UpdateFeedUrl: manifest.UpdateFeedUrl,
+                TranscriptionProfile: transcriptionProfile,
+                SpeakerLabelingProfile: speakerLabelingProfile),
+            CancellationToken.None);
+
+        logger.Info(
+            $"Provisioned models. Transcription requested={provisioningResult.Result.Transcription.RequestedProfile}, active={provisioningResult.Result.Transcription.ActiveProfile}, retryRecommended={provisioningResult.Result.Transcription.RetryRecommended}.");
+        logger.Info(
+            $"Provisioned models. Speaker labeling requested={provisioningResult.Result.SpeakerLabeling.RequestedProfile}, active={provisioningResult.Result.SpeakerLabeling.ActiveProfile}, retryRecommended={provisioningResult.Result.SpeakerLabeling.RetryRecommended}.");
+
+        Console.WriteLine($"Transcription requested profile: {provisioningResult.Result.Transcription.RequestedProfile}");
+        Console.WriteLine($"Transcription active profile: {provisioningResult.Result.Transcription.ActiveProfile}");
+        Console.WriteLine($"Speaker labeling requested profile: {provisioningResult.Result.SpeakerLabeling.RequestedProfile}");
+        Console.WriteLine($"Speaker labeling active profile: {provisioningResult.Result.SpeakerLabeling.ActiveProfile}");
+        return 0;
     }
 
     private static int RepairShortcuts(
@@ -157,7 +232,7 @@ internal static class Program
         IDeploymentLogger logger)
     {
         var manifest = LoadManifest(options, logger);
-        var installRoot = GetRequiredOption(options, "--install-root");
+        var installRoot = GetRequiredOption(options, "--install-root", "-i");
         var shortcutService = new WindowsShortcutService();
         var targetPath = ResolveShortcutTargetPath(manifest, installRoot);
         var iconPath = Path.Combine(installRoot, "MeetingRecorder.ico");
@@ -208,16 +283,72 @@ internal static class Program
         IDeploymentLogger logger)
     {
         var manifest = LoadManifest(options, logger);
-        var installRoot = GetOptionalOption(options, "--install-root") ?? manifest.ManagedInstallLayout.InstallRoot;
+        var installRoot = GetOptionalOption(options, "--install-root", "-i") ?? manifest.ManagedInstallLayout.InstallRoot;
         Console.WriteLine(ManualInstallStepsBuilder.Build(manifest, installRoot));
         return 0;
+    }
+
+    private static async Task ProvisionInstalledModelsAsync(
+        AppProductManifest manifest,
+        string installRoot,
+        IDeploymentLogger logger,
+        CancellationToken cancellationToken)
+    {
+        logger.Info($"Provisioning installed models from '{installRoot}'.");
+        var configStore = new AppConfigStore(manifest.ManagedInstallLayout.ConfigPath);
+        var currentConfig = await configStore.LoadOrCreateAsync(cancellationToken);
+        var resultStore = new ModelProvisioningResultStore(configStore.ConfigPath);
+        var catalogService = new MeetingRecorderModelCatalogService();
+        var whisperModelService = new WhisperModelService(new WhisperNetModelDownloader());
+        var feedClient = new HttpAppUpdateFeedClient();
+        var diarizationCatalogService = new DiarizationAssetCatalogService();
+        var provisioningService = new ModelProvisioningService(
+            configStore,
+            resultStore,
+            catalogService,
+            whisperModelService,
+            new WhisperModelReleaseCatalogService(feedClient, whisperModelService),
+            diarizationCatalogService,
+            new DiarizationAssetReleaseCatalogService(feedClient, diarizationCatalogService));
+
+        var provisioningResult = await provisioningService.ProvisionAsync(
+            new ModelProvisioningRequest(
+                InstallRoot: installRoot,
+                ModelCatalogPath: Path.Combine(installRoot, MeetingRecorderModelCatalogService.CatalogFileName),
+                UpdateFeedUrl: manifest.UpdateFeedUrl,
+                TranscriptionProfile: currentConfig.TranscriptionModelProfilePreference,
+                SpeakerLabelingProfile: currentConfig.SpeakerLabelingModelProfilePreference),
+            cancellationToken);
+
+        logger.Info(
+            $"Installed model provisioning completed. Transcription active={provisioningResult.Result.Transcription.ActiveProfile}; speaker-labeling active={provisioningResult.Result.SpeakerLabeling.ActiveProfile}.");
+    }
+
+    private static void LaunchInstalledApp(
+        AppProductManifest manifest,
+        string installRoot,
+        IDeploymentLogger logger)
+    {
+        var launcherPath = Path.Combine(installRoot, manifest.PortableLauncherFileName);
+        if (!File.Exists(launcherPath))
+        {
+            launcherPath = Path.Combine(installRoot, manifest.ExecutableName);
+        }
+
+        logger.Info($"Launching installed app from '{launcherPath}'.");
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = launcherPath,
+            WorkingDirectory = installRoot,
+            UseShellExecute = true,
+        });
     }
 
     private static AppProductManifest LoadManifest(
         IReadOnlyDictionary<string, string?> options,
         IDeploymentLogger logger)
     {
-        var manifestPath = GetOptionalOption(options, "--manifest-path") ??
+        var manifestPath = GetOptionalOption(options, "--manifest-path", "-m") ??
             Path.Combine(AppContext.BaseDirectory, "MeetingRecorder.product.json");
         logger.Info($"Loading product manifest from '{manifestPath}'.");
         return AppProductManifestFileLoader.Load(manifestPath);
@@ -277,19 +408,28 @@ internal static class Program
         return options;
     }
 
-    private static string GetRequiredOption(IReadOnlyDictionary<string, string?> options, string name)
+    private static string GetRequiredOption(IReadOnlyDictionary<string, string?> options, params string[] names)
     {
-        if (!options.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
+        var value = GetOptionalOption(options, names);
+        if (string.IsNullOrWhiteSpace(value))
         {
-            throw new InvalidOperationException($"Missing required option '{name}'.");
+            throw new InvalidOperationException($"Missing required option '{GetPrimaryOptionName(names)}'.");
         }
 
         return value;
     }
 
-    private static string? GetOptionalOption(IReadOnlyDictionary<string, string?> options, string name)
+    private static string? GetOptionalOption(IReadOnlyDictionary<string, string?> options, params string[] names)
     {
-        return options.TryGetValue(name, out var value) ? value : null;
+        foreach (var name in names)
+        {
+            if (options.TryGetValue(name, out var value))
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private static bool HasSwitch(IReadOnlyDictionary<string, string?> options, string name)
@@ -342,9 +482,29 @@ internal static class Program
         return parsed;
     }
 
+    private static TranscriptionModelProfilePreference ParseTranscriptionProfile(string value)
+    {
+        if (!Enum.TryParse<TranscriptionModelProfilePreference>(value, ignoreCase: true, out var parsed))
+        {
+            throw new InvalidOperationException($"Unknown transcription profile '{value}'.");
+        }
+
+        return parsed;
+    }
+
+    private static SpeakerLabelingModelProfilePreference ParseSpeakerLabelingProfile(string value)
+    {
+        if (!Enum.TryParse<SpeakerLabelingModelProfilePreference>(value, ignoreCase: true, out var parsed))
+        {
+            throw new InvalidOperationException($"Unknown speaker-labeling profile '{value}'.");
+        }
+
+        return parsed;
+    }
+
     private static string ResolveLogPath(string command, IReadOnlyDictionary<string, string?> options)
     {
-        var explicitLogPath = GetOptionalOption(options, "--log-path");
+        var explicitLogPath = GetOptionalOption(options, "--log-path", "-l");
         if (!string.IsNullOrWhiteSpace(explicitLogPath))
         {
             return Path.GetFullPath(explicitLogPath);
@@ -393,17 +553,29 @@ internal static class Program
     {
         Console.WriteLine("AppPlatform deployment CLI");
         Console.WriteLine("Common options:");
-        Console.WriteLine("  --log-path <file>");
+        Console.WriteLine("  --log-path <file> | -l <file>");
         Console.WriteLine("  --pause-on-error");
         Console.WriteLine("Commands:");
         Console.WriteLine("  install-bundle");
         Console.WriteLine("  install-latest");
         Console.WriteLine("  apply-update");
+        Console.WriteLine("  provision-models");
         Console.WriteLine("  repair-shortcuts");
         Console.WriteLine("  print-layout");
         Console.WriteLine("  emit-manual-steps");
+        Console.WriteLine("Common path aliases:");
+        Console.WriteLine("  --install-root <path> | -i <path>");
+        Console.WriteLine("  --manifest-path <file> | -m <file>");
+        Console.WriteLine("Provision-models aliases:");
+        Console.WriteLine("  --transcription-profile <profile> | -t <profile>");
+        Console.WriteLine("  --speaker-labeling-profile <profile> | -s <profile>");
         Console.WriteLine("Channel options:");
         Console.WriteLine("  --install-channel <Unknown|Msi|CommandBootstrap|ExecutableBootstrap|PortableZip|AutoUpdate|DirectCli>");
         Console.WriteLine("  --update-channel <Unknown|Msi|CommandBootstrap|ExecutableBootstrap|PortableZip|AutoUpdate|DirectCli>");
+    }
+
+    private static string GetPrimaryOptionName(IReadOnlyList<string> names)
+    {
+        return names.Count > 0 ? names[0] : "<unknown>";
     }
 }

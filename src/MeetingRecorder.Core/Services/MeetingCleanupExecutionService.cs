@@ -129,8 +129,36 @@ internal sealed partial class MeetingCleanupExecutionService
         string archiveDirectory,
         CancellationToken cancellationToken = default)
     {
+        return await MergeMeetingsAsync(
+            [first, second],
+            preferredTitle,
+            audioOutputDir,
+            transcriptOutputDir,
+            archiveDirectory,
+            cancellationToken);
+    }
+
+    public async Task<MeetingCleanupMergeResult> MergeMeetingsAsync(
+        IReadOnlyList<MeetingOutputRecord> meetings,
+        string preferredTitle,
+        string audioOutputDir,
+        string transcriptOutputDir,
+        string archiveDirectory,
+        CancellationToken cancellationToken = default)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var orderedMeetings = meetings
+            .Where(meeting => !string.IsNullOrWhiteSpace(meeting.Stem))
+            .OrderBy(meeting => meeting.StartedAtUtc)
+            .ThenBy(meeting => meeting.Stem, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (orderedMeetings.Length < 2)
+        {
+            throw new InvalidOperationException("At least two published meetings are required to merge a split chain.");
+        }
+
+        var first = orderedMeetings[0];
         var mergedStem = _pathBuilder.BuildFileStem(first.Platform, first.StartedAtUtc, preferredTitle);
         var tempDirectory = Path.Combine(archiveDirectory, "_temp");
         Directory.CreateDirectory(tempDirectory);
@@ -138,15 +166,17 @@ internal sealed partial class MeetingCleanupExecutionService
         var temporaryMarkdownPath = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.md");
 
         await new WaveChunkMerger().MergePublishedAudioFilesAsync(
-            [first.AudioPath!, second.AudioPath!],
+            orderedMeetings.Select(meeting => meeting.AudioPath!).ToArray(),
             temporaryAudioPath,
             cancellationToken);
 
-        var mergedMarkdown = await BuildMergedMarkdownAsync(first, second, preferredTitle, cancellationToken);
+        var mergedMarkdown = await BuildMergedMarkdownAsync(orderedMeetings, preferredTitle, cancellationToken);
         await File.WriteAllTextAsync(temporaryMarkdownPath, mergedMarkdown, cancellationToken);
 
-        await ArchiveMeetingAsync(first, archiveDirectory, "merge-split-pairs", cancellationToken);
-        await ArchiveMeetingAsync(second, archiveDirectory, "merge-split-pairs", cancellationToken);
+        foreach (var meeting in orderedMeetings)
+        {
+            await ArchiveMeetingAsync(meeting, archiveDirectory, "merge-split-pairs", cancellationToken);
+        }
 
         var finalAudioPath = Path.Combine(audioOutputDir, $"{mergedStem}{Path.GetExtension(first.AudioPath!)}");
         var finalMarkdownPath = Path.Combine(transcriptOutputDir, $"{mergedStem}.md");
@@ -192,6 +222,24 @@ internal sealed partial class MeetingCleanupExecutionService
         string preferredTitle,
         CancellationToken cancellationToken)
     {
+        return await BuildMergedMarkdownAsync([first, second], preferredTitle, cancellationToken);
+    }
+
+    private static async Task<string> BuildMergedMarkdownAsync(
+        IReadOnlyList<MeetingOutputRecord> meetings,
+        string preferredTitle,
+        CancellationToken cancellationToken)
+    {
+        var orderedMeetings = meetings
+            .OrderBy(meeting => meeting.StartedAtUtc)
+            .ThenBy(meeting => meeting.Stem, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (orderedMeetings.Length == 0)
+        {
+            throw new InvalidOperationException("At least one meeting is required to build merged markdown.");
+        }
+
+        var first = orderedMeetings[0];
         var builder = new StringBuilder();
         builder.AppendLine($"# {preferredTitle}");
         builder.AppendLine();
@@ -201,17 +249,22 @@ internal sealed partial class MeetingCleanupExecutionService
         builder.AppendLine();
         builder.AppendLine("## Transcript");
         builder.AppendLine();
-        builder.Append(await ReadTranscriptBodyAsync(first.MarkdownPath!, TimeSpan.Zero, cancellationToken));
-
-        var secondBody = await ReadTranscriptBodyAsync(second.MarkdownPath!, first.Duration ?? TimeSpan.Zero, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(secondBody))
+        var currentOffset = TimeSpan.Zero;
+        for (var index = 0; index < orderedMeetings.Length; index++)
         {
-            if (!builder.ToString().EndsWith(Environment.NewLine + Environment.NewLine, StringComparison.Ordinal))
+            var meeting = orderedMeetings[index];
+            var body = await ReadTranscriptBodyAsync(meeting.MarkdownPath!, currentOffset, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(body))
             {
-                builder.AppendLine();
+                if (!builder.ToString().EndsWith(Environment.NewLine + Environment.NewLine, StringComparison.Ordinal))
+                {
+                    builder.AppendLine();
+                }
+
+                builder.Append(body);
             }
 
-            builder.Append(secondBody);
+            currentOffset += meeting.Duration ?? TimeSpan.Zero;
         }
 
         return builder.ToString().TrimEnd() + Environment.NewLine;

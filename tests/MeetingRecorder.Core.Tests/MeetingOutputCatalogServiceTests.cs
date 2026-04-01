@@ -156,6 +156,204 @@ public sealed class MeetingOutputCatalogServiceTests
     }
 
     [Fact]
+    public async Task ListMeetings_Prefers_Published_Artifacts_Over_A_Queued_Imported_Source_Manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+        Directory.CreateDirectory(workDir);
+
+        var startedAtUtc = new DateTimeOffset(2026, 03, 24, 19, 31, 15, TimeSpan.Zero);
+        const string title = "Google Vmo Offsite Deck";
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, title);
+        var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+        var jsonPath = Path.Combine(transcriptJsonDir, $"{stem}.json");
+        var readyPath = Path.Combine(transcriptJsonDir, $"{stem}.ready");
+        await File.WriteAllTextAsync(audioPath, "audio");
+        await File.WriteAllTextAsync(
+            jsonPath,
+            JsonSerializer.Serialize(new
+            {
+                title,
+                segments = Array.Empty<object>(),
+            }));
+        await File.WriteAllTextAsync(readyPath, "ready");
+
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            title,
+            Array.Empty<DetectionSignal>());
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var importedManifest = manifest with
+        {
+            StartedAtUtc = startedAtUtc,
+            State = SessionState.Queued,
+            ImportedSourceAudio = new ImportedSourceAudioInfo(audioPath, new FileInfo(audioPath).Length, DateTimeOffset.UtcNow),
+            MergedAudioPath = Path.Combine(workDir, manifest.SessionId, "processing", "imported-source.wav"),
+        };
+        await manifestStore.SaveAsync(importedManifest, manifestPath);
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.Equal(audioPath, meeting.AudioPath);
+        Assert.Equal(jsonPath, meeting.JsonPath);
+        Assert.Equal(manifestPath, meeting.ManifestPath);
+        Assert.Null(meeting.ManifestState);
+        Assert.Equal(SessionState.Published.ToString(), MeetingOutputStatusResolver.ResolveDisplayStatus(meeting));
+    }
+
+    [Fact]
+    public async Task ListMeetings_Prefers_A_Published_Primary_Manifest_Over_A_Queued_Imported_Source_Reprocess_Manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+        Directory.CreateDirectory(workDir);
+
+        var startedAtUtc = new DateTimeOffset(2026, 03, 24, 15, 30, 10, TimeSpan.Zero);
+        const string title = "Google Cloud Vmo Working Team Connect";
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, title);
+        var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+        await File.WriteAllTextAsync(audioPath, "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title,
+                segments = Array.Empty<object>(),
+            }));
+
+        var primaryManifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            title,
+            Array.Empty<DetectionSignal>());
+        var primaryManifestPath = Path.Combine(workDir, primaryManifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(
+            primaryManifest with
+            {
+                StartedAtUtc = startedAtUtc,
+                State = SessionState.Published,
+                ProjectName = "IonQ",
+            },
+            primaryManifestPath);
+
+        var importedManifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            title,
+            Array.Empty<DetectionSignal>());
+        var importedManifestPath = Path.Combine(workDir, importedManifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(
+            importedManifest with
+            {
+                StartedAtUtc = startedAtUtc,
+                State = SessionState.Queued,
+                ProjectName = "Wrong Project",
+                ImportedSourceAudio = new ImportedSourceAudioInfo(audioPath, new FileInfo(audioPath).Length, DateTimeOffset.UtcNow),
+                MergedAudioPath = Path.Combine(workDir, importedManifest.SessionId, "processing", "imported-source.wav"),
+            },
+            importedManifestPath);
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.Equal(primaryManifestPath, meeting.ManifestPath);
+        Assert.Equal(SessionState.Published, meeting.ManifestState);
+        Assert.Equal("IonQ", meeting.ProjectName);
+        Assert.NotEqual(importedManifestPath, meeting.ManifestPath);
+    }
+
+    [Theory]
+    [InlineData(SessionState.Finalizing)]
+    [InlineData(SessionState.Queued)]
+    [InlineData(SessionState.Processing)]
+    [InlineData(SessionState.Failed)]
+    public async Task ListMeetings_Includes_ManifestOnly_Eligible_Work_Meeting_When_Published_Artifacts_Are_Missing(SessionState manifestState)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Recent Queue Candidate",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var queuedManifest = manifest with
+        {
+            State = manifestState,
+        };
+        await manifestStore.SaveAsync(queuedManifest, manifestPath);
+
+        var meetings = service.ListMeetings(audioDir, transcriptDir, workDir);
+
+        var meeting = Assert.Single(meetings);
+        Assert.Equal("Recent Queue Candidate", meeting.Title);
+        Assert.Equal(manifestPath, meeting.ManifestPath);
+        Assert.Equal(manifestState, meeting.ManifestState);
+        Assert.Null(meeting.AudioPath);
+        Assert.Null(meeting.MarkdownPath);
+        Assert.Null(meeting.JsonPath);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Does_Not_Include_ManifestOnly_Recording_Meeting_When_Published_Artifacts_Are_Missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.GoogleMeet,
+            "Still Recording",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(manifest with
+        {
+            State = SessionState.Recording,
+        }, manifestPath);
+
+        var meetings = service.ListMeetings(audioDir, transcriptDir, workDir);
+
+        Assert.Empty(meetings);
+    }
+
+    [Fact]
     public async Task ListMeetings_Prefers_Manifest_Duration_When_End_Time_Is_Present()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -209,6 +407,55 @@ public sealed class MeetingOutputCatalogServiceTests
 
         Assert.NotNull(meeting.Duration);
         Assert.InRange(meeting.Duration.Value.TotalSeconds, 4.9d, 5.1d);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Prefers_Repaired_Artifact_Duration_When_A_Stale_Manifest_Reuses_The_Same_Stem()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "[INT] GlobalFoundries daily",
+            Array.Empty<DetectionSignal>());
+
+        var sessionRoot = Path.Combine(workDir, manifest.SessionId);
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await manifestStore.SaveAsync(manifest with
+        {
+            EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1).AddSeconds(36),
+            State = SessionState.Published,
+        }, manifestPath);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, manifest.StartedAtUtc, manifest.DetectedTitle);
+        await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{stem}.wav"), TimeSpan.FromMinutes(8).Add(TimeSpan.FromSeconds(44)));
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptDir, $"{stem}.md"),
+            string.Join(
+                Environment.NewLine,
+                "# [INT] GlobalFoundries daily",
+                string.Empty,
+                "- Session ID: cleanup-20260324-merge-split-pairs",
+                "- Platform: Teams",
+                string.Empty,
+                "## Transcript",
+                string.Empty,
+                "[00:00:00 - 00:08:44] **Speaker 1:** merged"));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.NotNull(meeting.Duration);
+        Assert.InRange(meeting.Duration.Value.TotalSeconds, 523.9d, 524.1d);
     }
 
     [Fact]

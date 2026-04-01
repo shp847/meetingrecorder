@@ -225,6 +225,7 @@ public sealed class LegacyPortableDataMigrationServiceTests : IDisposable
         var migrated = LegacyPortableDataMigrationService.TryMigrateFromLegacyPortableInstall(
             applicationBaseDirectory: appBaseDirectory,
             documentsDirectory: documentsDirectory,
+            desktopDirectory: CreateDirectory("desktop"),
             managedAppRootOverride: managedAppRoot);
 
         Assert.True(migrated);

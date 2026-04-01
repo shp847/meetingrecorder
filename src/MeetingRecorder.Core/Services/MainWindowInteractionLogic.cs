@@ -8,9 +8,6 @@ internal sealed record ConfigEditorSnapshot(
     string AudioOutputDir,
     string TranscriptOutputDir,
     string WorkDir,
-    string ModelCacheDir,
-    string TranscriptionModelPath,
-    string DiarizationAssetPath,
     bool UseGpuAcceleration,
     string AutoDetectThresholdText,
     string MeetingStopTimeoutText,
@@ -21,7 +18,10 @@ internal sealed record ConfigEditorSnapshot(
     bool MeetingAttendeeEnrichmentEnabled,
     bool UpdateCheckEnabled,
     bool AutoInstallUpdatesEnabled,
-    string UpdateFeedUrl);
+    string UpdateFeedUrl,
+    PreferredTeamsIntegrationMode PreferredTeamsIntegrationMode,
+    BackgroundProcessingMode BackgroundProcessingMode,
+    BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode);
 
 internal sealed record SpeakerLabelDraft(string OriginalLabel, string EditedLabel);
 
@@ -69,10 +69,10 @@ internal sealed record ConfigDependencyState(
 
 internal enum ModelsTabSetupActionKind
 {
-    DownloadRecommendedModel = 0,
-    OpenTranscriptionManagement = 1,
-    DownloadRecommendedDiarizationBundle = 2,
-    OpenSpeakerLabelingManagement = 3,
+    OpenTranscriptionManagement = 0,
+    RetryHigherAccuracyTranscription = 1,
+    OpenSpeakerLabelingManagement = 2,
+    RetryHigherAccuracySpeakerLabeling = 3,
 }
 
 internal sealed record ModelsTabSetupAction(
@@ -140,12 +140,101 @@ internal sealed record MeetingWorkspaceToolState(
     bool ShowMergeTool,
     bool ShowSpeakerLabelsTool);
 
+internal sealed record ProcessingQueueHeaderState(
+    bool IsVisible,
+    string Label,
+    string Detail);
+
+internal sealed record MeetingsProcessingStripState(
+    bool IsVisible,
+    string Line1,
+    string Line2,
+    string Line3,
+    string? SecondaryText);
+
 internal static class MainWindowInteractionLogic
 {
+    public static bool ShouldRefreshMeetingCatalogForConfigChange(AppConfig previousConfig, AppConfig currentConfig)
+    {
+        ArgumentNullException.ThrowIfNull(previousConfig);
+        ArgumentNullException.ThrowIfNull(currentConfig);
+
+        return
+            !string.Equals(previousConfig.AudioOutputDir, currentConfig.AudioOutputDir, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(previousConfig.TranscriptOutputDir, currentConfig.TranscriptOutputDir, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(previousConfig.WorkDir, currentConfig.WorkDir, StringComparison.OrdinalIgnoreCase) ||
+            previousConfig.MeetingAttendeeEnrichmentEnabled != currentConfig.MeetingAttendeeEnrichmentEnabled;
+    }
+
+    public static bool ShouldDeferMeetingRefresh(bool isRecording, bool isMeetingsTabSelected)
+    {
+        return isRecording || !isMeetingsTabSelected;
+    }
+
+    public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
+        ProcessingQueueStatusSnapshot snapshot,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        if (!ShouldShowProcessingQueueStatus(snapshot))
+        {
+            return new ProcessingQueueHeaderState(false, string.Empty, string.Empty);
+        }
+
+        var label = $"{snapshot.RunState.ToString().ToUpperInvariant()} {snapshot.TotalRemainingCount}";
+        var detail = snapshot.RunState switch
+        {
+            ProcessingQueueRunState.Paused when snapshot.PauseReason == ProcessingQueuePauseReason.LiveRecordingResponsiveMode
+                => "Paused by live recording",
+            ProcessingQueueRunState.Processing when FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) is { } eta
+                => eta,
+            ProcessingQueueRunState.Queued => $"{snapshot.TotalRemainingCount} waiting",
+            _ => $"{snapshot.TotalRemainingCount} remaining",
+        };
+
+        return new ProcessingQueueHeaderState(true, label, detail);
+    }
+
+    public static MeetingsProcessingStripState BuildMeetingsProcessingStripState(
+        ProcessingQueueStatusSnapshot snapshot,
+        string? refreshStateText,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        var hasQueueStatus = ShouldShowProcessingQueueStatus(snapshot);
+        var hasRefreshState = !string.IsNullOrWhiteSpace(refreshStateText);
+        if (!hasQueueStatus && !hasRefreshState)
+        {
+            return new MeetingsProcessingStripState(false, string.Empty, string.Empty, string.Empty, null);
+        }
+
+        if (!hasQueueStatus)
+        {
+            return new MeetingsProcessingStripState(true, string.Empty, string.Empty, string.Empty, refreshStateText);
+        }
+
+        var pauseReasonText = snapshot.PauseReason switch
+        {
+            ProcessingQueuePauseReason.LiveRecordingResponsiveMode => "Paused by live recording",
+            _ => string.Empty,
+        };
+        var line1 = string.IsNullOrWhiteSpace(pauseReasonText)
+            ? $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining"
+            : $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining · {pauseReasonText}";
+        var line2 = BuildCurrentStageSummary(snapshot, nowUtc);
+        var overallEta = FormatApproximateEta(snapshot.OverallEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ?? "ETA unavailable";
+        var line3 = $"Overall queue: {snapshot.TotalRemainingCount} remaining · {overallEta}";
+
+        return new MeetingsProcessingStripState(true, line1, line2, line3, refreshStateText);
+    }
+
     public static ShellStatusState BuildShellStatus(
         bool hasValidModel,
         bool isRecording,
         bool micCaptureEnabled,
+        bool autoDetectEnabled,
         bool updateChecksEnabled,
         bool autoInstallUpdatesEnabled,
         AppUpdateCheckResult? updateResult)
@@ -195,11 +284,101 @@ internal static class MainWindowInteractionLogic
                 null);
         }
 
+        if (!autoDetectEnabled)
+        {
+            return new ShellStatusState(
+                "MANUAL",
+                "Auto-detect off",
+                ShellStatusTarget.SettingsGeneral,
+                "Settings");
+        }
+
         return new ShellStatusState(
             "READY",
             "Manual or auto-detect",
             ShellStatusTarget.None,
             null);
+    }
+
+    private static bool ShouldShowProcessingQueueStatus(ProcessingQueueStatusSnapshot snapshot)
+    {
+        return snapshot.TotalRemainingCount > 0 ||
+               snapshot.RunState is ProcessingQueueRunState.Processing or ProcessingQueueRunState.Paused or ProcessingQueueRunState.Queued;
+    }
+
+    private static string BuildCurrentStageSummary(ProcessingQueueStatusSnapshot snapshot, DateTimeOffset nowUtc)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.CurrentTitle))
+        {
+            return snapshot.RunState == ProcessingQueueRunState.Paused
+                ? "Current: waiting to resume processing."
+                : "Current: waiting to start processing.";
+        }
+
+        var stageName = string.IsNullOrWhiteSpace(snapshot.CurrentStageName)
+            ? "queued"
+            : snapshot.CurrentStageName;
+        var stageState = snapshot.CurrentStageState?.ToString().ToLowerInvariant() ?? "queued";
+        var parts = new List<string>
+        {
+            $"Current: {snapshot.CurrentTitle}",
+            $"{stageName} {stageState}",
+        };
+
+        if (snapshot.CurrentItemStartedAtUtc is { } startedAtUtc)
+        {
+            parts.Add($"{FormatElapsed(nowUtc - startedAtUtc)} elapsed");
+        }
+
+        parts.Add(FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ?? "ETA unavailable");
+        return string.Join(" · ", parts);
+    }
+
+    private static string? FormatApproximateEta(
+        TimeSpan? estimatedRemaining,
+        DateTimeOffset snapshotUpdatedAtUtc,
+        DateTimeOffset nowUtc)
+    {
+        if (estimatedRemaining is null)
+        {
+            return null;
+        }
+
+        var elapsedSinceSnapshot = nowUtc - snapshotUpdatedAtUtc;
+        var adjustedRemaining = elapsedSinceSnapshot <= TimeSpan.Zero
+            ? estimatedRemaining.Value
+            : estimatedRemaining.Value - elapsedSinceSnapshot;
+        if (adjustedRemaining < TimeSpan.Zero)
+        {
+            adjustedRemaining = TimeSpan.Zero;
+        }
+
+        return $"ETA ~{FormatCompactDuration(adjustedRemaining)}";
+    }
+
+    private static string FormatCompactDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+        {
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        }
+
+        if (duration.TotalMinutes >= 1)
+        {
+            return $"{Math.Max(1, (int)Math.Floor(duration.TotalMinutes))}m";
+        }
+
+        return $"{Math.Max(1, (int)Math.Ceiling(duration.TotalSeconds))}s";
+    }
+
+    private static string FormatElapsed(TimeSpan duration)
+    {
+        if (duration < TimeSpan.Zero)
+        {
+            duration = TimeSpan.Zero;
+        }
+
+        return duration.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
     }
 
     public static DashboardPrimaryActionState BuildDashboardPrimaryAction(
@@ -278,77 +457,107 @@ internal static class MainWindowInteractionLogic
     }
 
     public static ModelsTabSetupState BuildModelsTabTranscriptionSetupState(
+        TranscriptionModelProfilePreference requestedProfile,
+        TranscriptionModelProfilePreference activeProfile,
         bool hasValidModel,
-        string? activeModelFileName,
-        WhisperRemoteModelAsset? recommendedModel)
+        bool retryRecommended)
     {
         if (!hasValidModel)
         {
             return new ModelsTabSetupState(
                 "Needs setup",
-                "Choose one Whisper model to activate transcription. Download the recommended model below, or import an approved local file if GitHub is blocked.",
+                "Transcription is not ready yet. Use Standard to restore the included model, choose Higher Accuracy to try the optional download, or import an approved local file.",
                 new ModelsTabSetupAction(
-                    ModelsTabSetupActionKind.DownloadRecommendedModel,
-                    "Download Recommended Model",
-                    recommendedModel is null
-                        ? "No recommended GitHub model is loaded yet. Review the transcription setup section below or import an approved local model file."
-                        : $"Review the transcription setup section below to download '{recommendedModel.FileName}' or choose an approved local model file.",
-                    "DownloadRecommendedRemoteModelButton"));
+                    ModelsTabSetupActionKind.OpenTranscriptionManagement,
+                    "Open Setup",
+                    "Review the transcription setup section below to restore the included Standard model, try Higher Accuracy, or import an approved local file.",
+                    "UseStandardTranscriptionProfileButton"));
         }
 
-        var activeModelText = string.IsNullOrWhiteSpace(activeModelFileName)
-            ? "A valid Whisper model is active. Change the active model below if you want to trade speed for accuracy."
-            : $"'{activeModelFileName.Trim()}' is active. Change the active model below if you want to trade speed for accuracy.";
+        if (retryRecommended && requestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded)
+        {
+            return new ModelsTabSetupState(
+                "Standard active",
+                "Higher Accuracy transcription was requested, but the included Standard model is active right now. Retry Higher Accuracy from Setup when downloads are available.",
+                new ModelsTabSetupAction(
+                    ModelsTabSetupActionKind.RetryHigherAccuracyTranscription,
+                    "Retry Higher Accuracy",
+                    "Review the transcription setup section below to retry the Higher Accuracy download. Standard stays ready either way.",
+                    "UseHighAccuracyTranscriptionProfileButton"));
+        }
+
+        var activeModelText = activeProfile switch
+        {
+            TranscriptionModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy transcription is active.",
+            TranscriptionModelProfilePreference.Custom => "A custom transcription model is active.",
+            _ => "The included Standard transcription model is active.",
+        };
 
         return new ModelsTabSetupState(
-            "Ready",
+            activeProfile switch
+            {
+                TranscriptionModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy ready",
+                TranscriptionModelProfilePreference.Custom => "Custom ready",
+                _ => "Standard ready",
+            },
             activeModelText,
             new ModelsTabSetupAction(
                 ModelsTabSetupActionKind.OpenTranscriptionManagement,
-                "Change Active Model",
-                "Review the transcription setup section below to choose a different active Whisper model or import another approved local file.",
-                "AvailableModelsComboBox"));
+                "Open Setup",
+                "Review the transcription setup section below to switch between Standard, Higher Accuracy, or a custom imported model.",
+                "UseStandardTranscriptionProfileButton"));
     }
 
     public static ModelsTabSetupState BuildModelsTabSpeakerLabelingSetupState(
+        SpeakerLabelingModelProfilePreference requestedProfile,
+        SpeakerLabelingModelProfilePreference activeProfile,
         bool isReady,
-        string? configuredAssetPath,
-        DiarizationRemoteAsset? recommendedAsset)
+        bool retryRecommended)
     {
         if (!isReady)
         {
             return new ModelsTabSetupState(
-                "Optional add-on",
-                recommendedAsset is null
-                    ? "Speaker labeling is optional. No recommended GitHub diarization model bundle is loaded right now, so open the local setup guide or review the setup options below."
-                    : "Speaker labeling is optional. Download the recommended diarization model bundle from GitHub, open the local setup guide, or review the alternate public download locations below.",
+                "Needs setup",
+                "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
                 new ModelsTabSetupAction(
-                    recommendedAsset is null
-                        ? ModelsTabSetupActionKind.OpenSpeakerLabelingManagement
-                        : ModelsTabSetupActionKind.DownloadRecommendedDiarizationBundle,
-                    recommendedAsset is null
-                        ? "Show Setup Options"
-                        : "Download Recommended Bundle",
-                    recommendedAsset is null
-                        ? "Review the speaker-labeling setup section below for local help, approved imports, and any curated alternate public download locations."
-                        : $"Review the speaker-labeling setup section below to download '{recommendedAsset.FileName}', open local setup help, or inspect alternate public download locations.",
-                    recommendedAsset is null
-                        ? "OpenSpeakerLabelingSetupGuideButton"
-                        : "DownloadRecommendedDiarizationBundleButton"));
+                    ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
+                    "Open Setup",
+                    "Review the speaker-labeling setup section below to restore the included Standard bundle, try Higher Accuracy, or import an approved local bundle.",
+                    "UseStandardSpeakerLabelingProfileButton"));
         }
 
-        var configuredPathText = string.IsNullOrWhiteSpace(configuredAssetPath)
-            ? "Speaker labeling is ready. Review the setup details below if you need to replace or repair it."
-            : $"Speaker labeling is ready from '{configuredAssetPath.Trim()}'. Review the setup details below if you need to replace or repair it.";
+        if (retryRecommended && requestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded)
+        {
+            return new ModelsTabSetupState(
+                "Standard active",
+                "Higher Accuracy speaker labeling was requested, but the included Standard bundle is active right now. Retry Higher Accuracy from Setup when downloads are available.",
+                new ModelsTabSetupAction(
+                    ModelsTabSetupActionKind.RetryHigherAccuracySpeakerLabeling,
+                    "Retry Higher Accuracy",
+                    "Review the speaker-labeling setup section below to retry the Higher Accuracy bundle. Standard stays ready either way.",
+                    "UseHighAccuracySpeakerLabelingProfileButton"));
+        }
+
+        var configuredPathText = activeProfile switch
+        {
+            SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy speaker labeling is active.",
+            SpeakerLabelingModelProfilePreference.Custom => "A custom speaker-labeling bundle is active.",
+            _ => "The included Standard speaker-labeling bundle is active.",
+        };
 
         return new ModelsTabSetupState(
-            "Ready",
+            activeProfile switch
+            {
+                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy ready",
+                SpeakerLabelingModelProfilePreference.Custom => "Custom ready",
+                _ => "Standard ready",
+            },
             configuredPathText,
             new ModelsTabSetupAction(
                 ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
-                "Review Speaker Labeling Setup",
-                "Review the speaker-labeling setup section below to inspect the current asset, open local setup help, or choose a replacement path.",
-                "OpenSpeakerLabelingSetupGuideButton"));
+                "Open Setup",
+                "Review the speaker-labeling setup section below to switch between Standard, Higher Accuracy, or a custom imported bundle.",
+                "UseStandardSpeakerLabelingProfileButton"));
     }
 
     public static AppConfig PromotePendingUpdateToInstalledReleaseMetadata(AppConfig config, string currentVersion)
@@ -463,11 +672,13 @@ internal static class MainWindowInteractionLogic
             : "Auto-detection is off, so the threshold and timeout fields below are ignored until you turn it back on.";
     }
 
-    public static string BuildDetectionSummary(DetectionDecision? decision)
+    public static string BuildDetectionSummary(DetectionDecision? decision, bool autoDetectEnabled)
     {
         if (decision is null)
         {
-            return "No meeting detected.";
+            return autoDetectEnabled
+                ? "No meeting detected."
+                : "Auto-detection is off. Start manually or turn it back on.";
         }
 
         var platformName = GetPlatformName(decision.Platform);
@@ -542,14 +753,14 @@ internal static class MainWindowInteractionLogic
             }
 
             return isRecording
-                ? "Microphone capture is off, so this recording may miss your voice. Turn it back on in Config for future sessions."
+                ? "Microphone capture is off, so this recording may miss your voice. Turn it back on in Config from now on."
                 : "Microphone capture is off, so your voice may be missing from the next recording. Turn it back on in Config if you want both sides captured.";
         }
 
         if (!savedMicCaptureEnabled && pendingMicCaptureEnabled)
         {
             return isRecording
-                ? "Microphone capture is still off in the saved config, so this recording may miss your voice. Save Config to turn it on for future sessions."
+                ? "Microphone capture is still off in the saved config, so this recording may miss your voice. Save Config to turn it on from now on."
                 : "Microphone capture is still off in the saved config. Save Config to turn it on for future recordings.";
         }
 
@@ -559,7 +770,7 @@ internal static class MainWindowInteractionLogic
         }
 
         return isRecording
-            ? "Microphone capture is still on in the saved config for this recording. Save Config to turn it off for future sessions."
+            ? "Microphone capture is still on in the saved config for this recording. Save Config to turn it off from now on."
             : "Microphone capture is still on in the saved config. Save Config if you want future recordings to stop capturing your microphone.";
     }
 
@@ -606,7 +817,7 @@ internal static class MainWindowInteractionLogic
 
         return
             $"Meeting Recorder detected live microphone activity during {safeSessionTitle}, but microphone capture is currently turned off. " +
-            "Your voice may be missing from this recording. Do you want to turn microphone capture on for future recordings?";
+            "Your voice may be missing from this recording. Do you want to turn microphone capture on from now on for this recording and keep it on for later recordings?";
     }
 
     public static bool ShouldAutoPromoteActiveMeetingTitle(
@@ -1001,6 +1212,9 @@ internal static class MainWindowInteractionLogic
         DateTimeOffset startedAtUtc,
         string platform,
         string status,
+        string? projectName = null,
+        IReadOnlyList<MeetingAttendee>? attendees = null,
+        IReadOnlyList<string>? keyAttendees = null,
         CultureInfo? culture = null,
         TimeZoneInfo? localTimeZone = null)
     {
@@ -1019,6 +1233,10 @@ internal static class MainWindowInteractionLogic
             MeetingsGroupKey.Status => string.IsNullOrWhiteSpace(status)
                 ? "Unknown status"
                 : status.Trim(),
+            MeetingsGroupKey.ClientProject => string.IsNullOrWhiteSpace(projectName)
+                ? "No client / project"
+                : projectName.Trim(),
+            MeetingsGroupKey.Attendee => BuildMeetingWorkspacePrimaryAttendeeLabel(attendees, keyAttendees),
             _ => "Other",
         };
     }
@@ -1031,6 +1249,8 @@ internal static class MainWindowInteractionLogic
             MeetingsGroupKey.Month => "MonthGroupLabel",
             MeetingsGroupKey.Platform => "PlatformGroupLabel",
             MeetingsGroupKey.Status => "StatusGroupLabel",
+            MeetingsGroupKey.ClientProject => "ClientProjectGroupLabel",
+            MeetingsGroupKey.Attendee => "AttendeeGroupLabel",
             _ => "WeekGroupLabel",
         };
     }
@@ -1043,6 +1263,8 @@ internal static class MainWindowInteractionLogic
             MeetingsGroupKey.Month => "MonthGroupSortValue",
             MeetingsGroupKey.Platform => "PlatformGroupLabel",
             MeetingsGroupKey.Status => "StatusGroupLabel",
+            MeetingsGroupKey.ClientProject => "ClientProjectGroupLabel",
+            MeetingsGroupKey.Attendee => "AttendeeGroupLabel",
             _ => "WeekGroupSortValue",
         };
     }
@@ -1169,9 +1391,6 @@ internal static class MainWindowInteractionLogic
             !string.Equals(currentConfig.AudioOutputDir, NormalizeText(editor.AudioOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.TranscriptOutputDir, NormalizeText(editor.TranscriptOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.WorkDir, NormalizeText(editor.WorkDir), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(currentConfig.ModelCacheDir, NormalizeText(editor.ModelCacheDir), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(currentConfig.TranscriptionModelPath, NormalizeText(editor.TranscriptionModelPath), StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(currentConfig.DiarizationAssetPath, NormalizeText(editor.DiarizationAssetPath), StringComparison.OrdinalIgnoreCase) ||
             (currentConfig.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto) != editor.UseGpuAcceleration ||
             !string.Equals(FormatThreshold(currentConfig.AutoDetectAudioPeakThreshold), NormalizeText(editor.AutoDetectThresholdText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.MeetingStopTimeoutText), StringComparison.Ordinal) ||
@@ -1182,7 +1401,10 @@ internal static class MainWindowInteractionLogic
             currentConfig.MeetingAttendeeEnrichmentEnabled != editor.MeetingAttendeeEnrichmentEnabled ||
             currentConfig.UpdateCheckEnabled != editor.UpdateCheckEnabled ||
             currentConfig.AutoInstallUpdatesEnabled != editor.AutoInstallUpdatesEnabled ||
-            !string.Equals(currentConfig.UpdateFeedUrl, NormalizeText(editor.UpdateFeedUrl), StringComparison.OrdinalIgnoreCase);
+            !string.Equals(currentConfig.UpdateFeedUrl, NormalizeText(editor.UpdateFeedUrl), StringComparison.OrdinalIgnoreCase) ||
+            currentConfig.PreferredTeamsIntegrationMode != editor.PreferredTeamsIntegrationMode ||
+            currentConfig.BackgroundProcessingMode != editor.BackgroundProcessingMode ||
+            currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode;
     }
 
     private static string FormatThreshold(double threshold)
@@ -1285,5 +1507,18 @@ internal static class MainWindowInteractionLogic
     private static bool ContainsSearchText(string? value, string normalizedSearchText)
     {
         return NormalizeText(value).Contains(normalizedSearchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildMeetingWorkspacePrimaryAttendeeLabel(
+        IReadOnlyList<MeetingAttendee>? attendees,
+        IReadOnlyList<string>? keyAttendees)
+    {
+        var mergedNames = MeetingMetadataNameMatcher.MergeNames(
+            keyAttendees ?? Array.Empty<string>(),
+            attendees?.Select(attendee => attendee.Name).ToArray() ?? Array.Empty<string>());
+
+        return mergedNames.Count == 0
+            ? "No attendee"
+            : mergedNames[0];
     }
 }

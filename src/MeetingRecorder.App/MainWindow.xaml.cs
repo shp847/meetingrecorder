@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private const int RecentCaptureActivitySampleCount = 24;
     private const string MeetingCleanupHistoricalReviewMarkerFileName = "meeting-cleanup-review-v1.done";
     private const string SpeakerLabelingSetupGuideFallbackUrl = "https://github.com/shp847/meetingrecorder/blob/main/SETUP.md#speaker-labeling-optional";
+    private const string TeamsThirdPartyApiGuideUrl = "https://support.microsoft.com/en-au/office/connect-to-third-party-devices-in-microsoft-teams-aabca9f2-47bb-407f-9f9b-81a104a883d6";
     private static readonly TimeSpan ShutdownUpdateCheckTimeout = TimeSpan.FromSeconds(5);
     private static readonly Brush HealthyModelStatusBrush = CreateBrush(0x2E, 0x7D, 0x32);
     private static readonly Brush HealthyModelStatusChipBackgroundBrush = CreateBrush(0xE8, 0xF3, 0xE8);
@@ -59,8 +60,15 @@ public partial class MainWindow : Window
     private readonly WhisperModelReleaseCatalogService _whisperModelReleaseCatalogService;
     private readonly DiarizationAssetCatalogService _diarizationAssetCatalogService;
     private readonly DiarizationAssetReleaseCatalogService _diarizationAssetReleaseCatalogService;
+    private readonly AppConfigStore _setupConfigStore;
+    private readonly ModelProvisioningResultStore _modelProvisioningResultStore;
+    private readonly MeetingRecorderModelCatalogService _meetingRecorderModelCatalogService;
+    private readonly MeetingRecorderModelCatalog _bundledModelCatalog;
+    private readonly ModelProvisioningService _modelProvisioningService;
     private readonly ExternalAudioImportService _externalAudioImportService;
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
+    private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
+    private readonly TeamsDetectionArbitrator _teamsDetectionArbitrator;
     private readonly SessionTitleDraftTracker _sessionTitleDraftTracker;
     private readonly SessionTitleDraftTracker _sessionProjectDraftTracker;
     private readonly SessionTitleDraftTracker _sessionKeyAttendeesDraftTracker;
@@ -71,10 +79,16 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _detectionTimer;
     private readonly DispatcherTimer _audioGraphTimer;
     private readonly DispatcherTimer _updateTimer;
+    private readonly DispatcherTimer _processingQueueStatusTimer;
+    private readonly DispatcherTimer _currentMeetingOptionalMetadataSaveTimer;
     private readonly SemaphoreSlim _updateOperationGate = new(1, 1);
     private readonly SemaphoreSlim _externalAudioImportGate = new(1, 1);
     private readonly SemaphoreSlim _teamsAttendeeCaptureGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly double[] _audioGraphLoopbackLevels = new double[AudioGraphPointCount];
+    private readonly double[] _audioGraphMicrophoneLevels = new double[AudioGraphPointCount];
+    private readonly double[] _audioGraphCombinedLevels = new double[AudioGraphPointCount];
+    private readonly PointCollection _audioGraphPoints = new(AudioGraphPointCount);
     private DateTimeOffset? _lastPositiveDetectionUtc;
     private RecentAutoStopContext? _recentAutoStopContext;
     private bool _allowClose;
@@ -99,6 +113,7 @@ public partial class MainWindow : Window
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isSavingConfig;
+    private bool _isRunningTeamsIntegrationProbe;
     private int _updateCheckOperations;
     private bool _isPreparingUpdateInstall;
     private bool _isDownloadingUpdate;
@@ -106,6 +121,7 @@ public partial class MainWindow : Window
     private bool _isStartupWarmupQueued;
     private bool _isDeferredStartupMaintenanceQueued;
     private bool _isDeferredMeetingsRefreshQueued;
+    private bool _hasPendingMeetingsRefreshRequest;
     private bool _hasCompletedFullMeetingsRefresh;
     private bool _isUpdatingMeetingsWorkspaceControls;
     private int _remoteModelRefreshOperations;
@@ -123,6 +139,8 @@ public partial class MainWindow : Window
     private bool _isMicCaptureEnablePromptInProgress;
     private bool _isUiReady;
     private int _meetingRefreshVersion;
+    private int _detectionCycleActive;
+    private int _detectionCycleGeneration;
     private CancellationTokenSource? _meetingBackgroundWorkCts;
     private HashSet<string> _meetingAttendeeBackfillAttemptedStems = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _meetingAttendeeBackfillForcedStems = new(StringComparer.OrdinalIgnoreCase);
@@ -131,6 +149,10 @@ public partial class MainWindow : Window
     private DetectedAudioSource? _lastObservedDetectedAudioSource;
     private string? _micCaptureEnablePromptedSessionId;
     private string? _splitMeetingSuggestionStem;
+    private string? _quietTeamsAutoStartFingerprint;
+    private DateTimeOffset? _quietTeamsAutoStartFirstObservedUtc;
+    private string? _lastTeamsProbeBaselineSummary;
+    private string? _pendingMeetingsRefreshSelectedStem;
     private AppUpdateCheckResult? _lastUpdateCheckResult;
     private WhisperModelStatusDisplayState? _currentWhisperModelDisplayState;
     private DiarizationAssetInstallStatus? _currentDiarizationAssetStatus;
@@ -146,6 +168,9 @@ public partial class MainWindow : Window
     private Dictionary<string, bool> _meetingGroupExpansionStates = new(StringComparer.Ordinal);
     private bool _isApplyingMeetingGroupExpansionState;
     private AppShutdownMode _shutdownMode = AppShutdownMode.Deferred;
+    private MeetingRefreshMode _pendingMeetingsRefreshMode = MeetingRefreshMode.Fast;
+    private ProcessingQueueStatusSnapshot _latestProcessingQueueStatusSnapshot;
+    private string? _currentMeetingsRefreshStateText;
     private bool IsShutdownRequested => _shutdownInProgress || _lifetimeCts.IsCancellationRequested;
 
     public MainWindow(LiveAppConfig liveConfig, FileLogWriter logger)
@@ -176,7 +201,14 @@ public partial class MainWindow : Window
             liveConfig,
             new MeetingDetectionEvaluator(),
             new SystemAudioActivityProbe(),
-            new MeetingTitleEnricher(_outlookCalendarMeetingTitleProvider));
+            new MeetingTitleEnricher(_outlookCalendarMeetingTitleProvider),
+            WindowMeetingDetector.EnumerateCandidateWindows,
+            WindowMeetingDetector.EnumerateBrowserTabTitles,
+            TimeSpan.FromMilliseconds(750),
+            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMilliseconds(750),
+            TimeSpan.FromMinutes(2),
+            logger.Log);
         _meetingTitleSuggestionService = new MeetingTitleSuggestionService(_outlookCalendarMeetingTitleProvider);
         _meetingsAttendeeBackfillService = new MeetingsAttendeeBackfillService(
             _outlookCalendarMeetingTitleProvider,
@@ -188,13 +220,33 @@ public partial class MainWindow : Window
             _manifestStore,
             logger,
             calendarMeetingMetadataEnricher);
+        _latestProcessingQueueStatusSnapshot = _processingQueue.GetStatusSnapshot();
         _whisperModelService = new WhisperModelService(new WhisperNetModelDownloader());
         _whisperModelCatalogService = new WhisperModelCatalogService(_whisperModelService);
-        _whisperModelReleaseCatalogService = new WhisperModelReleaseCatalogService(new HttpAppUpdateFeedClient(), _whisperModelService);
+        var updateFeedClient = new HttpAppUpdateFeedClient();
+        _whisperModelReleaseCatalogService = new WhisperModelReleaseCatalogService(updateFeedClient, _whisperModelService);
         _diarizationAssetCatalogService = new DiarizationAssetCatalogService();
-        _diarizationAssetReleaseCatalogService = new DiarizationAssetReleaseCatalogService(new HttpAppUpdateFeedClient(), _diarizationAssetCatalogService);
+        _diarizationAssetReleaseCatalogService = new DiarizationAssetReleaseCatalogService(updateFeedClient, _diarizationAssetCatalogService);
+        _setupConfigStore = new AppConfigStore(_liveConfig.ConfigPath);
+        _modelProvisioningResultStore = new ModelProvisioningResultStore(_liveConfig.ConfigPath);
+        _meetingRecorderModelCatalogService = new MeetingRecorderModelCatalogService();
+        _bundledModelCatalog = _meetingRecorderModelCatalogService.LoadBundledCatalog();
+        _modelProvisioningService = new ModelProvisioningService(
+            _setupConfigStore,
+            _modelProvisioningResultStore,
+            _meetingRecorderModelCatalogService,
+            _whisperModelService,
+            _whisperModelReleaseCatalogService,
+            _diarizationAssetCatalogService,
+            _diarizationAssetReleaseCatalogService);
         _externalAudioImportService = new ExternalAudioImportService(_pathBuilder);
         _autoRecordingContinuityPolicy = new AutoRecordingContinuityPolicy();
+        var teamsThirdPartyApiAdapter = new UnavailableTeamsThirdPartyApiAdapter();
+        _teamsIntegrationProbeService = new TeamsIntegrationProbeService(
+            () => _meetingDetector.DetectBestCandidateAsync(_lifetimeCts.Token),
+            teamsThirdPartyApiAdapter);
+        _teamsDetectionArbitrator = new TeamsDetectionArbitrator(
+            teamsThirdPartyApiAdapter);
         _sessionTitleDraftTracker = new SessionTitleDraftTracker();
         _sessionProjectDraftTracker = new SessionTitleDraftTracker();
         _sessionKeyAttendeesDraftTracker = new SessionTitleDraftTracker();
@@ -214,10 +266,22 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMinutes(1),
         };
         _updateTimer.Tick += UpdateTimer_OnTick;
+        _processingQueueStatusTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _processingQueueStatusTimer.Tick += ProcessingQueueStatusTimer_OnTick;
+        _currentMeetingOptionalMetadataSaveTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(700),
+        };
+        _currentMeetingOptionalMetadataSaveTimer.Tick += CurrentMeetingOptionalMetadataSaveTimer_OnTick;
         _liveConfig.Changed += LiveConfig_OnChanged;
+        _processingQueue.StatusChanged += ProcessingQueue_OnStatusChanged;
 
         Loaded += OnLoaded;
         Closed += OnClosed;
+        InitializeConfigEditorSelectionControls();
         RegisterConfigEditorChangeHandlers();
         InitializeMeetingsWorkspaceControls();
 
@@ -228,7 +292,9 @@ public partial class MainWindow : Window
         UpdateSelectedMeetingEditor(null);
         UpdateSelectedMeetingInspector(null);
         ApplyUpdateCheckResult(null, manual: false);
-        UpdateUi("Ready to record.", MainWindowInteractionLogic.BuildDetectionSummary(null));
+        UpdateUi(
+            "Ready to record.",
+            MainWindowInteractionLogic.BuildDetectionSummary(null, _liveConfig.Current.AutoDetectEnabled));
         UpdateModelActionButtons();
         UpdateDiarizationActionButtons();
         UpdateModelsTabGuidance();
@@ -236,6 +302,8 @@ public partial class MainWindow : Window
         UpdateAudioCaptureGraph();
         UpdateDashboardReadiness();
         UpdateMeetingsRefreshStateText();
+        UpdateProcessingQueueStatusUi();
+        UpdateProcessingQueueStatusTimerState();
         _isUiReady = true;
         UpdateMeetingActionState();
     }
@@ -292,6 +360,8 @@ public partial class MainWindow : Window
                 new SelectionOption<MeetingsGroupKey>(MeetingsGroupKey.Month, "Month"),
                 new SelectionOption<MeetingsGroupKey>(MeetingsGroupKey.Platform, "Platform"),
                 new SelectionOption<MeetingsGroupKey>(MeetingsGroupKey.Status, "Status"),
+                new SelectionOption<MeetingsGroupKey>(MeetingsGroupKey.ClientProject, "Client / project"),
+                new SelectionOption<MeetingsGroupKey>(MeetingsGroupKey.Attendee, "Attendee"),
             };
         }
         finally
@@ -316,8 +386,11 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _audioGraphTimer.Start();
+            UpdateAudioCaptureGraph();
+            UpdateCurrentRecordingElapsedText();
+            UpdateAudioGraphTimerState();
             ScheduleStartupWarmup();
+            await TrySurfaceInstallerProvisioningResultAsync();
         }
         catch (OperationCanceledException)
         {
@@ -355,7 +428,7 @@ public partial class MainWindow : Window
 
             RefreshWhisperModelStatus();
             RefreshDiarizationAssetStatus();
-            await RefreshMeetingListAsync(MeetingRefreshMode.Fast);
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "startup warmup");
             ScheduleDeferredStartupMaintenance();
         }
         catch (OperationCanceledException)
@@ -375,6 +448,42 @@ public partial class MainWindow : Window
 
             _isStartupWarmupQueued = false;
         }
+    }
+
+    private async Task TrySurfaceInstallerProvisioningResultAsync()
+    {
+        var provisioningResult = await _modelProvisioningResultStore.TryConsumeAsync(_lifetimeCts.Token);
+        if (provisioningResult is null)
+        {
+            return;
+        }
+
+        ModelActionStatusTextBlock.Text = provisioningResult.Transcription.Detail;
+        DiarizationActionStatusTextBlock.Text = provisioningResult.SpeakerLabeling.Detail;
+
+        if (!provisioningResult.Transcription.RetryRecommended &&
+            !provisioningResult.SpeakerLabeling.RetryRecommended)
+        {
+            return;
+        }
+
+        var retryTargets = new List<string>();
+        if (provisioningResult.Transcription.RetryRecommended)
+        {
+            retryTargets.Add("Higher Accuracy transcription");
+        }
+
+        if (provisioningResult.SpeakerLabeling.RetryRecommended)
+        {
+            retryTargets.Add("Higher Accuracy speaker labeling");
+        }
+
+        MessageBox.Show(
+            "Meeting Recorder finished setup with the included Standard options ready to use. " +
+            $"{string.Join(" and ", retryTargets)} did not finish during install. Retry it later from Settings > Setup.",
+            AppBranding.DisplayNameWithVersion,
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private void EnsureInteractiveTimersStarted()
@@ -434,35 +543,45 @@ public partial class MainWindow : Window
 
     private void ScheduleDeferredMeetingsRefresh()
     {
-        if (_hasCompletedFullMeetingsRefresh || _isDeferredMeetingsRefreshQueued || IsShutdownRequested)
+        if (_hasCompletedFullMeetingsRefresh || IsShutdownRequested)
         {
             return;
         }
 
-        if (!ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
-        {
-            _hasCompletedFullMeetingsRefresh = false;
-            UpdateMeetingsRefreshStateText();
-            return;
-        }
-
-        _isDeferredMeetingsRefreshQueued = true;
-        UpdateMeetingsRefreshStateText();
-        _ = Dispatcher.BeginInvoke(
-            new Action(() => _ = RunDeferredMeetingsRefreshAsync()),
-            DispatcherPriority.Background);
+        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "meetings tab selected");
     }
 
     private async Task RunDeferredMeetingsRefreshAsync()
     {
         try
         {
-            await RefreshMeetingListAsync(MeetingRefreshMode.Full);
+            while (_hasPendingMeetingsRefreshRequest && !IsShutdownRequested)
+            {
+                if (MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
+                        _recordingCoordinator.IsRecording,
+                        ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)))
+                {
+                    return;
+                }
+
+                var refreshMode = _pendingMeetingsRefreshMode;
+                var selectedStem = _pendingMeetingsRefreshSelectedStem;
+                _hasPendingMeetingsRefreshRequest = false;
+                _pendingMeetingsRefreshMode = MeetingRefreshMode.Fast;
+                _pendingMeetingsRefreshSelectedStem = null;
+
+                var stopwatch = Stopwatch.StartNew();
+                await RefreshMeetingListAsync(selectedStem, refreshMode);
+                _logger.Log(
+                    $"Completed queued meeting list refresh. mode='{refreshMode}', " +
+                    $"selectedStem='{selectedStem ?? string.Empty}', elapsedMs={stopwatch.ElapsedMilliseconds}.");
+            }
         }
         finally
         {
             _isDeferredMeetingsRefreshQueued = false;
             UpdateMeetingsRefreshStateText();
+            SchedulePendingMeetingsRefreshIfReady();
         }
     }
 
@@ -471,7 +590,9 @@ public partial class MainWindow : Window
         _detectionTimer.Stop();
         _audioGraphTimer.Stop();
         _updateTimer.Stop();
+        _processingQueueStatusTimer.Stop();
         _liveConfig.Changed -= LiveConfig_OnChanged;
+        _processingQueue.StatusChanged -= ProcessingQueue_OnStatusChanged;
         CancelMeetingBackgroundWork();
         if (!_lifetimeCts.IsCancellationRequested)
         {
@@ -484,6 +605,75 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ProcessingQueue_OnStatusChanged(ProcessingQueueStatusSnapshot snapshot)
+    {
+        if (Dispatcher.CheckAccess())
+        {
+            ApplyProcessingQueueStatusSnapshot(snapshot);
+            return;
+        }
+
+        _ = Dispatcher.BeginInvoke(new Action(() => ApplyProcessingQueueStatusSnapshot(snapshot)), DispatcherPriority.Background);
+    }
+
+    private void ApplyProcessingQueueStatusSnapshot(ProcessingQueueStatusSnapshot snapshot)
+    {
+        _latestProcessingQueueStatusSnapshot = snapshot;
+        UpdateProcessingQueueStatusUi();
+        UpdateProcessingQueueStatusTimerState();
+    }
+
+    private void ProcessingQueueStatusTimer_OnTick(object? sender, EventArgs e)
+    {
+        if (IsShutdownRequested)
+        {
+            return;
+        }
+
+        UpdateProcessingQueueStatusUi();
+        UpdateProcessingQueueStatusTimerState();
+    }
+
+    private void UpdateProcessingQueueStatusTimerState()
+    {
+        var shouldRun = _latestProcessingQueueStatusSnapshot.TotalRemainingCount > 0 ||
+                        _latestProcessingQueueStatusSnapshot.RunState is ProcessingQueueRunState.Processing or ProcessingQueueRunState.Paused or ProcessingQueueRunState.Queued;
+        if (shouldRun)
+        {
+            if (!_processingQueueStatusTimer.IsEnabled)
+            {
+                _processingQueueStatusTimer.Start();
+            }
+
+            return;
+        }
+
+        if (_processingQueueStatusTimer.IsEnabled)
+        {
+            _processingQueueStatusTimer.Stop();
+        }
+    }
+
+    private void UpdateProcessingQueueStatusUi()
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(_latestProcessingQueueStatusSnapshot, nowUtc);
+        HeaderQueueStatusBorder.Visibility = headerState.IsVisible ? Visibility.Visible : Visibility.Collapsed;
+        HeaderQueueStatusLabelTextBlock.Text = headerState.Label;
+        HeaderQueueStatusDetailTextBlock.Text = headerState.Detail;
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(_latestProcessingQueueStatusSnapshot, _currentMeetingsRefreshStateText, nowUtc);
+        MeetingsProcessingStatusBorder.Visibility = stripState.IsVisible ? Visibility.Visible : Visibility.Collapsed;
+        MeetingsProcessingStatusLine1TextBlock.Text = stripState.Line1;
+        MeetingsProcessingStatusLine1TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line1) ? Visibility.Collapsed : Visibility.Visible;
+        MeetingsProcessingStatusLine2TextBlock.Text = stripState.Line2;
+        MeetingsProcessingStatusLine2TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line2) ? Visibility.Collapsed : Visibility.Visible;
+        MeetingsProcessingStatusLine3TextBlock.Text = stripState.Line3;
+        MeetingsProcessingStatusLine3TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line3) ? Visibility.Collapsed : Visibility.Visible;
+        MeetingsRefreshStateTextBlock.Text = stripState.SecondaryText ?? string.Empty;
+        MeetingsRefreshStateTextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.SecondaryText) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private async void StartButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_isRecordingTransitionInProgress)
@@ -491,6 +681,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         _isRecordingTransitionInProgress = true;
         UpdateUi("Starting recording...", DetectionTextBlock.Text);
 
@@ -519,6 +710,7 @@ public partial class MainWindow : Window
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+            _logger.Log($"Start foreground path completed in {stopwatch.ElapsedMilliseconds}ms.");
         }
     }
 
@@ -529,6 +721,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         _isRecordingTransitionInProgress = true;
         _isAutoStopTransitionInProgress = false;
         ClearAutoStopVisualState();
@@ -546,6 +739,7 @@ public partial class MainWindow : Window
             _isAutoStopTransitionInProgress = false;
             ResumeDetectionAfterStopTransitionIfNeeded();
             UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+            _logger.Log($"Manual stop button flow completed in {stopwatch.ElapsedMilliseconds}ms.");
         }
     }
 
@@ -585,6 +779,7 @@ public partial class MainWindow : Window
             activeSession.Manifest.SessionId,
             activeSession.Manifest.ProjectName ?? string.Empty,
             CurrentMeetingProjectTextBox.Text);
+        ScheduleCurrentMeetingOptionalMetadataSave();
     }
 
     private void CurrentMeetingKeyAttendeesTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
@@ -604,6 +799,7 @@ public partial class MainWindow : Window
             activeSession.Manifest.SessionId,
             FormatKeyAttendeesForDisplay(activeSession.Manifest.KeyAttendees),
             CurrentMeetingKeyAttendeesTextBox.Text);
+        ScheduleCurrentMeetingOptionalMetadataSave();
     }
 
     private void DashboardPrimaryActionButton_OnClick(object sender, RoutedEventArgs e)
@@ -623,39 +819,73 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!_isUiReady)
+        {
+            return;
+        }
+
+        UpdateAudioGraphTimerState();
+        SchedulePendingMeetingsRefreshIfReady();
+
         if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
         {
             ScheduleDeferredMeetingsRefresh();
         }
     }
 
-    private void RequestMeetingRefreshForCurrentContext(bool requiresFullRefresh, string? selectedStem = null)
+    private void RequestMeetingRefreshForCurrentContext(
+        MeetingRefreshMode refreshMode,
+        string reason,
+        string? selectedStem = null)
     {
-        if (requiresFullRefresh)
+        if (refreshMode == MeetingRefreshMode.Full)
         {
             _hasCompletedFullMeetingsRefresh = false;
         }
 
-        if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+        _hasPendingMeetingsRefreshRequest = true;
+        if (refreshMode > _pendingMeetingsRefreshMode)
         {
-            _ = RefreshMeetingListAsync(
-                selectedStem,
-                refreshMode: MeetingRefreshMode.Fast);
-            if (requiresFullRefresh)
-            {
-                ScheduleDeferredMeetingsRefresh();
-            }
+            _pendingMeetingsRefreshMode = refreshMode;
+        }
 
+        if (!string.IsNullOrWhiteSpace(selectedStem))
+        {
+            _pendingMeetingsRefreshSelectedStem = selectedStem;
+        }
+
+        var isMeetingsTabSelected = ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem);
+        var shouldDefer = MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
+            _recordingCoordinator.IsRecording,
+            isMeetingsTabSelected);
+        _logger.Log(
+            $"Queued meeting list refresh request. reason='{reason}', mode='{refreshMode}', " +
+            $"selectedStem='{selectedStem ?? string.Empty}', deferred={shouldDefer}, " +
+            $"isRecording={_recordingCoordinator.IsRecording}, meetingsTabSelected={isMeetingsTabSelected}.");
+        UpdateMeetingsRefreshStateText();
+        SchedulePendingMeetingsRefreshIfReady();
+    }
+
+    private void SchedulePendingMeetingsRefreshIfReady()
+    {
+        if (!_hasPendingMeetingsRefreshRequest || _isDeferredMeetingsRefreshQueued || IsShutdownRequested)
+        {
             return;
         }
 
-        if (requiresFullRefresh)
+        if (MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
+                _recordingCoordinator.IsRecording,
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)))
         {
-            ScheduleDeferredMeetingsRefresh();
+            UpdateMeetingsRefreshStateText();
             return;
         }
 
-        _ = RefreshMeetingListAsync(selectedStem, refreshMode: MeetingRefreshMode.Fast);
+        _isDeferredMeetingsRefreshQueued = true;
+        UpdateMeetingsRefreshStateText();
+        _ = Dispatcher.BeginInvoke(
+            new Action(() => _ = RunDeferredMeetingsRefreshAsync()),
+            DispatcherPriority.Background);
     }
 
     private void HeaderSettingsButton_OnClick(object sender, RoutedEventArgs e)
@@ -751,7 +981,8 @@ public partial class MainWindow : Window
             configUpdater: config => config with { MicCaptureEnabled = true },
             snapshotUpdater: snapshot => snapshot with { MicCaptureEnabled = true },
             currentValueSelector: config => config.MicCaptureEnabled,
-            settingName: "Microphone capture");
+            settingName: "Microphone capture",
+            applyMicCaptureLiveChange: true);
     }
 
     private async void HomeMicCaptureDisabledButton_OnClick(object sender, RoutedEventArgs e)
@@ -761,7 +992,8 @@ public partial class MainWindow : Window
             configUpdater: config => config with { MicCaptureEnabled = false },
             snapshotUpdater: snapshot => snapshot with { MicCaptureEnabled = false },
             currentValueSelector: config => config.MicCaptureEnabled,
-            settingName: "Microphone capture");
+            settingName: "Microphone capture",
+            applyMicCaptureLiveChange: true);
     }
 
     private async void HomeAutoDetectEnabledButton_OnClick(object sender, RoutedEventArgs e)
@@ -1043,6 +1275,13 @@ public partial class MainWindow : Window
 
     private async void DetectionTimer_OnTick(object? sender, EventArgs e)
     {
+        if (!TryBeginDetectionCycle())
+        {
+            return;
+        }
+
+        var detectionGeneration = Volatile.Read(ref _detectionCycleGeneration);
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             if (IsShutdownRequested)
@@ -1052,8 +1291,10 @@ public partial class MainWindow : Window
 
             await TryReloadConfigAsync();
             await EnsureConfiguredModelPathResolvedAsync("runtime check", _lifetimeCts.Token);
-            if (IsShutdownRequested)
+            if (IsShutdownRequested || detectionGeneration != Volatile.Read(ref _detectionCycleGeneration))
             {
+                _logger.Log(
+                    $"Discarded stale detection scan after {stopwatch.ElapsedMilliseconds}ms because detection was paused or shutdown started.");
                 return;
             }
 
@@ -1064,21 +1305,42 @@ public partial class MainWindow : Window
                 _recordingCoordinator.IsRecording,
                 activeSessionBeforeDetection?.AutoStarted == true);
             var decision = shouldRunMeetingDetection
-                ? _meetingDetector.DetectBestCandidate()
+                ? await _meetingDetector.DetectBestCandidateAsync(_lifetimeCts.Token)
                 : null;
+            if (shouldRunMeetingDetection)
+            {
+                decision = await _teamsDetectionArbitrator.ApplyPreferredContextAsync(
+                    decision,
+                    _liveConfig.Current,
+                    nowUtc,
+                    _lifetimeCts.Token);
+            }
+            if (IsShutdownRequested || detectionGeneration != Volatile.Read(ref _detectionCycleGeneration))
+            {
+                _logger.Log(
+                    $"Ignored detection scan result after {stopwatch.ElapsedMilliseconds}ms because detection was paused or shutdown started.");
+                return;
+            }
+
+            _logger.Log(
+                $"Detection scan completed in {stopwatch.ElapsedMilliseconds}ms. shouldRun={shouldRunMeetingDetection}, " +
+                $"result='{decision?.SessionTitle ?? string.Empty}'.");
             LogDetectionChange(decision);
-            DetectionTextBlock.Text = MainWindowInteractionLogic.BuildDetectionSummary(decision);
+            DetectionTextBlock.Text = MainWindowInteractionLogic.BuildDetectionSummary(
+                decision,
+                _liveConfig.Current.AutoDetectEnabled);
             UpdateDetectedAudioSourceSurface(decision);
 
             if (!_recordingCoordinator.IsRecording &&
                 _liveConfig.Current.AutoDetectEnabled &&
                 decision is not null)
             {
+                var shouldAutoStartQuietTeamsMeeting = ShouldAutoStartQuietTeamsMeeting(decision, nowUtc);
                 var shouldRecoverFromRecentAutoStop = _autoRecordingContinuityPolicy.ShouldRecoverFromRecentAutoStop(
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
-                if (decision.ShouldStart || shouldRecoverFromRecentAutoStop)
+                if (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop)
                 {
                     ClearAutoStopVisualState();
                     await _recordingCoordinator.StartAsync(
@@ -1095,32 +1357,37 @@ public partial class MainWindow : Window
                     AppendActivity(
                         shouldRecoverFromRecentAutoStop && !decision.ShouldStart
                             ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
+                            : shouldAutoStartQuietTeamsMeeting
+                                ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
                             : $"Auto-started recording for '{decision.SessionTitle}'.");
                 }
             }
+            else
+            {
+                ResetQuietTeamsAutoStartCandidate();
+            }
 
-            var activeAutoStartedSession = _recordingCoordinator.ActiveSession is { AutoStarted: true } activeSession
-                ? activeSession
-                : null;
-            if (activeAutoStartedSession is not null &&
-                await TryReclassifyActiveAutoStartedSessionAsync(
-                    activeAutoStartedSession,
+            var activeSession = _recordingCoordinator.ActiveSession;
+            if (activeSession is not null &&
+                await TryReclassifyActiveSessionAsync(
+                    activeSession,
                     decision,
                     nowUtc,
                     _lifetimeCts.Token))
             {
-                activeAutoStartedSession = _recordingCoordinator.ActiveSession is { AutoStarted: true } reclassifiedSession
-                    ? reclassifiedSession
-                    : null;
+                activeSession = _recordingCoordinator.ActiveSession;
             }
 
-            if (activeAutoStartedSession is not null &&
+            var activeMeetingManagedSession = _recordingCoordinator.ActiveSession is { MeetingLifecycleManaged: true } reclassifiedSession
+                ? reclassifiedSession
+                : null;
+            if (activeMeetingManagedSession is not null &&
                 _autoRecordingContinuityPolicy.ShouldRefreshLastPositiveSignal(
                     decision,
-                    activeAutoStartedSession.Manifest.Platform,
-                    activeAutoStartedSession.Manifest.DetectedTitle,
-                    HasRecentLoopbackActivity(activeAutoStartedSession),
-                    HasRecentMicrophoneActivity(activeAutoStartedSession)))
+                    activeMeetingManagedSession.Manifest.Platform,
+                    activeMeetingManagedSession.Manifest.DetectedTitle,
+                    HasRecentLoopbackActivity(activeMeetingManagedSession),
+                    HasRecentMicrophoneActivity(activeMeetingManagedSession)))
             {
                 ClearAutoStopVisualState();
                 if (decision is { ShouldKeepRecording: true })
@@ -1135,9 +1402,9 @@ public partial class MainWindow : Window
                 _lastPositiveDetectionUtc = nowUtc;
             }
             else if (_recordingCoordinator.IsRecording &&
-                     activeAutoStartedSession is not null)
+                     activeMeetingManagedSession is not null)
             {
-                var activePlatform = activeAutoStartedSession.Manifest.Platform;
+                var activePlatform = activeMeetingManagedSession.Manifest.Platform;
                 var elapsedSincePositive = _lastPositiveDetectionUtc.HasValue
                     ? nowUtc - _lastPositiveDetectionUtc.Value
                     : (TimeSpan?)null;
@@ -1148,7 +1415,7 @@ public partial class MainWindow : Window
                     var stopTimeout = _autoRecordingContinuityPolicy.GetAutoStopTimeout(
                         decision,
                         activePlatform,
-                        activeAutoStartedSession.Manifest.DetectedTitle,
+                        activeMeetingManagedSession.Manifest.DetectedTitle,
                         TimeSpan.FromSeconds(_liveConfig.Current.MeetingStopTimeoutSeconds));
                     var remaining = stopTimeout - elapsedSincePositive.Value;
                     if (remaining <= TimeSpan.Zero)
@@ -1193,13 +1460,69 @@ public partial class MainWindow : Window
                 await TryCaptureTeamsAttendeesAsync(activeSessionForMicPrompt, _lifetimeCts.Token);
             }
         }
+        catch (OperationCanceledException) when (IsShutdownRequested || detectionGeneration != Volatile.Read(ref _detectionCycleGeneration))
+        {
+            _logger.Log("Detection scan canceled because detection was paused or shutdown started.");
+        }
         catch (Exception exception)
         {
             AppendActivity($"Detection error: {exception.Message}");
         }
+        finally
+        {
+            FinishDetectionCycle();
+        }
     }
 
-    private async Task<bool> TryReclassifyActiveAutoStartedSessionAsync(
+    private bool ShouldAutoStartQuietTeamsMeeting(DetectionDecision? decision, DateTimeOffset nowUtc)
+    {
+        if (decision is null ||
+            !_autoRecordingContinuityPolicy.IsQuietSpecificTeamsMeetingCandidate(decision))
+        {
+            ResetQuietTeamsAutoStartCandidate();
+            return false;
+        }
+
+        var quietCandidate = decision;
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(quietCandidate.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            ResetQuietTeamsAutoStartCandidate();
+            return false;
+        }
+
+        var fingerprint = $"{quietCandidate.Platform}|{normalizedTitle}";
+        if (!string.Equals(_quietTeamsAutoStartFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _quietTeamsAutoStartFingerprint = fingerprint;
+            _quietTeamsAutoStartFirstObservedUtc = nowUtc;
+        }
+
+        if (!_quietTeamsAutoStartFirstObservedUtc.HasValue)
+        {
+            _quietTeamsAutoStartFirstObservedUtc = nowUtc;
+            return false;
+        }
+
+        if (!_autoRecordingContinuityPolicy.ShouldAutoStartQuietSpecificTeamsMeeting(
+                quietCandidate,
+                _quietTeamsAutoStartFirstObservedUtc.Value,
+                nowUtc))
+        {
+            return false;
+        }
+
+        ResetQuietTeamsAutoStartCandidate();
+        return true;
+    }
+
+    private void ResetQuietTeamsAutoStartCandidate()
+    {
+        _quietTeamsAutoStartFingerprint = null;
+        _quietTeamsAutoStartFirstObservedUtc = null;
+    }
+
+    private async Task<bool> TryReclassifyActiveSessionAsync(
         ActiveRecordingSession activeSession,
         DetectionDecision? decision,
         DateTimeOffset nowUtc,
@@ -1210,9 +1533,10 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (!_autoRecordingContinuityPolicy.ShouldReclassifyAutoStartedSession(
+        if (!_autoRecordingContinuityPolicy.ShouldReclassifyActiveSession(
                 decision,
-                activeSession.Manifest.Platform))
+                activeSession.Manifest.Platform,
+                activeSession.Manifest.DetectedTitle))
         {
             return false;
         }
@@ -1220,6 +1544,7 @@ public partial class MainWindow : Window
         var previousPlatform = activeSession.Manifest.Platform;
         var reclassified = await _recordingCoordinator.ReclassifyActiveSessionAsync(
             decision.Platform,
+            decision.SessionTitle,
             decision.Signals,
             decision.DetectedAudioSource,
             cancellationToken);
@@ -1231,10 +1556,15 @@ public partial class MainWindow : Window
         _lastPositiveDetectionUtc = nowUtc;
         _recentAutoStopContext = null;
         _lastAutoStopFingerprint = null;
+        var wasMeetingLifecycleManaged = activeSession.MeetingLifecycleManaged;
+        activeSession.MeetingLifecycleManaged = true;
+        _sessionTitleDraftTracker.MarkPersisted(activeSession.Manifest.SessionId, decision.SessionTitle);
         UpdateCurrentMeetingEditor();
         UpdateDetectedAudioSourceSurface(decision);
         AppendActivity(
-            $"Reclassified active auto-started recording from {previousPlatform} to {decision.Platform} using the current detected meeting window.");
+            wasMeetingLifecycleManaged
+                ? $"Switched the active recording from {previousPlatform} to {decision.Platform} using the current detected meeting window '{decision.SessionTitle}'."
+                : $"Reclassified active recording from {previousPlatform} to {decision.Platform}, switched to '{decision.SessionTitle}', and enabled automatic meeting-end stop handling.");
         return true;
     }
 
@@ -1253,6 +1583,7 @@ public partial class MainWindow : Window
     private void AudioGraphTimer_OnTick(object? sender, EventArgs e)
     {
         UpdateAudioCaptureGraph();
+        UpdateCurrentRecordingElapsedText();
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -1266,6 +1597,7 @@ public partial class MainWindow : Window
         if (_shutdownMode == AppShutdownMode.Immediate)
         {
             _shutdownInProgress = true;
+            InvalidateDetectionCycle();
             _detectionTimer.Stop();
             _audioGraphTimer.Stop();
             _updateTimer.Stop();
@@ -1286,6 +1618,7 @@ public partial class MainWindow : Window
         }
 
         _shutdownInProgress = true;
+        InvalidateDetectionCycle();
         _detectionTimer.Stop();
         _audioGraphTimer.Stop();
         _updateTimer.Stop();
@@ -1311,6 +1644,7 @@ public partial class MainWindow : Window
         }
 
         _shutdownInProgress = true;
+        InvalidateDetectionCycle();
         _detectionTimer.Stop();
         _audioGraphTimer.Stop();
         _updateTimer.Stop();
@@ -1387,6 +1721,7 @@ public partial class MainWindow : Window
         bool enqueueForProcessing = true,
         CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             await ApplyPendingCurrentMetadataAsync(cancellationToken);
@@ -1406,7 +1741,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            await RefreshMeetingListAsync();
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "recording stop");
             UpdateCurrentMeetingEditor();
             UpdateUi(
                 MainWindowInteractionLogic.BuildRecordingStoppedMessage(processingQueued),
@@ -1424,6 +1759,10 @@ public partial class MainWindow : Window
             AppendActivity($"Failed to stop recording: {exception.Message}");
             UpdateUi("Unable to stop recording cleanly.", DetectionTextBlock.Text);
         }
+        finally
+        {
+            _logger.Log($"Stop foreground path completed in {stopwatch.ElapsedMilliseconds}ms. reason='{reason}'.");
+        }
     }
 
     private Task<string?> StopRecordingSessionAsync(
@@ -1435,6 +1774,7 @@ public partial class MainWindow : Window
 
     private void PauseDetectionDuringStopTransition()
     {
+        InvalidateDetectionCycle();
         if (_detectionTimer.IsEnabled)
         {
             _detectionTimer.Stop();
@@ -1458,6 +1798,7 @@ public partial class MainWindow : Window
     {
         _autoStopCountdownSecondsRemaining = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
         UpdateCurrentMeetingTitleStatus();
+        UpdateAudioGraphTimerState();
         UpdateAudioCaptureGraph();
     }
 
@@ -1465,13 +1806,14 @@ public partial class MainWindow : Window
     {
         _autoStopCountdownSecondsRemaining = null;
         UpdateCurrentMeetingTitleStatus();
+        UpdateAudioGraphTimerState();
         UpdateAudioCaptureGraph();
     }
 
     private async void RefreshMeetingsButton_OnClick(object sender, RoutedEventArgs e)
     {
         await RefreshMeetingListForCurrentContextAsync(bypassAttendeeNoMatchCacheForVisibleRows: true);
-        AppendActivity("Refreshed published meeting list.");
+        AppendActivity("Refreshed recent and published meeting list.");
     }
 
     private async void RenameSelectedMeetingButton_OnClick(object sender, RoutedEventArgs e)
@@ -1614,7 +1956,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            await RefreshMeetingListAsync();
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "suggested titles applied");
             SelectedMeetingStatusTextBlock.Text =
                 $"Applied {renamedCount} suggestion(s); skipped {missingSuggestionCount} without a better match, {unchangedCount} already matching, and {failureMessages.Count} failed.";
             if (failureMessages.Count > 0)
@@ -2342,6 +2684,7 @@ public partial class MainWindow : Window
 
         try
         {
+            var currentConfig = _liveConfig.Current;
             if (!double.TryParse(ConfigAutoDetectThresholdTextBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var threshold))
             {
                 throw new InvalidOperationException("Auto-detect audio threshold must be a number.");
@@ -2352,46 +2695,80 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Meeting stop timeout must be a whole number of seconds.");
             }
 
-            await _liveConfig.SaveAsync(new AppConfig
+            var nextConfig = new AppConfig
             {
                 AudioOutputDir = ConfigAudioOutputDirTextBox.Text.Trim(),
                 TranscriptOutputDir = ConfigTranscriptOutputDirTextBox.Text.Trim(),
                 WorkDir = ConfigWorkDirTextBox.Text.Trim(),
-                ModelCacheDir = ConfigModelCacheDirTextBox.Text.Trim(),
-                TranscriptionModelPath = ConfigTranscriptionModelPathTextBox.Text.Trim(),
-                DiarizationAssetPath = ConfigDiarizationAssetPathTextBox.Text.Trim(),
+                ModelCacheDir = currentConfig.ModelCacheDir,
+                TranscriptionModelPath = currentConfig.TranscriptionModelPath,
+                TranscriptionModelProfilePreference = currentConfig.TranscriptionModelProfilePreference,
+                DiarizationAssetPath = currentConfig.DiarizationAssetPath,
+                SpeakerLabelingModelProfilePreference = currentConfig.SpeakerLabelingModelProfilePreference,
                 DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true
                     ? InferenceAccelerationPreference.Auto
                     : InferenceAccelerationPreference.CpuOnly,
                 MicCaptureEnabled = ConfigMicCaptureCheckBox.IsChecked == true,
                 LaunchOnLoginEnabled = ConfigLaunchOnLoginCheckBox.IsChecked == true,
                 AutoDetectEnabled = ConfigAutoDetectCheckBox.IsChecked == true,
+                AutoDetectSecurityPromptMigrationApplied = currentConfig.AutoDetectSecurityPromptMigrationApplied,
                 CalendarTitleFallbackEnabled = ConfigCalendarTitleFallbackCheckBox.IsChecked == true,
                 MeetingAttendeeEnrichmentEnabled = ConfigMeetingAttendeeEnrichmentCheckBox.IsChecked == true,
                 UpdateCheckEnabled = ConfigUpdateCheckEnabledCheckBox.IsChecked == true,
                 AutoInstallUpdatesEnabled = ConfigAutoInstallUpdatesCheckBox.IsChecked == true,
                 UpdateFeedUrl = ConfigUpdateFeedUrlTextBox.Text.Trim(),
-                LastUpdateCheckUtc = _liveConfig.Current.LastUpdateCheckUtc,
-                InstalledReleaseVersion = _liveConfig.Current.InstalledReleaseVersion,
-                InstalledReleasePublishedAtUtc = _liveConfig.Current.InstalledReleasePublishedAtUtc,
-                InstalledReleaseAssetSizeBytes = _liveConfig.Current.InstalledReleaseAssetSizeBytes,
-                PendingUpdateZipPath = _liveConfig.Current.PendingUpdateZipPath,
-                PendingUpdateVersion = _liveConfig.Current.PendingUpdateVersion,
-                PendingUpdatePublishedAtUtc = _liveConfig.Current.PendingUpdatePublishedAtUtc,
-                PendingUpdateAssetSizeBytes = _liveConfig.Current.PendingUpdateAssetSizeBytes,
+                PreferredTeamsIntegrationMode = ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue is PreferredTeamsIntegrationMode preferredTeamsIntegrationMode
+                    ? preferredTeamsIntegrationMode
+                    : currentConfig.PreferredTeamsIntegrationMode,
+                TeamsGraphTenantId = currentConfig.TeamsGraphTenantId,
+                TeamsGraphClientId = currentConfig.TeamsGraphClientId,
+                TeamsCapabilitySnapshot = currentConfig.TeamsCapabilitySnapshot,
+                BackgroundProcessingMode = ConfigBackgroundProcessingModeComboBox.SelectedValue is BackgroundProcessingMode backgroundProcessingMode
+                    ? backgroundProcessingMode
+                    : currentConfig.BackgroundProcessingMode,
+                BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
+                    ? backgroundSpeakerLabelingMode
+                    : currentConfig.BackgroundSpeakerLabelingMode,
+                LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
+                InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
+                InstalledReleasePublishedAtUtc = currentConfig.InstalledReleasePublishedAtUtc,
+                InstalledReleaseAssetSizeBytes = currentConfig.InstalledReleaseAssetSizeBytes,
+                PendingUpdateZipPath = currentConfig.PendingUpdateZipPath,
+                PendingUpdateVersion = currentConfig.PendingUpdateVersion,
+                PendingUpdatePublishedAtUtc = currentConfig.PendingUpdatePublishedAtUtc,
+                PendingUpdateAssetSizeBytes = currentConfig.PendingUpdateAssetSizeBytes,
                 AutoDetectAudioPeakThreshold = threshold,
                 MeetingStopTimeoutSeconds = stopTimeoutSeconds,
-                MeetingsViewMode = _liveConfig.Current.MeetingsViewMode,
-                MeetingsGroupedViewMigrationApplied = _liveConfig.Current.MeetingsGroupedViewMigrationApplied,
-                MeetingsSortKey = _liveConfig.Current.MeetingsSortKey,
-                MeetingsSortDescending = _liveConfig.Current.MeetingsSortDescending,
-                MeetingsGroupKey = _liveConfig.Current.MeetingsGroupKey,
-                DismissedMeetingRecommendations = _liveConfig.Current.DismissedMeetingRecommendations,
-            }, _lifetimeCts.Token);
+                MeetingsViewMode = currentConfig.MeetingsViewMode,
+                MeetingsGroupedViewMigrationApplied = currentConfig.MeetingsGroupedViewMigrationApplied,
+                MeetingsSortKey = currentConfig.MeetingsSortKey,
+                MeetingsSortDescending = currentConfig.MeetingsSortDescending,
+                MeetingsGroupKey = currentConfig.MeetingsGroupKey,
+                DismissedMeetingRecommendations = currentConfig.DismissedMeetingRecommendations,
+            };
+
+            await _liveConfig.SaveAsync(nextConfig, _lifetimeCts.Token);
 
             _pendingConfigEditorSnapshotRestore = null;
-            _shellStatusOverride = null;
-            SetConfigSaveStatus("Config saved and applied to the running app.");
+            var liveMicCaptureUpdated = true;
+            if (currentConfig.MicCaptureEnabled != nextConfig.MicCaptureEnabled)
+            {
+                liveMicCaptureUpdated = await ApplyLiveMicCapturePreferenceIfNeededAsync(
+                    nextConfig.MicCaptureEnabled,
+                    "Settings save",
+                    _lifetimeCts.Token);
+            }
+
+            if (liveMicCaptureUpdated)
+            {
+                _shellStatusOverride = null;
+            }
+
+            if (liveMicCaptureUpdated)
+            {
+                SetConfigSaveStatus("Config saved and applied to the running app.");
+            }
+
             UpdateDashboardReadiness();
         }
         catch (Exception exception)
@@ -2404,6 +2781,80 @@ public partial class MainWindow : Window
             _isSavingConfig = false;
             UpdateConfigActionState();
         }
+    }
+
+    private async void RunTeamsIntegrationProbeButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isRunningTeamsIntegrationProbe)
+        {
+            return;
+        }
+
+        _isRunningTeamsIntegrationProbe = true;
+        UpdateTeamsIntegrationProbeActionState();
+        ConfigTeamsIntegrationStatusTextBlock.Text = "Running Teams probe...";
+        ConfigTeamsIntegrationDetailTextBlock.Text =
+            "Checking the heuristic detector and the Teams third-party API candidate.";
+        ConfigTeamsIntegrationMetadataTextBlock.Text =
+            "Last probe: pending current run." + Environment.NewLine +
+            "Promotable path: calculating." + Environment.NewLine +
+            "Block reason: none.";
+        ConfigTeamsIntegrationBaselineTextBlock.Text =
+            "Heuristic baseline: capturing the current local Teams detector result.";
+        SetConfigSaveStatus("Running Teams probe...");
+
+        try
+        {
+            var probeConfig = BuildTeamsProbeConfigFromEditor(_liveConfig.Current);
+            var result = await _teamsIntegrationProbeService.RunAsync(
+                probeConfig,
+                DateTimeOffset.UtcNow,
+                _lifetimeCts.Token);
+            _lastTeamsProbeBaselineSummary = result.HeuristicBaselineSummary;
+
+            var editorSnapshot = ReadConfigEditorSnapshot();
+            var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(_liveConfig.Current, editorSnapshot);
+            _pendingConfigEditorSnapshotRestore = hasPendingChanges
+                ? editorSnapshot
+                : null;
+
+            var updatedConfig = _liveConfig.Current with
+            {
+                TeamsCapabilitySnapshot = result.CapabilitySnapshot,
+            };
+            await _liveConfig.SaveAsync(updatedConfig, _lifetimeCts.Token);
+            UpdateTeamsIntegrationProbePresentation(updatedConfig, result.HeuristicBaselineSummary);
+            SetConfigSaveStatus("Teams probe completed and the capability snapshot was saved.");
+            AppendActivity($"Teams probe completed. {result.CapabilitySnapshot.Summary}");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            ConfigTeamsIntegrationStatusTextBlock.Text = "Probe canceled.";
+            ConfigTeamsIntegrationDetailTextBlock.Text = "The app is shutting down before the Teams probe completed.";
+            ConfigTeamsIntegrationMetadataTextBlock.Text = BuildTeamsIntegrationMetadataText(_liveConfig.Current);
+            ConfigTeamsIntegrationBaselineTextBlock.Text = _lastTeamsProbeBaselineSummary ??
+                "Heuristic baseline: no saved probe result is available.";
+        }
+        catch (Exception exception)
+        {
+            ConfigTeamsIntegrationStatusTextBlock.Text = "Probe failed.";
+            ConfigTeamsIntegrationDetailTextBlock.Text = exception.Message;
+            ConfigTeamsIntegrationMetadataTextBlock.Text = BuildTeamsIntegrationMetadataText(_liveConfig.Current);
+            ConfigTeamsIntegrationBaselineTextBlock.Text = _lastTeamsProbeBaselineSummary ??
+                "Heuristic baseline: the probe did not finish cleanly.";
+            SetConfigSaveStatus($"Teams probe failed: {exception.Message}");
+            AppendActivity($"Teams probe failed: {exception.Message}");
+        }
+        finally
+        {
+            _isRunningTeamsIntegrationProbe = false;
+            UpdateTeamsIntegrationProbeActionState();
+        }
+    }
+
+    private void OpenTeamsThirdPartyApiGuideButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenExternalUrl(TeamsThirdPartyApiGuideUrl);
     }
 
     private void AudioFolderLink_OnClick(object sender, RoutedEventArgs e)
@@ -2530,7 +2981,39 @@ public partial class MainWindow : Window
             return;
         }
 
-        DownloadRecommendedRemoteModelButton_OnClick(sender, e);
+        UseHighAccuracyTranscriptionProfileButton_OnClick(sender, e);
+    }
+
+    private async void UseStandardTranscriptionProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ApplyCuratedModelProfilesAsync(
+            TranscriptionModelProfilePreference.StandardIncluded,
+            _liveConfig.Current.SpeakerLabelingModelProfilePreference,
+            "Switching transcription to the included Standard model...",
+            "Transcription profile updated.",
+            isTranscriptionHighAccuracyDownload: false,
+            isSpeakerLabelingHighAccuracyDownload: false);
+    }
+
+    private async void UseHighAccuracyTranscriptionProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ApplyCuratedModelProfilesAsync(
+            TranscriptionModelProfilePreference.HighAccuracyDownloaded,
+            _liveConfig.Current.SpeakerLabelingModelProfilePreference,
+            "Trying the optional Higher Accuracy transcription download. The included Standard model stays available either way...",
+            "Transcription profile updated.",
+            isTranscriptionHighAccuracyDownload: true,
+            isSpeakerLabelingHighAccuracyDownload: false);
+    }
+
+    private void ImportApprovedTranscriptionModelButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ImportWhisperModelButton_OnClick(sender, e);
+    }
+
+    private void OpenTranscriptionModelFolderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenModelFolderButton_OnClick(sender, e);
     }
 
     private void DownloadRecommendedRemoteModelButton_OnClick(object sender, RoutedEventArgs e)
@@ -2563,7 +3046,39 @@ public partial class MainWindow : Window
             return;
         }
 
-        DownloadRecommendedDiarizationBundleButton_OnClick(sender, e);
+        UseHighAccuracySpeakerLabelingProfileButton_OnClick(sender, e);
+    }
+
+    private async void UseStandardSpeakerLabelingProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ApplyCuratedModelProfilesAsync(
+            _liveConfig.Current.TranscriptionModelProfilePreference,
+            SpeakerLabelingModelProfilePreference.StandardIncluded,
+            "Switching speaker labeling to the included Standard bundle...",
+            "Speaker-labeling profile updated.",
+            isTranscriptionHighAccuracyDownload: false,
+            isSpeakerLabelingHighAccuracyDownload: false);
+    }
+
+    private async void UseHighAccuracySpeakerLabelingProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ApplyCuratedModelProfilesAsync(
+            _liveConfig.Current.TranscriptionModelProfilePreference,
+            SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+            "Trying the optional Higher Accuracy speaker-labeling download. The included Standard bundle stays available either way...",
+            "Speaker-labeling profile updated.",
+            isTranscriptionHighAccuracyDownload: false,
+            isSpeakerLabelingHighAccuracyDownload: true);
+    }
+
+    private void ImportApprovedSpeakerLabelingButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ImportDiarizationAssetButton_OnClick(sender, e);
+    }
+
+    private void OpenSpeakerLabelingAssetFolderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenDiarizationFolderButton_OnClick(sender, e);
     }
 
     private void DownloadRecommendedDiarizationBundleButton_OnClick(object sender, RoutedEventArgs e)
@@ -2622,6 +3137,65 @@ public partial class MainWindow : Window
                     Keyboard.Focus(focusTarget);
                 }
             }));
+    }
+
+    private async Task ApplyCuratedModelProfilesAsync(
+        TranscriptionModelProfilePreference transcriptionProfile,
+        SpeakerLabelingModelProfilePreference speakerLabelingProfile,
+        string startingStatus,
+        string successPrefix,
+        bool isTranscriptionHighAccuracyDownload,
+        bool isSpeakerLabelingHighAccuracyDownload)
+    {
+        _isDownloadingRemoteModel = isTranscriptionHighAccuracyDownload;
+        _isDownloadingRemoteDiarizationAsset = isSpeakerLabelingHighAccuracyDownload;
+        _isActivatingModel = !isTranscriptionHighAccuracyDownload &&
+            transcriptionProfile == TranscriptionModelProfilePreference.StandardIncluded;
+        UpdateModelActionButtons();
+        UpdateDiarizationActionButtons();
+
+        ModelActionStatusTextBlock.Text = startingStatus;
+        DiarizationActionStatusTextBlock.Text = startingStatus;
+
+        try
+        {
+            var provisioningResult = await _modelProvisioningService.ProvisionAsync(
+                new ModelProvisioningRequest(
+                    InstallRoot: AppContext.BaseDirectory,
+                    ModelCatalogPath: _meetingRecorderModelCatalogService.GetBundledCatalogPath(),
+                    UpdateFeedUrl: _liveConfig.Current.UpdateFeedUrl,
+                    TranscriptionProfile: transcriptionProfile,
+                    SpeakerLabelingProfile: speakerLabelingProfile,
+                    RespectExistingConfigPreferences: false),
+                _lifetimeCts.Token);
+            await _liveConfig.SaveAsync(provisioningResult.Config, _lifetimeCts.Token);
+            RefreshWhisperModelStatus();
+            RefreshDiarizationAssetStatus();
+            ApplyProvisioningResultToSetupStatus(provisioningResult.Result, successPrefix);
+            AppendActivity(
+                $"Updated curated model profiles. Transcription requested={provisioningResult.Result.Transcription.RequestedProfile}; speaker labeling requested={provisioningResult.Result.SpeakerLabeling.RequestedProfile}.");
+        }
+        catch (Exception exception)
+        {
+            ModelActionStatusTextBlock.Text = $"Transcription setup update failed: {exception.Message}";
+            DiarizationActionStatusTextBlock.Text = $"Speaker-labeling setup update failed: {exception.Message}";
+            AppendActivity($"Curated model profile update failed: {exception.Message}");
+        }
+        finally
+        {
+            _isDownloadingRemoteModel = false;
+            _isDownloadingRemoteDiarizationAsset = false;
+            _isActivatingModel = false;
+            ResetModelDownloadProgress();
+            UpdateModelActionButtons();
+            UpdateDiarizationActionButtons();
+        }
+    }
+
+    private void ApplyProvisioningResultToSetupStatus(ModelProvisioningResult provisioningResult, string successPrefix)
+    {
+        ModelActionStatusTextBlock.Text = $"{successPrefix} {provisioningResult.Transcription.Detail}".Trim();
+        DiarizationActionStatusTextBlock.Text = $"{successPrefix} {provisioningResult.SpeakerLabeling.Detail}".Trim();
     }
 
     private async void RefreshModelStatusButton_OnClick(object sender, RoutedEventArgs e)
@@ -2690,9 +3264,14 @@ public partial class MainWindow : Window
 
         try
         {
+            var profilePreference = _meetingRecorderModelCatalogService.ResolveTranscriptionProfilePreference(
+                _bundledModelCatalog,
+                _liveConfig.Current.ModelCacheDir,
+                selectedModel.Source.ModelPath);
             await _liveConfig.SaveAsync(_liveConfig.Current with
             {
                 TranscriptionModelPath = selectedModel.Source.ModelPath,
+                TranscriptionModelProfilePreference = profilePreference,
             }, _lifetimeCts.Token);
 
             ModelActionStatusTextBlock.Text = $"Active model updated to '{selectedModel.Source.FileName}'.";
@@ -2744,9 +3323,14 @@ public partial class MainWindow : Window
                 _liveConfig.Current.ModelCacheDir,
                 progress,
                 _lifetimeCts.Token);
+            var profilePreference = _meetingRecorderModelCatalogService.ResolveTranscriptionProfilePreference(
+                _bundledModelCatalog,
+                _liveConfig.Current.ModelCacheDir,
+                imported.ModelPath);
             await _liveConfig.SaveAsync(_liveConfig.Current with
             {
                 TranscriptionModelPath = imported.ModelPath,
+                TranscriptionModelProfilePreference = profilePreference,
             }, _lifetimeCts.Token);
             RefreshWhisperModelStatus();
             await RefreshRemoteModelCatalogAsync(manual: false, _lifetimeCts.Token);
@@ -2795,6 +3379,7 @@ public partial class MainWindow : Window
             await _liveConfig.SaveAsync(_liveConfig.Current with
             {
                 TranscriptionModelPath = imported.ModelPath,
+                TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Custom,
             }, _lifetimeCts.Token);
             RefreshWhisperModelStatus();
             ModelActionStatusTextBlock.Text = $"Imported '{imported.FileName}' ({FormatBytes(imported.Status.FileSizeBytes)}). Active model set to '{imported.FileName}'.";
@@ -2830,9 +3415,14 @@ public partial class MainWindow : Window
                 selectedAsset.Source,
                 _liveConfig.Current.ModelCacheDir,
                 _lifetimeCts.Token);
+            var profilePreference = _meetingRecorderModelCatalogService.ResolveSpeakerLabelingProfilePreference(
+                _bundledModelCatalog,
+                _liveConfig.Current.ModelCacheDir,
+                installed.AssetRootPath);
             await _liveConfig.SaveAsync(_liveConfig.Current with
             {
                 DiarizationAssetPath = installed.AssetRootPath,
+                SpeakerLabelingModelProfilePreference = profilePreference,
             }, _lifetimeCts.Token);
             RefreshDiarizationAssetStatus();
             await RefreshRemoteDiarizationAssetCatalogAsync(manual: false, _lifetimeCts.Token);
@@ -2880,6 +3470,7 @@ public partial class MainWindow : Window
             await _liveConfig.SaveAsync(_liveConfig.Current with
             {
                 DiarizationAssetPath = installed.AssetRootPath,
+                SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Custom,
             }, _lifetimeCts.Token);
             RefreshDiarizationAssetStatus();
             DiarizationActionStatusTextBlock.Text =
@@ -2923,6 +3514,7 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         CurrentMeetingTitleTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         UpdateCurrentMeetingTitleStatus();
+        UpdateAudioGraphTimerState();
         UpdateUpdateActionButtons();
         UpdateDashboardReadiness();
     }
@@ -2948,6 +3540,7 @@ public partial class MainWindow : Window
             _sessionTitleDraftTracker.Clear();
             _sessionProjectDraftTracker.Clear();
             _sessionKeyAttendeesDraftTracker.Clear();
+            _currentMeetingOptionalMetadataSaveTimer.Stop();
         }
 
         var nextTitleText = activeSession is null
@@ -2995,6 +3588,8 @@ public partial class MainWindow : Window
         }
 
         UpdateCurrentMeetingTitleStatus();
+        UpdateCurrentRecordingElapsedText();
+        UpdateAudioGraphTimerState();
     }
 
     private static string? NormalizeOptionalMeetingMetadataText(string? value)
@@ -3011,7 +3606,7 @@ public partial class MainWindow : Window
             : string.Join(", ", keyAttendees);
     }
 
-    private static IReadOnlyList<string> ParseKeyAttendeesText(string? value)
+    internal static IReadOnlyList<string> ParseDelimitedKeyAttendeesText(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -3068,7 +3663,7 @@ public partial class MainWindow : Window
         var forcedVisibleStems = bypassAttendeeNoMatchCacheForVisibleRows
             ? GetVisibleMeetingRows().Select(row => row.Source.Stem).ToArray()
             : Array.Empty<string>();
-        SelectedMeetingStatusTextBlock.Text = "Loading published meetings...";
+        SelectedMeetingStatusTextBlock.Text = "Loading recent and published meetings...";
         if (refreshMode == MeetingRefreshMode.Full)
         {
             _hasCompletedFullMeetingsRefresh = false;
@@ -3120,7 +3715,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             _logger.Log($"Meeting list refresh {refreshVersion} failed: {exception}");
-            AppendActivity($"Failed to load published meetings: {exception.Message}");
+            AppendActivity($"Failed to load recent and published meetings: {exception.Message}");
             _meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();
             _allMeetingRows = Array.Empty<MeetingListRow>();
             MeetingsDataGrid.ItemsSource = _allMeetingRows;
@@ -3133,11 +3728,6 @@ public partial class MainWindow : Window
         }
         finally
         {
-            if (refreshMode == MeetingRefreshMode.Full)
-            {
-                _isDeferredMeetingsRefreshQueued = false;
-            }
-
             Interlocked.Decrement(ref _meetingBaselineRefreshOperations);
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
@@ -3366,44 +3956,53 @@ public partial class MainWindow : Window
 
     private void UpdateMeetingsRefreshStateText(string? overrideText = null)
     {
+        _currentMeetingsRefreshStateText = BuildMeetingsRefreshStateText(overrideText);
+        MeetingsRefreshStateTextBlock.Text = _currentMeetingsRefreshStateText ?? string.Empty;
+        MeetingsRefreshStateTextBlock.Visibility = string.IsNullOrWhiteSpace(_currentMeetingsRefreshStateText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        UpdateProcessingQueueStatusUi();
+    }
+
+    private string? BuildMeetingsRefreshStateText(string? overrideText = null)
+    {
         if (!string.IsNullOrWhiteSpace(overrideText))
         {
-            MeetingsRefreshStateTextBlock.Text = overrideText;
-            MeetingsRefreshStateTextBlock.Visibility = Visibility.Visible;
-            return;
+            return overrideText;
         }
 
         if (Volatile.Read(ref _meetingBaselineRefreshOperations) > 0)
         {
-            MeetingsRefreshStateTextBlock.Text = "Loading published meetings...";
-            MeetingsRefreshStateTextBlock.Visibility = Visibility.Visible;
-            return;
+            return "Loading recent and published meetings...";
+        }
+
+        if (_hasPendingMeetingsRefreshRequest &&
+            MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
+                _recordingCoordinator.IsRecording,
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)))
+        {
+            return _recordingCoordinator.IsRecording
+                ? "Meeting list update queued until recording stops."
+                : "Meeting list update queued until Meetings is visible.";
         }
 
         if (Volatile.Read(ref _meetingCleanupRefreshOperations) > 0 &&
             Volatile.Read(ref _meetingAttendeeBackfillOperations) > 0)
         {
-            MeetingsRefreshStateTextBlock.Text = "Loading details and cleanup suggestions in the background.";
-            MeetingsRefreshStateTextBlock.Visibility = Visibility.Visible;
-            return;
+            return "Loading details and cleanup suggestions in the background.";
         }
 
         if (Volatile.Read(ref _meetingCleanupRefreshOperations) > 0)
         {
-            MeetingsRefreshStateTextBlock.Text = "Loading cleanup suggestions in the background.";
-            MeetingsRefreshStateTextBlock.Visibility = Visibility.Visible;
-            return;
+            return "Loading cleanup suggestions in the background.";
         }
 
         if (Volatile.Read(ref _meetingAttendeeBackfillOperations) > 0)
         {
-            MeetingsRefreshStateTextBlock.Text = "Enriching attendees for recent meetings in the background.";
-            MeetingsRefreshStateTextBlock.Visibility = Visibility.Visible;
-            return;
+            return "Enriching attendees for recent meetings in the background.";
         }
 
-        MeetingsRefreshStateTextBlock.Text = string.Empty;
-        MeetingsRefreshStateTextBlock.Visibility = Visibility.Collapsed;
+        return null;
     }
 
     private async Task HandleMeetingsWorkspacePreferenceChangedAsync()
@@ -3539,6 +4138,14 @@ public partial class MainWindow : Window
             visibleRows,
             row => row.StatusGroupBaseLabel,
             (row, label) => row.StatusGroupLabel = label);
+        ApplyMeetingGroupDisplayLabels(
+            visibleRows,
+            row => row.ClientProjectGroupBaseLabel,
+            (row, label) => row.ClientProjectGroupLabel = label);
+        ApplyMeetingGroupDisplayLabels(
+            visibleRows,
+            row => row.AttendeeGroupBaseLabel,
+            (row, label) => row.AttendeeGroupLabel = label);
     }
 
     private static void ApplyMeetingGroupDisplayLabels(
@@ -3589,6 +4196,8 @@ public partial class MainWindow : Window
                 : visibleRows.OrderBy(row => row.MonthGroupSortValue),
             MeetingsGroupKey.Platform => visibleRows.OrderBy(row => row.PlatformGroupLabel, StringComparer.Ordinal),
             MeetingsGroupKey.Status => visibleRows.OrderBy(row => row.StatusGroupLabel, StringComparer.Ordinal),
+            MeetingsGroupKey.ClientProject => visibleRows.OrderBy(row => row.ClientProjectGroupLabel, StringComparer.Ordinal),
+            MeetingsGroupKey.Attendee => visibleRows.OrderBy(row => row.AttendeeGroupLabel, StringComparer.Ordinal),
             _ => visibleRows.OrderByDescending(row => row.WeekGroupSortValue),
         };
 
@@ -3788,7 +4397,7 @@ public partial class MainWindow : Window
     {
         if (row is null)
         {
-            MeetingWorkspaceStatusTextBlock.Text = "Published meetings from the current audio and transcript output folders.";
+            MeetingWorkspaceStatusTextBlock.Text = "Recent and published meetings from the current audio, transcript, and work-session folders.";
             SelectedMeetingInspectorStatusTextBlock.Text = "Select one meeting to review its details here. Multi-selection still drives bulk actions separately.";
             SelectedMeetingInspectorTitleTextBlock.Text = "No meeting selected";
             SelectedMeetingInspectorStartedTextBlock.Text = "Unknown";
@@ -4303,9 +4912,9 @@ public partial class MainWindow : Window
         ConfigAudioOutputDirTextBox.Text = config.AudioOutputDir;
         ConfigTranscriptOutputDirTextBox.Text = config.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = config.WorkDir;
-        ConfigModelCacheDirTextBox.Text = config.ModelCacheDir;
-        ConfigTranscriptionModelPathTextBox.Text = config.TranscriptionModelPath;
-        ConfigDiarizationAssetPathTextBox.Text = config.DiarizationAssetPath;
+        ConfigModelStorageSummaryTextBlock.Text = config.ModelCacheDir;
+        ConfigTranscriptionStorageTextBlock.Text = config.TranscriptionModelPath;
+        ConfigSpeakerLabelingStorageTextBlock.Text = config.DiarizationAssetPath;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked =
             config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
@@ -4318,7 +4927,41 @@ public partial class MainWindow : Window
         ConfigUpdateCheckEnabledCheckBox.IsChecked = config.UpdateCheckEnabled;
         ConfigAutoInstallUpdatesCheckBox.IsChecked = config.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = config.UpdateFeedUrl;
+        ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
+        ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
+        ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue = config.BackgroundSpeakerLabelingMode;
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
+        UpdateTeamsIntegrationProbePresentation(config);
+    }
+
+    private void InitializeConfigEditorSelectionControls()
+    {
+        ConfigPreferredTeamsIntegrationModeComboBox.DisplayMemberPath = nameof(SelectionOption<PreferredTeamsIntegrationMode>.Label);
+        ConfigPreferredTeamsIntegrationModeComboBox.SelectedValuePath = nameof(SelectionOption<PreferredTeamsIntegrationMode>.Value);
+        ConfigPreferredTeamsIntegrationModeComboBox.ItemsSource = new[]
+        {
+            new SelectionOption<PreferredTeamsIntegrationMode>(PreferredTeamsIntegrationMode.Auto, "Auto"),
+            new SelectionOption<PreferredTeamsIntegrationMode>(PreferredTeamsIntegrationMode.FallbackOnly, "Fallback only"),
+            new SelectionOption<PreferredTeamsIntegrationMode>(PreferredTeamsIntegrationMode.ThirdPartyApi, "Third-party API"),
+        };
+
+        ConfigBackgroundProcessingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundProcessingMode>.Label);
+        ConfigBackgroundProcessingModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundProcessingMode>.Value);
+        ConfigBackgroundProcessingModeComboBox.ItemsSource = new[]
+        {
+            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.Responsive, "Responsive"),
+            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.Balanced, "Balanced"),
+            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.FastestDrain, "Fastest drain"),
+        };
+
+        ConfigBackgroundSpeakerLabelingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
+        ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Value);
+        ConfigBackgroundSpeakerLabelingModeComboBox.ItemsSource = new[]
+        {
+            new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Deferred, "Deferred"),
+            new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Throttled, "Throttled"),
+            new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Inline, "Inline"),
+        };
     }
 
     private void RegisterConfigEditorChangeHandlers()
@@ -4328,9 +4971,6 @@ public partial class MainWindow : Window
                      ConfigAudioOutputDirTextBox,
                      ConfigTranscriptOutputDirTextBox,
                      ConfigWorkDirTextBox,
-                     ConfigModelCacheDirTextBox,
-                     ConfigTranscriptionModelPathTextBox,
-                     ConfigDiarizationAssetPathTextBox,
                      ConfigAutoDetectThresholdTextBox,
                      ConfigMeetingStopTimeoutTextBox,
                      ConfigUpdateFeedUrlTextBox,
@@ -4354,9 +4994,18 @@ public partial class MainWindow : Window
             checkBox.Checked += ConfigEditorValueChanged;
             checkBox.Unchecked += ConfigEditorValueChanged;
         }
+
+        ConfigPreferredTeamsIntegrationModeComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigBackgroundProcessingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigBackgroundSpeakerLabelingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
     }
 
     private void ConfigEditorValueChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateConfigActionState();
+    }
+
+    private void ConfigEditorValueChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateConfigActionState();
     }
@@ -4376,6 +5025,7 @@ public partial class MainWindow : Window
         _settingsWindow?.SetSaveActionState(
             _isSavingConfig ? "Saving..." : "Save Changes",
             !_isSavingConfig && hasPendingChanges);
+        UpdateTeamsIntegrationProbeActionState();
     }
 
     private void SetConfigSaveStatus(string statusText)
@@ -4390,9 +5040,6 @@ public partial class MainWindow : Window
             ConfigAudioOutputDirTextBox.Text,
             ConfigTranscriptOutputDirTextBox.Text,
             ConfigWorkDirTextBox.Text,
-            ConfigModelCacheDirTextBox.Text,
-            ConfigTranscriptionModelPathTextBox.Text,
-            ConfigDiarizationAssetPathTextBox.Text,
             ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true,
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
@@ -4403,7 +5050,16 @@ public partial class MainWindow : Window
             ConfigMeetingAttendeeEnrichmentCheckBox.IsChecked == true,
             ConfigUpdateCheckEnabledCheckBox.IsChecked == true,
             ConfigAutoInstallUpdatesCheckBox.IsChecked == true,
-            ConfigUpdateFeedUrlTextBox.Text);
+            ConfigUpdateFeedUrlTextBox.Text,
+            ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue is PreferredTeamsIntegrationMode preferredTeamsIntegrationMode
+                ? preferredTeamsIntegrationMode
+                : _liveConfig.Current.PreferredTeamsIntegrationMode,
+            ConfigBackgroundProcessingModeComboBox.SelectedValue is BackgroundProcessingMode backgroundProcessingMode
+                ? backgroundProcessingMode
+                : _liveConfig.Current.BackgroundProcessingMode,
+            ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
+                ? backgroundSpeakerLabelingMode
+                : _liveConfig.Current.BackgroundSpeakerLabelingMode);
     }
 
     private void ApplyConfigEditorSnapshot(ConfigEditorSnapshot snapshot)
@@ -4411,9 +5067,6 @@ public partial class MainWindow : Window
         ConfigAudioOutputDirTextBox.Text = snapshot.AudioOutputDir;
         ConfigTranscriptOutputDirTextBox.Text = snapshot.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = snapshot.WorkDir;
-        ConfigModelCacheDirTextBox.Text = snapshot.ModelCacheDir;
-        ConfigTranscriptionModelPathTextBox.Text = snapshot.TranscriptionModelPath;
-        ConfigDiarizationAssetPathTextBox.Text = snapshot.DiarizationAssetPath;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked = snapshot.UseGpuAcceleration;
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
@@ -4425,6 +5078,83 @@ public partial class MainWindow : Window
         ConfigUpdateCheckEnabledCheckBox.IsChecked = snapshot.UpdateCheckEnabled;
         ConfigAutoInstallUpdatesCheckBox.IsChecked = snapshot.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = snapshot.UpdateFeedUrl;
+        ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = snapshot.PreferredTeamsIntegrationMode;
+        ConfigBackgroundProcessingModeComboBox.SelectedValue = snapshot.BackgroundProcessingMode;
+        ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue = snapshot.BackgroundSpeakerLabelingMode;
+    }
+
+    private AppConfig BuildTeamsProbeConfigFromEditor(AppConfig currentConfig)
+    {
+        return currentConfig with
+        {
+            PreferredTeamsIntegrationMode = ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue is PreferredTeamsIntegrationMode preferredTeamsIntegrationMode
+                ? preferredTeamsIntegrationMode
+                : currentConfig.PreferredTeamsIntegrationMode,
+        };
+    }
+
+    private void UpdateTeamsIntegrationProbePresentation(AppConfig config, string? heuristicBaselineSummary = null)
+    {
+        var snapshot = config.TeamsCapabilitySnapshot ?? new TeamsCapabilitySnapshot();
+        ConfigTeamsIntegrationStatusTextBlock.Text = string.IsNullOrWhiteSpace(snapshot.Summary)
+            ? "Fallback only."
+            : snapshot.Summary;
+        ConfigTeamsIntegrationDetailTextBlock.Text = string.IsNullOrWhiteSpace(snapshot.Detail)
+            ? "The local Teams detector remains active until you validate a stronger integration path."
+            : snapshot.Detail;
+        ConfigTeamsIntegrationMetadataTextBlock.Text = BuildTeamsIntegrationMetadataText(config);
+        ConfigTeamsIntegrationBaselineTextBlock.Text =
+            !string.IsNullOrWhiteSpace(heuristicBaselineSummary)
+                ? heuristicBaselineSummary
+                : !string.IsNullOrWhiteSpace(_lastTeamsProbeBaselineSummary)
+                    ? _lastTeamsProbeBaselineSummary
+                    : snapshot.HeuristicBaselineReady
+                        ? "Heuristic baseline was captured during the most recent Teams probe."
+                        : "Heuristic baseline: run the Teams probe to capture what the local detector would do right now.";
+        UpdateTeamsIntegrationProbeActionState();
+    }
+
+    private static string BuildTeamsIntegrationMetadataText(AppConfig config)
+    {
+        var snapshot = config.TeamsCapabilitySnapshot ?? new TeamsCapabilitySnapshot();
+        var lastProbeText = snapshot.LastProbeUtc.HasValue
+            ? snapshot.LastProbeUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)
+            : "not run yet";
+        var promotablePath = ResolvePromotableTeamsIntegrationLabel(snapshot);
+        var blockReason = ResolveTeamsIntegrationBlockReason(snapshot);
+
+        return "Last probe: " + lastProbeText + Environment.NewLine +
+            "Promotable path: " + promotablePath + Environment.NewLine +
+            "Block reason: " + blockReason;
+    }
+
+    private static string ResolvePromotableTeamsIntegrationLabel(TeamsCapabilitySnapshot snapshot)
+    {
+        if (snapshot.ThirdPartyApi.Status == TeamsThirdPartyApiStatus.ReadableStateAvailable ||
+            snapshot.ThirdPartyApiReadableStateSupported)
+        {
+            return "Third-party API";
+        }
+
+        return "None";
+    }
+
+    private static string ResolveTeamsIntegrationBlockReason(TeamsCapabilitySnapshot snapshot)
+    {
+        if (snapshot.ThirdPartyApi.Status == TeamsThirdPartyApiStatus.BlockedByTeamsPolicy &&
+            !string.IsNullOrWhiteSpace(snapshot.ThirdPartyApi.Detail))
+        {
+            return snapshot.ThirdPartyApi.Detail;
+        }
+        return "none.";
+    }
+
+    private void UpdateTeamsIntegrationProbeActionState()
+    {
+        RunTeamsIntegrationProbeButton.Content = _isRunningTeamsIntegrationProbe
+            ? "Running Probe..."
+            : "Run Teams Probe";
+        RunTeamsIntegrationProbeButton.IsEnabled = !_isRunningTeamsIntegrationProbe;
     }
 
     private async Task TryReloadConfigAsync()
@@ -4452,14 +5182,10 @@ public partial class MainWindow : Window
                 _pendingConfigEditorSnapshotRestore = null;
                 UpdateDashboardReadiness();
             }
-
-            _shellStatusOverride = null;
             TrySyncLaunchOnLoginSetting(e.CurrentConfig, $"config {e.Source.ToString().ToLowerInvariant()}");
-            var meetingDataChanged =
-                !string.Equals(e.PreviousConfig.AudioOutputDir, e.CurrentConfig.AudioOutputDir, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(e.PreviousConfig.TranscriptOutputDir, e.CurrentConfig.TranscriptOutputDir, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(e.PreviousConfig.WorkDir, e.CurrentConfig.WorkDir, StringComparison.OrdinalIgnoreCase) ||
-                e.PreviousConfig.MeetingAttendeeEnrichmentEnabled != e.CurrentConfig.MeetingAttendeeEnrichmentEnabled;
+            var meetingDataChanged = MainWindowInteractionLogic.ShouldRefreshMeetingCatalogForConfigChange(
+                e.PreviousConfig,
+                e.CurrentConfig);
             var updateSourceChanged =
                 !string.Equals(e.PreviousConfig.UpdateFeedUrl, e.CurrentConfig.UpdateFeedUrl, StringComparison.OrdinalIgnoreCase) ||
                 e.PreviousConfig.UpdateCheckEnabled != e.CurrentConfig.UpdateCheckEnabled;
@@ -4477,7 +5203,12 @@ public partial class MainWindow : Window
             }
 
             _ = EnsureConfiguredModelPathResolvedAsync($"config {e.Source.ToString().ToLowerInvariant()}", _lifetimeCts.Token);
-            RequestMeetingRefreshForCurrentContext(meetingDataChanged);
+            if (meetingDataChanged)
+            {
+                RequestMeetingRefreshForCurrentContext(
+                    MeetingRefreshMode.Full,
+                    $"config {e.Source.ToString().ToLowerInvariant()}");
+            }
         });
     }
 
@@ -4746,6 +5477,8 @@ public partial class MainWindow : Window
         var config = _liveConfig.Current;
         if (!_appUpdateInstallPolicy.ShouldRetryPendingInstall(
                 config.PendingUpdateZipPath,
+                config.PendingUpdateVersion,
+                AppBranding.Version,
                 _recordingCoordinator.IsRecording,
                 _processingQueue.IsProcessingInProgress,
                 _isUpdateInstallInProgress))
@@ -4966,9 +5699,7 @@ public partial class MainWindow : Window
         UpdateCheckStatusTextBlock.Text = $"Installing update {FormatVersionLabel(updateResult.LatestVersion)}. The app will close and relaunch automatically.";
         AppendActivity($"Handed off update {FormatVersionLabel(updateResult.LatestVersion)} to the external installer from {source}.");
 
-        _updateTimer.Stop();
-        _allowClose = true;
-        Close();
+        RequestApplicationShutdownForInstallerHandoff();
     }
 
     private void LaunchDownloadedUpdateInstaller(string downloadedPath, AppUpdateCheckResult updateResult)
@@ -4988,6 +5719,30 @@ public partial class MainWindow : Window
             updateResult);
 
         _ = Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the downloaded update installer.");
+    }
+
+    private void RequestApplicationShutdownForInstallerHandoff()
+    {
+        _shutdownInProgress = true;
+        InvalidateDetectionCycle();
+        _detectionTimer.Stop();
+        _audioGraphTimer.Stop();
+        _updateTimer.Stop();
+        if (!_lifetimeCts.IsCancellationRequested)
+        {
+            _lifetimeCts.Cancel();
+        }
+
+        CloseHeaderSurfaces();
+        _allowClose = true;
+
+        if (Application.Current is { Dispatcher.HasShutdownStarted: false } application)
+        {
+            application.Shutdown();
+            return;
+        }
+
+        Close();
     }
 
     private async Task PersistLastUpdateCheckUtcAsync(DateTimeOffset checkedAtUtc, CancellationToken cancellationToken)
@@ -5310,8 +6065,11 @@ public partial class MainWindow : Window
         DashboardDiarizationReadinessTextBlock.Text = diarizationReady
             ? "Ready. The optional diarization bundle is installed when you need transcripts grouped by speaker."
             : "Optional. Transcripts still work normally without speaker labeling.";
+        var liveMicCaptureEnabled = _recordingCoordinator.ActiveSession?.MicrophoneRecorder is not null;
         DashboardMicCaptureReadinessTextBlock.Text = BuildMicCaptureReadinessText(
             _liveConfig.Current.MicCaptureEnabled,
+            _recordingCoordinator.IsRecording,
+            liveMicCaptureEnabled,
             hasPendingMicCaptureChange,
             pendingMicCaptureEnabled);
         DashboardAutoDetectReadinessTextBlock.Text = BuildAutoDetectReadinessText(
@@ -5328,7 +6086,10 @@ public partial class MainWindow : Window
             ? Visibility.Collapsed
             : Visibility.Visible;
 
-        HomeMicCaptureQuickSettingSummaryTextBlock.Text = BuildHomeMicCaptureQuickSettingSummary(_liveConfig.Current.MicCaptureEnabled);
+        HomeMicCaptureQuickSettingSummaryTextBlock.Text = BuildHomeMicCaptureQuickSettingSummary(
+            _liveConfig.Current.MicCaptureEnabled,
+            _recordingCoordinator.IsRecording,
+            liveMicCaptureEnabled);
         HomeAutoDetectQuickSettingSummaryTextBlock.Text = BuildHomeAutoDetectQuickSettingSummary(_liveConfig.Current.AutoDetectEnabled);
         UpdateHomeQuickSettingButtons();
 
@@ -5336,6 +6097,7 @@ public partial class MainWindow : Window
             hasValidModel,
             _recordingCoordinator.IsRecording,
             _liveConfig.Current.MicCaptureEnabled,
+            _liveConfig.Current.AutoDetectEnabled,
             _liveConfig.Current.UpdateCheckEnabled,
             _liveConfig.Current.AutoInstallUpdatesEnabled,
             _lastUpdateCheckResult);
@@ -5345,7 +6107,7 @@ public partial class MainWindow : Window
         HeaderShellStatusActionButton.Tag = shellStatus.Target;
         HeaderShellStatusActionButton.Content = shellStatus.ActionLabel ?? string.Empty;
         HeaderShellStatusActionButton.Visibility = string.IsNullOrWhiteSpace(shellStatus.ActionLabel)
-            ? Visibility.Collapsed
+            ? Visibility.Hidden
             : Visibility.Visible;
 
         DashboardPrimaryActionHeadlineTextBlock.Text = shellStatus.Headline;
@@ -5359,14 +6121,30 @@ public partial class MainWindow : Window
 
     private static string BuildMicCaptureReadinessText(
         bool savedMicCaptureEnabled,
+        bool isRecording,
+        bool liveMicCaptureEnabled,
         bool hasPendingMicCaptureChange,
         bool pendingMicCaptureEnabled)
     {
         if (hasPendingMicCaptureChange)
         {
+            if (isRecording)
+            {
+                return pendingMicCaptureEnabled
+                    ? "Pending save. Microphone capture will turn on from now on after you save Settings."
+                    : "Pending save. Microphone capture will turn off from now on after you save Settings.";
+            }
+
             return pendingMicCaptureEnabled
                 ? "Pending save. Microphone capture will turn on after you save Settings."
                 : "Pending save. Microphone capture will turn off after you save Settings.";
+        }
+
+        if (isRecording)
+        {
+            return liveMicCaptureEnabled
+                ? "On now and for future recordings. Your microphone is captured alongside meeting audio."
+                : "Off from now on. Turn it on when you want your own voice included in this recording.";
         }
 
         return savedMicCaptureEnabled
@@ -5374,9 +6152,19 @@ public partial class MainWindow : Window
             : "Off. Turn it on when you want your own voice included in future recordings.";
     }
 
-    private static string BuildHomeMicCaptureQuickSettingSummary(bool micCaptureEnabled)
+    private static string BuildHomeMicCaptureQuickSettingSummary(
+        bool savedMicCaptureEnabled,
+        bool isRecording,
+        bool liveMicCaptureEnabled)
     {
-        return micCaptureEnabled
+        if (isRecording)
+        {
+            return liveMicCaptureEnabled
+                ? "On now and for future recordings."
+                : "Off from now on. Your voice is excluded.";
+        }
+
+        return savedMicCaptureEnabled
             ? "On for future recordings."
             : "Off. Your voice is excluded.";
     }
@@ -5462,16 +6250,35 @@ public partial class MainWindow : Window
         Func<AppConfig, AppConfig> configUpdater,
         Func<ConfigEditorSnapshot, ConfigEditorSnapshot> snapshotUpdater,
         Func<AppConfig, bool> currentValueSelector,
-        string settingName)
+        string settingName,
+        bool applyMicCaptureLiveChange = false)
     {
-        if (_isSavingConfig || currentValueSelector(_liveConfig.Current) == enabled)
+        if (_isSavingConfig)
         {
-            _shellStatusOverride = null;
-            UpdateDashboardReadiness();
             return;
         }
 
         var currentConfig = _liveConfig.Current;
+        if (currentValueSelector(currentConfig) == enabled)
+        {
+            var liveMicCaptureUpdated = true;
+            if (applyMicCaptureLiveChange)
+            {
+                liveMicCaptureUpdated = await ApplyLiveMicCapturePreferenceIfNeededAsync(
+                    enabled,
+                    $"{settingName} Home quick setting",
+                    _lifetimeCts.Token);
+            }
+
+            if (liveMicCaptureUpdated)
+            {
+                _shellStatusOverride = null;
+            }
+
+            UpdateDashboardReadiness();
+            return;
+        }
+
         var editorSnapshot = ReadConfigEditorSnapshot();
         var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(currentConfig, editorSnapshot);
         _pendingConfigEditorSnapshotRestore = hasPendingChanges
@@ -5481,9 +6288,23 @@ public partial class MainWindow : Window
         try
         {
             await _liveConfig.SaveAsync(configUpdater(currentConfig), _lifetimeCts.Token);
+            var liveMicCaptureUpdated = true;
+            if (applyMicCaptureLiveChange)
+            {
+                liveMicCaptureUpdated = await ApplyLiveMicCapturePreferenceIfNeededAsync(
+                    enabled,
+                    $"{settingName} Home quick setting",
+                    _lifetimeCts.Token);
+            }
+
             _shellStatusOverride = null;
-            SetConfigSaveStatus($"{settingName} updated from Home.");
+            if (liveMicCaptureUpdated)
+            {
+                SetConfigSaveStatus($"{settingName} updated from Home.");
+            }
+
             AppendActivity($"{settingName} {(enabled ? "enabled" : "disabled")} from Home.");
+            UpdateDashboardReadiness();
         }
         catch (Exception exception)
         {
@@ -5496,6 +6317,51 @@ public partial class MainWindow : Window
             SetConfigSaveStatus($"Quick setting failed: {exception.Message}");
             AppendActivity($"{settingName} quick setting failed: {exception.Message}");
             UpdateDashboardReadiness();
+        }
+    }
+
+    private async Task<bool> ApplyLiveMicCapturePreferenceIfNeededAsync(
+        bool enabled,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        var activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            return true;
+        }
+
+        var liveMicCaptureEnabled = activeSession.MicrophoneRecorder is not null;
+        if (liveMicCaptureEnabled == enabled)
+        {
+            return true;
+        }
+
+        try
+        {
+            var changed = await _recordingCoordinator.SetMicrophoneCaptureEnabledAsync(enabled, cancellationToken);
+            if (!changed)
+            {
+                return true;
+            }
+
+            UpdateCurrentMeetingEditor();
+            UpdateAudioCaptureGraph();
+            UpdateDashboardReadiness();
+            AppendActivity($"Microphone capture {(enabled ? "enabled" : "disabled")} for the current recording from now on via {source}.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            _shellStatusOverride = new ShellStatusState(
+                "MIC LIVE",
+                "Saved for next recording",
+                ShellStatusTarget.SettingsGeneral,
+                "Settings");
+            SetConfigSaveStatus($"Microphone capture was saved, but the current recording could not be updated: {exception.Message}");
+            AppendActivity($"Live microphone capture update failed from {source}: {exception.Message}");
+            UpdateDashboardReadiness();
+            return false;
         }
     }
 
@@ -5556,9 +6422,15 @@ public partial class MainWindow : Window
             {
                 MicCaptureEnabled = true,
             }, cancellationToken);
+            var liveMicCaptureUpdated = await ApplyLiveMicCapturePreferenceIfNeededAsync(
+                enabled: true,
+                source: "Microphone activity prompt",
+                cancellationToken);
 
             AppendActivity(
-                $"Detected live microphone activity while microphone capture was off for '{activeSession.Manifest.DetectedTitle}'. Enabled microphone capture for future recordings.");
+                liveMicCaptureUpdated
+                    ? $"Detected live microphone activity while microphone capture was off for '{activeSession.Manifest.DetectedTitle}'. Enabled microphone capture from now on for this recording and future recordings."
+                    : $"Detected live microphone activity while microphone capture was off for '{activeSession.Manifest.DetectedTitle}'. Enabled microphone capture for future recordings, but the current recording could not be updated.");
         }
         finally
         {
@@ -6025,7 +6897,7 @@ public partial class MainWindow : Window
             ? activeSession.Manifest.DetectedTitle
             : pendingTitle;
         var normalizedProjectName = NormalizeOptionalMeetingMetadataText(CurrentMeetingProjectTextBox.Text);
-        var pendingKeyAttendees = ParseKeyAttendeesText(CurrentMeetingKeyAttendeesTextBox.Text);
+        var pendingKeyAttendees = ParseDelimitedKeyAttendeesText(CurrentMeetingKeyAttendeesTextBox.Text);
         if (string.Equals(normalizedTitle, activeSession.Manifest.DetectedTitle, StringComparison.Ordinal) &&
             string.Equals(normalizedProjectName, activeSession.Manifest.ProjectName, StringComparison.Ordinal) &&
             (activeSession.Manifest.KeyAttendees ?? Array.Empty<string>()).SequenceEqual(pendingKeyAttendees, StringComparer.Ordinal))
@@ -6051,6 +6923,79 @@ public partial class MainWindow : Window
 
         UpdateCurrentMeetingEditor();
         AppendActivity($"Applied current meeting metadata before publishing for '{normalizedTitle}'.");
+    }
+
+    private void ScheduleCurrentMeetingOptionalMetadataSave()
+    {
+        if (!_isUiReady ||
+            _isUpdatingCurrentMeetingEditor ||
+            _isRecordingTransitionInProgress ||
+            _isUpdateInstallInProgress ||
+            _recordingCoordinator.ActiveSession is null)
+        {
+            return;
+        }
+
+        _currentMeetingOptionalMetadataSaveTimer.Stop();
+        _currentMeetingOptionalMetadataSaveTimer.Start();
+    }
+
+    private async void CurrentMeetingOptionalMetadataSaveTimer_OnTick(object? sender, EventArgs e)
+    {
+        _currentMeetingOptionalMetadataSaveTimer.Stop();
+        if (IsShutdownRequested)
+        {
+            return;
+        }
+
+        try
+        {
+            await PersistCurrentMeetingOptionalMetadataAsync(_lifetimeCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore cancellation during shutdown or rapid session transitions.
+        }
+    }
+
+    private async Task PersistCurrentMeetingOptionalMetadataAsync(CancellationToken cancellationToken)
+    {
+        var activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            return;
+        }
+
+        var normalizedProjectName = NormalizeOptionalMeetingMetadataText(CurrentMeetingProjectTextBox.Text);
+        var pendingKeyAttendees = ParseDelimitedKeyAttendeesText(CurrentMeetingKeyAttendeesTextBox.Text);
+        if (string.Equals(normalizedProjectName, activeSession.Manifest.ProjectName, StringComparison.Ordinal) &&
+            (activeSession.Manifest.KeyAttendees ?? Array.Empty<string>()).SequenceEqual(pendingKeyAttendees, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            var updated = await _recordingCoordinator.UpdateActiveSessionMetadataAsync(
+                activeSession.Manifest.DetectedTitle,
+                normalizedProjectName,
+                pendingKeyAttendees,
+                cancellationToken);
+            if (!updated)
+            {
+                return;
+            }
+
+            _sessionProjectDraftTracker.MarkPersisted(activeSession.Manifest.SessionId, normalizedProjectName ?? string.Empty);
+            _sessionKeyAttendeesDraftTracker.MarkPersisted(
+                activeSession.Manifest.SessionId,
+                FormatKeyAttendeesForDisplay(pendingKeyAttendees));
+            UpdateCurrentMeetingEditor();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            AppendActivity($"Live current meeting metadata save failed: {exception.Message}");
+        }
     }
 
     private void UpdateCurrentMeetingTitleStatus()
@@ -6089,6 +7034,36 @@ public partial class MainWindow : Window
         }
 
         CurrentMeetingTitleStatusTextBlock.Text = $"Pending stem: {stem}. Applied when recording stops.";
+    }
+
+    private void UpdateCurrentRecordingElapsedText()
+    {
+        var activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            CurrentRecordingElapsedGrid.Visibility = Visibility.Collapsed;
+            CurrentRecordingElapsedTextBlock.Text = string.Empty;
+            return;
+        }
+
+        var elapsed = DateTimeOffset.UtcNow - activeSession.Manifest.StartedAtUtc;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        CurrentRecordingElapsedGrid.Visibility = Visibility.Visible;
+        CurrentRecordingElapsedTextBlock.Text = FormatRecordingElapsed(elapsed);
+    }
+
+    private static string FormatRecordingElapsed(TimeSpan elapsed)
+    {
+        if (elapsed.TotalHours >= 1d)
+        {
+            return elapsed.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
+        }
+
+        return elapsed.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
     }
 
     private void RefreshWhisperModelStatus()
@@ -6350,15 +7325,23 @@ public partial class MainWindow : Window
     private void UpdateModelsTabGuidance()
     {
         var recommendedRemoteModel = GetRecommendedRemoteModelRow()?.Source;
-        var activeLocalModelFileName = AvailableModelsComboBox.Items
-            .OfType<WhisperModelListRow>()
-            .FirstOrDefault(row => row.Source.IsConfigured)?
-            .Source
-            .FileName;
+        var transcriptionRequestedProfile = _liveConfig.Current.TranscriptionModelProfilePreference;
+        var transcriptionActiveProfile = _currentWhisperModelDisplayState?.IsHealthy == true
+            ? _meetingRecorderModelCatalogService.ResolveTranscriptionProfilePreference(
+                _bundledModelCatalog,
+                _liveConfig.Current.ModelCacheDir,
+                _liveConfig.Current.TranscriptionModelPath)
+            : transcriptionRequestedProfile == TranscriptionModelProfilePreference.Custom
+                ? TranscriptionModelProfilePreference.Custom
+                : TranscriptionModelProfilePreference.StandardIncluded;
+        var transcriptionRetryRecommended =
+            transcriptionRequestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded &&
+            transcriptionActiveProfile != TranscriptionModelProfilePreference.HighAccuracyDownloaded;
         var transcriptionState = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
+            transcriptionRequestedProfile,
+            transcriptionActiveProfile,
             _currentWhisperModelDisplayState?.IsHealthy == true,
-            activeLocalModelFileName,
-            recommendedRemoteModel);
+            transcriptionRetryRecommended);
         _currentTranscriptionSetupState = transcriptionState;
 
         ApplySetupOverviewStatusChip(
@@ -6386,10 +7369,23 @@ public partial class MainWindow : Window
         }
 
         var recommendedDiarizationAsset = GetRecommendedRemoteDiarizationAssetRow()?.Source;
+        var speakerLabelingRequestedProfile = _liveConfig.Current.SpeakerLabelingModelProfilePreference;
+        var speakerLabelingActiveProfile = _currentDiarizationAssetStatus?.IsReady == true
+            ? _meetingRecorderModelCatalogService.ResolveSpeakerLabelingProfilePreference(
+                _bundledModelCatalog,
+                _liveConfig.Current.ModelCacheDir,
+                _liveConfig.Current.DiarizationAssetPath)
+            : speakerLabelingRequestedProfile == SpeakerLabelingModelProfilePreference.Custom
+                ? SpeakerLabelingModelProfilePreference.Custom
+                : SpeakerLabelingModelProfilePreference.StandardIncluded;
+        var speakerLabelingRetryRecommended =
+            speakerLabelingRequestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded &&
+            speakerLabelingActiveProfile != SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded;
         var speakerLabelingState = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            speakerLabelingRequestedProfile,
+            speakerLabelingActiveProfile,
             _currentDiarizationAssetStatus?.IsReady == true,
-            _currentDiarizationAssetStatus?.AssetRootPath ?? _liveConfig.Current.DiarizationAssetPath,
-            recommendedDiarizationAsset);
+            speakerLabelingRetryRecommended);
         _currentSpeakerLabelingSetupState = speakerLabelingState;
 
         ApplySetupOverviewStatusChip(
@@ -6397,8 +7393,21 @@ public partial class MainWindow : Window
             SpeakerLabelingOverviewStatusTextBlock,
             speakerLabelingState.Status,
             _currentDiarizationAssetStatus?.IsReady == true);
-        SpeakerLabelingOverviewSummaryTextBlock.Text = speakerLabelingState.Body;
+            SpeakerLabelingOverviewSummaryTextBlock.Text = speakerLabelingState.Body;
         SpeakerLabelingOverviewPrimaryButton.Content = speakerLabelingState.PrimaryActionLabel;
+
+        TranscriptionRetryStatusTextBlock.Text = transcriptionRetryRecommended
+            ? "Higher Accuracy was requested earlier, but the included Standard model is active right now. Retry Higher Accuracy when downloads are available."
+            : string.Empty;
+        TranscriptionRetryStatusTextBlock.Visibility = transcriptionRetryRecommended
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SpeakerLabelingRetryStatusTextBlock.Text = speakerLabelingRetryRecommended
+            ? "Higher Accuracy was requested earlier, but the included Standard bundle is active right now. Retry Higher Accuracy when downloads are available."
+            : string.Empty;
+        SpeakerLabelingRetryStatusTextBlock.Visibility = speakerLabelingRetryRecommended
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         var alternateLocationsState = ModelsTabGuidance.BuildAlternatePublicDownloadLocationsState(
             ModelsTabGuidance.GetSpeakerLabelingAlternatePublicDownloadLocations());
@@ -6461,12 +7470,22 @@ public partial class MainWindow : Window
         RefreshRemoteModelsButton.Content = Volatile.Read(ref _remoteModelRefreshOperations) > 0
             ? "Refreshing..."
             : "Refresh GitHub Models";
+        UseStandardTranscriptionProfileButton.Content = _isActivatingModel && !_isDownloadingRemoteModel
+            ? "Applying..."
+            : "Use Standard";
+        UseHighAccuracyTranscriptionProfileButton.Content = _isDownloadingRemoteModel
+            ? "Downloading..."
+            : "Use Higher Accuracy";
         DownloadRecommendedRemoteModelButton.Content = _isDownloadingRemoteModel
             ? "Downloading..."
             : "Download Recommended Model";
         DownloadSelectedRemoteModelButton.Content = _isDownloadingRemoteModel
             ? "Downloading..."
             : "Download Selected Model";
+        ImportApprovedTranscriptionModelButton.Content = _isImportingModel
+            ? "Importing..."
+            : "Import approved file";
+        OpenTranscriptionModelFolderButton.Content = "Open model folder";
         ImportWhisperModelButton.Content = _isImportingModel
             ? "Importing..."
             : "Import Existing File";
@@ -6474,12 +7493,16 @@ public partial class MainWindow : Window
             ? "Switching..."
             : "Use Selected Model";
 
+        UseStandardTranscriptionProfileButton.IsEnabled = !isModelActionInProgress;
+        UseHighAccuracyTranscriptionProfileButton.IsEnabled = !isModelActionInProgress;
         RefreshModelStatusButton.IsEnabled = !isModelActionInProgress;
         RefreshRemoteModelsButton.IsEnabled = !isModelActionInProgress;
         DownloadRecommendedRemoteModelButton.IsEnabled = !isModelActionInProgress &&
             recommendedRemoteModel is not null;
         DownloadSelectedRemoteModelButton.IsEnabled = !isModelActionInProgress &&
             AvailableRemoteModelsComboBox.SelectedItem is WhisperRemoteModelListRow;
+        ImportApprovedTranscriptionModelButton.IsEnabled = !isModelActionInProgress;
+        OpenTranscriptionModelFolderButton.IsEnabled = true;
         ImportWhisperModelButton.IsEnabled = !isModelActionInProgress;
         OpenModelFolderButton.IsEnabled = true;
         ActivateSelectedModelButton.IsEnabled = !isModelActionInProgress &&
@@ -6542,21 +7565,35 @@ public partial class MainWindow : Window
         RefreshRemoteDiarizationAssetsButton.Content = Volatile.Read(ref _remoteDiarizationRefreshOperations) > 0
             ? "Refreshing..."
             : "Refresh Diarization Assets";
+        UseStandardSpeakerLabelingProfileButton.Content = !isBusy && !_isDownloadingRemoteDiarizationAsset
+            ? "Use Standard"
+            : "Applying...";
+        UseHighAccuracySpeakerLabelingProfileButton.Content = _isDownloadingRemoteDiarizationAsset
+            ? "Downloading..."
+            : "Use Higher Accuracy";
         DownloadRecommendedDiarizationBundleButton.Content = _isDownloadingRemoteDiarizationAsset
             ? "Downloading..."
             : "Download Recommended Bundle";
         DownloadSelectedRemoteDiarizationAssetButton.Content = _isDownloadingRemoteDiarizationAsset
             ? "Downloading..."
             : "Download Selected Asset";
+        ImportApprovedSpeakerLabelingButton.Content = _isImportingDiarizationAsset
+            ? "Importing..."
+            : "Import approved file";
+        OpenSpeakerLabelingAssetFolderButton.Content = "Open asset folder";
         ImportDiarizationAssetButton.Content = _isImportingDiarizationAsset
             ? "Importing..."
             : "Import Existing File";
 
+        UseStandardSpeakerLabelingProfileButton.IsEnabled = !isBusy;
+        UseHighAccuracySpeakerLabelingProfileButton.IsEnabled = !isBusy;
         RefreshRemoteDiarizationAssetsButton.IsEnabled = !isBusy;
         DownloadRecommendedDiarizationBundleButton.IsEnabled = !isBusy &&
             recommendedRemoteAsset is not null;
         DownloadSelectedRemoteDiarizationAssetButton.IsEnabled = !isBusy &&
             AvailableRemoteDiarizationAssetsComboBox.SelectedItem is DiarizationRemoteAssetListRow;
+        ImportApprovedSpeakerLabelingButton.IsEnabled = !isBusy;
+        OpenSpeakerLabelingAssetFolderButton.IsEnabled = true;
         ImportDiarizationAssetButton.IsEnabled = !isBusy;
         OpenDiarizationFolderButton.IsEnabled = true;
         SpeakerLabelingOverviewPrimaryButton.IsEnabled = !isBusy;
@@ -7444,55 +8481,85 @@ public partial class MainWindow : Window
         }
 
         var (levels, currentPeak, statusText) = BuildAudioGraphSnapshot();
-        AudioCaptureGraphPolyline.Points = BuildAudioGraphPoints(levels, width, height);
+        BuildAudioGraphPoints(levels, width, height, _audioGraphPoints);
+        if (!ReferenceEquals(AudioCaptureGraphPolyline.Points, _audioGraphPoints))
+        {
+            AudioCaptureGraphPolyline.Points = _audioGraphPoints;
+        }
+
         AudioCaptureGraphStatusTextBlock.Text = statusText + $" Current peak: {currentPeak:0.000}.";
     }
 
-    private (double[] Levels, double CurrentPeak, string StatusText) BuildAudioGraphSnapshot()
+    private (IReadOnlyList<double> Levels, double CurrentPeak, string StatusText) BuildAudioGraphSnapshot()
     {
         var activeSession = _recordingCoordinator.ActiveSession;
         if (_isAutoStopTransitionInProgress)
         {
-            return (
-                Enumerable.Repeat(0d, AudioGraphPointCount).ToArray(),
-                0d,
-                "Auto-stopping.");
+            Array.Clear(_audioGraphCombinedLevels);
+            return (_audioGraphCombinedLevels, 0d, "Auto-stopping.");
         }
 
         if (activeSession is null)
         {
-            return (
-                Enumerable.Repeat(0d, AudioGraphPointCount).ToArray(),
-                0d,
-                "Idle.");
+            Array.Clear(_audioGraphCombinedLevels);
+            return (_audioGraphCombinedLevels, 0d, "Idle.");
         }
 
-        var loopbackLevels = activeSession.LoopbackRecorder.LevelHistory.Snapshot(AudioGraphPointCount);
-        var microphoneLevels = activeSession.MicrophoneRecorder?.LevelHistory.Snapshot(AudioGraphPointCount);
-        var combined = new double[AudioGraphPointCount];
-        for (var index = 0; index < combined.Length; index++)
+        activeSession.LoopbackRecorder.LevelHistory.CopySnapshot(_audioGraphLoopbackLevels);
+        if (activeSession.MicrophoneRecorder is not null)
         {
-            combined[index] = Math.Max(loopbackLevels[index], microphoneLevels?[index] ?? 0d);
+            activeSession.MicrophoneRecorder.LevelHistory.CopySnapshot(_audioGraphMicrophoneLevels);
+        }
+        else
+        {
+            Array.Clear(_audioGraphMicrophoneLevels);
         }
 
-        var currentPeak = combined.Length == 0 ? 0d : combined[^1];
+        for (var index = 0; index < _audioGraphCombinedLevels.Length; index++)
+        {
+            _audioGraphCombinedLevels[index] = Math.Max(_audioGraphLoopbackLevels[index], _audioGraphMicrophoneLevels[index]);
+        }
+
+        var currentPeak = _audioGraphCombinedLevels[^1];
         var liveStatusText = activeSession.MicrophoneRecorder is null
             ? "Loopback live."
             : "Loopback + mic live.";
         var statusText = _autoStopCountdownSecondsRemaining is { } countdownSeconds
             ? $"Auto-stop in {countdownSeconds}s."
             : liveStatusText;
-        return (combined, currentPeak, statusText);
+        return (_audioGraphCombinedLevels, currentPeak, statusText);
     }
 
-    private static PointCollection BuildAudioGraphPoints(IReadOnlyList<double> levels, double width, double height)
+    private static void BuildAudioGraphPoints(
+        IReadOnlyList<double> levels,
+        double width,
+        double height,
+        PointCollection points)
     {
-        var points = new PointCollection(levels.Count);
         if (levels.Count == 0)
         {
-            points.Add(new Point(0d, height - 2d));
-            points.Add(new Point(width, height - 2d));
-            return points;
+            if (points.Count != 2)
+            {
+                points.Clear();
+                points.Add(new Point(0d, height - 2d));
+                points.Add(new Point(width, height - 2d));
+            }
+            else
+            {
+                points[0] = new Point(0d, height - 2d);
+                points[1] = new Point(width, height - 2d);
+            }
+
+            return;
+        }
+
+        if (points.Count != levels.Count)
+        {
+            points.Clear();
+            for (var index = 0; index < levels.Count; index++)
+            {
+                points.Add(new Point());
+            }
         }
 
         var usableHeight = Math.Max(1d, height - 4d);
@@ -7502,10 +8569,56 @@ public partial class MainWindow : Window
             var x = (width * index) / denominator;
             var level = Math.Clamp(levels[index], 0d, 1d);
             var y = height - 2d - (usableHeight * level);
-            points.Add(new Point(x, y));
+            points[index] = new Point(x, y);
+        }
+    }
+
+    private void UpdateAudioGraphTimerState()
+    {
+        var shouldRun = !IsShutdownRequested &&
+            !ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem) &&
+            (_recordingCoordinator.IsRecording || _autoStopCountdownSecondsRemaining is not null || _isAutoStopTransitionInProgress);
+
+        if (!shouldRun)
+        {
+            UpdateAudioCaptureGraph();
+            UpdateCurrentRecordingElapsedText();
+            if (_audioGraphTimer.IsEnabled)
+            {
+                _audioGraphTimer.Stop();
+                _logger.Log("Suppressed Home audio graph updates because Home is hidden or no live recording state is visible.");
+            }
+
+            return;
         }
 
-        return points;
+        UpdateAudioCaptureGraph();
+        UpdateCurrentRecordingElapsedText();
+        if (!_audioGraphTimer.IsEnabled)
+        {
+            _audioGraphTimer.Start();
+        }
+    }
+
+    private bool TryBeginDetectionCycle()
+    {
+        if (Interlocked.CompareExchange(ref _detectionCycleActive, 1, 0) == 0)
+        {
+            return true;
+        }
+
+        _logger.Log("Skipped overlapping detection scan because the previous scan is still running.");
+        return false;
+    }
+
+    private void FinishDetectionCycle()
+    {
+        Interlocked.Exchange(ref _detectionCycleActive, 0);
+    }
+
+    private void InvalidateDetectionCycle()
+    {
+        Interlocked.Increment(ref _detectionCycleGeneration);
     }
 
     private void UpdateSelectedModelEditor(WhisperModelListRow? row)
@@ -7633,6 +8746,24 @@ public partial class MainWindow : Window
                 Platform,
                 Status);
             StatusGroupLabel = StatusGroupBaseLabel;
+            ClientProjectGroupBaseLabel = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
+                MeetingsGroupKey.ClientProject,
+                source.StartedAtUtc,
+                Platform,
+                Status,
+                source.ProjectName,
+                source.Attendees,
+                source.KeyAttendees);
+            ClientProjectGroupLabel = ClientProjectGroupBaseLabel;
+            AttendeeGroupBaseLabel = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
+                MeetingsGroupKey.Attendee,
+                source.StartedAtUtc,
+                Platform,
+                Status,
+                source.ProjectName,
+                source.Attendees,
+                source.KeyAttendees);
+            AttendeeGroupLabel = AttendeeGroupBaseLabel;
             PrimaryRecommendation = MainWindowInteractionLogic.GetPrimaryMeetingCleanupRecommendation(recommendations);
             RecommendationCount = recommendations.Count;
             Recommended = MainWindowInteractionLogic.BuildMeetingCleanupBadgeText(recommendations);
@@ -7704,6 +8835,14 @@ public partial class MainWindow : Window
 
         public string StatusGroupLabel { get; set; }
 
+        public string ClientProjectGroupBaseLabel { get; }
+
+        public string ClientProjectGroupLabel { get; set; }
+
+        public string AttendeeGroupBaseLabel { get; }
+
+        public string AttendeeGroupLabel { get; set; }
+
         public string Recommended { get; set; }
 
         public MeetingCleanupRecommendation? PrimaryRecommendation { get; }
@@ -7742,6 +8881,8 @@ public partial class MainWindow : Window
             MonthGroupLabel = MonthGroupBaseLabel;
             PlatformGroupLabel = PlatformGroupBaseLabel;
             StatusGroupLabel = StatusGroupBaseLabel;
+            ClientProjectGroupLabel = ClientProjectGroupBaseLabel;
+            AttendeeGroupLabel = AttendeeGroupBaseLabel;
         }
 
         public string GetGroupLabel(MeetingsGroupKey groupKey)
@@ -7752,6 +8893,8 @@ public partial class MainWindow : Window
                 MeetingsGroupKey.Month => MonthGroupLabel,
                 MeetingsGroupKey.Platform => PlatformGroupLabel,
                 MeetingsGroupKey.Status => StatusGroupLabel,
+                MeetingsGroupKey.ClientProject => ClientProjectGroupLabel,
+                MeetingsGroupKey.Attendee => AttendeeGroupLabel,
                 _ => WeekGroupLabel,
             };
         }

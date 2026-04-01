@@ -14,6 +14,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: false,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
@@ -44,6 +45,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: false,
             updateResult: updateResult);
@@ -61,6 +63,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: false,
             autoInstallUpdatesEnabled: false,
             updateResult: null);
@@ -78,6 +81,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: new AppUpdateCheckResult(
@@ -106,6 +110,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: false,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
@@ -123,6 +128,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: true,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
@@ -140,6 +146,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: false,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
@@ -147,6 +154,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: false,
             autoInstallUpdatesEnabled: false,
             updateResult: null);
@@ -162,6 +170,7 @@ public sealed class MainWindowInteractionLogicTests
             hasValidModel: true,
             isRecording: false,
             micCaptureEnabled: true,
+            autoDetectEnabled: true,
             updateChecksEnabled: true,
             autoInstallUpdatesEnabled: true,
             updateResult: null);
@@ -173,69 +182,240 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void BuildModelsTabTranscriptionSetupState_Prefers_Download_When_No_Valid_Model_Is_Configured()
+    public void BuildShellStatus_Points_To_General_Settings_When_AutoDetection_Is_Off()
     {
-        var recommendedModel = new WhisperRemoteModelAsset(
-            "ggml-base.en-q8_0.bin",
-            "https://example.com/base",
-            152_000_000,
-            true,
-            "Best balance of quality, size, and speed.");
+        var result = MainWindowInteractionLogic.BuildShellStatus(
+            hasValidModel: true,
+            isRecording: false,
+            micCaptureEnabled: true,
+            autoDetectEnabled: false,
+            updateChecksEnabled: true,
+            autoInstallUpdatesEnabled: true,
+            updateResult: null);
 
+        Assert.Equal(ShellStatusTarget.SettingsGeneral, result.Target);
+        Assert.Equal("Settings", result.ActionLabel);
+        Assert.Equal("MANUAL", result.Headline);
+        Assert.Equal("Auto-detect off", result.Body);
+    }
+
+    [Fact]
+    public void ShouldRefreshMeetingCatalogForConfigChange_Returns_False_For_Runtime_Only_Config_Changes()
+    {
+        var previous = new AppConfig
+        {
+            UpdateCheckEnabled = true,
+            AutoDetectEnabled = true,
+            MicCaptureEnabled = true,
+            LastUpdateCheckUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
+        };
+        var current = previous with
+        {
+            UpdateCheckEnabled = false,
+            AutoDetectEnabled = false,
+            MicCaptureEnabled = false,
+            LastUpdateCheckUtc = DateTimeOffset.UtcNow,
+        };
+
+        var result = MainWindowInteractionLogic.ShouldRefreshMeetingCatalogForConfigChange(previous, current);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void ShouldRefreshMeetingCatalogForConfigChange_Returns_True_When_Meeting_Workspace_Folders_Change()
+    {
+        var previous = new AppConfig
+        {
+            AudioOutputDir = @"C:\Meetings\Audio-A",
+            TranscriptOutputDir = @"C:\Meetings\Transcripts-A",
+            WorkDir = @"C:\Meetings\Work-A",
+        };
+        var current = previous with
+        {
+            AudioOutputDir = @"C:\Meetings\Audio-B",
+            TranscriptOutputDir = @"C:\Meetings\Transcripts-B",
+            WorkDir = @"C:\Meetings\Work-B",
+        };
+
+        var result = MainWindowInteractionLogic.ShouldRefreshMeetingCatalogForConfigChange(previous, current);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void ShouldDeferMeetingRefresh_Returns_True_While_Recording_Or_When_Meetings_Is_Not_Visible()
+    {
+        Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: true, isMeetingsTabSelected: true));
+        Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
+        Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: true));
+    }
+
+    [Fact]
+    public void BuildProcessingQueueHeaderState_IsHidden_When_No_Backlog_Exists()
+    {
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Idle,
+            ProcessingQueuePauseReason.None,
+            0,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            DateTimeOffset.UtcNow);
+
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, DateTimeOffset.UtcNow);
+
+        Assert.False(headerState.IsVisible);
+        Assert.Equal(string.Empty, headerState.Label);
+        Assert.Equal(string.Empty, headerState.Detail);
+    }
+
+    [Fact]
+    public void BuildProcessingQueueHeaderState_Shows_Remaining_Count_And_Paused_Reason_When_Backlog_Is_Paused()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Paused,
+            ProcessingQueuePauseReason.LiveRecordingResponsiveMode,
+            5,
+            5,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now);
+
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, now);
+
+        Assert.True(headerState.IsVisible);
+        Assert.Equal("PAUSED 5", headerState.Label);
+        Assert.Equal("Paused by live recording", headerState.Detail);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Shows_Current_Stage_Elapsed_Time_Current_Item_Eta_And_Overall_Eta()
+    {
+        var snapshotTime = new DateTimeOffset(2026, 03, 27, 18, 0, 0, TimeSpan.Zero);
+        var currentItemStartedAtUtc = snapshotTime.AddMinutes(-2);
+        var currentStageUpdatedAtUtc = snapshotTime.AddMinutes(-1);
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Processing,
+            ProcessingQueuePauseReason.None,
+            4,
+            5,
+            @"C:\Meetings\work\abc\manifest.json",
+            "AI Super Users",
+            MeetingPlatform.Teams,
+            "transcription",
+            StageExecutionState.Running,
+            currentStageUpdatedAtUtc,
+            currentItemStartedAtUtc,
+            TimeSpan.FromMinutes(8),
+            TimeSpan.FromMinutes(32),
+            snapshotTime);
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(
+            snapshot,
+            "Loading cleanup suggestions in the background.",
+            snapshotTime.AddMinutes(1));
+
+        Assert.True(stripState.IsVisible);
+        Assert.Contains("PROCESSING", stripState.Line1);
+        Assert.Contains("5 remaining", stripState.Line1);
+        Assert.Contains("AI Super Users", stripState.Line2);
+        Assert.Contains("transcription running", stripState.Line2);
+        Assert.Contains("00:03:00 elapsed", stripState.Line2);
+        Assert.Contains("ETA ~7m", stripState.Line2);
+        Assert.Contains("Overall queue", stripState.Line3);
+        Assert.Contains("ETA ~31m", stripState.Line3);
+        Assert.Equal("Loading cleanup suggestions in the background.", stripState.SecondaryText);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Uses_Eta_Unavailable_When_The_Queue_Cannot_Estimate_Remaining_Time()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Queued,
+            ProcessingQueuePauseReason.None,
+            3,
+            3,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now);
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, now);
+
+        Assert.True(stripState.IsVisible);
+        Assert.Contains("QUEUED", stripState.Line1);
+        Assert.Contains("3 remaining", stripState.Line1);
+        Assert.Contains("ETA unavailable", stripState.Line3);
+    }
+
+    [Fact]
+    public void BuildModelsTabTranscriptionSetupState_Prefers_Setup_When_No_Valid_Model_Is_Configured()
+    {
         var result = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
+            requestedProfile: TranscriptionModelProfilePreference.StandardIncluded,
+            activeProfile: TranscriptionModelProfilePreference.StandardIncluded,
             hasValidModel: false,
-            activeModelFileName: null,
-            recommendedModel);
+            retryRecommended: false);
 
         Assert.Equal("Needs setup", result.Status);
-        Assert.Equal("Download Recommended Model", result.PrimaryActionLabel);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Choose one Whisper model to activate transcription. Download the recommended model below, or import an approved local file if GitHub is blocked.",
+            "Transcription is not ready yet. Use Standard to restore the included model, choose Higher Accuracy to try the optional download, or import an approved local file.",
             result.Body);
     }
 
     [Fact]
-    public void BuildModelsTabTranscriptionSetupState_Points_To_Model_Management_When_A_Model_Is_Ready()
+    public void BuildModelsTabTranscriptionSetupState_Points_To_Model_Management_When_HigherAccuracy_Is_Ready()
     {
-        var recommendedModel = new WhisperRemoteModelAsset(
-            "ggml-base.en-q8_0.bin",
-            "https://example.com/base",
-            152_000_000,
-            true,
-            "Best balance of quality, size, and speed.");
-
         var result = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
+            requestedProfile: TranscriptionModelProfilePreference.HighAccuracyDownloaded,
+            activeProfile: TranscriptionModelProfilePreference.HighAccuracyDownloaded,
             hasValidModel: true,
-            activeModelFileName: "ggml-small.en-q8_0.bin",
-            recommendedModel);
+            retryRecommended: false);
 
-        Assert.Equal("Ready", result.Status);
-        Assert.Equal("Change Active Model", result.PrimaryActionLabel);
+        Assert.Equal("Higher Accuracy ready", result.Status);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "'ggml-small.en-q8_0.bin' is active. Change the active model below if you want to trade speed for accuracy.",
+            "Higher Accuracy transcription is active.",
             result.Body);
     }
 
     [Fact]
-    public void BuildModelsTabSpeakerLabelingSetupState_Uses_Recommended_Bundle_When_Sidecar_Is_Not_Ready()
+    public void BuildModelsTabSpeakerLabelingSetupState_Uses_Setup_When_Sidecar_Is_Not_Ready()
     {
-        var recommendedAsset = new DiarizationRemoteAsset(
-            "diarization-sidecar-win-x64.zip",
-            "https://example.com/diarization.zip",
-            55_000_000,
-            DiarizationRemoteAssetKind.Bundle,
-            true,
-            "Recommended bundle");
-
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            requestedProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
+            activeProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
             isReady: false,
-            configuredAssetPath: @"C:\Models\Diarization",
-            recommendedAsset);
+            retryRecommended: false);
 
-        Assert.Equal("Optional add-on", result.Status);
-        Assert.Equal("Download Recommended Bundle", result.PrimaryActionLabel);
+        Assert.Equal("Needs setup", result.Status);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Speaker labeling is optional. Download the recommended diarization model bundle from GitHub, open the local setup guide, or review the alternate public download locations below.",
+            "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
             result.Body);
     }
 
@@ -278,40 +458,34 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void BuildModelsTabSpeakerLabelingSetupState_Shows_Setup_Options_When_No_Recommended_Bundle_Is_Loaded()
+    public void BuildModelsTabSpeakerLabelingSetupState_Uses_StandardReady_Copy_When_Standard_Bundle_Is_Ready()
     {
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            requestedProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
+            activeProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
             isReady: false,
-            configuredAssetPath: @"C:\Models\Diarization",
-            recommendedAsset: null);
+            retryRecommended: true);
 
-        Assert.Equal("Optional add-on", result.Status);
-        Assert.Equal("Show Setup Options", result.PrimaryActionLabel);
+        Assert.Equal("Needs setup", result.Status);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Speaker labeling is optional. No recommended GitHub diarization model bundle is loaded right now, so open the local setup guide or review the setup options below.",
+            "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
             result.Body);
     }
 
     [Fact]
-    public void BuildModelsTabSpeakerLabelingSetupState_Points_To_Management_When_Sidecar_Is_Ready()
+    public void BuildModelsTabSpeakerLabelingSetupState_Points_To_Management_When_HigherAccuracy_Is_Ready()
     {
-        var recommendedAsset = new DiarizationRemoteAsset(
-            "diarization-sidecar-win-x64.zip",
-            "https://example.com/diarization.zip",
-            55_000_000,
-            DiarizationRemoteAssetKind.Bundle,
-            true,
-            "Recommended bundle");
-
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            requestedProfile: SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+            activeProfile: SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
             isReady: true,
-            configuredAssetPath: @"C:\Models\Diarization",
-            recommendedAsset);
+            retryRecommended: false);
 
-        Assert.Equal("Ready", result.Status);
-        Assert.Equal("Review Speaker Labeling Setup", result.PrimaryActionLabel);
+        Assert.Equal("Higher Accuracy ready", result.Status);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            @"Speaker labeling is ready from 'C:\Models\Diarization'. Review the setup details below if you need to replace or repair it.",
+            "Higher Accuracy speaker labeling is active.",
             result.Body);
     }
 
@@ -327,7 +501,7 @@ public sealed class MainWindowInteractionLogicTests
             Signals: Array.Empty<DetectionSignal>(),
             Reason: "The detected Teams window appears to be a chat or navigation view, not an active meeting.");
 
-        var result = MainWindowInteractionLogic.BuildDetectionSummary(decision);
+        var result = MainWindowInteractionLogic.BuildDetectionSummary(decision, autoDetectEnabled: true);
 
         Assert.DoesNotContain("Detected Teams meeting", result, StringComparison.Ordinal);
         Assert.Contains("not an active meeting", result, StringComparison.OrdinalIgnoreCase);
@@ -345,10 +519,21 @@ public sealed class MainWindowInteractionLogicTests
             Signals: Array.Empty<DetectionSignal>(),
             Reason: "Meeting-like window detected, but no active system audio was observed.");
 
-        var result = MainWindowInteractionLogic.BuildDetectionSummary(decision);
+        var result = MainWindowInteractionLogic.BuildDetectionSummary(decision, autoDetectEnabled: true);
 
         Assert.Contains("Possible Teams meeting", result, StringComparison.Ordinal);
         Assert.Contains("no active system audio", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildDetectionSummary_Uses_Manual_Mode_Message_When_AutoDetection_Is_Off()
+    {
+        var result = MainWindowInteractionLogic.BuildDetectionSummary(
+            decision: null,
+            autoDetectEnabled: false);
+
+        Assert.Contains("Auto-detection is off", result, StringComparison.Ordinal);
+        Assert.Contains("turn it back on", result, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -519,6 +704,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Contains("microphone", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("voice", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("recording", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("from now on", result, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -598,11 +784,12 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void BuildEnableMicCapturePromptMessage_Explains_That_Only_Future_Recordings_Are_Affected()
+    public void BuildEnableMicCapturePromptMessage_Explains_That_The_Current_Recording_Is_Affected_From_Now_On()
     {
         var result = MainWindowInteractionLogic.BuildEnableMicCapturePromptMessage("Chao Adam");
 
-        Assert.Contains("future recordings", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("from now on", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("future recordings", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Chao Adam", result, StringComparison.Ordinal);
         Assert.Contains("microphone", result, StringComparison.OrdinalIgnoreCase);
     }
@@ -689,14 +876,12 @@ public sealed class MainWindowInteractionLogicTests
             UpdateFeedUrl = "https://example.com/releases/latest",
             AutoDetectAudioPeakThreshold = 0.125,
             MeetingStopTimeoutSeconds = 15,
+            PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.Auto,
         };
         var editor = new ConfigEditorSnapshot(
             @" C:\Audio ",
             @" C:\Transcripts ",
             @" C:\Work ",
-            @" C:\Models ",
-            @" C:\Models\ggml-base.en-q8_0.bin ",
-            @" C:\Models\diarizer.onnx ",
             true,
             "0.125",
             "15",
@@ -707,7 +892,10 @@ public sealed class MainWindowInteractionLogicTests
             true,
             true,
             false,
-            " https://example.com/releases/latest ");
+            " https://example.com/releases/latest ",
+            PreferredTeamsIntegrationMode.Auto,
+            BackgroundProcessingMode.Responsive,
+            BackgroundSpeakerLabelingMode.Deferred);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
@@ -733,14 +921,12 @@ public sealed class MainWindowInteractionLogicTests
             UpdateFeedUrl = "https://example.com/releases/latest",
             AutoDetectAudioPeakThreshold = 0.125,
             MeetingStopTimeoutSeconds = 15,
+            PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.Auto,
         };
         var editor = new ConfigEditorSnapshot(
             @"C:\Audio",
             @"C:\Transcripts",
             @"C:\Work",
-            @"C:\Models",
-            @"C:\Models\ggml-base.en-q8_0.bin",
-            @"C:\Models\diarizer.onnx",
             true,
             "0.125",
             "15",
@@ -751,7 +937,41 @@ public sealed class MainWindowInteractionLogicTests
             true,
             true,
             false,
-            "https://example.com/releases/latest");
+            "https://example.com/releases/latest",
+            PreferredTeamsIntegrationMode.ThirdPartyApi,
+            BackgroundProcessingMode.Balanced,
+            BackgroundSpeakerLabelingMode.Throttled);
+
+        var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void HasPendingConfigChanges_Returns_True_When_Teams_Integration_Settings_Differ()
+    {
+        var config = new AppConfig
+        {
+            PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.Auto,
+        };
+        var editor = new ConfigEditorSnapshot(
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            true,
+            "0.02",
+            "30",
+            true,
+            false,
+            false,
+            false,
+            true,
+            true,
+            true,
+            string.Empty,
+            PreferredTeamsIntegrationMode.ThirdPartyApi,
+            BackgroundProcessingMode.Responsive,
+            BackgroundSpeakerLabelingMode.Deferred);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
@@ -1303,6 +1523,61 @@ public sealed class MainWindowInteractionLogicTests
         var result = MainWindowInteractionLogic.GetMeetingWorkspaceGroupPropertyName(MeetingsGroupKey.Month);
 
         Assert.Equal("MonthGroupLabel", result);
+    }
+
+    [Fact]
+    public void BuildMeetingWorkspaceGroupLabel_Returns_Project_Name_For_Client_Project_Grouping()
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
+            MeetingsGroupKey.ClientProject,
+            DateTimeOffset.Parse("2026-03-18T14:00:00Z"),
+            "Teams",
+            "Published",
+            projectName: "Project Atlas");
+
+        Assert.Equal("Project Atlas", result);
+    }
+
+    [Fact]
+    public void BuildMeetingWorkspaceGroupLabel_Merges_Key_And_Persisted_Attendees_For_Attendee_Grouping()
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
+            MeetingsGroupKey.Attendee,
+            DateTimeOffset.Parse("2026-03-18T14:00:00Z"),
+            "Teams",
+            "Published",
+            attendees:
+            [
+                new MeetingAttendee("Pranav", [MeetingAttendeeSource.TeamsLiveRoster]),
+                new MeetingAttendee("Jane Smith", [MeetingAttendeeSource.OutlookCalendar]),
+            ],
+            keyAttendees: ["Pranav Sharma"]);
+
+        Assert.Equal("Pranav Sharma", result);
+    }
+
+    [Theory]
+    [InlineData(MeetingsGroupKey.ClientProject, "ClientProjectGroupLabel")]
+    [InlineData(MeetingsGroupKey.Attendee, "AttendeeGroupLabel")]
+    public void GetMeetingWorkspaceGroupPropertyName_Returns_Group_Specific_Property_For_Client_Project_And_Attendee(
+        MeetingsGroupKey groupKey,
+        string expectedPropertyName)
+    {
+        var result = MainWindowInteractionLogic.GetMeetingWorkspaceGroupPropertyName(groupKey);
+
+        Assert.Equal(expectedPropertyName, result);
+    }
+
+    [Theory]
+    [InlineData(MeetingsGroupKey.ClientProject, "ClientProjectGroupLabel")]
+    [InlineData(MeetingsGroupKey.Attendee, "AttendeeGroupLabel")]
+    public void GetMeetingWorkspaceGroupSortPropertyName_Returns_Group_Specific_Property_For_Client_Project_And_Attendee(
+        MeetingsGroupKey groupKey,
+        string expectedPropertyName)
+    {
+        var result = MainWindowInteractionLogic.GetMeetingWorkspaceGroupSortPropertyName(groupKey);
+
+        Assert.Equal(expectedPropertyName, result);
     }
 
     [Fact]

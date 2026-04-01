@@ -56,6 +56,7 @@ $bootstrapScriptPath = Join-Path $packagePath "Install-LatestFromGitHub.ps1"
 $releaseSourceMetadataPath = Join-Path $packagePath "release-source.json"
 $publishScript = Join-Path $PSScriptRoot "Publish-Portable.ps1"
 $publishedAppPath = Join-Path $repoRoot ".artifacts\publish\$Runtime\MeetingRecorder"
+$modelCatalogSourcePath = Join-Path $repoRoot "src\MeetingRecorder.Core\Assets\model-catalog.json"
 $installerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Installer\MeetingRecorder.Installer.csproj"
 $msiProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Setup\MeetingRecorder.Setup.wixproj"
 $msiTemp = Join-Path $packagePath "msi-temp"
@@ -239,6 +240,46 @@ function Publish-StableAsset {
 
     Copy-Item -Path $SourcePath -Destination $PreferredPath -Force
     return $PreferredPath
+}
+
+function Read-ModelCatalog {
+    param(
+        [string]$CatalogPath
+    )
+
+    if (-not (Test-Path $CatalogPath)) {
+        throw "Required model catalog was not found at '$CatalogPath'."
+    }
+
+    return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
+}
+
+function Publish-HighAccuracyReleaseAssets {
+    param(
+        [string]$RepoRoot,
+        [string]$CatalogPath,
+        [string]$PackagePath
+    )
+
+    $catalog = Read-ModelCatalog -CatalogPath $CatalogPath
+    $assetsToPublish = @(
+        @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\asr\" + $catalog.transcription.highAccuracy.fileName)
+            PreferredPath = Join-Path $PackagePath $catalog.transcription.highAccuracy.fileName
+        },
+        @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\diarization\" + $catalog.speakerLabeling.highAccuracy.fileName)
+            PreferredPath = Join-Path $PackagePath $catalog.speakerLabeling.highAccuracy.fileName
+        }
+    )
+
+    foreach ($asset in $assetsToPublish) {
+        if (-not (Test-Path $asset.SourcePath)) {
+            throw "Required Higher Accuracy release asset was not found at '$($asset.SourcePath)'."
+        }
+
+        Publish-StableAsset -SourcePath $asset.SourcePath -PreferredPath $asset.PreferredPath | Out-Null
+    }
 }
 
 function Convert-ToWixIdentifier {
@@ -664,6 +705,7 @@ $installerMsiPath = Publish-StableAsset -SourcePath $installerMsiBuiltPath -Pref
 $bootstrapCommandPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.cmd") -PreferredPath $bootstrapCommandPath
 $bootstrapScriptPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.ps1") -PreferredPath $bootstrapScriptPath
 $releaseSourceMetadataPath = Publish-StableAsset -SourcePath $publishedReleaseSourceMetadataPath -PreferredPath $releaseSourceMetadataPath
+Publish-HighAccuracyReleaseAssets -RepoRoot $repoRoot -CatalogPath $modelCatalogSourcePath -PackagePath $packagePath
 
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($bootstrapScriptPath)
 

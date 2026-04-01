@@ -4,8 +4,10 @@
         xmlns:branding="clr-namespace:MeetingRecorder.Core.Branding;assembly=MeetingRecorder.Core"
         Title="{x:Static branding:AppBranding.DisplayNameWithVersion}"
         Icon="Assets/MeetingRecorder.ico"
-        Height="840"
-        Width="980"
+        Height="920"
+        Width="1440"
+        MinHeight="860"
+        MinWidth="1280"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="DashboardStartButtonStyle" TargetType="Button">
@@ -277,9 +279,10 @@
         </Style>
         <Style x:Key="QuickSettingToggleButtonStyle" TargetType="Button">
             <Setter Property="Height" Value="32" />
+            <Setter Property="Width" Value="72" />
             <Setter Property="MinWidth" Value="68" />
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
             <Setter Property="Background" Value="{StaticResource AppCanvasBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AppStrongOutlineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
@@ -354,6 +357,8 @@
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                     <Border x:Name="HeaderShellStatusBorder"
+                            MinWidth="390"
+                            MinHeight="44"
                             Padding="10,6"
                             Margin="0,0,10,0"
                             Background="{StaticResource AppCardBrush}"
@@ -385,6 +390,7 @@
 
                             <TextBlock x:Name="HeaderShellStatusDetailTextBlock"
                                        Grid.Column="1"
+                                       Width="180"
                                        Margin="10,0,0,0"
                                        VerticalAlignment="Center"
                                        FontFamily="{StaticResource AppMonoFontFamily}"
@@ -401,7 +407,34 @@
                                     Style="{StaticResource ShellStatusActionButtonStyle}"
                                     Click="HeaderShellStatusActionButton_OnClick"
                                     Visibility="Collapsed" />
-                        </Grid>
+                            </Grid>
+                    </Border>
+
+                    <Border x:Name="HeaderQueueStatusBorder"
+                            MinWidth="176"
+                            MinHeight="44"
+                            Padding="10,6"
+                            Margin="0,0,10,0"
+                            Background="{StaticResource AppCardBrush}"
+                            BorderBrush="{StaticResource AppOutlineBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Visibility="Collapsed">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="HeaderQueueStatusLabelTextBlock"
+                                       FontFamily="{StaticResource AppMonoFontFamily}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource AppTextBrush}"
+                                       Text="QUEUED 0" />
+                            <TextBlock x:Name="HeaderQueueStatusDetailTextBlock"
+                                       Margin="0,2,0,0"
+                                       FontFamily="{StaticResource AppMonoFontFamily}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource AppMutedTextBrush}"
+                                       Text="Approximate processing status"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
                     </Border>
 
                     <Button x:Name="HeaderSettingsButton"
@@ -424,18 +457,24 @@
                             ItemContainerStyle="{StaticResource ShellSegmentedTabItemStyle}"
                             SelectionChanged="MainTabControl_OnSelectionChanged">
                 <TabItem x:Name="DashboardTabItem" Header="Home">
+                        <ScrollViewer x:Name="HomeDashboardScrollViewer"
+                                      Margin="0,12,0,0"
+                                      HorizontalAlignment="Stretch"
+                                      HorizontalContentAlignment="Stretch"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
                         <Grid x:Name="HomeDashboardGrid"
-                              Margin="0,12,0,0"
-                              MinWidth="760"
+                              MinWidth="1040"
                               HorizontalAlignment="Stretch"
                               VerticalAlignment="Top">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <Border x:Name="HomeRecordingConsoleBorder"
+                                    MinWidth="1040"
+                                    HorizontalAlignment="Stretch"
                                     Style="{StaticResource ShellSurfaceCardStyle}">
                                 <Grid>
                                     <Grid.RowDefinitions>
@@ -446,7 +485,7 @@
 
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
-                                                   Text="SESSION TITLE" />
+                                                   Text="SESSION TITLE (REQUIRED)" />
                                         <TextBox x:Name="CurrentMeetingTitleTextBox"
                                                  Margin="0,10,0,0"
                                                  Height="52"
@@ -465,7 +504,7 @@
 
                                             <StackPanel>
                                                 <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
-                                                           Text="CLIENT / PROJECT" />
+                                                           Text="CLIENT / PROJECT (OPTIONAL)" />
                                                 <TextBox x:Name="CurrentMeetingProjectTextBox"
                                                          Margin="0,8,0,0"
                                                          Height="40"
@@ -475,10 +514,11 @@
 
                                             <StackPanel Grid.Column="2">
                                                 <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
-                                                           Text="KEY ATTENDEES" />
+                                                           Text="KEY ATTENDEES (OPTIONAL)" />
                                                 <TextBox x:Name="CurrentMeetingKeyAttendeesTextBox"
                                                          Margin="0,8,0,0"
                                                          Height="40"
+                                                         ToolTip="Use commas or semicolons to separate attendees."
                                                          VerticalContentAlignment="Center"
                                                          TextChanged="CurrentMeetingKeyAttendeesTextBox_OnTextChanged" />
                                             </StackPanel>
@@ -486,6 +526,21 @@
                                         <TextBlock x:Name="CurrentMeetingTitleStatusTextBlock"
                                                    Margin="0,10,0,0"
                                                    Style="{StaticResource TechnicalMetaLabelStyle}" />
+                                        <Grid x:Name="CurrentRecordingElapsedGrid"
+                                              Margin="0,8,0,0"
+                                              Visibility="Collapsed">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                       Text="RECORDING TIME" />
+                                            <TextBlock x:Name="CurrentRecordingElapsedTextBlock"
+                                                       Grid.Column="2"
+                                                       Style="{StaticResource TechnicalMetaLabelStyle}" />
+                                        </Grid>
                                         <TextBlock x:Name="CurrentDetectedAudioSourceTextBlock"
                                                    Margin="0,8,0,0"
                                                    Foreground="#45504D"
@@ -493,9 +548,9 @@
                                     </StackPanel>
 
                                     <Border Grid.Row="1"
-                                            Margin="0,20,0,0"
+                                            Margin="0,18,0,0"
                                             Padding="16"
-                                            Height="248"
+                                            Height="220"
                                             CornerRadius="4"
                                             Background="{StaticResource AppMutedCardBrush}"
                                             BorderBrush="{StaticResource AppOutlineBrush}"
@@ -524,33 +579,37 @@
                                         </Grid>
                                     </Border>
 
-                                    <WrapPanel Grid.Row="2"
-                                               Margin="0,20,0,0"
-                                               HorizontalAlignment="Center">
+                                    <Grid Grid.Row="2"
+                                          Margin="0,18,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="16" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
                                             <Button x:Name="HomePrimaryActionButton"
                                                     Style="{StaticResource DashboardStartButtonStyle}"
-                                                    Width="220"
+                                                    Grid.Column="0"
                                                     Height="52"
-                                                    Margin="0,0,14,0"
                                                     Click="StartButton_OnClick"
                                                     Content="START" />
                                             <Button x:Name="StopButton"
                                                     Style="{StaticResource DashboardStopButtonStyle}"
-                                                    Width="180"
+                                                    Grid.Column="2"
                                                     Height="52"
-                                                    Margin="0"
                                                     Click="StopButton_OnClick"
                                                     Content="STOP" />
-                                    </WrapPanel>
+                                    </Grid>
                                 </Grid>
                             </Border>
 
                             <Grid x:Name="HomeQuickSettingsGrid"
                                   Grid.Row="1"
-                                  Margin="0,12,0,0">
+                                  Margin="0,12,0,0"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Top">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="16" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
@@ -570,19 +629,26 @@
                                                        Style="{StaticResource MutedHelperTextStyle}" />
                                         </StackPanel>
 
-                                        <WrapPanel Grid.Row="1"
-                                                   Margin="0,14,0,0"
-                                                   HorizontalAlignment="Left">
+                                        <Grid x:Name="HomeMicCaptureToggleGrid"
+                                              Grid.Row="1"
+                                              Margin="0,14,0,0"
+                                              HorizontalAlignment="Left">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
                                             <Button x:Name="HomeMicCaptureEnabledButton"
+                                                    Grid.Column="0"
                                                     Style="{StaticResource QuickSettingToggleButtonStyle}"
                                                     Click="HomeMicCaptureEnabledButton_OnClick"
                                                     Content="ON" />
                                             <Button x:Name="HomeMicCaptureDisabledButton"
+                                                    Grid.Column="2"
                                                     Style="{StaticResource QuickSettingToggleButtonStyle}"
-                                                    Margin="0"
                                                     Click="HomeMicCaptureDisabledButton_OnClick"
                                                     Content="OFF" />
-                                        </WrapPanel>
+                                        </Grid>
                                     </Grid>
                                 </Border>
 
@@ -603,24 +669,32 @@
                                                        Style="{StaticResource MutedHelperTextStyle}" />
                                         </StackPanel>
 
-                                        <WrapPanel Grid.Row="1"
-                                                   Margin="0,14,0,0"
-                                                   HorizontalAlignment="Left">
+                                        <Grid x:Name="HomeAutoDetectToggleGrid"
+                                              Grid.Row="1"
+                                              Margin="0,14,0,0"
+                                              HorizontalAlignment="Left">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="12" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
                                             <Button x:Name="HomeAutoDetectEnabledButton"
+                                                    Grid.Column="0"
                                                     Style="{StaticResource QuickSettingToggleButtonStyle}"
                                                     Click="HomeAutoDetectEnabledButton_OnClick"
                                                     Content="ON" />
                                             <Button x:Name="HomeAutoDetectDisabledButton"
+                                                    Grid.Column="2"
                                                     Style="{StaticResource QuickSettingToggleButtonStyle}"
-                                                    Margin="0"
                                                     Click="HomeAutoDetectDisabledButton_OnClick"
                                                     Content="OFF" />
-                                        </WrapPanel>
+                                        </Grid>
                                     </Grid>
                                 </Border>
                             </Grid>
 
-                            <StackPanel Grid.Row="2"
+                            <StackPanel Grid.Row="1"
+                                        Grid.ColumnSpan="3"
                                         Visibility="Collapsed">
                                 <TextBlock x:Name="StatusTextBlock" />
                                 <TextBlock x:Name="DetectionTextBlock" />
@@ -647,6 +721,7 @@
                                          AcceptsReturn="True" />
                             </StackPanel>
                         </Grid>
+                        </ScrollViewer>
                 </TabItem>
                 <TabItem x:Name="MeetingsTabItem" Header="Meetings">
                     <Grid x:Name="MeetingsWorkspaceGrid"
@@ -661,10 +736,38 @@
                             <TextBlock x:Name="MeetingWorkspaceStatusTextBlock"
                                        VerticalAlignment="Center"
                                        Foreground="#45504D"
-                                       Text="Published meetings from the current audio and transcript output folders." />
-                            <TextBlock x:Name="MeetingsRefreshStateTextBlock"
-                                       Margin="0,6,0,0"
-                                       Style="{StaticResource TechnicalMetaLabelStyle}" />
+                                       Text="Recent and published meetings from the current audio, transcript, and work-session folders." />
+                            <Border x:Name="MeetingsProcessingStatusBorder"
+                                    Margin="0,8,0,0"
+                                    Padding="10,8"
+                                    Background="{StaticResource AppCardBrush}"
+                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Margin="0,0,0,4"
+                                               Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               Text="Approximate processing status" />
+                                    <TextBlock x:Name="MeetingsProcessingStatusLine1TextBlock"
+                                               Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               FontFamily="{StaticResource AppMonoFontFamily}"
+                                               Text="PROCESSING · 0 remaining" />
+                                    <TextBlock x:Name="MeetingsProcessingStatusLine2TextBlock"
+                                               Margin="0,2,0,0"
+                                               Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               FontFamily="{StaticResource AppMonoFontFamily}"
+                                               Text="Current: waiting to start processing." />
+                                    <TextBlock x:Name="MeetingsProcessingStatusLine3TextBlock"
+                                               Margin="0,2,0,0"
+                                               Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               FontFamily="{StaticResource AppMonoFontFamily}"
+                                               Text="Overall queue: 0 remaining · ETA unavailable" />
+                                    <TextBlock x:Name="MeetingsRefreshStateTextBlock"
+                                               Margin="0,4,0,0"
+                                               Style="{StaticResource TechnicalMetaLabelStyle}" />
+                                </StackPanel>
+                            </Border>
                             <TextBlock Margin="0,8,0,0"
                                        Foreground="#45504D"
                                        TextWrapping="Wrap">
@@ -700,6 +803,7 @@
                                     <TextBlock FontWeight="SemiBold"
                                                Text="View" />
                                     <ComboBox x:Name="MeetingsViewModeComboBox"
+                                              Style="{StaticResource ShellFilterComboBoxStyle}"
                                               Width="120"
                                               Height="32"
                                               Margin="0,6,0,0"
@@ -710,6 +814,7 @@
                                     <TextBlock FontWeight="SemiBold"
                                                Text="Sort by" />
                                     <ComboBox x:Name="MeetingsSortKeyComboBox"
+                                              Style="{StaticResource ShellFilterComboBoxStyle}"
                                               Width="130"
                                               Height="32"
                                               Margin="0,6,0,0"
@@ -720,6 +825,7 @@
                                     <TextBlock FontWeight="SemiBold"
                                                Text="Direction" />
                                     <ComboBox x:Name="MeetingsSortDirectionComboBox"
+                                              Style="{StaticResource ShellFilterComboBoxStyle}"
                                               Width="120"
                                               Height="32"
                                               Margin="0,6,0,0"
@@ -730,6 +836,7 @@
                                     <TextBlock FontWeight="SemiBold"
                                                Text="Group by" />
                                     <ComboBox x:Name="MeetingsGroupKeyComboBox"
+                                              Style="{StaticResource ShellFilterComboBoxStyle}"
                                               Width="130"
                                               Height="32"
                                               Margin="0,6,0,0"
@@ -1280,6 +1387,7 @@
                                                                TextWrapping="Wrap"
                                                                Text="Add or clear one optional project label for the selected meeting, or apply the same label to multiple selected meetings at once." />
                                                     <ComboBox x:Name="SelectedMeetingProjectComboBox"
+                                                              Style="{StaticResource ShellFilterComboBoxStyle}"
                                                               Margin="0,10,0,0"
                                                               Height="34"
                                                               IsEditable="True"
@@ -1557,101 +1665,40 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
-                                               Text="Use one Whisper model at a time. Start with the recommended download, or choose an alternate GitHub model or approved local file if you need a different setup path." />
+                                               Text="Meeting Recorder always includes the Standard transcription model. Choose Higher Accuracy only when you want setup to try the larger optional download now." />
 
                                     <TextBlock Margin="0,12,0,0"
                                                FontWeight="SemiBold"
-                                               Text="Current active model" />
+                                               Text="Current transcription profile" />
                                     <TextBlock x:Name="SelectedModelSummaryTextBlock"
                                                Margin="0,6,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap" />
-
-                                    <TextBlock Margin="0,14,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Recommended Start" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="Start here when you want the quickest supported transcription setup path." />
-                                    <TextBlock Margin="0,12,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Recommended download" />
-                                    <TextBlock x:Name="RecommendedRemoteModelNameTextBlock"
-                                               Margin="0,6,0,0"
-                                               FontWeight="SemiBold"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock x:Name="RecommendedRemoteModelSummaryTextBlock"
-                                               Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap" />
                                     <WrapPanel Margin="0,12,0,0">
-                                        <Button x:Name="DownloadRecommendedRemoteModelButton"
-                                                Width="230"
+                                        <Button x:Name="UseStandardTranscriptionProfileButton"
+                                                Width="160"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="DownloadRecommendedRemoteModelButton_OnClick"
-                                                Content="Download Recommended Model" />
-                                        <Button x:Name="RefreshRemoteModelsButton"
-                                                Width="180"
+                                                Click="UseStandardTranscriptionProfileButton_OnClick"
+                                                Content="Use Standard" />
+                                        <Button x:Name="UseHighAccuracyTranscriptionProfileButton"
+                                                Width="190"
                                                 Height="34"
-                                                Margin="0,0,0,12"
-                                                Click="RefreshRemoteModelsButton_OnClick"
-                                                Content="Refresh GitHub Models" />
-                                    </WrapPanel>
-
-                                    <TextBlock Margin="0,8,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Need a Different Path?" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="Use these options when you need a different GitHub model, an existing local file, or a previously imported model." />
-                                    <TextBlock Margin="0,12,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Other downloadable models" />
-                                    <ComboBox x:Name="AvailableRemoteModelsComboBox"
-                                              Margin="0,8,0,0"
-                                              DisplayMemberPath="DisplayText"
-                                              SelectionChanged="AvailableRemoteModelsComboBox_OnSelectionChanged" />
-                                    <TextBlock x:Name="SelectedRemoteModelSummaryTextBlock"
-                                               Margin="0,8,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap" />
-                                    <Button x:Name="DownloadSelectedRemoteModelButton"
-                                            Width="190"
-                                            Height="34"
-                                            Margin="0,12,0,0"
-                                            HorizontalAlignment="Left"
-                                            Click="DownloadSelectedRemoteModelButton_OnClick"
-                                            Content="Download Selected Model" />
-
-                                    <TextBlock Margin="0,14,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Installed and imported models" />
-                                    <ComboBox x:Name="AvailableModelsComboBox"
-                                              Margin="0,8,0,0"
-                                              DisplayMemberPath="DisplayText"
-                                              SelectionChanged="AvailableModelsComboBox_OnSelectionChanged" />
-                                    <WrapPanel Margin="0,12,0,0">
-                                        <Button x:Name="ActivateSelectedModelButton"
+                                                Margin="0,0,12,12"
+                                                Click="UseHighAccuracyTranscriptionProfileButton_OnClick"
+                                                Content="Use Higher Accuracy" />
+                                        <Button x:Name="ImportApprovedTranscriptionModelButton"
                                                 Width="170"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="ActivateSelectedModelButton_OnClick"
-                                                Content="Use Selected Model" />
-                                        <Button x:Name="ImportWhisperModelButton"
-                                                Width="170"
-                                                Height="34"
-                                                Margin="0,0,12,12"
-                                                Click="ImportWhisperModelButton_OnClick"
-                                                Content="Import Existing File" />
-                                        <Button x:Name="OpenModelFolderButton"
+                                                Click="ImportApprovedTranscriptionModelButton_OnClick"
+                                                Content="Import approved file" />
+                                        <Button x:Name="OpenTranscriptionModelFolderButton"
                                                 Width="150"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="OpenModelFolderButton_OnClick"
-                                                Content="Open Model Folder" />
+                                                Click="OpenTranscriptionModelFolderButton_OnClick"
+                                                Content="Open model folder" />
                                         <Button x:Name="RefreshModelStatusButton"
                                                 Width="150"
                                                 Height="34"
@@ -1659,6 +1706,10 @@
                                                 Click="RefreshModelStatusButton_OnClick"
                                                 Content="Refresh Status" />
                                     </WrapPanel>
+                                    <TextBlock x:Name="TranscriptionRetryStatusTextBlock"
+                                               Foreground="#8A5A00"
+                                               TextWrapping="Wrap"
+                                               Visibility="Collapsed" />
                                     <TextBlock x:Name="ModelActionStatusTextBlock"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap" />
@@ -1669,13 +1720,85 @@
                                                  Maximum="100"
                                                  IsIndeterminate="True"
                                                  Visibility="Collapsed" />
-                                    <TextBlock FontWeight="SemiBold"
-                                               Margin="0,16,0,0"
-                                               Text="Advanced"
-                                               Visibility="Collapsed" />
                                     <Expander Margin="0,16,0,0"
-                                              Header="Advanced">
+                                              Header="Advanced options &amp; diagnostics">
                                         <StackPanel Margin="0,12,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Higher Accuracy source" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap"
+                                                       Text="Use these controls only when you need to inspect alternate GitHub downloads or switch to a specific previously imported model." />
+                                            <TextBlock Margin="0,12,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Recommended Higher Accuracy download" />
+                                            <TextBlock x:Name="RecommendedRemoteModelNameTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock x:Name="RecommendedRemoteModelSummaryTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap" />
+                                            <WrapPanel Margin="0,12,0,0">
+                                                <Button x:Name="DownloadRecommendedRemoteModelButton"
+                                                        Width="230"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="DownloadRecommendedRemoteModelButton_OnClick"
+                                                        Content="Download Recommended Model" />
+                                                <Button x:Name="RefreshRemoteModelsButton"
+                                                        Width="180"
+                                                        Height="34"
+                                                        Margin="0,0,0,12"
+                                                        Click="RefreshRemoteModelsButton_OnClick"
+                                                        Content="Refresh GitHub Models" />
+                                            </WrapPanel>
+                                            <TextBlock Margin="0,12,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Other downloadable models" />
+                                            <ComboBox x:Name="AvailableRemoteModelsComboBox"
+                                                      Margin="0,8,0,0"
+                                                      DisplayMemberPath="DisplayText"
+                                                      SelectionChanged="AvailableRemoteModelsComboBox_OnSelectionChanged" />
+                                            <TextBlock x:Name="SelectedRemoteModelSummaryTextBlock"
+                                                       Margin="0,8,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap" />
+                                            <Button x:Name="DownloadSelectedRemoteModelButton"
+                                                    Width="190"
+                                                    Height="34"
+                                                    Margin="0,12,0,0"
+                                                    HorizontalAlignment="Left"
+                                                    Click="DownloadSelectedRemoteModelButton_OnClick"
+                                                    Content="Download Selected Model" />
+                                            <TextBlock Margin="0,14,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Installed and imported models" />
+                                            <ComboBox x:Name="AvailableModelsComboBox"
+                                                      Margin="0,8,0,0"
+                                                      DisplayMemberPath="DisplayText"
+                                                      SelectionChanged="AvailableModelsComboBox_OnSelectionChanged" />
+                                            <WrapPanel Margin="0,12,0,0">
+                                                <Button x:Name="ActivateSelectedModelButton"
+                                                        Width="170"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="ActivateSelectedModelButton_OnClick"
+                                                        Content="Use Selected Model" />
+                                                <Button x:Name="ImportWhisperModelButton"
+                                                        Width="170"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="ImportWhisperModelButton_OnClick"
+                                                        Content="Import Existing File" />
+                                                <Button x:Name="OpenModelFolderButton"
+                                                        Width="150"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="OpenModelFolderButton_OnClick"
+                                                        Content="Open Model Folder" />
+                                            </WrapPanel>
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="What if GitHub is blocked?" />
                                             <TextBlock Margin="0,8,0,0"
@@ -1793,142 +1916,44 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
-                                               Text="Add optional speaker labeling when you want transcripts grouped by speaker. Transcription still works normally without it." />
-                                    <Border Margin="0,12,0,0"
-                                            Padding="12"
-                                            CornerRadius="10"
-                                            Background="#F6F3EA">
-                                        <StackPanel>
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Get the diarization model bundle" />
-                                            <TextBlock Margin="0,6,0,0"
-                                                       Foreground="#45504D"
-                                                       TextWrapping="Wrap"
-                                                       Text="Start with the recommended bundle because it includes the segmentation model, embedding model, and manifest together." />
-                                            <TextBlock Margin="0,10,0,0"
-                                                       FontWeight="SemiBold"
-                                                       Text="Install or import it" />
-                                            <TextBlock Margin="0,6,0,0"
-                                                       Foreground="#45504D"
-                                                       TextWrapping="Wrap"
-                                                       Text="Download the recommended bundle from GitHub, or import an approved local file if GitHub is blocked." />
-                                            <TextBlock Margin="0,10,0,0"
-                                                       FontWeight="SemiBold"
-                                                       Text="Confirm speaker labeling is ready" />
-                                            <TextBlock Margin="0,6,0,0"
-                                                       Foreground="#45504D"
-                                                       TextWrapping="Wrap"
-                                                       Text="When setup is complete, the overview above will show that speaker labeling is ready." />
-                                        </StackPanel>
-                                    </Border>
-                                    <TextBlock Margin="0,14,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Local Help First" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="Open the bundled setup guide first for the exact local bundle and file layout this app expects." />
-                                    <Button x:Name="OpenSpeakerLabelingSetupGuideButton"
-                                            Width="190"
-                                            Height="34"
-                                            Margin="0,10,0,0"
-                                            HorizontalAlignment="Left"
-                                            Click="SpeakerLabelingSetupGuideLink_OnClick"
-                                            Content="Open local setup guide" />
-
-                                    <TextBlock Margin="0,14,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Recommended model bundle" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="GitHub is the only built-in automatic download source. If no recommended bundle is loaded, review the local setup guide or import an approved local diarization model bundle or files." />
-                                    <TextBlock x:Name="RecommendedDiarizationBundleNameTextBlock"
-                                               Margin="0,10,0,0"
-                                               FontWeight="SemiBold"
-                                               TextWrapping="Wrap" />
-                                    <TextBlock x:Name="RecommendedDiarizationBundleSummaryTextBlock"
-                                               Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap" />
+                                               Text="Meeting Recorder always includes the Standard speaker-labeling bundle. Higher Accuracy is optional, and if that download fails you can keep working with Standard and retry later from Settings > Setup." />
                                     <WrapPanel Margin="0,12,0,0">
-                                        <Button x:Name="DownloadRecommendedDiarizationBundleButton"
-                                                Width="230"
+                                        <Button x:Name="UseStandardSpeakerLabelingProfileButton"
+                                                Width="160"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="DownloadRecommendedDiarizationBundleButton_OnClick"
-                                                Content="Download Recommended Bundle" />
-                                        <Button x:Name="RefreshRemoteDiarizationAssetsButton"
-                                                Width="210"
-                                                Height="34"
-                                                Margin="0,0,0,12"
-                                                Click="RefreshRemoteDiarizationAssetsButton_OnClick"
-                                                Content="Refresh Diarization Assets" />
-                                    </WrapPanel>
-
-                                    <TextBlock Margin="0,8,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Alternate public download locations" />
-                                    <TextBlock x:Name="AlternatePublicDownloadLocationsEmptyStateTextBlock"
-                                               Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="No vetted public mirror configured yet." />
-                                    <ItemsControl x:Name="AlternatePublicDownloadLocationsItemsControl"
-                                                  Margin="0,8,0,0">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <StackPanel Margin="0,0,0,8">
-                                                    <TextBlock FontWeight="SemiBold"
-                                                               Text="{Binding Label}" />
-                                                    <TextBlock Margin="0,4,0,0"
-                                                               Foreground="#45504D"
-                                                               Text="{Binding Notes}"
-                                                               TextWrapping="Wrap" />
-                                                    <TextBlock Margin="0,2,0,0"
-                                                               Foreground="#45504D"
-                                                               Text="{Binding Url}"
-                                                               TextWrapping="Wrap" />
-                                                </StackPanel>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-
-                                    <TextBlock Margin="0,14,0,0"
-                                               FontWeight="SemiBold"
-                                               Text="Import or manage speaker-labeling files" />
-                                    <TextBlock Margin="0,6,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap"
-                                               Text="Refresh GitHub assets, import approved local bundle/files, or open the asset folder if you need to troubleshoot setup manually." />
-                                    <ComboBox x:Name="AvailableRemoteDiarizationAssetsComboBox"
-                                              Margin="0,8,0,0"
-                                              DisplayMemberPath="DisplayText"
-                                              SelectionChanged="AvailableRemoteDiarizationAssetsComboBox_OnSelectionChanged" />
-                                    <TextBlock x:Name="SelectedRemoteDiarizationAssetSummaryTextBlock"
-                                               Margin="0,8,0,0"
-                                               Foreground="#45504D"
-                                               TextWrapping="Wrap" />
-                                    <WrapPanel Margin="0,12,0,0">
-                                        <Button x:Name="DownloadSelectedRemoteDiarizationAssetButton"
-                                                Width="210"
+                                                Click="UseStandardSpeakerLabelingProfileButton_OnClick"
+                                                Content="Use Standard" />
+                                        <Button x:Name="UseHighAccuracySpeakerLabelingProfileButton"
+                                                Width="190"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="DownloadSelectedRemoteDiarizationAssetButton_OnClick"
-                                                Content="Download Selected Asset" />
-                                        <Button x:Name="ImportDiarizationAssetButton"
+                                                Click="UseHighAccuracySpeakerLabelingProfileButton_OnClick"
+                                                Content="Use Higher Accuracy" />
+                                        <Button x:Name="ImportApprovedSpeakerLabelingButton"
                                                 Width="170"
                                                 Height="34"
                                                 Margin="0,0,12,12"
-                                                Click="ImportDiarizationAssetButton_OnClick"
-                                                Content="Import Existing File" />
-                                        <Button x:Name="OpenDiarizationFolderButton"
+                                                Click="ImportApprovedSpeakerLabelingButton_OnClick"
+                                                Content="Import approved file" />
+                                        <Button x:Name="OpenSpeakerLabelingAssetFolderButton"
+                                                Width="150"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="OpenSpeakerLabelingAssetFolderButton_OnClick"
+                                                Content="Open asset folder" />
+                                        <Button x:Name="OpenSpeakerLabelingSetupGuideButton"
                                                 Width="170"
                                                 Height="34"
                                                 Margin="0,0,0,12"
-                                                Click="OpenDiarizationFolderButton_OnClick"
-                                                Content="Open Asset Folder" />
+                                                HorizontalAlignment="Left"
+                                                Click="SpeakerLabelingSetupGuideLink_OnClick"
+                                                Content="Open setup guide" />
                                     </WrapPanel>
+                                    <TextBlock x:Name="SpeakerLabelingRetryStatusTextBlock"
+                                               Foreground="#8A5A00"
+                                               TextWrapping="Wrap"
+                                               Visibility="Collapsed" />
                                     <TextBlock x:Name="DiarizationActionStatusTextBlock"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap" />
@@ -1937,18 +1962,98 @@
                                                  Height="6"
                                                  IsIndeterminate="True"
                                                  Visibility="Collapsed" />
-                                </StackPanel>
-                            </Border>
-
-                            <Border Margin="0,16,0,0"
-                                    Padding="16"
-                                    CornerRadius="12"
-                                    Background="White">
-                                <StackPanel>
-                                    <TextBlock FontWeight="SemiBold"
-                                               Text="Advanced" Visibility="Collapsed" />
-                                    <Expander Header="Advanced">
+                                    <Expander Margin="0,16,0,0"
+                                              Header="Advanced options &amp; diagnostics">
                                         <StackPanel Margin="0,12,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Current speaker-labeling profile" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap"
+                                                       Text="Meeting Recorder always keeps the included Standard bundle as the safe fallback. Use the controls below only when you need to inspect alternate downloads, mirrors, or imported bundles." />
+                                            <TextBlock Margin="0,12,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Recommended Higher Accuracy bundle" />
+                                            <TextBlock x:Name="RecommendedDiarizationBundleNameTextBlock"
+                                                       Margin="0,10,0,0"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock x:Name="RecommendedDiarizationBundleSummaryTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap" />
+                                            <WrapPanel Margin="0,12,0,0">
+                                                <Button x:Name="DownloadRecommendedDiarizationBundleButton"
+                                                        Width="230"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="DownloadRecommendedDiarizationBundleButton_OnClick"
+                                                        Content="Download Recommended Bundle" />
+                                                <Button x:Name="RefreshRemoteDiarizationAssetsButton"
+                                                        Width="210"
+                                                        Height="34"
+                                                        Margin="0,0,0,12"
+                                                        Click="RefreshRemoteDiarizationAssetsButton_OnClick"
+                                                        Content="Refresh Diarization Assets" />
+                                            </WrapPanel>
+                                            <TextBlock Margin="0,8,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Alternate public download locations" />
+                                            <TextBlock x:Name="AlternatePublicDownloadLocationsEmptyStateTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap"
+                                                       Text="No vetted public mirror configured yet." />
+                                            <ItemsControl x:Name="AlternatePublicDownloadLocationsItemsControl"
+                                                          Margin="0,8,0,0">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Margin="0,0,0,8">
+                                                            <TextBlock FontWeight="SemiBold"
+                                                                       Text="{Binding Label}" />
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       Foreground="#45504D"
+                                                                       Text="{Binding Notes}"
+                                                                       TextWrapping="Wrap" />
+                                                            <TextBlock Margin="0,2,0,0"
+                                                                       Foreground="#45504D"
+                                                                       Text="{Binding Url}"
+                                                                       TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Margin="0,14,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="Imported or downloadable bundles" />
+                                            <ComboBox x:Name="AvailableRemoteDiarizationAssetsComboBox"
+                                                      Margin="0,8,0,0"
+                                                      DisplayMemberPath="DisplayText"
+                                                      SelectionChanged="AvailableRemoteDiarizationAssetsComboBox_OnSelectionChanged" />
+                                            <TextBlock x:Name="SelectedRemoteDiarizationAssetSummaryTextBlock"
+                                                       Margin="0,8,0,0"
+                                                       Foreground="#45504D"
+                                                       TextWrapping="Wrap" />
+                                            <WrapPanel Margin="0,12,0,0">
+                                                <Button x:Name="DownloadSelectedRemoteDiarizationAssetButton"
+                                                        Width="210"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="DownloadSelectedRemoteDiarizationAssetButton_OnClick"
+                                                        Content="Download Selected Asset" />
+                                                <Button x:Name="ImportDiarizationAssetButton"
+                                                        Width="170"
+                                                        Height="34"
+                                                        Margin="0,0,12,12"
+                                                        Click="ImportDiarizationAssetButton_OnClick"
+                                                        Content="Import Existing File" />
+                                                <Button x:Name="OpenDiarizationFolderButton"
+                                                        Width="170"
+                                                        Height="34"
+                                                        Margin="0,0,0,12"
+                                                        Click="OpenDiarizationFolderButton_OnClick"
+                                                        Content="Open Asset Folder" />
+                                            </WrapPanel>
                                             <TextBlock Foreground="#45504D"
                                                        TextWrapping="Wrap"
                                                        Text="Use this section when you need the raw configured asset path, the last GPU fallback message, or the full readiness details for the optional diarization bundle." />
@@ -2003,6 +2108,57 @@
                                                 Margin="0,16,0,0" />
                                 <ContentControl x:Name="SettingsSetupSpeakerLabelingSectionHost"
                                                 Margin="0,16,0,0" />
+                                <Border Style="{StaticResource ConfigSectionBorderStyle}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="Teams Integration Probe" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Validate the most stable Teams hook available on this machine. The probe checks the local detector first, then the Teams third-party API candidate. If no readable third-party bridge is available, the local Teams detector remains the fallback." />
+
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Preferred Teams integration" />
+                                            <ComboBox x:Name="ConfigPreferredTeamsIntegrationModeComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Auto prefers a readable third-party adapter when one is proven, then falls back to the local Teams detector." />
+                                        </StackPanel>
+
+                                        <WrapPanel Margin="0,16,0,0">
+                                            <Button x:Name="RunTeamsIntegrationProbeButton"
+                                                    Width="170"
+                                                    Height="34"
+                                                    Margin="0,0,12,12"
+                                                    Click="RunTeamsIntegrationProbeButton_OnClick"
+                                                    Content="Run Teams Probe" />
+                                            <Button x:Name="OpenTeamsThirdPartyApiGuideButton"
+                                                    Margin="0,6,0,0"
+                                                    Click="OpenTeamsThirdPartyApiGuideButton_OnClick"
+                                                    Content="Open Teams third-party API guide"
+                                                    Style="{StaticResource TertiaryLinkButtonStyle}" />
+                                        </WrapPanel>
+
+                                        <TextBlock x:Name="ConfigTeamsIntegrationStatusTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Text="Fallback only." />
+                                        <TextBlock x:Name="ConfigTeamsIntegrationDetailTextBlock"
+                                                    Margin="0,8,0,0"
+                                                    Style="{StaticResource ConfigHelpTextStyle}"
+                                                    Text="The local Teams detector remains active until you validate a stronger integration path." />
+                                        <TextBlock x:Name="ConfigTeamsIntegrationMetadataTextBlock"
+                                                    Margin="0,8,0,0"
+                                                    Style="{StaticResource ConfigHelpTextStyle}"
+                                                    Text="Last probe: not run yet." />
+                                        <TextBlock x:Name="ConfigTeamsIntegrationBaselineTextBlock"
+                                                    Margin="0,10,0,0"
+                                                    Style="{StaticResource ConfigHelpTextStyle}"
+                                                    Text="Heuristic baseline: run the Teams probe to capture what the local detector would do right now." />
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
 
@@ -2396,7 +2552,7 @@
                                                    Text="Advanced &amp; Troubleshooting" />
                                         <TextBlock Margin="0,6,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Change these only when you need to relocate working folders, override model paths, or point the app at a different update feed." />
+                                                   Text="Change these only when you need to relocate working folders, change technical runtime behavior, or inspect the managed storage paths the app is using." />
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="Work folder" />
@@ -2409,33 +2565,30 @@
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
-                                                       Text="Model cache folder" />
-                                            <TextBox x:Name="ConfigModelCacheDirTextBox"
-                                                     Margin="0,6,0,0"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
+                                                       Text="Model storage root" />
+                                            <TextBlock x:Name="ConfigModelStorageSummaryTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Managed Whisper and diarization downloads are stored here." />
+                                                       Text="Managed transcription and speaker-labeling files are stored here." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
-                                                       Text="Whisper model path" />
-                                            <TextBox x:Name="ConfigTranscriptionModelPathTextBox"
-                                                     Margin="0,6,0,0"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
+                                                       Text="Transcription storage" />
+                                            <TextBlock x:Name="ConfigTranscriptionStorageTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Override the exact Whisper model file the worker should load." />
+                                                       Text="The active transcription profile is managed from Settings &gt; Setup." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
-                                                       Text="Diarization asset folder" />
-                                            <TextBox x:Name="ConfigDiarizationAssetPathTextBox"
-                                                     Margin="0,6,0,0"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
+                                                       Text="Speaker labeling storage" />
+                                            <TextBlock x:Name="ConfigSpeakerLabelingStorageTextBlock"
+                                                       Margin="0,6,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="The diarization model bundle and runtime status file are discovered from this folder." />
+                                                       Text="The active speaker-labeling profile is managed from Settings &gt; Setup." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
@@ -2446,6 +2599,26 @@
                                                      VerticalContentAlignment="Center" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Point this at the shared release feed the app should use for update discovery." />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Background processing mode" />
+                                            <ComboBox x:Name="ConfigBackgroundProcessingModeComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Responsive pauses new backlog work during live recordings and keeps the worker below normal priority by default." />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Speaker labeling mode" />
+                                            <ComboBox x:Name="ConfigBackgroundSpeakerLabelingModeComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Deferred publishes audio and transcripts first, then leaves speaker labels for manual follow-up later." />
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>

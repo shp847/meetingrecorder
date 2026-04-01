@@ -15,6 +15,7 @@ $workerTemp = Join-Path $outputPath "worker-temp"
 $finalPath = Join-Path $outputPath "MeetingRecorder"
 $appAssetPath = Join-Path $repoRoot "src\MeetingRecorder.App\Assets\MeetingRecorder.ico"
 $productManifestPath = Join-Path $repoRoot "src\MeetingRecorder.Product\MeetingRecorder.product.json"
+$modelCatalogSourcePath = Join-Path $repoRoot "src\MeetingRecorder.Core\Assets\model-catalog.json"
 $selfContained = -not $FrameworkDependent.IsPresent
 $selfContainedValue = if ($selfContained) { "true" } else { "false" }
 $bundleMode = if ($selfContained) { "self-contained" } else { "framework-dependent" }
@@ -108,6 +109,47 @@ function Invoke-DotnetPublish {
 
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed for $ProjectPath"
+    }
+}
+
+function Read-ModelCatalog {
+    param(
+        [string]$CatalogPath
+    )
+
+    if (-not (Test-Path $CatalogPath)) {
+        throw "Required model catalog was not found at '$CatalogPath'."
+    }
+
+    return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
+}
+
+function Copy-BundledStandardModelSeedAssets {
+    param(
+        [string]$RepoRoot,
+        [pscustomobject]$Catalog,
+        [string]$BundleRoot
+    )
+
+    $bundledAssets = @(
+        @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\asr\" + $Catalog.transcription.standardIncluded.fileName)
+            RelativeDestinationPath = ($Catalog.transcription.standardIncluded.seedRelativePath -replace '/', '\')
+        },
+        @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\diarization\" + $Catalog.speakerLabeling.standardIncluded.fileName)
+            RelativeDestinationPath = ($Catalog.speakerLabeling.standardIncluded.seedRelativePath -replace '/', '\')
+        }
+    )
+
+    foreach ($asset in $bundledAssets) {
+        if (-not (Test-Path $asset.SourcePath)) {
+            throw "Required bundled standard model asset was not found at '$($asset.SourcePath)'."
+        }
+
+        $destinationPath = Join-Path $BundleRoot $asset.RelativeDestinationPath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destinationPath) | Out-Null
+        Copy-Item -Path $asset.SourcePath -Destination $destinationPath -Force
     }
 }
 
@@ -227,34 +269,16 @@ Copy-Item -Path (Join-Path $repoRoot "SETUP.md") -Destination (Join-Path $finalP
 Copy-Item -Path $productManifestPath -Destination (Join-Path $finalPath "MeetingRecorder.product.json") -Force
 Set-Content -Path (Join-Path $finalPath "portable.mode") -Value "portable" -NoNewline
 Set-Content -Path (Join-Path $finalPath "bundle-mode.txt") -Value $bundleMode -NoNewline
+Copy-Item -Path $modelCatalogSourcePath -Destination (Join-Path $finalPath "model-catalog.json") -Force
 
 if (Test-Path $appAssetPath) {
     Copy-Item -Path $appAssetPath -Destination (Join-Path $finalPath "MeetingRecorder.ico") -Force
 }
 
-$workerArtifacts = @(
-    "MeetingRecorder.ProcessingWorker.exe",
-    "MeetingRecorder.ProcessingWorker.dll",
-    "MeetingRecorder.ProcessingWorker.pdb",
-    "MeetingRecorder.ProcessingWorker.deps.json",
-    "MeetingRecorder.ProcessingWorker.runtimeconfig.json",
-    "Whisper.net.dll",
-    "Whisper.net.Runtime.dll"
-)
+Copy-Item -Path (Join-Path $workerTemp "*") -Destination $finalPath -Recurse -Force
 
-foreach ($artifact in $workerArtifacts) {
-    $source = Join-Path $workerTemp $artifact
-    if (Test-Path $source) {
-        Copy-Item -Path $source -Destination $finalPath -Force
-    }
-}
-
-$workerRuntimeRoot = Join-Path $workerTemp "runtimes"
-$finalRuntimeRoot = Join-Path $finalPath "runtimes"
-if (Test-Path $workerRuntimeRoot) {
-    New-Item -ItemType Directory -Force -Path $finalRuntimeRoot | Out-Null
-    Copy-Item -Path (Join-Path $workerRuntimeRoot "*") -Destination $finalRuntimeRoot -Recurse -Force
-}
+$modelCatalog = Read-ModelCatalog -CatalogPath $modelCatalogSourcePath
+Copy-BundledStandardModelSeedAssets -RepoRoot $repoRoot -Catalog $modelCatalog -BundleRoot $finalPath
 
 Assert-SingleFileWpfShellBundleLayout -BundleRoot $finalPath
 
@@ -264,7 +288,14 @@ $bundleIntegrityManifest = [ordered]@{
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.App.exe"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "AppPlatform.Deployment.Cli.exe"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.exe"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.dll"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.deps.json"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.runtimeconfig.json"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.Core.dll"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.product.json"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "model-catalog.json"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath ($modelCatalog.transcription.standardIncluded.seedRelativePath -replace '/', '\')),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath ($modelCatalog.speakerLabeling.standardIncluded.seedRelativePath -replace '/', '\')),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "Run-MeetingRecorder.cmd"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "Launch-MeetingRecorder-AfterInstall.vbs")
     )

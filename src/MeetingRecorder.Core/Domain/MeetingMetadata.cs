@@ -42,7 +42,8 @@ public sealed record DetectedAudioSource(
 
 public sealed record MeetingProcessingOverrides(
     string? TranscriptionModelPath,
-    string? TranscriptionModelFileName);
+    string? TranscriptionModelFileName,
+    bool SkipSpeakerLabeling = false);
 
 public enum DiarizationAttributionMode
 {

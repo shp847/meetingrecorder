@@ -66,6 +66,7 @@ public sealed class InstallerPackagingTests
         var projectContents = File.ReadAllText(projectPath);
 
         Assert.Contains("SuppressIces", projectContents, StringComparison.Ordinal);
+        Assert.Contains("ICE57", projectContents, StringComparison.Ordinal);
         Assert.Contains("ICE91", projectContents, StringComparison.Ordinal);
         Assert.Contains("ICE71", projectContents, StringComparison.Ordinal);
     }
@@ -162,6 +163,66 @@ public sealed class InstallerPackagingTests
         Assert.Contains("Dialog=\"VerifyReadyDlg\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("Value=\"WelcomeDlg\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("Order=\"999\"", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_Prompts_For_Optional_HigherAccuracy_Model_Downloads_Only_On_First_Install()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("MODEL_OPTION_TRANSCRIPTION", packageContents, StringComparison.Ordinal);
+        Assert.Contains("MODEL_OPTION_SPEAKER_LABELING", packageContents, StringComparison.Ordinal);
+        Assert.Contains("ModelOptionsDlg", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Standard is always installed from this package", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Retry it later from Settings > Setup", packageContents, StringComparison.Ordinal);
+        Assert.Contains("NOT Installed", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_Invokes_The_Installed_Deployment_Cli_To_Provision_Models_After_File_Copy()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("AppPlatform.Deployment.Cli.exe", packageContents, StringComparison.Ordinal);
+        Assert.Contains("provision-models", packageContents, StringComparison.Ordinal);
+        Assert.Contains("-m", packageContents, StringComparison.Ordinal);
+        Assert.Contains("-t", packageContents, StringComparison.Ordinal);
+        Assert.Contains("-s", packageContents, StringComparison.Ordinal);
+        Assert.Contains("-l", packageContents, StringComparison.Ordinal);
+        Assert.Contains("After=\"InstallFiles\"", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_Uninstall_Removes_Only_The_Managed_Install_And_Shortcuts_Not_User_Data()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("<RemoveFolder Id=\"RemoveInstallFolder\" Directory=\"INSTALLFOLDER\" On=\"uninstall\" />", packageContents, StringComparison.Ordinal);
+        Assert.Contains("<RemoveFolder Id=\"RemoveApplicationProgramsFolder\" Directory=\"ApplicationProgramsFolder\" On=\"uninstall\" />", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Directory=\"LocalAppDataFolder\"", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Directory=\"PersonalFolder\"", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Directory=\"UserProfileFolder\"", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

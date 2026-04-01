@@ -64,7 +64,7 @@ public sealed class UpdatePackageInstaller
                     InstallRoot: request.InstallRoot,
                     CreateDesktopShortcut: false,
                     CreateStartMenuShortcut: false,
-                    LaunchAfterInstall: true,
+                    LaunchAfterInstall: request.LaunchAfterInstall,
                     ReleaseVersion: request.ReleaseVersion,
                     ReleasePublishedAtUtc: request.ReleasePublishedAtUtc,
                     ReleaseAssetSizeBytes: request.ReleaseAssetSizeBytes,

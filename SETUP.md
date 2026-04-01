@@ -17,6 +17,9 @@ That installer path:
 
 - installs the app into `%USERPROFILE%\Documents\MeetingRecorder`
 - keeps writable runtime data such as config, logs, models, work files, and install provenance under `%LOCALAPPDATA%\MeetingRecorder`
+- always seeds the included Standard transcription and Standard speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models` so offline installs still finish ready to use
+- shows a first-install `Choose model options` page where users can keep `Standard` or also ask setup to try one optional `Higher Accuracy` download for transcription and speaker labeling
+- keeps the install successful even if those optional Higher Accuracy downloads fail, then tells the user to retry later from `Settings > Setup`
 - creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%USERPROFILE%\Documents\MeetingRecorder`
 - skips the stock license-agreement page so the install flow stays short
 - shows a final completion screen so users can confirm the install succeeded
@@ -57,6 +60,7 @@ If you already have a downloaded release ZIP, you can still use the manual path:
 By default, the installers preserve existing user data on update so recordings, transcripts, logs, models, and config are not wiped. The thin script/bootstrap wrappers now delegate install and update execution to the bundled `AppPlatform.Deployment.Cli` helper instead of mutating app config themselves.
 The portable bundle now ships with `bundle-integrity.json`, and the shared deployment CLI validates that manifest before it touches the managed install root.
 The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`.
+The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%USERPROFILE%\Documents\MeetingRecorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
 
 User-facing installer and updater rule:
 
@@ -84,13 +88,13 @@ If you prefer not to install, the extract-and-run portable folder still works. I
 - `Run-MeetingRecorder.cmd`
 
 The default portable bundle is `self-contained`, so most laptops do not need a separate .NET Desktop Runtime install.
-That default self-contained bundle now publishes the WPF shell as a single-file `MeetingRecorder.App.exe`, while `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` remain as external bundle files.
+That default self-contained bundle now publishes the WPF shell as a single-file `MeetingRecorder.App.exe`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` remain as external bundle files.
 
 If you are rebuilding from source locally, note the difference between artifacts and the live installed app:
 
 - `.artifacts\publish\win-x64\MeetingRecorder` is only the freshly published bundle output
 - `%USERPROFILE%\Documents\MeetingRecorder` is the canonical managed install root that the Start Menu and live app should use
-- after a local source build, run `powershell -ExecutionPolicy Bypass -File .\scripts\Deploy-Local.ps1` to update the live managed install and verify the deployed `MeetingRecorder.App.exe`, `MeetingRecorder.product.json`, and `.lnk` shortcuts match the new bundle
+- local repo deployments are intentionally disabled for publishing validation; use the MSI install path or release bootstrap scripts when you need to test the managed install root
 
 ## 2. Data Layout
 
@@ -143,18 +147,21 @@ The portable bundle also includes:
 1. Install with `MeetingRecorderInstaller.msi`, `MeetingRecorderInstaller.exe`, `Install-LatestFromGitHub.cmd`, `Install-MeetingRecorder.cmd`, or run `Run-MeetingRecorder.cmd` from the portable folder.
 2. If the dependency checker reports a missing runtime, run `Install-Dependencies.cmd`.
 3. Open `Settings` from the header and review `Setup`.
-4. Make sure the active Whisper model looks correct.
-5. If the output folders are not acceptable, review `Settings > Files`.
-6. If needed, choose a discovered local model with `Use Selected Model`.
-7. Install or import the Whisper model until the app shows `Model status: ready`.
-8. Record a short manual test.
+4. Confirm `Transcription` shows either `Standard ready` or `Higher Accuracy ready`.
+5. If the installer reported that an optional Higher Accuracy download did not finish, leave `Standard` active and retry from `Settings > Setup` when downloads are available.
+6. If you plan to rely on Teams auto-detection, open `Settings > Setup > Teams integration`, choose the preferred mode, and run the Teams probe so the app can capture the current local detector baseline, test whether the Teams third-party API candidate exposes readable meeting state on this machine, and fall back cleanly when it does not. The Setup card now also saves and shows `Last probe`, `Promotable path`, and `Block reason`.
+7. Confirm `Speaker labeling` shows either `Standard ready`, `Higher Accuracy ready`, or your preferred custom import state if you plan to use diarization.
+8. If the output folders are not acceptable, review `Settings > Files`.
+9. If you need a custom approved model or bundle instead of the curated profiles, use `Import approved file` from `Settings > Setup`.
+10. Record a short manual test.
+
+If no Whisper model is installed yet, the app can still launch normally. The packaged launcher now keeps that as an in-app setup reminder instead of printing a startup console warning on every launch.
 
 The dependency checker currently verifies:
 
 - the app launcher expects `MeetingRecorder.App.exe` to be present in the managed install root
-- the transcription worker can launch from either `MeetingRecorder.ProcessingWorker.exe` or `MeetingRecorder.ProcessingWorker.dll`
+- the transcription worker payload includes `MeetingRecorder.ProcessingWorker.exe`, `MeetingRecorder.ProcessingWorker.dll`, `MeetingRecorder.ProcessingWorker.deps.json`, `MeetingRecorder.ProcessingWorker.runtimeconfig.json`, and `MeetingRecorder.Core.dll`
 - the .NET 8 Desktop Runtime is installed when the bundle is framework-dependent
-- the .NET 8 Desktop Runtime is also installed when the bundle has to fall back to DLL launches because the apphost executables are missing
 - whether a configured local Whisper model is present
 
 ## 3.1 In-App Navigation
@@ -162,16 +169,35 @@ The dependency checker currently verifies:
 The app now keeps the main workflow in two primary destinations inside one visible segmented top navigation strip:
 
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, the detected audio source summary, live audio graph, start/stop controls, and quick settings for microphone capture and auto-detection
-- `Meetings` for the published meetings workspace, grouped browsing, cleanup review, quick actions, and compact meeting drafts
-Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready.
-When you open `Meetings`, the app now shows the current published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
+- `Meetings` for the recent-and-published meetings workspace, grouped browsing, cleanup review, quick actions, and compact meeting drafts
+Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file`, then use the built-in open-folder diagnostics only when you need to troubleshoot or verify what is on disk.
+When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
+Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
+When the backlog includes repaired sessions that already finished transcription, startup now resumes those publish-ready items before fresh untouched queue work so the visible queue can shrink faster after a crash backlog.
 
 Secondary maintenance and support actions live in the header:
 
 - `Settings` for Setup, General, Files, Updates, and Advanced, surfaced through a dedicated section button strip so labels stay readable at the default window size
 - `Help` for About details, setup/help links, logs/data folder shortcuts, and release notes entry points
 
+`Settings > Advanced` now also exposes two machine-performance controls:
+
+- `Background processing mode`
+  - `Responsive` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets
+  - `Balanced`: keeps background work moving with moderate thread budgets
+  - `FastestDrain`: favors queue throughput over responsiveness
+- `Speaker labeling mode`
+  - `Deferred` (default): publish audio and transcript first, then leave speaker labels for later repair or retry work
+  - `Throttled`: keep speaker labeling inline, but with conservative CPU budgets
+  - `Inline`: keep speaker labeling in the primary pass with the largest worker budgets
+
+The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
+That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
+
 When auto-detection is on, the app now also tries to attribute active Windows render audio to a likely process, meeting window, or Chromium Meet tab. The compact summary appears on `Home`, and `Help` includes the current app/window/tab match plus confidence when attribution is available.
+For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, but an explicit active `Meet - ...` browser window can now auto-start from active browser-family audio even when Chromium session metadata is too weak to name the exact tab.
+For Teams, an active auto-started call now stays alive through weak stray Google Meet browser detections during quiet patches, so an unrelated open Meet tab should not keep stopping and restarting the live Teams recording.
+When you run the Teams probe in `Settings > Setup`, the app records what the local Teams detector would do right now and whether the Teams third-party API candidate exposed anything beyond control actions. If the third-party path cannot prove readable meeting state, the local Teams detector remains the active fallback. No Microsoft Entra app registration or Graph sign-in is required for this flow.
 When an auto-started session loses strong meeting signals, `Home` now shows the auto-stop countdown directly in the recording console instead of only writing it to logs.
 When attendee enrichment finds fuller Outlook or Teams names, the app now merges those into `Key attendees` with reasonable partial-match promotion so a short typed name like `Pranav` can become `Pranav Sharma` instead of duplicating both.
 
@@ -209,6 +235,37 @@ Current limitation:
 - the thin wrapper scripts no longer change launch-on-login during install
 - if you need launch-on-login, change it from `Settings > General` after the app is installed
 
+## 4.1.1 MSI Uninstall And Fresh Reinstall
+
+Use this path when you want to remove the installed app but keep your meeting data.
+
+Uninstall with preserved data:
+
+1. Close Meeting Recorder if it is running.
+2. Open Windows `Settings > Apps > Installed apps` or `Apps & features`.
+3. Find `Meeting Recorder`.
+4. Choose `Uninstall`.
+5. Let Windows remove the app.
+6. Keep `%LOCALAPPDATA%\MeetingRecorder` and your `Documents\Meetings\...` folders in place. Those contain the preserved config, logs, models, transcripts, and recordings that the app can reuse later.
+
+Expected result after uninstall:
+
+- `%USERPROFILE%\Documents\MeetingRecorder` is removed
+- current-user Start Menu and Desktop shortcuts are removed
+- `%LOCALAPPDATA%\MeetingRecorder` remains
+- `Documents\Meetings\Recordings` remains
+- `Documents\Meetings\Transcripts` remains
+- `Documents\Meetings\Archive` remains
+
+Fresh reinstall:
+
+1. Run `MeetingRecorderInstaller.msi`.
+2. On a first install, choose whether to keep `Standard` only or also ask setup to try the optional `Higher Accuracy` downloads.
+3. Finish the MSI install.
+4. Launch the app.
+5. Confirm `Settings > Setup` shows the expected transcription and speaker-labeling readiness state.
+6. Confirm your prior meeting outputs and config-backed preferences are still present.
+
 ## 4.2 GitHub-Based Updates
 
 The same GitHub bootstrap path can be used later for updates.
@@ -226,25 +283,31 @@ If an installer or updater console fails, copy the diagnostic log path shown in 
 
 The installer preserves the existing portable `data` folder during updates, so recordings, transcripts, logs, models, and config are kept.
 The shared deployment CLI now updates the managed install in place instead of renaming the whole `Documents\MeetingRecorder` root first, which makes updates more tolerant of locked files under the preserved `data` tree.
+Managed install repair now also restores the required worker sidecar payload from the source bundle if any of those files are missing from an existing install, so queued sessions do not stay unpublished after restart because the worker cannot load `MeetingRecorder.Core.dll`.
 The actual apply/install work is now delegated to the shipped `AppPlatform.Deployment.Cli` helper so the script layer stays thin and reusable.
 That same CLI-first rule also applies after MSI-origin installs, so the app can update through the shared ZIP/CLI path without switching to MSI-based in-app patching.
 The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory instead of the temporary single-file extraction folder, so the updater can still launch correctly from the packaged managed install.
-Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches.
+Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches when you install it manually.
 The MSI now also allows a refreshed same-version release asset to overwrite the already-installed app binaries on reinstall, so reinstalling an updated `0.x` package does not leave the previous apphost in place.
 Automatic updates are still allowed, but the app now refuses installer shutdown handoff while a recording or background transcript-processing job is active, so an update cannot forcibly close the app in the middle of active work.
+Background auto-install and pending-update retry are now limited to true version upgrades, so a freshly MSI-relaunched app does not immediately kick off a same-version self-update loop just because the release was republished with a newer timestamp or asset size.
 The `Run-MeetingRecorder.cmd` launcher now waits briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, which helps during short install or update handoff windows.
 The EXE shell keeps the `Try backup CMD installer` action available after a handoff so you can still trigger the fallback path if the command window fails later.
 The `Install-LatestFromGitHub.cmd` wrapper now preserves the real PowerShell/bootstrap exit code in its local-script path, so a successful install no longer prints a stale generic failure message afterward.
-Normal in-app update installs do not use `Deploy-Local.ps1`; that script remains a repo-only developer utility for source-tree testing.
+The Home screen now uses a wider full-canvas recording layout inside its dedicated scroll viewer, stretches to the full tab content width at startup, keeps the quick-setting cards underneath the main console, and uses fixed-width `On` / `Off` controls so the setting cards do not resize while you toggle them.
+The Home graph now also stays on a lightweight timer only while the Home deck is actually visible and a live recording state is worth drawing, which reduces unnecessary UI churn while you are elsewhere in the app.
+Normal in-app update installs do not use `Deploy-Local.ps1`; that old repo-only developer utility is now intentionally disabled so MSI and real upgrade paths stay the only supported validation routes.
+Startup now also performs a one-time higher-aggression cleanup of stale unlocked files under `%LOCALAPPDATA%\Temp\MeetingRecorderDiarization` and `%LOCALAPPDATA%\Temp\MeetingRecorderTranscription`, then falls back to recurring cleanup on later starts and before worker launches so orphaned temp data does not keep growing indefinitely.
 
 ## 5. Whisper Model Setup
 
 App releases now keep Whisper models separate from the main installer bundle so installs and updates stay lighter.
 
-`Settings > Setup` now opens as a dedicated guided surface with two sections:
+`Settings > Setup` now opens as a dedicated guided surface with three sections:
 
 - `Transcription`
 - `Speaker labeling`
+- `Teams integration`
 
 Inside `Transcription`, the app presents guided readiness content first, then keeps alternate/manual paths available when you need a different model source or an existing local file.
 
@@ -364,12 +427,14 @@ Open `Settings` from the header to review or change settings through these group
 - `Advanced`
 
 Use `Settings > Setup` when you need to make transcription or speaker labeling work. Use the other sections for recording behavior, meeting-file locations, updates, and troubleshooting.
+Use `Settings > Setup > Teams integration` when you want the app to test a more stable Teams path before falling back to local heuristics. The probe can promote `Third-party API usable`, report `Third-party API available but control-only`, or stay at `Fallback only` while preserving any Teams policy block reason it can detect.
 
-The simplified `Home` surface keeps only the title editor, live audio graph, start/stop controls, and quick toggles for microphone capture and auto-detection. Setup and maintenance flows now live in the header surfaces.
+The simplified `Home` surface keeps only the title/project/attendee editor, live audio graph, start/stop controls, and quick toggles for microphone capture and auto-detection. Setup and maintenance flows now live in the header surfaces.
+If you turn automatic detection off, the header status now switches into an explicit manual-mode state so it is obvious that supported meetings will not auto-start until you turn it back on.
 
 Everyday recording and file settings stay visible first, while infrastructure and troubleshooting paths stay hidden until you open `Advanced`.
 
-Installer, update, and local deploy flows now refuse to replace the app while an active recording or processing session is still running. Stop the live session first, then retry the install or update.
+Installer and update flows now refuse to replace the app while an active recording or processing session is still running. Stop the live session first, then retry the install or update.
 
 Settings available there include:
 
@@ -394,17 +459,19 @@ Settings available there include:
 Use `Help` from the header when you need About details, the bundled setup guide, logs/data folder shortcuts, or the release page.
 
 For auto-started Teams recordings, the app can briefly tolerate quiet patches and reduced meeting surfaces such as compact view, sharing controls, or a matching chat/navigation surface. If the actual meeting window disappears entirely, a lingering `ms-teams` background process by itself is no longer treated as enough evidence to keep the recording running.
+If the active Teams title stays on screen after the call ends, microphone-only activity is no longer treated as a forever-positive keep-alive. The session now needs recent Teams render activity to keep refreshing the quiet-call grace window, and an official Teams path can also veto stale shell continuity when it reports that no current meeting is active, so recordings stop instead of drifting into long post-call silence.
 
-The detector also now treats a plain Teams content window more cautiously when a matching `Chat | ... | Microsoft Teams` surface is present at the same time. That helps avoid auto-starting on Teams recording playback or chat-thread media that looks meeting-like but is not actually a live call.
+The detector also now treats a plain Teams content window more cautiously when a matching `Chat | ... | Microsoft Teams` surface is present at the same time, or when no recent Teams-attributed render audio is visible. That helps avoid auto-starting on Teams recording playback or chat-thread media that looks meeting-like but is not actually a live call.
+Bare Teams shell titles such as `Chat | Microsoft Teams` or `Activity | Microsoft Teams` are also ignored safely now, so those navigation surfaces no longer crash the detection loop when automatic detection is enabled.
 
 ## 7. Recording Validation
 
 After the model is ready:
 
 1. Start a short meeting or test call.
-2. If the call is in Teams or Google Meet, you can turn on auto-detection and let the app watch for it automatically, or click `Start Recording` manually. New installs keep auto-detection off by default, and older configs are reset off once after this update, to avoid extra permission prompts on some systems. Google Meet detection can now follow Meet tabs inside a visible Chromium browser window even when the main window title is a shared Slides or Docs page, and the detector now uses Windows render-session ownership as a tie-breaker so a real Teams call can beat stale Google Meet browser titles. When Chromium render-session metadata is available, Google Meet auto-start now requires that metadata to look Meet-specific before browser audio is credited to the meeting, which helps prevent music or video playback in the same browser from triggering a false Meet recording. If an auto-started recording is first labeled from stale Google Meet browser evidence and a stronger Teams in-call window plus audio source shows up afterward, the app now reclassifies the live session in place instead of stopping and starting a second recording.
+2. If the call is in Teams or Google Meet, you can turn on auto-detection and let the app watch for it automatically, or click `Start Recording` manually. New installs keep auto-detection off by default, and older configs are reset off once after this update, to avoid extra permission prompts on some systems. Google Meet detection can now follow Meet tabs inside a visible Chromium browser window even when the main window title is a shared Slides or Docs page, and the detector now uses Windows render-session ownership as a tie-breaker so a real Teams call can beat stale Google Meet browser titles. When Chromium render-session metadata is available, Google Meet auto-start now requires that metadata to look Meet-specific before browser audio is credited to the meeting, which helps prevent music or video playback in the same browser from triggering a false Meet recording. Bare Teams shell titles such as `Chat | Microsoft Teams` are now ignored safely instead of crashing the detection loop. When microphone capture is on, the published audio path now also ducks low-level mic bleed under strong loopback audio so speaker playback is less likely to create echo. If an auto-started recording is first labeled from stale Google Meet browser evidence and a stronger Teams in-call window plus audio source shows up afterward, the app now reclassifies the live session in place instead of stopping and starting a second recording.
 3. If the call is in Zoom, Webex, or another conferencing app, click `Start Recording` manually.
-4. Optionally type a better meeting title on Home while recording.
+4. Optionally type a better meeting title, client / project, and comma- or semicolon-delimited key attendees on Home while recording.
 5. Stop the recording, or let auto-stop trigger.
 6. Confirm the final title is reflected in the published filename stem.
 
@@ -455,6 +522,8 @@ Important behavior:
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, and retry-transcript actions
 - split and lower-confidence actions stay manual
+- on first launch after the updated build, the one-time published repair pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, not just a single adjacent pair
+- repaired merged publishes now show duration from the repaired artifact itself when the preserved original stem would otherwise point back to stale manifest timing
 - dismissed recommendations stay hidden until the underlying meeting data changes enough to produce a new recommendation fingerprint
 
 Archive output is user-recoverable. The app moves artifacts into timestamped folders under `Documents\Meetings\Archive` instead of permanently deleting them. Current builds also treat older top-level folders such as `ArchivedRepairs`, `ArchivedFalseStarts`, and `ArchivedGenericCleanup` as legacy inputs that can be consolidated under the single `Archive` root.
@@ -466,6 +535,7 @@ The Meetings tab now keeps a focused meeting inspector and quick actions visible
 Meetings workspace behavior:
 
 - grouped view is now the default for current releases, including a one-time migration for older configs
+- grouped browsing can now pivot by client / project and attendee as well as time, platform, and status
 - grouped browsing opens only the first visible group by default and keeps the rest collapsed until you expand them
 - `Expand All` and `Collapse All` appear when grouped browsing is active
 - meeting timestamps in the list and inspector use the local system time zone with the current short date/time format
@@ -580,8 +650,12 @@ What the current app does:
 - if the prior instance is still shutting down after an install or update handoff, a new launch now gives that shutdown a longer final grace window before it shows the warning
 - if a recording or background transcript-processing job is active, the app now defers installer shutdown instead of letting an update forcibly close the current session
 - if queued transcript processing faults while the app is closing, shutdown now logs and ignores that queued-worker failure instead of leaving a headless background process behind
+- if older queue items were stranded in `Processing` after transcription had already finished, the next startup now repairs those stale manifests automatically, keeps the saved transcript snapshot, and requeues them once without speaker labels so the backlog can drain without manual manifest editing or repeated full retranscription
 - when shutdown cleanup finishes, the app now explicitly tears down any header surfaces and requests full WPF application shutdown instead of relying only on the main window close path
-- same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt
+- automatic update handoff now requests a full application shutdown instead of only closing the main window, so modeless header surfaces cannot keep the process alive after the window disappears
+- app exit no longer blocks the UI thread waiting on the activation and installer-shutdown monitor tasks, which prevents a closed window from turning into a stuck headless background process
+- same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt when you launch them manually
+- background auto-install and pending-update retry only run for true version upgrades, so republished same-version builds do not immediately relaunch the updater against a still-running app
 
 If you still see the warning:
 
@@ -597,6 +671,8 @@ What the current app does:
 
 - it can use a matching Outlook appointment as a fallback title source
 - it can also persist attendee names from that appointment into the session manifest and published transcript JSON when the meeting can be matched successfully, including post-publish backfill for meetings that were listed without attendee metadata
+- it only binds to an already-running Outlook session and keeps the lookup best-effort, so the app no longer tries to spin up extra hidden Outlook automation sessions on its own
+- it runs that Outlook read on a short-lived STA-bound lookup with per-day caching, concurrent-read coalescing, and temporary backoff after timeouts or other Outlook failures, so queue processing and live detection can keep moving if Outlook is unhealthy
 - if Outlook is unavailable or the appointment cannot be matched confidently, recording and processing continue without attendee metadata
 
 ### Teams live attendee capture did not add attendees
@@ -620,7 +696,7 @@ If that happens, the recording and transcript still complete normally; you just 
 
 ### The meeting recorded speaker audio but not the mic
 
-Make sure `Enable microphone capture` is turned on in `Settings > General` before starting the next recording. That setting applies on the next recording, not mid-session.
+Make sure `Enable microphone capture` is turned on in `Settings > General` before starting the next recording. You can also change it during an active recording from `Home` or `Settings`; the change applies from that moment forward and also becomes the new default for future recordings.
 
 ### Will this work with Zoom, Webex, or another conferencing app?
 

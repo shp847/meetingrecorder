@@ -69,6 +69,75 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RepairKnownIssuesAsync_Merges_Repeated_Split_Meeting_Chains_Into_One_Publish()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var appRoot = CreateDirectory("app");
+
+        var stems = new[]
+        {
+            "2026-03-24_170250_teams_int-globalfoundries-daily",
+            "2026-03-24_170437_teams_int-globalfoundries-daily",
+            "2026-03-24_170650_teams_int-globalfoundries-daily",
+            "2026-03-24_171019_teams_int-globalfoundries-daily",
+        };
+        var durations = new[]
+        {
+            TimeSpan.FromSeconds(96),
+            TimeSpan.FromSeconds(53),
+            TimeSpan.FromSeconds(34),
+            TimeSpan.FromSeconds(32),
+        };
+        var transcriptBodies = new[]
+        {
+            "[00:00:00 - 00:01:36] **Speaker:** First segment",
+            "[00:00:00 - 00:00:53] **Speaker:** Second segment",
+            "[00:00:00 - 00:00:34] **Speaker:** Third segment",
+            "[00:00:00 - 00:00:32] **Speaker:** Fourth segment",
+        };
+
+        for (var index = 0; index < stems.Length; index++)
+        {
+            await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{stems[index]}.wav"), durations[index]);
+            await File.WriteAllTextAsync(
+                Path.Combine(transcriptDir, $"{stems[index]}.md"),
+                string.Join(
+                    Environment.NewLine,
+                    "# [INT] GlobalFoundries daily",
+                    string.Empty,
+                    $"- Session ID: segment-{index + 1}",
+                    "- Platform: Teams",
+                    $"- Started (UTC): 2026-03-24T17:{new[] { "02:50", "04:37", "06:50", "10:19" }[index]}.0000000+00:00",
+                    string.Empty,
+                    "## Transcript",
+                    string.Empty,
+                    transcriptBodies[index]));
+        }
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
+
+        Assert.Equal(3, result.MergedSplitPairCount);
+        var mergedStem = stems[0];
+        var mergedMarkdownPath = Path.Combine(transcriptDir, $"{mergedStem}.md");
+        Assert.True(File.Exists(Path.Combine(audioDir, $"{mergedStem}.wav")));
+        Assert.True(File.Exists(mergedMarkdownPath));
+        var markdown = await File.ReadAllTextAsync(mergedMarkdownPath);
+        Assert.Contains("# [INT] GlobalFoundries daily", markdown, StringComparison.Ordinal);
+        Assert.Contains("[00:01:36 - 00:02:29] **Speaker:** Second segment", markdown, StringComparison.Ordinal);
+        Assert.Contains("[00:02:29 - 00:03:03] **Speaker:** Third segment", markdown, StringComparison.Ordinal);
+        Assert.Contains("[00:03:03 - 00:03:35] **Speaker:** Fourth segment", markdown, StringComparison.Ordinal);
+
+        for (var index = 1; index < stems.Length; index++)
+        {
+            Assert.False(File.Exists(Path.Combine(audioDir, $"{stems[index]}.wav")));
+            Assert.False(File.Exists(Path.Combine(transcriptDir, $"{stems[index]}.md")));
+        }
+
+        Assert.True(Directory.Exists(result.ArchiveDirectory));
+    }
+
+    [Fact]
     public async Task RepairKnownIssuesAsync_Archives_Editor_Window_Bogus_Published_Meetings()
     {
         var audioDir = CreateDirectory("audio");

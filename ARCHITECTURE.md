@@ -47,8 +47,16 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - WPF desktop UI
   - recording orchestration
   - local meeting detection for Teams and Google Meet, including Chromium browser tab-title inspection for visible Google Meet windows and Windows render-session audio attribution for process/window/tab tie-breaking
-  - guarded Google Meet browser-audio attribution that refuses generic Chromium playback when the render-session metadata does not point back to Meet
-  - in-place reclassification of an auto-started live session from stale Google Meet browser evidence to a stronger Teams meeting window, so the recording is preserved as one session
+- guarded Google Meet browser-audio attribution that still refuses generic Chromium playback in shared-content browser windows, but allows an explicit active `Meet - ...` top-level browser window to auto-start from browser-family audio when exact tab attribution is unavailable
+- in-place reclassification of an auto-started live session from stale Google Meet browser evidence to a stronger Teams meeting window, so the recording is preserved as one session
+- continued background detection during manual recordings so a user-started session can still reclassify in place when a stronger live Teams or Google Meet signal appears later, while auto-stop remains limited to auto-started sessions
+- same-platform live meeting takeovers for manual or already-managed sessions when a clearly different specific Teams or Google Meet call becomes the stronger detected identity later, so stale old titles do not remain pinned to the active recording
+- continuity protection for active auto-started Teams sessions when a weak unrelated Google Meet browser candidate is also visible, so quiet patches do not falsely age the Teams session into auto-stop
+- sustained specific Teams meeting-window evidence can now auto-start a quiet desktop call even before render audio rises above the normal auto-start threshold, but only when the detector can still attribute a quiet Windows audio session back to Teams instead of relying on title evidence alone
+- once an auto-started Teams session is already live, a stale same-title quiet Teams window now extends the stop timeout only for a bounded grace period instead of resetting the positive-signal clock forever, and weaker matching Teams shell/chat/share surfaces only refresh continuity when recent capture activity still exists
+- Chromium browser tab-title inspection now runs behind a short timeout and cooldown so a stuck UI Automation query on an unrelated browser window cannot starve later detection cycles
+- Windows render-session audio probing now also runs behind a short timeout and cooldown so a hung Core Audio query cannot starve later detection cycles before Teams auto-start has a chance to react
+  - resilient Teams shell-title parsing so bare navigation surfaces like `Chat | Microsoft Teams` do not crash the background detection loop
   - config editing and hot reload
   - meetings library, rename, and retry actions
   - Whisper model setup UI
@@ -57,7 +65,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - path and filename rules
   - work-manifest persistence
   - output catalog logic
-  - WAV merge and mix logic
+  - WAV merge and mix logic, including loopback-aware microphone bleed reduction during published-audio preparation
   - transcript rendering
   - publish helpers
   - Whisper model inspection, download, and import logic
@@ -69,7 +77,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - transcript and ready-marker publishing
 
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
-For self-contained release bundles, `MeetingRecorder.App` is now published as a single-file executable while `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly.
+For self-contained release bundles, `MeetingRecorder.App` is now published as a single-file executable while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
 
 ## 3. Windows Deployment Constraints
 
@@ -102,6 +110,9 @@ Secondary maintenance and support live in header-level `Settings` and `Help` sur
 
 Startup now favors shell responsiveness over full Meetings analysis. The initial load waits for the first shell render, performs a fast meeting refresh, and starts the long-lived detection/update timers only after that first paint so `Home` becomes interactive sooner. Heavier attendee enrichment, manifest inspection, and cleanup-analysis work stay deferred until `Meetings` is actually activated.
 Auto-stop now follows the same responsiveness rule: the Home console shows a visible countdown for auto-started sessions, flips into an immediate `Auto-stopping` transition when the timeout expires, and pushes attendee enrichment into the background queue so stop finalization no longer waits on Outlook lookups.
+Detection follows the same rule now: the dispatcher timer only schedules scans, the expensive window/audio probe runs off-thread, overlapping scans are skipped instead of queued, browser-tab and audio-session subprobes are both bounded by short timeouts/backoff windows, and only the final decision is applied back on the UI thread.
+Meetings refreshes are now treated as coalesced foreground-sensitive work. Config churn, stop-time publish, and similar non-urgent refresh requests can stay marked dirty while a recording is active or the user is still on `Home`, then one catch-up refresh runs automatically once `Meetings` is visible again.
+Backlog visibility is now additive to that shell responsiveness work: `MainWindow` subscribes to a queue-status snapshot from `ProcessingQueueService`, drives a compact header queue chip plus a fuller `Meetings` processing strip from the latest in-memory snapshot, and uses a dedicated 1-second UI timer only to refresh relative elapsed/ETA strings without rescanning manifests on every tick.
 
 ### Home
 
@@ -109,22 +120,30 @@ Responsibilities:
 
 - show the current shell status through the header-level status capsule
 - keep the editable session metadata visible
+- surface a live elapsed recording timer while capture is active
 - render the live audio graph inside a single recording console
 - expose manual start and stop controls
 - expose immediate-save quick settings for microphone capture and auto-detection
+- apply microphone capture changes to the active recording from the save/click moment forward while also updating the saved default
 - clarify that manual recording works beyond Teams and Google Meet, while auto-detection is narrower
 - allow editing the current meeting title, client/project, and key attendees while recording
+- persist client/project and key-attendee edits back into the active session during recording instead of waiting only for stop-time publish
+- parse comma- or semicolon-delimited key attendees into separate stored attendee names before later Teams/Outlook reconciliation upgrades them
+- let a manually started recording adopt meeting-lifecycle auto-stop once it is strongly reclassified to a supported Teams or Google Meet call, so unrelated post-call system audio does not leak into the same session
+- reset the current meeting title draft to the new detected meeting title when a clearly different supported call takes over the active session, so the editor reflects the live meeting identity instead of preserving a stale prior call label
 - keep setup, update, and warning actions out of the Home body so the recording deck stays visually simple
 
 ### Meetings
 
 Responsibilities:
 
-- list published meetings from output artifacts
+- list published meetings from output artifacts and surface recent ended work-session manifests when publish artifacts are still missing
 - provide a toolbar-driven workspace with search, explicit sorting, and a default grouped view that older configs are migrated into once
-- support grouped browsing by week, month, platform, or status without changing the underlying meeting source
+- support grouped browsing by week, month, platform, status, client / project, or attendee without changing the underlying meeting source
 - initialize grouped browsing with only the first visible group expanded, keep the rest collapsed, and offer explicit `Expand All` and `Collapse All` controls when grouping is active
 - publish the baseline meeting list immediately, then defer cleanup suggestion analysis and attendee enrichment so opening `Meetings` does not block the shell
+- avoid awaiting routine catalog refreshes on the stop path or on unrelated config saves; those now flow through the same deferred refresh coalescer
+- show queue state, pause reason, remaining count, current processing stage, and approximate current-item plus overall queue ETA in a compact technical strip above the Meetings toolbar
 - surface title, project, local started time, duration, platform, status, and compact audio/transcript actions
 - let search match title, project, key attendees, and captured attendee names
 - surface cleanup recommendation badges independently from publish status
@@ -143,16 +162,15 @@ Responsibilities:
 - split setup into dedicated `Transcription` and `Speaker labeling` sections
 - stay focused on capability readiness only, while pointing behavior, storage, updates, and troubleshooting back to `Settings`
 - keep transcription in one consolidated setup section instead of split recommendation panels
-- show the configured Whisper model path and validate the current model file
-- show `Missing`, `Invalid`, or `Ready` status
-- list downloadable GitHub model assets and discovered local model files
-- allow choosing which local model is active
-- allow `Download Recommended Model` and `Import Existing File`
+- drive both capabilities from a shipped curated model catalog with `Standard`, `Higher Accuracy`, and `Custom` profile states
+- default the lay-user flow to `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics actions instead of raw path editing
+- show `Needs setup`, `Standard ready`, `Higher Accuracy ready`, or `Custom ready` status plus retry guidance when an optional Higher Accuracy install-time download fell back to Standard
+- keep raw storage paths read-only in the normal settings flow and tuck infrastructure-heavy details under diagnostics-oriented surfaces
 - keep speaker labeling optional and separate from core transcription readiness
 - use GitHub as the only built-in automatic download source for Whisper models and speaker-labeling assets
 - open bundled local setup help first for speaker labeling, then fall back to GitHub guidance if the local guide is unavailable
 - show curated alternate public speaker-labeling download locations when configured, or an explicit empty state when none are available
-- provide quick access to model and diarization asset folders plus advanced raw-path details
+- provide quick access to model and diarization asset folders plus advanced diagnostics
 
 ### Settings and Help
 
@@ -163,6 +181,8 @@ Responsibilities:
 - use a dedicated section-button strip instead of a custom clipped tab header template
 - group capability readiness under `Setup`, everyday defaults under `General` and `Files`, and release/troubleshooting paths under `Updates` and `Advanced`
 - make the distinction from `Setup` explicit in copy: `Setup` is for readiness, while the other Settings sections are for behavior, storage, updates, and troubleshooting
+- expose mode-based performance controls in `Advanced` instead of raw numeric worker knobs
+- default those performance controls to `Responsive` background work plus `Deferred` speaker labeling so the app biases toward machine responsiveness first
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
 - expose About details, setup/help entry points, logs/data shortcuts, and release-page links from the header-level `Help` dialog
@@ -190,9 +210,18 @@ The durable session lifecycle uses these states:
 5. The UI launches the worker with the manifest path and config path.
    For single-file app installs, worker discovery prefers the installed app directory derived from `Environment.ProcessPath` instead of the transient `.net` extraction directory behind `AppContext.BaseDirectory`.
 6. The worker loads the manifest, merges audio, and publishes the final WAV.
-7. If transcription succeeds, transcript artifacts are rendered and published.
-8. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
-9. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
+7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
+8. If speaker labeling succeeds, transcript artifacts are rendered and published from the labeled segments.
+9. If optional speaker labeling crashes the worker process, the queue stamps the manifest with an internal skip-label override and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
+10. On startup, the queue also scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
+11. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
+12. In `Responsive` mode, new background queue work pauses while a live recording is active, worker launches run at reduced OS priority, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`.
+13. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound.
+14. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
+15. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
+16. `ProcessingQueueService` now maintains an immutable queue-status snapshot with exact in-memory queued counts, current-item stage metadata, pause reason, and approximate ETA estimates, and it publishes those status changes to the shell without adding new queue controls or changing the actual pause rules.
+16. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
+17. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
 
 ## 6. Work Folders and Persistence
 
@@ -202,6 +231,8 @@ Each session has a dedicated work folder:
 - `<workDir>\<session-id>\raw\`
 - `<workDir>\<session-id>\processing\`
 - `<workDir>\<session-id>\logs\`
+
+The processing folder now also carries a fixed `transcription.snapshot.json` sidecar whenever transcription finishes successfully, so repaired retries can continue from the saved transcript text even when a later optional diarization step crashes the worker.
 
 `manifest.json` is the durable source of truth for:
 
@@ -216,23 +247,26 @@ Each session has a dedicated work folder:
 - raw chunk paths
 - microphone chunk paths
 - processing overrides
+- whether speaker labeling should be skipped for a repaired or recovered processing run
 - processing metadata such as the transcription model file name used and whether speaker labels were present
 - processing state
 - error summary
 
 The Meetings tab uses the shared filename stem to reconnect published output files back to their work manifests when those manifests still exist.
+If a stale imported-source reprocessing manifest survives for a published stem, the catalog prefers the artifact-backed published row over that queued manifest state so the meeting remains openable and truthful in the UI.
 If the original work manifest is missing but the published audio file still exists, the app can synthesize a new queued manifest in the work folder to support transcript regeneration.
 
 Published transcript JSON sidecars now also persist attendee, project, key-attendee, detected-audio-source, and processing metadata so meeting rows can still recover those details even when the original work manifest is gone.
 
 When Outlook appointment matching succeeds, the queue can stamp calendar attendee metadata into the manifest before publish so both the raw attendee list and the curated key-attendee list survive into the published transcript JSON sidecar as durable fallbacks without slowing down the foreground stop action.
 
-The Meetings workspace can also perform a best-effort Outlook attendee backfill pass for listed meetings that still lack attendee metadata but retain enough timing and platform context to match a calendar item. That merged attendee metadata is persisted back into the meeting manifest and transcript sidecars when possible.
+The Meetings workspace can also perform a best-effort Outlook attendee backfill pass for listed meetings that still lack attendee metadata but retain enough timing and platform context to match a calendar item. That merged attendee metadata is persisted back into the meeting manifest and transcript sidecars when possible, but only when the matched calendar item still looks like the same meeting by title or attendee identity so unrelated overlapping appointments do not pollute a published meeting row.
 That backfill now runs recent-first in background batches, keeps the list visible while enrichment is in flight, and stores a managed-data no-match cache under `%LOCALAPPDATA%\MeetingRecorder\cache` so unchanged historical misses are not retried on every Meetings refresh.
 
 During active Teams recordings, the app can also attempt best-effort live attendee capture through Windows UI Automation. That capture runs off the UI thread on a bounded polling cadence, merges discovered names into the active manifest, and soft-fails without affecting recording stability when Teams does not expose a usable roster tree.
 
 Outlook attendee backfill and live Teams roster capture are both gated by a default-on config flag so users can disable attendee enrichment without turning off calendar title fallback.
+The Outlook calendar provider now keeps a per-day in-memory appointment cache so repeated live title fallback checks and same-day attendee backfill reads can reuse one Outlook calendar snapshot instead of repeatedly reopening COM automation work. If Outlook throws during one of those reads, the provider enters a temporary backoff window and soft-fails subsequent requests until that backoff expires.
 
 ## 6.1 Meeting Cleanup Recommendation System
 
@@ -244,6 +278,8 @@ Core pieces:
   - inspects published meetings using artifact presence, manifest evidence, detection history, transcript state, and narrow audio-identity checks
 - `MeetingCleanupExecutionService`
   - executes archive, merge, rename, and other recommended cleanup actions
+- `PublishedMeetingRepairService`
+- runs a versioned one-time repair pass on startup, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, and relies on repaired artifact duration instead of stale reused-stem manifest timing when cataloging those repaired publishes
 - persistent dismissed recommendation state in `AppConfig`
   - keeps the system unobtrusive until the underlying meeting changes enough to produce a new fingerprint
 
@@ -418,7 +454,8 @@ That bootstrap path:
 - runs `AppPlatform.Deployment.Cli` from the downloaded bundle
 - expects the WPF shell itself to be present as a single-file `MeetingRecorder.App.exe` rather than a loose `MeetingRecorder.App.dll/.deps.json/.runtimeconfig.json` trio
 - resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so a single-file app launch does not look for `AppPlatform.Deployment.Cli.exe` under the transient `.net` extraction directory
-- only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt
+- only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt when explicitly launched
+- only auto-installs or auto-retries pending updates when the release is newer by semantic version, so republished same-version builds cannot create a self-update loop after an installer relaunch
 - validates `bundle-integrity.json` before the managed install root is changed
 - persists install provenance under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`
 - preserves the existing install `data` folder on update installs instead of reimplementing install logic in PowerShell
@@ -458,6 +495,10 @@ That MSI path:
 - avoids `Program Files` and per-machine scope
 - adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `Documents\MeetingRecorder`
 - keeps writable runtime data outside the installed binaries
+- seeds the included Standard transcription and Standard speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
+- shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
+- invokes the installed `AppPlatform.Deployment.Cli provision-models` step after file copy so provisioning and later update repair share one model-management path
+- keeps the install successful when optional Higher Accuracy downloads fail, records a one-time retry-needed result, and leaves Standard active
 - enables verbose Windows Installer logging by default for direct MSI troubleshooting
 - schedules `ARPINSTALLLOCATION` through WiX property-setting instead of a raw property literal reference
 - suppresses `ICE91` only because the package is intentionally per-user-only and targets user-profile directories

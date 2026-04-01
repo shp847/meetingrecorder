@@ -146,6 +146,24 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void DeployLocalScript_Is_Disabled_To_Force_Msi_And_InApp_Update_Testing()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Deploy-Local.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected local deploy script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Local repo deployments are disabled", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("in-app update path", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"install-bundle\"", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void InstallLatestFromGitHubCommandWrapper_Uses_RuntimeSafe_ErrorLevel_Handling_In_The_LocalScript_Path()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -200,6 +218,22 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void PortableLauncherScript_Suppresses_Optional_Dependency_Warnings_During_Normal_Startup()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Run-MeetingRecorder.cmd");
+
+        Assert.True(File.Exists(scriptPath), $"Expected launcher script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("-SuppressOptionalWarnings", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("-QuietSuccess", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void InstallerRelaunchLauncher_Sets_The_Installer_Relaunch_Environment_Variable_Before_Starting_The_App()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -236,7 +270,47 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void PublishPortableScript_Merges_Worker_Runtime_Contents_Without_Nesting_A_Second_Runtimes_Directory()
+    public void CheckDependenciesScript_Fails_Clearly_When_The_ProcessingWorker_Payload_Is_Incomplete()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Check-Dependencies.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected dependency script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("MeetingRecorder.ProcessingWorker.exe", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.deps.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.runtimeconfig.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.Core.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Missing required processing worker payload", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CheckDependenciesScript_Can_Suppress_Optional_Model_Warnings_And_Success_Output_For_Normal_Startup()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Check-Dependencies.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected dependency script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("[switch]$SuppressOptionalWarnings", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("[switch]$QuietSuccess", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("if (-not $SuppressOptionalWarnings)", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("if (-not $QuietSuccess)", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("no Whisper model files were found", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Dependency check passed. Bundle mode:", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishPortableScript_Copies_The_Worker_Publish_Output_Recursively_Without_Manual_Runtimes_Merging()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -247,9 +321,9 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains("Join-Path $workerTemp \"runtimes\"", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Join-Path $finalPath \"runtimes\"", scriptContents, StringComparison.Ordinal);
-        Assert.DoesNotContain("Destination (Join-Path $finalPath $_.Name)", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -Path (Join-Path $workerTemp \"*\") -Destination $finalPath -Recurse -Force", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Join-Path $workerTemp \"runtimes\"", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Join-Path $finalPath \"runtimes\"", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -269,9 +343,49 @@ public sealed class InstallerScriptTests
         Assert.Contains("MeetingRecorder.App.exe", scriptContents, StringComparison.Ordinal);
         Assert.Contains("AppPlatform.Deployment.Cli.exe", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.ProcessingWorker.exe", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.deps.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.runtimeconfig.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.Core.dll", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.product.json", scriptContents, StringComparison.Ordinal);
         Assert.Contains("$productManifestPath", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Copy-Item -Path $productManifestPath", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishPortableScript_Bundles_The_Curated_Model_Catalog_And_Offline_Standard_Model_Seeds()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected publish script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("model-catalog.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Read-ModelCatalog", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Copy-BundledStandardModelSeedAssets", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$modelCatalog.transcription.standardIncluded.seedRelativePath", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$modelCatalog.speakerLabeling.standardIncluded.seedRelativePath", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishPortableScript_Copies_The_Full_Worker_Publish_Output_Into_The_Final_Bundle()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected publish script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Copy-Item -Path (Join-Path $workerTemp \"*\") -Destination $finalPath -Recurse -Force", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("$workerArtifacts = @(", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -366,6 +480,24 @@ public sealed class InstallerScriptTests
         Assert.Contains("$msiBuildOutputPath = Join-Path $packagePath \"msi-build\"", scriptContents, StringComparison.Ordinal);
         Assert.Contains("-OutputDirectory $msiBuildOutputPath", scriptContents, StringComparison.Ordinal);
         Assert.DoesNotContain("-OutputDirectory $msiTemp", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstallerScript_Publishes_HigherAccuracy_Model_Assets_As_Separate_Stable_Release_Files()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Installer.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected installer build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Publish-HighAccuracyReleaseAssets", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.transcription.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.speakerLabeling.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Publish-StableAsset", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -565,30 +697,23 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void DeployLocalScript_Uses_The_Published_Bundle_And_Verifies_Deployed_Output()
+    public void DeployLocalCommandWrapper_Runs_The_Disabled_Local_Deploy_Script_With_ExecutionPolicy_Bypass()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
         var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
-        var scriptPath = Path.Combine(repoRoot, "scripts", "Deploy-Local.ps1");
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Deploy-Local.cmd");
 
-        Assert.True(File.Exists(scriptPath), $"Expected local deploy script at '{scriptPath}'.");
+        Assert.True(File.Exists(scriptPath), $"Expected local deploy wrapper at '{scriptPath}'.");
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains(".artifacts\\publish\\win-x64\\MeetingRecorder", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Publish-Portable.ps1", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("\"install-bundle\"", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("MeetingRecorder.product.json", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("MeetingRecorder.App.exe", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Get-FileHash", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Meeting Recorder.lnk", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("CreateShortcut($ShortcutPath)", scriptContents, StringComparison.Ordinal);
-        Assert.DoesNotContain("MeetingRecorder.App.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("set \"SCRIPT_DIR=%~dp0\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("powershell -ExecutionPolicy Bypass -File \"%SCRIPT_DIR%Deploy-Local.ps1\" %*", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DeployLocalScript_Detects_Unexpected_Running_App_Instances_Outside_The_Canonical_Install()
+    public void DeployLocalScript_Explains_Which_Paths_To_Use_Instead()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -599,9 +724,26 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains("Unexpected running app instance", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("canonical install", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Get-Process -Name \"MeetingRecorder.App\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Use MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("use the in-app update path", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("publishing validation", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeployLocalScript_Removes_The_Previous_Local_Deploy_Implementation()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Deploy-Local.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected local deploy script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.DoesNotContain("Get-FileHash", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateShortcut($ShortcutPath)", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-Process -Name \"MeetingRecorder.App\"", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
