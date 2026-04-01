@@ -585,6 +585,22 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void UploadReleaseAssetsScript_Configures_Infinite_WebRequest_Timeouts_For_Large_Asset_Uploads()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Upload-ReleaseAssets.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected release upload script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("$request.Timeout = [System.Threading.Timeout]::Infinite", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$request.ReadWriteTimeout = [System.Threading.Timeout]::Infinite", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void UploadReleaseAssetsScript_Polls_And_Prints_Coarse_Upload_Progress_Snapshots()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

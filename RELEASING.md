@@ -152,6 +152,8 @@ scripts\Upload-ReleaseAssets.cmd -DryRun
 
 The upload helper now queues changed GitHub assets in parallel and prints coarse `Upload progress:` snapshots while larger files are in flight, instead of the very noisy per-chunk PowerShell web progress output.
 
+Large uploads now force infinite request and read/write timeouts inside the background upload workers, so the main release ZIP and MSI are not canceled by the default .NET web-request timeout on slower corporate links.
+
 It also validates `release-source.json` before upload, so it will fail fast instead of publishing stale `.artifacts` from an older build.
 
 The command wrapper now normalizes its working directory before invoking `cmd.exe`/PowerShell, which avoids the Codex app `\\?\C:\...` current-directory issue.

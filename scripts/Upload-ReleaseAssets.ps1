@@ -374,6 +374,8 @@ function Start-GitHubReleaseAssetUploadJob {
         $request.UserAgent = "MeetingRecorderInstallerUpload/$RepoInformationalVersion"
         $request.ContentType = "application/octet-stream"
         $request.ContentLength = $fileInfo.Length
+        $request.Timeout = [System.Threading.Timeout]::Infinite
+        $request.ReadWriteTimeout = [System.Threading.Timeout]::Infinite
         $request.Headers["Authorization"] = "Bearer $Token"
         $request.Headers["X-GitHub-Api-Version"] = "2022-11-28"
 
