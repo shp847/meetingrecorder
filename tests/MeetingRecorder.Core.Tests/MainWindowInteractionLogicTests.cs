@@ -200,6 +200,69 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void GetEligibleActiveSessionReclassification_Returns_The_Detected_Teams_Decision_For_A_Quiet_Manual_Takeover()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "HR Track: IonQ/SkyWater Integration | anonymous",
+            Signals:
+            [
+                new DetectionSignal("window-title", "HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; window=HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams; process=ms-teams; peak=0.000; confidence=Medium", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var reclassification = MainWindowInteractionLogic.GetEligibleActiveSessionReclassification(
+            decision,
+            MeetingPlatform.Manual,
+            "Manual session 2026-04-01 14:09",
+            policy);
+
+        Assert.Same(decision, reclassification);
+    }
+
+    [Fact]
+    public void GetEligibleActiveSessionReclassification_Returns_Null_When_The_Current_Detection_Does_Not_Qualify()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: false,
+            ShouldKeepRecording: false,
+            Confidence: 0.15d,
+            SessionTitle: "Google Meet and 28 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Google Meet and 28 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Google Meet and 28 more pages - Work - Microsoft Edge", 0.15d, now),
+            ],
+            Reason: "Detection confidence did not meet the recording threshold.");
+
+        var reclassification = MainWindowInteractionLogic.GetEligibleActiveSessionReclassification(
+            decision,
+            MeetingPlatform.Manual,
+            "Manual session 2026-04-01 14:09",
+            policy);
+
+        Assert.Null(reclassification);
+    }
+
+    [Fact]
     public void ShouldRefreshMeetingCatalogForConfigChange_Returns_False_For_Runtime_Only_Config_Changes()
     {
         var previous = new AppConfig

@@ -439,6 +439,8 @@ Settings available there include:
 
 Use `Help` from the header when you need About details, the bundled setup guide, logs/data folder shortcuts, or the release page.
 
+On `Home`, the active session title, `Client / project`, and `Key attendees` fields all stay editable during a live recording, including a recording you started manually.
+
 For auto-started Teams recordings, the app can briefly tolerate quiet patches and reduced meeting surfaces such as compact view, sharing controls, or a matching chat/navigation surface. If the actual meeting window disappears entirely, a lingering `ms-teams` background process by itself is no longer treated as enough evidence to keep the recording running.
 If the active Teams title stays on screen after the call ends, microphone-only activity is no longer treated as a forever-positive keep-alive. The session now needs recent Teams render activity to keep refreshing the quiet-call grace window, and an official Teams path can also veto stale shell continuity when it reports that no current meeting is active, so recordings stop instead of drifting into long post-call silence.
 
@@ -652,7 +654,7 @@ What the current app does:
 - it can use a matching Outlook appointment as a fallback title source
 - it can also persist attendee names from that appointment into the session manifest and published transcript JSON when the meeting can be matched successfully, including post-publish backfill for meetings that were listed without attendee metadata
 - it only binds to an already-running Outlook session and keeps the lookup best-effort, so the app no longer tries to spin up extra hidden Outlook automation sessions on its own
-- it runs that Outlook read on a short-lived STA-bound lookup with per-day caching, concurrent-read coalescing, and temporary backoff after timeouts or other Outlook failures, so queue processing and live detection can keep moving if Outlook is unhealthy
+- it runs that Outlook read on a short-lived STA-bound lookup with per-day caching, concurrent-read coalescing, a restricted time-window query, cancellation for timed-out background reads, and temporary backoff after timeouts or other Outlook failures, so queue processing and live detection can keep moving if Outlook is unhealthy
 - if Outlook is unavailable or the appointment cannot be matched confidently, recording and processing continue without attendee metadata
 
 ### Teams live attendee capture did not add attendees

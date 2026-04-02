@@ -2,6 +2,7 @@ using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using NAudio.CoreAudioApi;
 using System.Diagnostics;
 using System.Threading;
 
@@ -50,6 +51,51 @@ public sealed class WindowMeetingDetectorTests
             "Detection confidence met the recording threshold and active system audio was present.");
 
         var result = WindowMeetingDetector.IsBetterCandidate(googleMeetCandidate, teamsCandidate);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public void IsBetterCandidate_Prefers_Specific_Teams_Candidate_With_Attributed_Audio_Over_Unattributed_GoogleMeet_Browser_Candidate()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var googleMeetCandidate = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            true,
+            true,
+            1d,
+            "Meet - mna-sfqg-htr",
+            new[]
+            {
+                new DetectionSignal("window-title", "Meet - mna-sfqg-htr", 0.85d, timestamp),
+                new DetectionSignal("browser-window", "Meet - mna-sfqg-htr", 0.15d, timestamp),
+                new DetectionSignal("audio-browser-unverified", "Display Audio; peak=0.391; status=active", 0.2d, timestamp),
+            },
+            "Detection confidence met the recording threshold and active system audio was present.");
+        var teamsAudioSource = new DetectedAudioSource(
+            "Microsoft Teams",
+            "HR Kickoff Plan | anonymous | Microsoft Teams",
+            null,
+            AudioSourceMatchKind.Process,
+            AudioSourceConfidence.Medium,
+            timestamp);
+        var teamsCandidate = new DetectionDecision(
+            MeetingPlatform.Teams,
+            true,
+            true,
+            1d,
+            "HR Kickoff Plan | anonymous",
+            new[]
+            {
+                new DetectionSignal("window-title", "HR Kickoff Plan | anonymous | Microsoft Teams", 0.85d, timestamp),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, timestamp),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, timestamp),
+                new DetectionSignal("audio-process", "Microsoft Teams; window=HR Kickoff Plan | anonymous | Microsoft Teams; process=ms-teams; peak=0.412; confidence=Medium", 0.15d, timestamp),
+            },
+            "Detection confidence met the recording threshold and active system audio was present.",
+            teamsAudioSource);
+
+        var result = WindowMeetingDetector.IsBetterCandidate(teamsCandidate, googleMeetCandidate);
 
         Assert.True(result);
     }
@@ -593,6 +639,48 @@ public sealed class WindowMeetingDetectorTests
         Assert.True(result.ShouldKeepRecording);
         Assert.False(result.ShouldStart);
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"Expected detector to time out audio probing quickly, but it took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public void SystemAudioActivityProbe_Combines_Communications_Render_Sessions_When_The_Multimedia_Endpoint_Is_Quiet()
+    {
+        var multimediaSnapshot = new AudioSourceAttributionSnapshot(
+            "Display Audio",
+            0d,
+            false,
+            "below-threshold",
+            Array.Empty<AudioSourceSessionSnapshot>(),
+            null);
+        var communicationsSnapshot = new AudioSourceAttributionSnapshot(
+            "Bluetooth Headset",
+            0.42d,
+            true,
+            "active",
+            new[]
+            {
+                new AudioSourceSessionSnapshot(
+                    4242,
+                    "ms-teams",
+                    0.42d,
+                    true,
+                    false,
+                    false,
+                    "Microsoft Teams",
+                    "teams-session-1"),
+            },
+            null);
+
+        var probe = new SystemAudioActivityProbe((flow, role, threshold) =>
+        {
+            Assert.Equal(DataFlow.Render, flow);
+            return role == Role.Communications ? communicationsSnapshot : multimediaSnapshot;
+        });
+
+        var result = probe.Capture(0.05d);
+
+        Assert.True(result.IsActive);
+        Assert.Equal("Bluetooth Headset", result.DeviceName);
+        Assert.Contains(result.Sessions, session => string.Equals(session.ProcessName, "ms-teams", StringComparison.OrdinalIgnoreCase));
     }
 
     private static Task<WindowMeetingDetector> CreateDetectorAsync(params MeetingWindowCandidate[] candidates)

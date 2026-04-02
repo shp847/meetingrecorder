@@ -122,8 +122,9 @@ public sealed class AutoRecordingContinuityPolicy
         MeetingPlatform activePlatform,
         string? activeSessionTitle)
     {
+        var isQuietSpecificTeamsCandidate = IsQuietSpecificTeamsMeetingCandidateCore(decision);
         if (decision is null ||
-            !decision.ShouldStart ||
+            (!decision.ShouldStart && !isQuietSpecificTeamsCandidate) ||
             activePlatform == MeetingPlatform.Unknown ||
             decision.Platform == MeetingPlatform.Unknown)
         {

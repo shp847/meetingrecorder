@@ -757,6 +757,41 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldReclassifyActiveSession_Returns_True_For_Manual_Session_When_A_Quiet_Specific_Teams_Call_Is_Detected_With_A_Matched_Teams_Audio_Source()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "HR Track: IonQ/SkyWater Integration | anonymous",
+            Signals:
+            [
+                new DetectionSignal("window-title", "HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; window=HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams; process=ms-teams; peak=0.000; confidence=Medium", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "HR Track: IonQ/SkyWater Integration | anonymous | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldReclassify = policy.ShouldReclassifyActiveSession(
+            decision,
+            MeetingPlatform.Manual,
+            activeSessionTitle: "HR Kickoff Plan");
+
+        Assert.True(shouldReclassify);
+    }
+
+    [Fact]
     public void ShouldReclassifyActiveSession_Returns_True_For_A_Different_Specific_Teams_Call_On_The_Same_Platform()
     {
         var policy = new AutoRecordingContinuityPolicy();

@@ -191,6 +191,16 @@ internal sealed class WindowMeetingDetector
         ArgumentNullException.ThrowIfNull(candidate);
         ArgumentNullException.ThrowIfNull(currentBest);
 
+        if (ShouldPreferSpecificTeamsCandidateOverUnattributedGoogleMeet(candidate, currentBest))
+        {
+            return true;
+        }
+
+        if (ShouldPreferSpecificTeamsCandidateOverUnattributedGoogleMeet(currentBest, candidate))
+        {
+            return false;
+        }
+
         var candidatePriority = GetCandidatePriority(candidate);
         var currentBestPriority = GetCandidatePriority(currentBest);
 
@@ -210,6 +220,29 @@ internal sealed class WindowMeetingDetector
         }
 
         return candidatePriority.SignalCount > currentBestPriority.SignalCount;
+    }
+
+    private static bool ShouldPreferSpecificTeamsCandidateOverUnattributedGoogleMeet(
+        DetectionDecision candidate,
+        DetectionDecision other)
+    {
+        return candidate.Platform == MeetingPlatform.Teams &&
+            other.Platform == MeetingPlatform.GoogleMeet &&
+            candidate.ShouldKeepRecording &&
+            HasSpecificSessionTitle(candidate) &&
+            HasTeamsRenderEvidence(candidate) &&
+            !HasAttributedGoogleMeetAudio(other);
+    }
+
+    private static bool HasAttributedGoogleMeetAudio(DetectionDecision decision)
+    {
+        return decision.Platform == MeetingPlatform.GoogleMeet &&
+            decision.DetectedAudioSource is
+            {
+                AppName: var appName,
+                MatchKind: not AudioSourceMatchKind.EndpointFallback,
+            } &&
+            string.Equals(appName, "Google Meet", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static IReadOnlyList<MeetingWindowCandidate> EnumerateCandidateWindows()
@@ -1240,9 +1273,23 @@ internal interface IAudioActivityProbe
 
 internal sealed class SystemAudioActivityProbe : IAudioActivityProbe
 {
+    private readonly Func<DataFlow, Role, double, AudioSourceAttributionSnapshot> _captureDefaultEndpoint;
+
+    public SystemAudioActivityProbe()
+        : this(AudioActivityProbeSupport.CaptureDefaultEndpoint)
+    {
+    }
+
+    internal SystemAudioActivityProbe(Func<DataFlow, Role, double, AudioSourceAttributionSnapshot> captureDefaultEndpoint)
+    {
+        _captureDefaultEndpoint = captureDefaultEndpoint ?? throw new ArgumentNullException(nameof(captureDefaultEndpoint));
+    }
+
     public AudioSourceAttributionSnapshot Capture(double threshold)
     {
-        return AudioActivityProbeSupport.CaptureDefaultEndpoint(DataFlow.Render, Role.Multimedia, threshold);
+        var multimediaSnapshot = _captureDefaultEndpoint(DataFlow.Render, Role.Multimedia, threshold);
+        var communicationsSnapshot = _captureDefaultEndpoint(DataFlow.Render, Role.Communications, threshold);
+        return AudioActivityProbeSupport.MergeRenderSnapshots(multimediaSnapshot, communicationsSnapshot);
     }
 }
 
@@ -1263,6 +1310,35 @@ internal sealed class SystemMicrophoneActivityProbe : IAudioActivityProbe
 
 internal static class AudioActivityProbeSupport
 {
+    internal static AudioSourceAttributionSnapshot MergeRenderSnapshots(
+        AudioSourceAttributionSnapshot multimediaSnapshot,
+        AudioSourceAttributionSnapshot communicationsSnapshot)
+    {
+        ArgumentNullException.ThrowIfNull(multimediaSnapshot);
+        ArgumentNullException.ThrowIfNull(communicationsSnapshot);
+
+        var preferredSnapshot = ShouldPreferRenderSnapshot(communicationsSnapshot, multimediaSnapshot)
+            ? communicationsSnapshot
+            : multimediaSnapshot;
+        var mergedSessions = MergeSessions(multimediaSnapshot.Sessions, communicationsSnapshot.Sessions);
+        var mergedEndpointPeakLevel = Math.Max(multimediaSnapshot.EndpointPeakLevel, communicationsSnapshot.EndpointPeakLevel);
+        var mergedIsEndpointActive = multimediaSnapshot.IsEndpointActive || communicationsSnapshot.IsEndpointActive;
+        var mergedStatusDetail = !string.IsNullOrWhiteSpace(preferredSnapshot.StatusDetail)
+            ? preferredSnapshot.StatusDetail
+            : string.IsNullOrWhiteSpace(multimediaSnapshot.StatusDetail)
+                ? communicationsSnapshot.StatusDetail
+                : multimediaSnapshot.StatusDetail;
+        var mergedMatch = preferredSnapshot.Match ?? multimediaSnapshot.Match ?? communicationsSnapshot.Match;
+
+        return new AudioSourceAttributionSnapshot(
+            preferredSnapshot.DeviceName,
+            mergedEndpointPeakLevel,
+            mergedIsEndpointActive,
+            mergedStatusDetail,
+            mergedSessions,
+            mergedMatch);
+    }
+
     public static AudioSourceAttributionSnapshot CaptureDefaultEndpoint(DataFlow flow, Role role, double threshold)
     {
         try
@@ -1399,5 +1475,121 @@ internal static class AudioActivityProbeSupport
         {
             return null;
         }
+    }
+
+    private static bool ShouldPreferRenderSnapshot(
+        AudioSourceAttributionSnapshot candidate,
+        AudioSourceAttributionSnapshot current)
+    {
+        var candidateActiveSessionCount = CountRelevantActiveSessions(candidate);
+        var currentActiveSessionCount = CountRelevantActiveSessions(current);
+        if (candidateActiveSessionCount != currentActiveSessionCount)
+        {
+            return candidateActiveSessionCount > currentActiveSessionCount;
+        }
+
+        if (candidate.IsEndpointActive != current.IsEndpointActive)
+        {
+            return candidate.IsEndpointActive;
+        }
+
+        if (Math.Abs(candidate.EndpointPeakLevel - current.EndpointPeakLevel) > 0.0001d)
+        {
+            return candidate.EndpointPeakLevel > current.EndpointPeakLevel;
+        }
+
+        if (candidate.Match is not null && current.Match is null)
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.DeviceName) && string.IsNullOrWhiteSpace(current.DeviceName))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static int CountRelevantActiveSessions(AudioSourceAttributionSnapshot snapshot)
+    {
+        var count = 0;
+        foreach (var session in snapshot.Sessions)
+        {
+            if (session.IsActive && !session.IsCurrentProcess && !session.IsSystemSounds)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static IReadOnlyList<AudioSourceSessionSnapshot> MergeSessions(
+        IReadOnlyList<AudioSourceSessionSnapshot> first,
+        IReadOnlyList<AudioSourceSessionSnapshot> second)
+    {
+        var merged = new List<AudioSourceSessionSnapshot>(first.Count + second.Count);
+
+        foreach (var session in first)
+        {
+            merged.Add(session);
+        }
+
+        foreach (var session in second)
+        {
+            var replaced = false;
+            for (var index = 0; index < merged.Count; index++)
+            {
+                if (!AreEquivalentSessions(merged[index], session))
+                {
+                    continue;
+                }
+
+                if (ShouldPreferSession(session, merged[index]))
+                {
+                    merged[index] = session;
+                }
+
+                replaced = true;
+                break;
+            }
+
+            if (!replaced)
+            {
+                merged.Add(session);
+            }
+        }
+
+        return merged;
+    }
+
+    private static bool AreEquivalentSessions(AudioSourceSessionSnapshot left, AudioSourceSessionSnapshot right)
+    {
+        return left.ProcessId == right.ProcessId &&
+            string.Equals(left.ProcessName, right.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.DisplayName, right.DisplayName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.SessionIdentifier, right.SessionIdentifier, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldPreferSession(AudioSourceSessionSnapshot candidate, AudioSourceSessionSnapshot current)
+    {
+        if (candidate.IsActive != current.IsActive)
+        {
+            return candidate.IsActive;
+        }
+
+        if (Math.Abs(candidate.PeakLevel - current.PeakLevel) > 0.0001d)
+        {
+            return candidate.PeakLevel > current.PeakLevel;
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.SessionIdentifier) &&
+            string.IsNullOrWhiteSpace(current.SessionIdentifier))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

@@ -147,6 +147,7 @@ public partial class MainWindow : Window
     private string? _lastDetectionFingerprint;
     private string? _lastAutoStopFingerprint;
     private DetectedAudioSource? _lastObservedDetectedAudioSource;
+    private DetectionDecision? _lastObservedDetectionDecision;
     private string? _micCaptureEnablePromptedSessionId;
     private string? _splitMeetingSuggestionStem;
     private string? _quietTeamsAutoStartFingerprint;
@@ -1325,11 +1326,13 @@ public partial class MainWindow : Window
             _logger.Log(
                 $"Detection scan completed in {stopwatch.ElapsedMilliseconds}ms. shouldRun={shouldRunMeetingDetection}, " +
                 $"result='{decision?.SessionTitle ?? string.Empty}'.");
+            _lastObservedDetectionDecision = decision;
             LogDetectionChange(decision);
             DetectionTextBlock.Text = MainWindowInteractionLogic.BuildDetectionSummary(
                 decision,
                 _liveConfig.Current.AutoDetectEnabled);
             UpdateDetectedAudioSourceSurface(decision);
+            UpdateCurrentMeetingTitleStatus();
 
             if (!_recordingCoordinator.IsRecording &&
                 _liveConfig.Current.AutoDetectEnabled &&
@@ -3513,6 +3516,8 @@ public partial class MainWindow : Window
         HomePrimaryActionButton.IsEnabled = !_recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         StopButton.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         CurrentMeetingTitleTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
+        CurrentMeetingProjectTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
+        CurrentMeetingKeyAttendeesTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         UpdateCurrentMeetingTitleStatus();
         UpdateAudioGraphTimerState();
         UpdateUpdateActionButtons();
@@ -6892,6 +6897,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        await TryApplyDeferredMeetingReclassificationAsync(activeSession, cancellationToken);
+        activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            return;
+        }
+
         var pendingTitle = CurrentMeetingTitleTextBox.Text.Trim();
         var normalizedTitle = string.IsNullOrWhiteSpace(pendingTitle)
             ? activeSession.Manifest.DetectedTitle
@@ -6966,6 +6978,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        await TryApplyDeferredMeetingReclassificationAsync(activeSession, cancellationToken);
+        activeSession = _recordingCoordinator.ActiveSession;
+        if (activeSession is null)
+        {
+            return;
+        }
+
         var normalizedProjectName = NormalizeOptionalMeetingMetadataText(CurrentMeetingProjectTextBox.Text);
         var pendingKeyAttendees = ParseDelimitedKeyAttendeesText(CurrentMeetingKeyAttendeesTextBox.Text);
         if (string.Equals(normalizedProjectName, activeSession.Manifest.ProjectName, StringComparison.Ordinal) &&
@@ -7026,7 +7045,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var stem = _pathBuilder.BuildFileStem(activeSession.Manifest.Platform, activeSession.Manifest.StartedAtUtc, pendingTitle);
+        var deferredReclassification = MainWindowInteractionLogic.GetEligibleActiveSessionReclassification(
+            _lastObservedDetectionDecision,
+            activeSession.Manifest.Platform,
+            activeSession.Manifest.DetectedTitle,
+            _autoRecordingContinuityPolicy);
+        var stemPlatform = deferredReclassification?.Platform ?? activeSession.Manifest.Platform;
+        var stem = _pathBuilder.BuildFileStem(stemPlatform, activeSession.Manifest.StartedAtUtc, pendingTitle);
         if (string.Equals(pendingTitle, activeSession.Manifest.DetectedTitle, StringComparison.Ordinal))
         {
             CurrentMeetingTitleStatusTextBlock.Text = $"Publish stem: {stem}";
@@ -7034,6 +7059,27 @@ public partial class MainWindow : Window
         }
 
         CurrentMeetingTitleStatusTextBlock.Text = $"Pending stem: {stem}. Applied when recording stops.";
+    }
+
+    private async Task<bool> TryApplyDeferredMeetingReclassificationAsync(
+        ActiveRecordingSession activeSession,
+        CancellationToken cancellationToken)
+    {
+        var deferredReclassification = MainWindowInteractionLogic.GetEligibleActiveSessionReclassification(
+            _lastObservedDetectionDecision,
+            activeSession.Manifest.Platform,
+            activeSession.Manifest.DetectedTitle,
+            _autoRecordingContinuityPolicy);
+        if (deferredReclassification is null)
+        {
+            return false;
+        }
+
+        return await TryReclassifyActiveSessionAsync(
+            activeSession,
+            deferredReclassification,
+            DateTimeOffset.UtcNow,
+            cancellationToken);
     }
 
     private void UpdateCurrentRecordingElapsedText()

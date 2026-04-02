@@ -281,6 +281,29 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
         Assert.Equal(1, source.CallCount);
     }
 
+    [Fact]
+    public void TryGetMeetingTitle_Cancels_A_Timed_Out_Outlook_Read()
+    {
+        using var cancellationObserved = new ManualResetEventSlim(false);
+        using var sourceFinished = new ManualResetEventSlim(false);
+        var source = new CancellationAwareOutlookCalendarAppointmentSource(
+            cancellationObserved,
+            sourceFinished);
+        var provider = new OutlookCalendarMeetingTitleProvider(
+            source,
+            appointmentReadTimeout: TimeSpan.FromMilliseconds(100));
+
+        var candidate = provider.TryGetMeetingTitle(
+            MeetingPlatform.Teams,
+            DateTimeOffset.Parse("2026-03-21T13:00:00Z"),
+            DateTimeOffset.Parse("2026-03-21T13:30:00Z"));
+
+        Assert.Null(candidate);
+        Assert.True(cancellationObserved.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(sourceFinished.Wait(TimeSpan.FromSeconds(2)));
+        Assert.Equal(1, source.CallCount);
+    }
+
     private sealed class StubOutlookCalendarAppointmentSource : IOutlookCalendarAppointmentSource
     {
         private readonly IReadOnlyList<OutlookCalendarAppointmentDetails> _appointments;
@@ -295,7 +318,8 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
         public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
             MeetingPlatform platform,
             DateTimeOffset startedAtUtc,
-            DateTimeOffset? endedAtUtc)
+            DateTimeOffset? endedAtUtc,
+            CancellationToken cancellationToken)
         {
             CallCount++;
             return _appointments;
@@ -309,7 +333,8 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
         public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
             MeetingPlatform platform,
             DateTimeOffset startedAtUtc,
-            DateTimeOffset? endedAtUtc)
+            DateTimeOffset? endedAtUtc,
+            CancellationToken cancellationToken)
         {
             CallCount++;
             throw new InvalidOperationException("Outlook is unavailable.");
@@ -331,7 +356,8 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
         public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
             MeetingPlatform platform,
             DateTimeOffset startedAtUtc,
-            DateTimeOffset? endedAtUtc)
+            DateTimeOffset? endedAtUtc,
+            CancellationToken cancellationToken)
         {
             ApartmentState = Thread.CurrentThread.GetApartmentState();
             return _appointments;
@@ -360,12 +386,55 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
         public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
             MeetingPlatform platform,
             DateTimeOffset startedAtUtc,
-            DateTimeOffset? endedAtUtc)
+            DateTimeOffset? endedAtUtc,
+            CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _callCount);
             _firstCallObserved.Set();
             _release.Wait();
             return _appointments;
+        }
+    }
+
+    private sealed class CancellationAwareOutlookCalendarAppointmentSource : IOutlookCalendarAppointmentSource
+    {
+        private readonly ManualResetEventSlim _cancellationObserved;
+        private readonly ManualResetEventSlim _sourceFinished;
+        private int _callCount;
+
+        public CancellationAwareOutlookCalendarAppointmentSource(
+            ManualResetEventSlim cancellationObserved,
+            ManualResetEventSlim sourceFinished)
+        {
+            _cancellationObserved = cancellationObserved;
+            _sourceFinished = sourceFinished;
+        }
+
+        public int CallCount => _callCount;
+
+        public IReadOnlyList<OutlookCalendarAppointmentDetails> ReadOverlappingAppointments(
+            MeetingPlatform platform,
+            DateTimeOffset startedAtUtc,
+            DateTimeOffset? endedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+
+            try
+            {
+                cancellationToken.WaitHandle.WaitOne();
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    _cancellationObserved.Set();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                return Array.Empty<OutlookCalendarAppointmentDetails>();
+            }
+            finally
+            {
+                _sourceFinished.Set();
+            }
         }
     }
 }

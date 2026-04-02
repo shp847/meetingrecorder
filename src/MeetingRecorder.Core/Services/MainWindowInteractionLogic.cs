@@ -154,6 +154,22 @@ internal sealed record MeetingsProcessingStripState(
 
 internal static class MainWindowInteractionLogic
 {
+    public static DetectionDecision? GetEligibleActiveSessionReclassification(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
+        AutoRecordingContinuityPolicy continuityPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(continuityPolicy);
+
+        return continuityPolicy.ShouldReclassifyActiveSession(
+                decision,
+                activePlatform,
+                activeSessionTitle)
+            ? decision
+            : null;
+    }
+
     public static bool ShouldRefreshMeetingCatalogForConfigChange(AppConfig previousConfig, AppConfig currentConfig)
     {
         ArgumentNullException.ThrowIfNull(previousConfig);
