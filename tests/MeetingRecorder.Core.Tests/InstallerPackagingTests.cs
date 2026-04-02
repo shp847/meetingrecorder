@@ -180,9 +180,33 @@ public sealed class InstallerPackagingTests
         Assert.Contains("MODEL_OPTION_TRANSCRIPTION", packageContents, StringComparison.Ordinal);
         Assert.Contains("MODEL_OPTION_SPEAKER_LABELING", packageContents, StringComparison.Ordinal);
         Assert.Contains("ModelOptionsDlg", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Standard is always installed from this package", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Retry it later from Settings > Setup", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Standard is included in this package", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Higher Accuracy", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Settings > Setup", packageContents, StringComparison.Ordinal);
         Assert.Contains("NOT Installed", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_ModelOptionsDialog_Uses_Visible_Navigation_Button_Labels_And_Clear_HigherAccuracy_Tradeoff_Copy()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("Text=\"Back\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Next\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Cancel\"", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("[ButtonText_Back]", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("[ButtonText_Next]", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("[ButtonText_Cancel]", packageContents, StringComparison.Ordinal);
+        Assert.Contains("larger download", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("slower processing", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Standard stays active", packageContents, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -199,11 +223,36 @@ public sealed class InstallerPackagingTests
 
         Assert.Contains("AppPlatform.Deployment.Cli.exe", packageContents, StringComparison.Ordinal);
         Assert.Contains("provision-models", packageContents, StringComparison.Ordinal);
-        Assert.Contains("-m", packageContents, StringComparison.Ordinal);
-        Assert.Contains("-t", packageContents, StringComparison.Ordinal);
-        Assert.Contains("-s", packageContents, StringComparison.Ordinal);
-        Assert.Contains("-l", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -i ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -m ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -t ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -s ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -l ", packageContents, StringComparison.Ordinal);
         Assert.Contains("After=\"InstallFiles\"", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_Uses_Compact_ProvisionModels_Arguments_To_Avoid_CustomAction_Target_Overflow()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains(" provision-models -i ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -m ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -t ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -s ", packageContents, StringComparison.Ordinal);
+        Assert.Contains(" -l ", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("--install-root", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("--manifest-path", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("--transcription-profile", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("--speaker-labeling-profile", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("--log-path", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

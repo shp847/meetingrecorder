@@ -19,6 +19,7 @@ That installer path:
 - keeps writable runtime data such as config, logs, models, work files, and install provenance under `%LOCALAPPDATA%\MeetingRecorder`
 - always seeds the included Standard transcription and Standard speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models` so offline installs still finish ready to use
 - shows a first-install `Choose model options` page where users can keep `Standard` or also ask setup to try one optional `Higher Accuracy` download for transcription and speaker labeling
+- explains the tradeoff clearly: `Higher Accuracy` can improve transcript or speaker-label quality, but it uses a larger download and may lead to slower processing than the included `Standard` option
 - keeps the install successful even if those optional Higher Accuracy downloads fail, then tells the user to retry later from `Settings > Setup`
 - creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%USERPROFILE%\Documents\MeetingRecorder`
 - skips the stock license-agreement page so the install flow stays short
@@ -57,6 +58,7 @@ User-facing installer and updater rule:
 - do not wait forever on app shutdown during update apply; if the running app does not exit promptly, the updater should escalate the release sequence and then fail with a clear message instead of hanging indefinitely
 - do not enumerate, close, or kill Meeting Recorder processes from installer flows; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
 - all actual install and update writes flow through `AppPlatform.Deployment.Cli`
+- the MSI post-copy `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
 
 For newer managed installs:
@@ -267,6 +269,7 @@ The shared deployment CLI now updates the managed install in place instead of re
 Managed install repair now also restores the required worker sidecar payload from the source bundle if any of those files are missing from an existing install, so queued sessions do not stay unpublished after restart because the worker cannot load `MeetingRecorder.Core.dll`.
 The actual apply/install work is now delegated to the shipped `AppPlatform.Deployment.Cli` helper so the script layer stays thin and reusable.
 That same CLI-first rule also applies after MSI-origin installs, so the app can update through the shared ZIP/CLI path without switching to MSI-based in-app patching.
+The in-app updater now filters GitHub release assets down to the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle and ignores the separately published model or speaker-labeling ZIP assets, so `Install Available Update` cannot hand a diarization bundle to `apply-update`.
 The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory instead of the temporary single-file extraction folder, so the updater can still launch correctly from the packaged managed install.
 Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches when you install it manually.
 The MSI now also allows a refreshed same-version release asset to overwrite the already-installed app binaries on reinstall, so reinstalling an updated `0.x` package does not leave the previous apphost in place.

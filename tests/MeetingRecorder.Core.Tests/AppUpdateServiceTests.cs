@@ -265,6 +265,41 @@ public sealed class AppUpdateServiceTests
         Assert.Equal("https://example.com/MeetingRecorder-v0.3-win-x64.zip", result.DownloadUrl);
     }
 
+    [Fact]
+    public async Task CheckForUpdateAsync_Ignores_Model_Bundle_Zips_When_Selecting_The_App_Update_Asset()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "v0.3",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.3",
+              "assets": [
+                {
+                  "name": "meeting-recorder-diarization-bundle-accurate-win-x64.zip",
+                  "browser_download_url": "https://example.com/meeting-recorder-diarization-bundle-accurate-win-x64.zip",
+                  "size": 95853218
+                },
+                {
+                  "name": "MeetingRecorder-v0.3-win-x64.zip",
+                  "browser_download_url": "https://example.com/MeetingRecorder-v0.3-win-x64.zip",
+                  "size": 271610979
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                AppBranding.Version,
+                AppBranding.Version,
+                null,
+                null),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal("https://example.com/MeetingRecorder-v0.3-win-x64.zip", result.DownloadUrl);
+        Assert.Equal(271610979L, result.LatestAssetSizeBytes);
+    }
+
     private sealed class FakeUpdateFeedClient : IAppUpdateFeedClient
     {
         private readonly string _responseBody;

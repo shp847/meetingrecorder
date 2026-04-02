@@ -380,7 +380,7 @@ internal static class Program
 
         foreach (var arg in args)
         {
-            if (arg.StartsWith("--", StringComparison.Ordinal))
+            if (arg.StartsWith("-", StringComparison.Ordinal) && arg.Length > 1)
             {
                 if (pendingKey is not null)
                 {

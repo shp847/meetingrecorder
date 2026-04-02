@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MeetingRecorder.Core\MeetingRecorder.Core.csproj" />
     <ProjectReference Include="..\..\src\MeetingRecorder.App\MeetingRecorder.App.csproj" />
+    <ProjectReference Include="..\..\src\AppPlatform.Deployment.Cli\AppPlatform.Deployment.Cli.csproj" />
     <ProjectReference Include="..\..\src\MeetingRecorder.Installer\MeetingRecorder.Installer.csproj" />
     <ProjectReference Include="..\..\src\MeetingRecorder.Product\MeetingRecorder.Product.csproj" />
   </ItemGroup>

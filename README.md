@@ -173,6 +173,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Automatic GitHub update checks on app startup and app shutdown when update checks are enabled
 - Pending downloaded update retry after restart when the app could not install immediately
 - CLI-only update apply flow for MSI, EXE, script, and ZIP-origin installs
+- In-app update asset selection now ignores bundled model and diarization ZIP assets on the GitHub release and only downloads the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle for apply-update handoff
 - In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so single-file app launches do not accidentally look for the updater helper inside the temporary `.net` extraction folder
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory via the running process path, so queued sessions still publish correctly from single-file installs
 - Managed install repair now restores the required worker sidecar payload if any of those files are missing from an existing install, instead of only checking for the worker `.exe`

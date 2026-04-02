@@ -1,10 +1,15 @@
 using AppPlatform.Abstractions;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 
 namespace AppPlatform.Deployment;
 
 public sealed class GitHubReleaseCatalogService
 {
+    private static readonly Regex PortableAppZipAssetNamePattern = new(
+        "^MeetingRecorder(?:-v?[^\\\\/]+)?-win-(?:x64|arm64|x86)\\.zip$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly DeploymentDownloadClient _downloadClient;
     private readonly IDeploymentLogger _logger;
 
@@ -46,9 +51,10 @@ public sealed class GitHubReleaseCatalogService
 
         var appZipAsset =
             assets.FirstOrDefault(asset =>
+                IsPortableAppZipAsset(asset.Name) &&
                 asset.Name.Contains("win-x64", StringComparison.OrdinalIgnoreCase) &&
                 asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) ??
-            assets.FirstOrDefault(asset => asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+            assets.FirstOrDefault(asset => IsPortableAppZipAsset(asset.Name));
 
         if (appZipAsset is null)
         {
@@ -97,6 +103,12 @@ public sealed class GitHubReleaseCatalogService
             downloadUrl,
             TryGetInt64(asset, "size"),
             TryGetDateTimeOffset(asset, "updated_at"));
+    }
+
+    private static bool IsPortableAppZipAsset(string assetName)
+    {
+        return !string.IsNullOrWhiteSpace(assetName) &&
+            PortableAppZipAssetNamePattern.IsMatch(assetName);
     }
 
     private static string NormalizeVersion(string rawVersion)

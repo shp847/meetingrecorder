@@ -46,7 +46,7 @@ The app uses an offline-first setup model:
 - install still succeeds if those optional downloads fail
 - users can retry those optional downloads later from `Settings > Setup`
 
-That makes the app workable on locked-down corporate machines where large model downloads are unreliable or blocked.
+That makes the app workable on managed Windows machines where large model downloads are unreliable or blocked.
 
 ### 2. Record
 

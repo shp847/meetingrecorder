@@ -8,6 +8,10 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class AppUpdateService
 {
+    private static readonly Regex PortableAppZipAssetNamePattern = new(
+        "^MeetingRecorder(?:-v?[^\\\\/]+)?-win-(?:x64|arm64|x86)\\.zip$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly IAppUpdateFeedClient _feedClient;
 
     public AppUpdateService()
@@ -212,10 +216,17 @@ public sealed class AppUpdateService
             .ToArray();
 
         return assets
-            .FirstOrDefault(asset => asset.Name?.Contains("win-x64", StringComparison.OrdinalIgnoreCase) == true &&
-                asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            ?? assets.FirstOrDefault(asset => asset.Name?.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) == true)
+            .FirstOrDefault(asset =>
+                IsPortableAppZipAsset(asset.Name) &&
+                asset.Name!.Contains("win-x64", StringComparison.OrdinalIgnoreCase))
+            ?? assets.FirstOrDefault(asset => IsPortableAppZipAsset(asset.Name))
             ?? assets.FirstOrDefault();
+    }
+
+    private static bool IsPortableAppZipAsset(string? assetName)
+    {
+        return !string.IsNullOrWhiteSpace(assetName) &&
+            PortableAppZipAssetNamePattern.IsMatch(assetName);
     }
 
     private static DateTimeOffset? ResolveEffectivePublishedAtUtc(
