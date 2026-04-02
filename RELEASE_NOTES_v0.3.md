@@ -1,156 +1,269 @@
 # Meeting Recorder v0.3
 
-Meeting Recorder v0.3 is the first full release of the app: a Windows-first, local-first desktop workflow for recording meeting audio, transcribing it with local Whisper models, and publishing stable output files for follow-up review or automation.
+Meeting Recorder v0.3 is the first full release of a Windows-first, local-first meeting capture and transcription app designed for practical day-to-day use.
 
-This release turns Meeting Recorder into a complete day-to-day product for practical Windows meeting capture. It combines guided setup, reliable local recording, offline transcription, optional speaker labeling, a full meetings workspace, and multiple install paths that do not require administrator rights.
+It records meeting audio locally, transcribes with local Whisper models, optionally applies local speaker labeling, and publishes stable output files that are easy to review, archive, or hand off to downstream automation.
 
-## Release Highlights
+This release should be read as the product definition for Meeting Recorder as it exists today, not just as a list of incremental changes from the prior build.
 
-- Local-first meeting capture with offline transcription and automation-ready outputs
-- Manual recording support across Teams, Google Meet, Zoom, Webex, and other conferencing apps that use the normal Windows audio stack
-- Assisted auto-detection for Microsoft Teams desktop and Google Meet, with new installs defaulting it off and older configs reset off once to avoid extra permission prompts on some systems
-- Guided in-app setup for Whisper transcription and optional speaker labeling
-- A full Meetings workspace for browsing, cleanup, retry, rename, merge, split, and speaker-label maintenance
-- Flexible install options including a per-user MSI, EXE bootstrapper, script fallback, and ZIP/manual path
-- Stable published artifacts in Markdown, JSON, audio, and `.ready` marker formats for downstream tooling
+## What Meeting Recorder Is
 
-## What Ships In This Release
+Meeting Recorder is built for users who need:
 
-### Recording and detection
+- reliable local meeting capture on Windows
+- predictable install and update paths without admin-heavy deployment assumptions
+- local transcription without a required cloud dependency
+- automation-friendly output files
+- a practical workspace for reviewing, fixing, and organizing recorded meetings after capture
 
-- Records system audio locally on Windows
-- Optionally records microphone audio and mixes it into the final meeting audio
-- Supports manual start and stop for any conferencing app that uses the normal Windows playback path
-- Uses assisted auto-detection for Teams desktop and Google Meet when you turn it on
-- Specific quiet Teams desktop meetings now auto-start after sustained meeting-window evidence when Windows can still attribute the quiet session to Teams, so muted or listen-heavy calls no longer wait for a later audio spike before recording begins while stale Teams titles alone no longer trigger false starts
-- Auto-started Teams recordings now stop after a bounded quiet grace period when only a stale same-title Teams window remains, and matching Teams shell/chat/share surfaces only prolong the session when recent capture activity still exists, instead of letting stale post-call UI keep the live-call timer refreshed forever after the meeting has ended
-- Google Meet continuity now treats browser-title variants that share the same Meet code as the same live call, which prevents a single meeting from being split when Edge or Chrome changes the tab caption mid-call
-- Chromium browser tab inspection now uses a short timeout and cooldown, so a stuck browser automation query cannot stall later Teams or Google Meet detection scans for minutes
-- Windows audio-session probing now uses a short timeout and cooldown too, so a hung render-session query cannot delay Teams auto-start by several minutes before the detector notices the live call
-- Replaces launch-time `Process` enumeration with top-level window discovery for meeting detection and existing-instance activation, and keeps live Teams roster capture disabled by default so extra permission prompts are less likely
-- Auto-stops recordings when meeting signals disappear
-- Auto-stop now shows a visible `Home` countdown for auto-started sessions and flips into `Auto-stopping` immediately when timeout expires instead of looking idle while finalization runs
-- Microphone capture can now be turned on or off during an active recording, with the change applying from that moment forward while also updating the default for later recordings
-- Manual recordings now keep meeting detection alive in the background so a session you started yourself can still switch in place to a stronger detected Teams or Google Meet meeting identity later, without inheriting auto-stop
-- Manual recordings and already-managed live sessions now also switch in place when a clearly different specific Teams or Google Meet call takes over later on the same platform, and the stale old title draft is reset to the new meeting title instead of staying pinned to the prior call
-- Shows a simplified Technical Studio Home console with separate `Title`, `Client / project`, and `Key attendees` fields, plus the live audio graph, start/stop controls, and quick microphone/auto-detect settings
-- Shows a live elapsed recording timer on `Home` during active capture so users can immediately see how long the current session has been running
-- Loads the Home shell first and finishes heavier Meetings enrichment in the background so the app becomes interactive sooner after launch
-- Shows the main shell before transcript sidecar migration and published-meeting repair run, so startup and installer relaunch are much less likely to strand a headless primary process before the window appears
-- Moves attendee enrichment off the foreground stop path and into the background processing queue so auto-stop feels much less frozen on longer sessions
+The app is intentionally local-first:
 
-### Transcription and speaker labeling
+- capture runs on the local Windows audio stack
+- transcription runs on local Whisper models
+- optional speaker labeling runs from a separate local diarization bundle
+- runtime data stays under user-writable locations instead of inside the installed app files
 
-- Runs Whisper transcription locally after the meeting completes
-- Supports downloadable or imported local ggml Whisper models
-- Validates models before use so broken or obviously invalid files are rejected
-- Publishes transcripts as Markdown and JSON
-- Supports optional local speaker labeling through a separate diarization model bundle
-- Keeps speaker labeling best-effort so transcript generation can still succeed without it
+## End-to-End Workflow
 
-### Meetings workspace
+Meeting Recorder covers the full path from install to usable output.
 
-- Lists published meetings in a dedicated Meetings view
-- Keeps the meeting list in a primary split-pane region so it remains visible and scrollable at the default window size while inspector and cleanup tools stay in a separate side pane
-- Supports grouped browsing, search, sorting, and a focused meeting inspector
-- Meetings search now matches title, project, key attendees, and captured attendee names
-- Meetings grouping now supports client / project and attendee in addition to week, month, platform, and status
-- Exposes quick actions for opening audio and transcript artifacts
-- Lets users rename meetings while keeping published artifacts aligned
-- Supports transcript regeneration for retryable failed or incomplete sessions
-- Supports merge, split, archive, and permanent delete maintenance actions
-- Surfaces cleanup recommendations and safe-fix flows for likely false starts, duplicates, or repairable meetings
-- On first launch after the updated build, the one-time published cleanup repair can now collapse longer same-title split chains from repeated stop/start fragmentation into one merged publish
-- Supports project tagging and post-publish speaker-name maintenance for diarized transcripts
+### 1. Install and setup
 
-### Setup, settings, and help
+The recommended install path is the per-user MSI:
 
-- Simplifies the primary shell to `Home` and `Meetings`
-- Uses one visible `Home` / `Meetings` strip backed by the built-in WPF tab host so `Home` paints sooner and the primary shell stops relying on brittle custom tab-content routing
-- Replaces the clipped settings section tabs with a dedicated section button strip so labels stay readable at the default window size
-- Simplifies the Home quick-setting wells by removing the oversized secondary headings and highlighting the active `On` / `Off` state directly in the selected button
-- Gives the Home recording console a wider fixed-width floor at the default window size and keeps the title editor single-line so the panel does not expand while you type
-- Moves the Home quick settings back underneath the main recording console, widens the default app window, centers the primary tab labels more cleanly, and keeps the shell status footprint stable when a mic-off warning appears
-- Tightens shared control alignment so the primary `Home` / `Meetings` tab labels stay centered and the Meetings dropdowns plus project picker keep their selection text vertically centered inside the control chrome
-- Marks `Client / project` and `Key attendees` as optional metadata so only the session title reads as required on Home
-- Removes the redundant required/optional helper line under the Home metadata fields, stretches the recording console across the full tab canvas, and keeps the Home quick-setting toggles at a stable fixed width while you switch states
-- Lets `Key attendees` accept comma- or semicolon-delimited names so they remain separate searchable attendees later in `Meetings` and can still reconcile to fuller Outlook names when enrichment finds a better match
-- `Client / project` and `Key attendees` on `Home` now save into the active recording shortly after you edit them, so manual recordings no longer wait until stop before those optional fields persist
-- A manual recording that is later strongly reclassified to an active Teams or Google Meet call now adopts the existing meeting-end auto-stop path, so closing the meeting no longer leaves the recording open to capture unrelated browser audio afterward
-- Outlook attendee enrichment and backfill now require a reasonable meeting-identity match before they merge attendee names, which prevents a 1:1 recording from inheriting people from an unrelated overlapping calendar invite
-- Outlook calendar lookups now reuse a per-day cached appointment snapshot and temporarily back off after Outlook failures, which reduces repeated COM automation pressure from live title fallback plus attendee backfill and helps prevent the recurring "Outlook has exhausted all shared resources" warning
-- The packaged launcher no longer prints a recurring startup warning just because no Whisper model is installed yet; missing models remain an in-app setup task, while real missing runtime or worker-payload failures still block launch
-- Stamps release bundles with `release-source.json` and now blocks GitHub release uploads when installer assets do not match the current clean repo commit, preventing stale `.artifacts` from being published as a fresh release
-- Moves guided transcription and speaker-labeling setup into `Settings > Setup`
-- Moves maintenance and support into header-level `Settings` and `Help`
-- Keeps setup discoverable through the header status capsule when the model or optional speaker-labeling assets need attention
-- Keeps file locations, update behavior, troubleshooting paths, and advanced settings in one dedicated settings surface
-- Provides local setup help, logs/data shortcuts, and release-note entry points from Help
+- `MeetingRecorderInstaller.msi`
 
-### Deployment and updates
+Current releases also support:
 
-- Preferred installer: `MeetingRecorderInstaller.msi`
-- Optional thin bootstrapper: `MeetingRecorderInstaller.exe`
-- EXE bootstrapper now prefers a sibling locally built release ZIP when one ships beside the installer, instead of always falling back to the current GitHub release
-- Self-contained releases now ship the WPF shell as a single-file `MeetingRecorder.App.exe`, which avoids the loose-file `WindowsBase` startup failure that could surface as a downstream `WerFault.exe` restricted-access popup on launch
-- EXE bootstrapper now uses the shared app shell styling for status, progress, fallback guidance, and actions, with a scrollable layout and cleaner grouped buttons at the default window size
-- In-app `Install Available Update` handoff now resolves the updater CLI from the installed app directory instead of the transient single-file extraction folder, fixing failed update launches that could report the helper missing
-- Same-version pending updates now compare published-at and asset-size identity before they are treated as already installed, so refreshed `0.3` builds do not get skipped just because the semantic version text stayed the same
-- The MSI now allows refreshed same-version release assets to overwrite the installed app binaries on reinstall, fixing cases where `release-source.json` updated but `MeetingRecorder.App.exe` and `MeetingRecorder.ProcessingWorker.exe` stayed on the previous `0.3` build
-- Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory instead of the transient single-file extraction folder, fixing queued sessions that could otherwise stay unpublished after recording stops
-- Portable and installer bundles now ship the full worker sidecar payload, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair restores those files if they go missing so queued same-day sessions can publish after restart without manual bundle repair
-- If the worker crashes inside optional speaker labeling, the queue now stamps that session with an internal skip-label override, saves a durable per-session transcript snapshot before diarization begins, retries it once without diarization, repairs older stale post-transcription queue items on startup, and resumes those already-transcribed repaired items ahead of untouched queue work so transcript/audio publish can still complete instead of leaving meetings stuck in `Processing` or repeatedly retranscribing the same session
-- `Settings > Advanced` now exposes `Background processing mode` and `Speaker labeling mode`, with defaults of `Responsive` plus `Deferred` so the app reduces worker priority, caps CPU usage, pauses new backlog work during active recordings, and prioritizes publish-first behavior over inline speaker labeling
-- The shell now surfaces backlog status through a compact header queue chip plus a Meetings processing strip, including `Processing` / `Paused` / `Queued` state, pause reason, remaining queue size, active stage, elapsed processing time, and approximate current-item plus overall ETA so users can understand long backlogs without guessing
-- Startup and pre-worker maintenance now clean stale unlocked files from the diarization and transcription temp roots, including a one-time post-upgrade recovery pass so orphaned temp files stop consuming large amounts of disk space
-- Supported-call detection now runs its heavy scan off the WPF dispatcher, skips overlapping scans instead of stacking them, bounds both browser-tab inspection and audio-session probing, and defers non-urgent Meetings refreshes while `Home` is active or a recording is still live so typing, call starts, and stop flows stay responsive under load
-- Meetings now prefer real published audio/transcript artifacts over stale queued imported-source reprocessing manifests, and startup archives those superseded imported work folders into maintenance storage so false `Queued` / `Missing` rows drop out of the visible backlog instead of lingering indefinitely
-- Startup now ignores early `TabControl` selection-change events until the Home shell finishes initializing, fixing a `NullReferenceException` that could otherwise surface as the generic “unexpected UI error” dialog immediately after launch
-- The shared deployment CLI bundle now explicitly carries `System.IO.Pipelines`, fixing the old local-deploy / `install-bundle` failures that could crash late while saving install provenance after the new app files were already staged
-- `Deploy-Local.ps1` used to install by default without auto-launching the app again, which avoided local-redeploy races that could leave duplicate background `MeetingRecorder.App` processes and break existing-instance activation; that repo-only local deploy path is now intentionally disabled in favor of MSI and in-app upgrade validation
-- Script fallback: `Install-LatestFromGitHub.cmd` or `Install-LatestFromGitHub.ps1`
-- Manual fallback: `MeetingRecorder-v0.3-win-x64.zip` with `Install-MeetingRecorder.cmd`
-- Supports managed per-user installs and portable extract-and-run usage
-- Preserves user data on update
-- Checks GitHub releases for updates and supports deferred install retry when the app becomes idle
+- `Install-LatestFromGitHub.cmd`
+- `Install-LatestFromGitHub.ps1`
+- `MeetingRecorder-v0.3-win-x64.zip`
 
-## Published Outputs
+The app uses an offline-first setup model:
 
-For a successful transcript run, Meeting Recorder publishes:
+- a fresh MSI install always seeds the Standard transcription asset and the Standard speaker-labeling asset locally
+- the installer can optionally try a Higher Accuracy transcription download and a Higher Accuracy speaker-labeling download
+- install still succeeds if those optional downloads fail
+- users can retry those optional downloads later from `Settings > Setup`
 
-- final meeting audio as `.wav`
-- transcript Markdown as `.md`
-- transcript JSON as `.json`
-- completion marker as `.ready`
+That makes the app workable on locked-down corporate machines where large model downloads are unreliable or blocked.
 
-For current managed installs, the default locations are:
+### 2. Record
+
+The `Home` view is the live recording console. It includes:
+
+- required session title
+- optional `Client / project`
+- optional `Key attendees`
+- live audio graph
+- live elapsed timer
+- start and stop controls
+- quick `Microphone capture` and `Automatic detection` toggles
+
+Manual recording works broadly across conferencing apps that use the normal Windows audio path, including:
+
+- Microsoft Teams
+- Google Meet
+- Zoom
+- Webex
+- other meeting apps on the standard Windows playback stack
+
+Assisted auto-detection is narrower and currently focuses on:
+
+- Microsoft Teams desktop
+- Google Meet in visible Chromium-family browsers
+
+When auto-detection is enabled, the app watches for a supported live meeting and can auto-start and auto-stop supported calls. Manual recordings also continue running with background detection, so a user-started session can still reclassify in place to a detected Teams or Google Meet meeting later.
+
+### 3. Detect and label the meeting
+
+Meeting Recorder uses window evidence plus Windows audio evidence to decide whether a supported call is really active.
+
+Current detection behavior includes:
+
+- Teams desktop detection
+- Google Meet browser detection
+- Chromium tab-title inspection for Meet
+- Windows render-session audio attribution
+- continuity handling for quiet patches and temporary shell-state changes
+- in-place reclassification when a better meeting identity appears after recording has already started
+
+The goal is not just to start recording, but to keep one meeting as one meeting whenever possible instead of fragmenting it into multiple artifacts.
+
+### 4. Process locally
+
+After stop, the background worker processes the session locally:
+
+- finalizes meeting audio
+- runs Whisper transcription
+- optionally runs speaker labeling
+- publishes stable artifacts
+
+Speaker labeling is optional and best-effort. A meeting can still complete successfully even when diarization is unavailable, skipped, or fails.
+
+### 5. Publish usable artifacts
+
+For a successful transcript run, the app publishes:
+
+- final meeting audio
+- Markdown transcript
+- JSON transcript
+- `.ready` completion marker
+
+For current managed installs, the default publish locations are:
 
 - `Documents\Meetings\Recordings`
 - `Documents\Meetings\Transcripts`
 - `Documents\Meetings\Transcripts\json`
 - `Documents\Meetings\Archive`
 
-The `.ready` file is created last and is intended to be the completion signal for downstream tools such as Power Automate.
+The `.ready` marker is written last and acts as the completion signal for downstream tools such as Power Automate.
 
-## Designed For Real-World Windows Use
+### 6. Review and maintain
 
-- No admin rights required for normal use
-- No browser extension required
-- No cloud transcription dependency required
-- CPU-only local transcription supported
-- Portable usage supported
-- Local model import supported when direct downloads are blocked
-- Writable runtime data stays outside the installed app files for managed installs
+The `Meetings` workspace is the post-recording maintenance surface.
+
+It supports:
+
+- browsing recent and published meetings
+- search
+- grouping and sorting
+- meeting inspection
+- rename
+- archive
+- permanent delete
+- transcript retry / regeneration
+- merge
+- split
+- speaker-label maintenance
+- project tagging
+- cleanup recommendations for likely bad or fragmented recordings
+
+The app is meant to help users recover from real-world messy recordings, not just ideal clean captures.
+
+## Product Capabilities In v0.3
+
+### Recording
+
+- local Windows system-audio capture
+- optional microphone capture
+- live audio graph during recording
+- live elapsed timer
+- manual start and stop
+- background detection during manual recordings
+- in-place meeting reclassification when a better supported meeting identity appears
+- auto-stop for meeting-lifecycle-managed recordings when signals disappear
+
+### Detection
+
+- Teams desktop support
+- Google Meet browser support
+- quiet Teams continuity handling
+- Google Meet browser/title continuity handling
+- audio-attributed tie-breaking between competing meeting candidates
+- bounded detection probes so browser or audio inspection failures do not stall the app indefinitely
+
+### Transcription and speaker labeling
+
+- local Whisper transcription
+- curated Standard vs Higher Accuracy setup flow
+- downloadable or imported local models
+- optional local speaker labeling through a separate diarization bundle
+- fallback behavior that prioritizes publishing transcripts even when speaker labeling is unavailable
+
+### Meetings workspace
+
+- published-meeting catalog
+- status-aware browsing
+- searchable title, project, and attendee metadata
+- meeting cleanup and repair workflows
+- transcript retry and speaker-label maintenance
+- merge and split operations
+
+### Setup and settings
+
+- simplified shell with `Home` and `Meetings` as the primary destinations
+- guided `Settings > Setup` for transcription and speaker-labeling readiness
+- dedicated `Settings` and `Help` entry points in the header
+- read-only diagnostic storage details instead of raw model-path editing as the normal user flow
+
+### Deployment and updates
+
+- per-user MSI installer
+- script/bootstrap fallback installers
+- ZIP fallback
+- in-app update support
+- user-data-preserving reinstall and uninstall behavior
+- release packaging and upload guards to reduce stale or mismatched published assets
+
+## Installation and Runtime Model
+
+Meeting Recorder supports two practical usage modes.
+
+### Managed per-user install
+
+This is the recommended mode.
+
+- binaries install under `%USERPROFILE%\Documents\MeetingRecorder`
+- writable runtime data lives under `%LOCALAPPDATA%\MeetingRecorder`
+- published outputs live under `Documents\Meetings\...`
+- uninstall removes the managed app files and shortcuts but preserves user data, recordings, transcripts, models, logs, and config
+
+### Portable extract-and-run
+
+This remains available for users who need a non-installed path.
+
+- the app can run from an extracted release folder
+- writable data stays beside the portable app folder
+
+## Who This Release Is For
+
+v0.3 is aimed at users who need a practical desktop recorder for real working meetings:
+
+- consultants and project teams capturing calls for notes and follow-up
+- users in corporate environments where browser extensions or cloud transcription are not acceptable
+- users who need stable files for downstream automation
+- users who want a local tool they can install, keep, and trust rather than a one-off prototype
+
+## Current Boundaries
+
+Meeting Recorder v0.3 is intentionally strong in a few areas and explicitly limited in others.
+
+### Strong today
+
+- Windows local capture
+- local transcription
+- practical install/update paths
+- Teams and Google Meet assisted detection
+- manual recording fallback for other conferencing apps
+- published artifact stability
+- post-recording maintenance workflows
+
+### Not the focus of this release
+
+- full cloud meeting-platform integrations across every conferencing product
+- rich in-app transcript editing
+- a general-purpose media editor
+- cross-platform desktop support outside Windows
 
 ## Important Notes
 
-- A valid local Whisper model is required for transcript generation
-- Speaker labeling is optional and remains best-effort
-- Assisted auto-detection currently focuses on Teams desktop and Google Meet only
-- Manual recording works more broadly than assisted auto-detection
-- Transcript quality depends on the chosen model and source audio quality
-- There is no full transcript text-editing workflow in the app yet
+- A valid local Whisper model is required for transcript generation.
+- Speaker labeling is optional.
+- Assisted auto-detection currently focuses on Teams desktop and Google Meet only.
+- Manual recording works more broadly than assisted auto-detection.
+- Transcript quality depends on the selected model and source audio quality.
+- Users are responsible for complying with applicable recording, privacy, employment, and consent laws and workplace policies.
 
-## Compliance Notice
+## Bottom Line
 
-Users are responsible for complying with applicable recording, privacy, employment, and consent laws and workplace policies. Tell participants when they are being recorded and obtain consent where required.
+Meeting Recorder v0.3 is a complete local meeting workflow for Windows:
+
+- install it without heavy deployment assumptions
+- make transcription ready with guided setup
+- record manually or with assisted detection
+- process locally
+- publish stable outputs
+- review and repair meetings from one workspace
+
+That is the product shipped in v0.3.
