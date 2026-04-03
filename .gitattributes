@@ -1,0 +1,2 @@
+assets/models/asr/*.bin filter=lfs diff=lfs merge=lfs -text
+assets/models/diarization/*.zip filter=lfs diff=lfs merge=lfs -text
