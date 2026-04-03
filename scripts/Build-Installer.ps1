@@ -251,7 +251,7 @@ function Read-ModelCatalog {
     return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
 }
 
-function Publish-HighAccuracyReleaseAssets {
+function Publish-CuratedModelReleaseAssets {
     param(
         [string]$RepoRoot,
         [string]$CatalogPath,
@@ -261,8 +261,16 @@ function Publish-HighAccuracyReleaseAssets {
     $catalog = Read-ModelCatalog -CatalogPath $CatalogPath
     $assetsToPublish = @(
         @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\asr\" + $catalog.transcription.standard.fileName)
+            PreferredPath = Join-Path $PackagePath $catalog.transcription.standard.fileName
+        },
+        @{
             SourcePath = Join-Path $RepoRoot ("assets\models\asr\" + $catalog.transcription.highAccuracy.fileName)
             PreferredPath = Join-Path $PackagePath $catalog.transcription.highAccuracy.fileName
+        },
+        @{
+            SourcePath = Join-Path $RepoRoot ("assets\models\diarization\" + $catalog.speakerLabeling.standard.fileName)
+            PreferredPath = Join-Path $PackagePath $catalog.speakerLabeling.standard.fileName
         },
         @{
             SourcePath = Join-Path $RepoRoot ("assets\models\diarization\" + $catalog.speakerLabeling.highAccuracy.fileName)
@@ -272,7 +280,7 @@ function Publish-HighAccuracyReleaseAssets {
 
     foreach ($asset in $assetsToPublish) {
         if (-not (Test-Path $asset.SourcePath)) {
-            throw "Required Higher Accuracy release asset was not found at '$($asset.SourcePath)'."
+            throw "Required curated model release asset was not found at '$($asset.SourcePath)'."
         }
 
         Publish-StableAsset -SourcePath $asset.SourcePath -PreferredPath $asset.PreferredPath | Out-Null
@@ -640,7 +648,7 @@ $installerMsiPath = Publish-StableAsset -SourcePath $installerMsiBuiltPath -Pref
 $bootstrapCommandPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.cmd") -PreferredPath $bootstrapCommandPath
 $bootstrapScriptPath = Publish-StableAsset -SourcePath (Join-Path $PSScriptRoot "Install-LatestFromGitHub.ps1") -PreferredPath $bootstrapScriptPath
 $releaseSourceMetadataPath = Publish-StableAsset -SourcePath $publishedReleaseSourceMetadataPath -PreferredPath $releaseSourceMetadataPath
-Publish-HighAccuracyReleaseAssets -RepoRoot $repoRoot -CatalogPath $modelCatalogSourcePath -PackagePath $packagePath
+Publish-CuratedModelReleaseAssets -RepoRoot $repoRoot -CatalogPath $modelCatalogSourcePath -PackagePath $packagePath
 
 Sign-ArtifactFiles -SigningConfiguration $signingConfiguration -FilePaths @($bootstrapScriptPath)
 

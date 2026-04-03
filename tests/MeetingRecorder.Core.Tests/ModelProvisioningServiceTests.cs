@@ -8,40 +8,65 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class ModelProvisioningServiceTests
 {
     [Fact]
-    public async Task ProvisionAsync_Seeds_The_Standard_Profiles_For_A_Fresh_Offline_Install()
+    public async Task ProvisionAsync_Downloads_The_Standard_Profiles_For_A_Fresh_Install()
     {
         var fixture = await ProvisioningFixture.CreateAsync();
-        var service = fixture.CreateService(new StubAppUpdateFeedClient(throwOnFeedAccess: true));
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false));
+        var service = fixture.CreateService(feedClient);
 
         var result = await service.ProvisionAsync(
             new ModelProvisioningRequest(
                 fixture.InstallRoot,
                 fixture.ModelCatalogPath,
                 "https://example.com/releases/latest",
-                TranscriptionModelProfilePreference.StandardIncluded,
-                SpeakerLabelingModelProfilePreference.StandardIncluded));
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.Standard));
 
         Assert.False(result.ExistingConfigDetected);
-        Assert.Equal(TranscriptionModelProfilePreference.StandardIncluded, result.Config.TranscriptionModelProfilePreference);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Config.TranscriptionModelProfilePreference);
         Assert.Equal(fixture.StandardTranscriptionTargetPath, result.Config.TranscriptionModelPath);
-        Assert.Equal(SpeakerLabelingModelProfilePreference.StandardIncluded, result.Config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, result.Config.SpeakerLabelingModelProfilePreference);
         Assert.Equal(fixture.StandardSpeakerLabelingTargetPath, result.Config.DiarizationAssetPath);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Result.Transcription.ActiveProfile);
+        Assert.True(result.Result.Transcription.IsReady);
         Assert.False(result.Result.Transcription.RetryRecommended);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, result.Result.SpeakerLabeling.ActiveProfile);
+        Assert.True(result.Result.SpeakerLabeling.IsReady);
         Assert.False(result.Result.SpeakerLabeling.RetryRecommended);
+        Assert.False(result.Result.RequiresFirstLaunchSetupBeforeRecording);
         Assert.True(File.Exists(fixture.StandardTranscriptionTargetPath));
         Assert.True(Directory.Exists(fixture.StandardSpeakerLabelingTargetPath));
         Assert.True(File.Exists(fixture.ResultStorePath));
     }
 
     [Fact]
-    public async Task ProvisionAsync_Downloads_The_Higher_Accuracy_Whisper_Model_When_Requested_On_A_Fresh_Install()
+    public async Task ProvisionAsync_Completes_Install_But_Requires_FirstLaunch_Setup_When_Standard_Transcription_Download_Fails()
     {
         var fixture = await ProvisioningFixture.CreateAsync();
         var feedClient = new StubAppUpdateFeedClient(
-            payload: fixture.CreateReleasePayload(includeHighAccuracyTranscription: true, includeHighAccuracySpeakerLabeling: false),
-            downloads: new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: false,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            failingDownloads: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                [fixture.HighAccuracyTranscriptionDownloadUrl] = fixture.CreateWhisperModelBytes(),
+                fixture.StandardTranscriptionDownloadUrl,
             });
         var service = fixture.CreateService(feedClient);
 
@@ -50,13 +75,51 @@ public sealed class ModelProvisioningServiceTests
                 fixture.InstallRoot,
                 fixture.ModelCatalogPath,
                 "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.Standard));
+
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Config.TranscriptionModelProfilePreference);
+        Assert.Equal(fixture.StandardTranscriptionTargetPath, result.Config.TranscriptionModelPath);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Result.Transcription.ActiveProfile);
+        Assert.False(result.Result.Transcription.IsReady);
+        Assert.True(result.Result.Transcription.RetryRecommended);
+        Assert.Contains("resume setup at first launch", result.Result.Transcription.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.Result.RequiresFirstLaunchSetupBeforeRecording);
+        Assert.True(result.Result.SpeakerLabeling.IsReady);
+        Assert.False(File.Exists(fixture.StandardTranscriptionTargetPath));
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_Downloads_The_Higher_Accuracy_Whisper_Model_When_Requested_On_A_Fresh_Install()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false));
+        var service = fixture.CreateService(feedClient);
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
                 TranscriptionModelProfilePreference.HighAccuracyDownloaded,
-                SpeakerLabelingModelProfilePreference.StandardIncluded));
+                SpeakerLabelingModelProfilePreference.Standard));
 
         Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, result.Config.TranscriptionModelProfilePreference);
         Assert.Equal(fixture.HighAccuracyTranscriptionTargetPath, result.Config.TranscriptionModelPath);
         Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, result.Result.Transcription.ActiveProfile);
+        Assert.True(result.Result.Transcription.IsReady);
         Assert.False(result.Result.Transcription.RetryRecommended);
+        Assert.False(result.Result.RequiresFirstLaunchSetupBeforeRecording);
         Assert.True(File.Exists(fixture.HighAccuracyTranscriptionTargetPath));
     }
 
@@ -65,8 +128,16 @@ public sealed class ModelProvisioningServiceTests
     {
         var fixture = await ProvisioningFixture.CreateAsync();
         var feedClient = new StubAppUpdateFeedClient(
-            payload: fixture.CreateReleasePayload(includeHighAccuracyTranscription: true, includeHighAccuracySpeakerLabeling: false),
-            downloads: new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase),
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
             failingDownloads: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 fixture.HighAccuracyTranscriptionDownloadUrl,
@@ -79,25 +150,35 @@ public sealed class ModelProvisioningServiceTests
                 fixture.ModelCatalogPath,
                 "https://example.com/releases/latest",
                 TranscriptionModelProfilePreference.HighAccuracyDownloaded,
-                SpeakerLabelingModelProfilePreference.StandardIncluded));
+                SpeakerLabelingModelProfilePreference.Standard));
 
         Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, result.Config.TranscriptionModelProfilePreference);
         Assert.Equal(fixture.StandardTranscriptionTargetPath, result.Config.TranscriptionModelPath);
-        Assert.Equal(TranscriptionModelProfilePreference.StandardIncluded, result.Result.Transcription.ActiveProfile);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Result.Transcription.ActiveProfile);
+        Assert.True(result.Result.Transcription.IsReady);
         Assert.True(result.Result.Transcription.RetryRecommended);
         Assert.Contains("Retry it from Settings > Setup", result.Result.Transcription.Detail, StringComparison.Ordinal);
+        Assert.False(result.Result.RequiresFirstLaunchSetupBeforeRecording);
     }
 
     [Fact]
-    public async Task ProvisionAsync_Falls_Back_To_Standard_Speaker_Labeling_When_The_Optional_Bundle_Download_Fails()
+    public async Task ProvisionAsync_Keeps_Recording_Ready_When_The_Standard_SpeakerLabeling_Download_Fails()
     {
         var fixture = await ProvisioningFixture.CreateAsync();
         var feedClient = new StubAppUpdateFeedClient(
-            payload: fixture.CreateReleasePayload(includeHighAccuracyTranscription: false, includeHighAccuracySpeakerLabeling: true),
-            downloads: new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase),
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false),
             failingDownloads: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                fixture.HighAccuracySpeakerLabelingDownloadUrl,
+                fixture.StandardSpeakerLabelingDownloadUrl,
             });
         var service = fixture.CreateService(feedClient);
 
@@ -106,14 +187,62 @@ public sealed class ModelProvisioningServiceTests
                 fixture.InstallRoot,
                 fixture.ModelCatalogPath,
                 "https://example.com/releases/latest",
-                TranscriptionModelProfilePreference.StandardIncluded,
-                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded));
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.Standard));
 
-        Assert.Equal(SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, result.Config.SpeakerLabelingModelProfilePreference);
-        Assert.Equal(fixture.StandardSpeakerLabelingTargetPath, result.Config.DiarizationAssetPath);
-        Assert.Equal(SpeakerLabelingModelProfilePreference.StandardIncluded, result.Result.SpeakerLabeling.ActiveProfile);
+        Assert.True(result.Result.Transcription.IsReady);
+        Assert.False(result.Result.RequiresFirstLaunchSetupBeforeRecording);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, result.Result.SpeakerLabeling.ActiveProfile);
+        Assert.False(result.Result.SpeakerLabeling.IsReady);
         Assert.True(result.Result.SpeakerLabeling.RetryRecommended);
-        Assert.Contains("Retry it from Settings > Setup", result.Result.SpeakerLabeling.Detail, StringComparison.Ordinal);
+        Assert.Contains("Speaker labeling stays optional", result.Result.SpeakerLabeling.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_Allows_SpeakerLabeling_To_Stay_Off_For_Now()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.CustomTranscriptionPath)!);
+        await File.WriteAllBytesAsync(fixture.CustomTranscriptionPath, fixture.CreateWhisperModelBytes());
+        await fixture.CreateConfigStore().SaveAsync(new AppConfig
+        {
+            AudioOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Recordings"),
+            TranscriptOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Transcripts"),
+            WorkDir = Path.Combine(fixture.AppRoot, "work"),
+            ModelCacheDir = fixture.ModelCacheRoot,
+            TranscriptionModelPath = fixture.CustomTranscriptionPath,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Custom,
+            DiarizationAssetPath = string.Empty,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Disabled,
+            DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+            MicCaptureEnabled = true,
+            LaunchOnLoginEnabled = true,
+            AutoDetectEnabled = false,
+            AutoDetectSecurityPromptMigrationApplied = true,
+            CalendarTitleFallbackEnabled = false,
+            MeetingAttendeeEnrichmentEnabled = true,
+            UpdateCheckEnabled = true,
+            AutoInstallUpdatesEnabled = true,
+            UpdateFeedUrl = "https://example.com/releases/latest",
+        });
+        var service = fixture.CreateService(new StubAppUpdateFeedClient(throwOnFeedAccess: true));
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.Custom,
+                SpeakerLabelingModelProfilePreference.Disabled));
+
+        Assert.True(result.ExistingConfigDetected);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, result.Config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(string.Empty, result.Config.DiarizationAssetPath);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, result.Result.SpeakerLabeling.RequestedProfile);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, result.Result.SpeakerLabeling.ActiveProfile);
+        Assert.False(result.Result.SpeakerLabeling.IsReady);
+        Assert.False(result.Result.SpeakerLabeling.RetryRecommended);
+        Assert.Contains("turned off for now", result.Result.SpeakerLabeling.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -153,16 +282,19 @@ public sealed class ModelProvisioningServiceTests
                 fixture.InstallRoot,
                 fixture.ModelCatalogPath,
                 "https://example.com/releases/latest",
-                TranscriptionModelProfilePreference.StandardIncluded,
-                SpeakerLabelingModelProfilePreference.StandardIncluded));
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.Standard));
 
         Assert.True(result.ExistingConfigDetected);
         Assert.Equal(TranscriptionModelProfilePreference.Custom, result.Config.TranscriptionModelProfilePreference);
         Assert.Equal(fixture.CustomTranscriptionPath, result.Config.TranscriptionModelPath);
         Assert.Equal(SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, result.Config.SpeakerLabelingModelProfilePreference);
         Assert.Equal(fixture.HighAccuracySpeakerLabelingTargetPath, result.Config.DiarizationAssetPath);
+        Assert.True(result.Result.Transcription.IsReady);
+        Assert.True(result.Result.SpeakerLabeling.IsReady);
         Assert.False(result.Result.Transcription.RetryRecommended);
         Assert.False(result.Result.SpeakerLabeling.RetryRecommended);
+        Assert.False(result.Result.RequiresFirstLaunchSetupBeforeRecording);
     }
 
     private sealed class ProvisioningFixture
@@ -210,7 +342,11 @@ public sealed class ModelProvisioningServiceTests
 
         public string CustomTranscriptionPath { get; }
 
+        public string StandardTranscriptionDownloadUrl => "https://example.com/models/ggml-base.en-q8_0.bin";
+
         public string HighAccuracyTranscriptionDownloadUrl => "https://example.com/models/ggml-small.en-q8_0.bin";
+
+        public string StandardSpeakerLabelingDownloadUrl => "https://example.com/models/meeting-recorder-diarization-bundle-standard-win-x64.zip";
 
         public string HighAccuracySpeakerLabelingDownloadUrl => "https://example.com/models/meeting-recorder-diarization-bundle-accurate-win-x64.zip";
 
@@ -227,22 +363,6 @@ public sealed class ModelProvisioningServiceTests
             await File.WriteAllTextAsync(
                 fixture.ModelCatalogPath,
                 JsonSerializer.Serialize(catalog, new JsonSerializerOptions { WriteIndented = true }));
-
-            var standardTranscriptionSeedPath = Path.Combine(
-                fixture.InstallRoot,
-                "model-seed",
-                "transcription",
-                catalog.Transcription.StandardIncluded.FileName);
-            Directory.CreateDirectory(Path.GetDirectoryName(standardTranscriptionSeedPath)!);
-            await File.WriteAllBytesAsync(standardTranscriptionSeedPath, fixture.CreateWhisperModelBytes());
-
-            var standardSpeakerSeedPath = Path.Combine(
-                fixture.InstallRoot,
-                "model-seed",
-                "speaker-labeling",
-                catalog.SpeakerLabeling.StandardIncluded.FileName);
-            Directory.CreateDirectory(Path.GetDirectoryName(standardSpeakerSeedPath)!);
-            await fixture.CreateDiarizationBundleZipAsync(standardSpeakerSeedPath, "standard-included");
 
             return fixture;
         }
@@ -277,9 +397,55 @@ public sealed class ModelProvisioningServiceTests
             return Enumerable.Repeat((byte)0x7A, (int)WhisperModelService.MinimumExpectedModelBytes + 2048).ToArray();
         }
 
-        public string CreateReleasePayload(bool includeHighAccuracyTranscription, bool includeHighAccuracySpeakerLabeling)
+        public async Task<IReadOnlyDictionary<string, byte[]>> CreateDownloadsAsync(
+            bool includeStandardTranscription,
+            bool includeHighAccuracyTranscription,
+            bool includeStandardSpeakerLabeling,
+            bool includeHighAccuracySpeakerLabeling)
+        {
+            var downloads = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            if (includeStandardTranscription)
+            {
+                downloads[StandardTranscriptionDownloadUrl] = CreateWhisperModelBytes();
+            }
+
+            if (includeHighAccuracyTranscription)
+            {
+                downloads[HighAccuracyTranscriptionDownloadUrl] = CreateWhisperModelBytes();
+            }
+
+            if (includeStandardSpeakerLabeling)
+            {
+                downloads[StandardSpeakerLabelingDownloadUrl] = await CreateDiarizationBundleZipBytesAsync("standard-download");
+            }
+
+            if (includeHighAccuracySpeakerLabeling)
+            {
+                downloads[HighAccuracySpeakerLabelingDownloadUrl] = await CreateDiarizationBundleZipBytesAsync("accurate-download");
+            }
+
+            return downloads;
+        }
+
+        public string CreateReleasePayload(
+            bool includeStandardTranscription,
+            bool includeHighAccuracyTranscription,
+            bool includeStandardSpeakerLabeling,
+            bool includeHighAccuracySpeakerLabeling)
         {
             var assets = new List<string>();
+            if (includeStandardTranscription)
+            {
+                assets.Add(
+                    $$"""
+                    {
+                      "name": "ggml-base.en-q8_0.bin",
+                      "browser_download_url": "{{StandardTranscriptionDownloadUrl}}",
+                      "size": {{CreateWhisperModelBytes().Length}}
+                    }
+                    """);
+            }
+
             if (includeHighAccuracyTranscription)
             {
                 assets.Add(
@@ -288,6 +454,18 @@ public sealed class ModelProvisioningServiceTests
                       "name": "ggml-small.en-q8_0.bin",
                       "browser_download_url": "{{HighAccuracyTranscriptionDownloadUrl}}",
                       "size": {{CreateWhisperModelBytes().Length}}
+                    }
+                    """);
+            }
+
+            if (includeStandardSpeakerLabeling)
+            {
+                assets.Add(
+                    $$"""
+                    {
+                      "name": "meeting-recorder-diarization-bundle-standard-win-x64.zip",
+                      "browser_download_url": "{{StandardSpeakerLabelingDownloadUrl}}",
+                      "size": 4096
                     }
                     """);
             }
@@ -311,6 +489,23 @@ public sealed class ModelProvisioningServiceTests
               ]
             }
             """;
+        }
+
+        public async Task<byte[]> CreateDiarizationBundleZipBytesAsync(string bundleVersion)
+        {
+            var zipPath = Path.Combine(Path.GetTempPath(), "MeetingRecorderProvisioningBundle", Guid.NewGuid().ToString("N") + ".zip");
+            await CreateDiarizationBundleZipAsync(zipPath, bundleVersion);
+            try
+            {
+                return await File.ReadAllBytesAsync(zipPath);
+            }
+            finally
+            {
+                if (File.Exists(zipPath))
+                {
+                    File.Delete(zipPath);
+                }
+            }
         }
 
         public async Task CreateDiarizationBundleZipAsync(string zipPath, string bundleVersion)

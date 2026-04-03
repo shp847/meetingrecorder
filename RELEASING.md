@@ -57,7 +57,7 @@ What it does:
 - stages `AppPlatform.Deployment.Cli` into the portable bundle so the script wrappers and in-app updater can delegate install/apply work to one canonical executable
 - emits `bundle-integrity.json` into the portable bundle so the shared deployment CLI can validate required files before promoting a bundle
 - bundles the curated Standard transcription and Standard speaker-labeling seed assets into the main portable/MSI payload under `model-seed\...`
-- publishes the curated Higher Accuracy Whisper and speaker-labeling assets as separate stable GitHub release downloads
+- publishes all four curated Whisper and speaker-labeling assets as separate stable GitHub release downloads
 - creates:
   - the per-user installer MSI
   - the lightweight installer EXE
@@ -154,7 +154,7 @@ The upload helper now queues changed GitHub assets in parallel and prints coarse
 
 Large uploads now force infinite request and read/write timeouts inside the background upload workers, so the main release ZIP and MSI are not canceled by the default .NET web-request timeout on slower corporate links.
 
-It also validates `release-source.json` before upload, so it will fail fast instead of publishing stale `.artifacts` from an older build.
+It also validates `release-source.json` before upload. If the current repo source state is clean but the packaged installer assets are stale, the helper now rebuilds them automatically before continuing. If the current source state is dirty, it still fails fast and now reports that dirty-worktree blocker before any stale-asset metadata warning.
 
 The command wrapper now normalizes its working directory before invoking `cmd.exe`/PowerShell, which avoids the Codex app `\\?\C:\...` current-directory issue.
 
@@ -314,10 +314,10 @@ Important:
 
 - upload the built installer ZIP asset, not only GitHub's automatic source ZIP
 - the bootstrap flow depends on the GitHub release having a real app ZIP asset
-- the Higher Accuracy options only work as built-in downloads when `ggml-small.en-q8_0.bin` and `meeting-recorder-diarization-bundle-accurate-win-x64.zip` are uploaded as release assets
-- the Standard transcription and Standard speaker-labeling assets are now bundled into the MSI/ZIP payload and should not be uploaded as separate fallback release assets
+- the built-in Standard and Higher Accuracy options only work as downloads when all four curated assets are uploaded as release assets
+- the MSI/ZIP payload no longer bundles Standard model payloads, so a successful install may still resume transcription setup at first launch when downloads are blocked
 - `Build-Release.ps1 -UploadToGitHubLatestRelease` can automate the upload step when a GitHub token is available
-- `Upload-ReleaseAssets.cmd` is the lighter-weight helper when you want to update the latest release without rebuilding first
+- `Upload-ReleaseAssets.cmd` is the lighter-weight helper when you want to update the latest release without manually rebuilding first; it will self-heal stale installer assets by running `Build-Installer.ps1` when the current repo source state is clean
 - `Upload-ReleaseAssets.cmd` skips the EXE and MSI by default unless you pass `-Installers`
 
 ## Smoke Test After Publishing
@@ -334,7 +334,7 @@ Important:
 9. Confirm published outputs default to `Documents\Meetings\Recordings` and `Documents\Meetings\Transcripts`
 10. Confirm the app launches and the `Setup` page is usable
 11. Confirm a no-network or blocked-download MSI install still lands with `Standard ready` for transcription and speaker labeling
-12. Confirm an install where `Higher Accuracy` is selected falls back cleanly to `Standard` if the download fails and surfaces a retry message that points back to `Settings > Setup`
+12. Confirm an install where `Higher Accuracy` is selected falls back cleanly when the download fails and surfaces a retry message that points back to `Settings > Setup`
 13. Confirm the app does not immediately offer the same GitHub release again on first launch after the MSI install
 14. Confirm the `Setup` page offers `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics for both transcription and speaker labeling
 15. Confirm only the Higher Accuracy assets are shown as GitHub-backed downloads

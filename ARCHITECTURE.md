@@ -496,7 +496,7 @@ That MSI path:
 - avoids `Program Files` and per-machine scope
 - adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `Documents\MeetingRecorder`
 - keeps writable runtime data outside the installed binaries
-- seeds the included Standard transcription and Standard speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
+- downloads the selected Standard or Higher Accuracy transcription and speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
 - shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
 - invokes the installed `AppPlatform.Deployment.Cli provision-models` step after file copy so provisioning and later update repair share one model-management path
 - keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow

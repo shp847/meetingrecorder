@@ -462,29 +462,42 @@ public partial class MainWindow : Window
         ModelActionStatusTextBlock.Text = provisioningResult.Transcription.Detail;
         DiarizationActionStatusTextBlock.Text = provisioningResult.SpeakerLabeling.Detail;
 
-        if (!provisioningResult.Transcription.RetryRecommended &&
-            !provisioningResult.SpeakerLabeling.RetryRecommended)
+        if (provisioningResult.RequiresFirstLaunchSetupBeforeRecording || !provisioningResult.Transcription.IsReady)
         {
+            MessageBox.Show(
+                "Meeting Recorder finished installing, but transcription setup still needs to finish before recording can start. Open Settings > Setup to retry the Standard download, try Higher Accuracy, or import an approved local model.",
+                AppBranding.DisplayNameWithVersion,
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            OpenSetupWindow(
+                SetupWindowSection.Transcription,
+                SettingsTranscriptionSetupSectionBorder,
+                _currentTranscriptionSetupState,
+                ModelActionStatusTextBlock);
             return;
         }
 
-        var retryTargets = new List<string>();
-        if (provisioningResult.Transcription.RetryRecommended)
+        if (provisioningResult.Transcription.RetryRecommended ||
+            provisioningResult.SpeakerLabeling.RetryRecommended)
         {
-            retryTargets.Add("Higher Accuracy transcription");
-        }
+            var retryTargets = new List<string>();
+            if (provisioningResult.Transcription.RetryRecommended)
+            {
+                retryTargets.Add("Higher Accuracy transcription");
+            }
 
-        if (provisioningResult.SpeakerLabeling.RetryRecommended)
-        {
-            retryTargets.Add("Higher Accuracy speaker labeling");
-        }
+            if (provisioningResult.SpeakerLabeling.RetryRecommended)
+            {
+                retryTargets.Add("Higher Accuracy speaker labeling");
+            }
 
-        MessageBox.Show(
-            "Meeting Recorder finished setup with the included Standard options ready to use. " +
-            $"{string.Join(" and ", retryTargets)} did not finish during install. Retry it later from Settings > Setup.",
-            AppBranding.DisplayNameWithVersion,
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+            MessageBox.Show(
+                "Meeting Recorder finished setup and transcription is ready. " +
+                $"{string.Join(" and ", retryTargets)} did not finish during install. Retry it later from Settings > Setup.",
+                AppBranding.DisplayNameWithVersion,
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
     }
 
     private void EnsureInteractiveTimersStarted()
@@ -679,6 +692,12 @@ public partial class MainWindow : Window
     {
         if (_isRecordingTransitionInProgress)
         {
+            return;
+        }
+
+        if (!HasReadyTranscriptionModel())
+        {
+            ShowTranscriptionSetupRequiredMessage();
             return;
         }
 
@@ -1335,6 +1354,7 @@ public partial class MainWindow : Window
             UpdateCurrentMeetingTitleStatus();
 
             if (!_recordingCoordinator.IsRecording &&
+                HasReadyTranscriptionModel() &&
                 _liveConfig.Current.AutoDetectEnabled &&
                 decision is not null)
             {
@@ -2990,9 +3010,9 @@ public partial class MainWindow : Window
     private async void UseStandardTranscriptionProfileButton_OnClick(object sender, RoutedEventArgs e)
     {
         await ApplyCuratedModelProfilesAsync(
-            TranscriptionModelProfilePreference.StandardIncluded,
+            TranscriptionModelProfilePreference.Standard,
             _liveConfig.Current.SpeakerLabelingModelProfilePreference,
-            "Switching transcription to the included Standard model...",
+            "Downloading the Standard transcription model...",
             "Transcription profile updated.",
             isTranscriptionHighAccuracyDownload: false,
             isSpeakerLabelingHighAccuracyDownload: false);
@@ -3003,7 +3023,7 @@ public partial class MainWindow : Window
         await ApplyCuratedModelProfilesAsync(
             TranscriptionModelProfilePreference.HighAccuracyDownloaded,
             _liveConfig.Current.SpeakerLabelingModelProfilePreference,
-            "Trying the optional Higher Accuracy transcription download. The included Standard model stays available either way...",
+            "Trying the optional Higher Accuracy transcription download. If it does not finish, Setup will fall back to Standard when it can...",
             "Transcription profile updated.",
             isTranscriptionHighAccuracyDownload: true,
             isSpeakerLabelingHighAccuracyDownload: false);
@@ -3056,9 +3076,20 @@ public partial class MainWindow : Window
     {
         await ApplyCuratedModelProfilesAsync(
             _liveConfig.Current.TranscriptionModelProfilePreference,
-            SpeakerLabelingModelProfilePreference.StandardIncluded,
-            "Switching speaker labeling to the included Standard bundle...",
+            SpeakerLabelingModelProfilePreference.Standard,
+            "Downloading the Standard speaker-labeling bundle...",
             "Speaker-labeling profile updated.",
+            isTranscriptionHighAccuracyDownload: false,
+            isSpeakerLabelingHighAccuracyDownload: false);
+    }
+
+    private async void SkipSpeakerLabelingForNowButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ApplyCuratedModelProfilesAsync(
+            _liveConfig.Current.TranscriptionModelProfilePreference,
+            SpeakerLabelingModelProfilePreference.Disabled,
+            "Turning speaker labeling off for now...",
+            "Speaker-labeling preference updated.",
             isTranscriptionHighAccuracyDownload: false,
             isSpeakerLabelingHighAccuracyDownload: false);
     }
@@ -3068,7 +3099,7 @@ public partial class MainWindow : Window
         await ApplyCuratedModelProfilesAsync(
             _liveConfig.Current.TranscriptionModelProfilePreference,
             SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
-            "Trying the optional Higher Accuracy speaker-labeling download. The included Standard bundle stays available either way...",
+            "Trying the optional Higher Accuracy speaker-labeling download. If it does not finish, speaker labeling stays optional and Setup can retry later...",
             "Speaker-labeling profile updated.",
             isTranscriptionHighAccuracyDownload: false,
             isSpeakerLabelingHighAccuracyDownload: true);
@@ -3153,7 +3184,7 @@ public partial class MainWindow : Window
         _isDownloadingRemoteModel = isTranscriptionHighAccuracyDownload;
         _isDownloadingRemoteDiarizationAsset = isSpeakerLabelingHighAccuracyDownload;
         _isActivatingModel = !isTranscriptionHighAccuracyDownload &&
-            transcriptionProfile == TranscriptionModelProfilePreference.StandardIncluded;
+            transcriptionProfile == TranscriptionModelProfilePreference.Standard;
         UpdateModelActionButtons();
         UpdateDiarizationActionButtons();
 
@@ -3513,7 +3544,10 @@ public partial class MainWindow : Window
         StopButton.Content = _isRecordingTransitionInProgress
             ? "STOPPING"
             : "STOP";
-        HomePrimaryActionButton.IsEnabled = !_recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
+        HomePrimaryActionButton.IsEnabled = !_recordingCoordinator.IsRecording &&
+            !_isUpdateInstallInProgress &&
+            !_isRecordingTransitionInProgress &&
+            HasReadyTranscriptionModel();
         StopButton.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         CurrentMeetingTitleTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         CurrentMeetingProjectTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
@@ -6056,7 +6090,7 @@ public partial class MainWindow : Window
 
     private void UpdateDashboardReadiness()
     {
-        var hasValidModel = _currentWhisperModelDisplayState?.IsHealthy == true;
+        var hasValidModel = HasReadyTranscriptionModel();
         var editorSnapshot = ReadConfigEditorSnapshot();
         var pendingMicCaptureEnabled = editorSnapshot.MicCaptureEnabled;
         var hasPendingMicCaptureChange = _liveConfig.Current.MicCaptureEnabled != pendingMicCaptureEnabled;
@@ -6079,6 +6113,7 @@ public partial class MainWindow : Window
             pendingMicCaptureEnabled);
         DashboardAutoDetectReadinessTextBlock.Text = BuildAutoDetectReadinessText(
             _liveConfig.Current.AutoDetectEnabled,
+            hasValidModel,
             hasPendingAutoDetectChange,
             pendingAutoDetectEnabled);
         var micCaptureWarning = MainWindowInteractionLogic.BuildMicCaptureWarning(
@@ -6095,7 +6130,9 @@ public partial class MainWindow : Window
             _liveConfig.Current.MicCaptureEnabled,
             _recordingCoordinator.IsRecording,
             liveMicCaptureEnabled);
-        HomeAutoDetectQuickSettingSummaryTextBlock.Text = BuildHomeAutoDetectQuickSettingSummary(_liveConfig.Current.AutoDetectEnabled);
+        HomeAutoDetectQuickSettingSummaryTextBlock.Text = BuildHomeAutoDetectQuickSettingSummary(
+            _liveConfig.Current.AutoDetectEnabled,
+            hasValidModel);
         UpdateHomeQuickSettingButtons();
 
         var shellStatus = _shellStatusOverride ?? MainWindowInteractionLogic.BuildShellStatus(
@@ -6176,9 +6213,15 @@ public partial class MainWindow : Window
 
     private static string BuildAutoDetectReadinessText(
         bool savedAutoDetectEnabled,
+        bool transcriptionReady,
         bool hasPendingAutoDetectChange,
         bool pendingAutoDetectEnabled)
     {
+        if (!transcriptionReady)
+        {
+            return "Blocked until transcription is ready. Finish Setup before automatic meeting detection can start.";
+        }
+
         if (hasPendingAutoDetectChange)
         {
             return pendingAutoDetectEnabled
@@ -6191,8 +6234,13 @@ public partial class MainWindow : Window
             : "Off. Use manual start and stop unless you turn auto-detection back on.";
     }
 
-    private static string BuildHomeAutoDetectQuickSettingSummary(bool autoDetectEnabled)
+    private static string BuildHomeAutoDetectQuickSettingSummary(bool autoDetectEnabled, bool transcriptionReady)
     {
+        if (!transcriptionReady)
+        {
+            return "Finish Setup before auto-detect can turn on.";
+        }
+
         return autoDetectEnabled
             ? "On. Supported meetings are watched."
             : "Off. Start and stop manually.";
@@ -6204,6 +6252,9 @@ public partial class MainWindow : Window
         SetQuickSettingButtonState(HomeMicCaptureDisabledButton, !_liveConfig.Current.MicCaptureEnabled);
         SetQuickSettingButtonState(HomeAutoDetectEnabledButton, _liveConfig.Current.AutoDetectEnabled);
         SetQuickSettingButtonState(HomeAutoDetectDisabledButton, !_liveConfig.Current.AutoDetectEnabled);
+        var autoDetectControlsEnabled = HasReadyTranscriptionModel() && !_isUpdateInstallInProgress;
+        HomeAutoDetectEnabledButton.IsEnabled = autoDetectControlsEnabled;
+        HomeAutoDetectDisabledButton.IsEnabled = autoDetectControlsEnabled;
     }
 
     private static void SetQuickSettingButtonState(Button button, bool isActive)
@@ -7379,7 +7430,7 @@ public partial class MainWindow : Window
                 _liveConfig.Current.TranscriptionModelPath)
             : transcriptionRequestedProfile == TranscriptionModelProfilePreference.Custom
                 ? TranscriptionModelProfilePreference.Custom
-                : TranscriptionModelProfilePreference.StandardIncluded;
+                : TranscriptionModelProfilePreference.Standard;
         var transcriptionRetryRecommended =
             transcriptionRequestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded &&
             transcriptionActiveProfile != TranscriptionModelProfilePreference.HighAccuracyDownloaded;
@@ -7421,9 +7472,9 @@ public partial class MainWindow : Window
                 _bundledModelCatalog,
                 _liveConfig.Current.ModelCacheDir,
                 _liveConfig.Current.DiarizationAssetPath)
-            : speakerLabelingRequestedProfile == SpeakerLabelingModelProfilePreference.Custom
-                ? SpeakerLabelingModelProfilePreference.Custom
-                : SpeakerLabelingModelProfilePreference.StandardIncluded;
+            : speakerLabelingRequestedProfile is SpeakerLabelingModelProfilePreference.Custom or SpeakerLabelingModelProfilePreference.Disabled
+                ? speakerLabelingRequestedProfile
+                : SpeakerLabelingModelProfilePreference.Standard;
         var speakerLabelingRetryRecommended =
             speakerLabelingRequestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded &&
             speakerLabelingActiveProfile != SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded;
@@ -7443,13 +7494,13 @@ public partial class MainWindow : Window
         SpeakerLabelingOverviewPrimaryButton.Content = speakerLabelingState.PrimaryActionLabel;
 
         TranscriptionRetryStatusTextBlock.Text = transcriptionRetryRecommended
-            ? "Higher Accuracy was requested earlier, but the included Standard model is active right now. Retry Higher Accuracy when downloads are available."
+            ? "Higher Accuracy was requested earlier, but the Standard model is active right now. Retry Higher Accuracy when downloads are available."
             : string.Empty;
         TranscriptionRetryStatusTextBlock.Visibility = transcriptionRetryRecommended
             ? Visibility.Visible
             : Visibility.Collapsed;
         SpeakerLabelingRetryStatusTextBlock.Text = speakerLabelingRetryRecommended
-            ? "Higher Accuracy was requested earlier, but the included Standard bundle is active right now. Retry Higher Accuracy when downloads are available."
+            ? "Higher Accuracy was requested earlier, but the Standard bundle is active right now. Retry Higher Accuracy when downloads are available."
             : string.Empty;
         SpeakerLabelingRetryStatusTextBlock.Visibility = speakerLabelingRetryRecommended
             ? Visibility.Visible
@@ -7614,6 +7665,9 @@ public partial class MainWindow : Window
         UseStandardSpeakerLabelingProfileButton.Content = !isBusy && !_isDownloadingRemoteDiarizationAsset
             ? "Use Standard"
             : "Applying...";
+        SkipSpeakerLabelingForNowButton.Content = !isBusy
+            ? "Skip for now"
+            : "Applying...";
         UseHighAccuracySpeakerLabelingProfileButton.Content = _isDownloadingRemoteDiarizationAsset
             ? "Downloading..."
             : "Use Higher Accuracy";
@@ -7632,6 +7686,7 @@ public partial class MainWindow : Window
             : "Import Existing File";
 
         UseStandardSpeakerLabelingProfileButton.IsEnabled = !isBusy;
+        SkipSpeakerLabelingForNowButton.IsEnabled = !isBusy;
         UseHighAccuracySpeakerLabelingProfileButton.IsEnabled = !isBusy;
         RefreshRemoteDiarizationAssetsButton.IsEnabled = !isBusy;
         DownloadRecommendedDiarizationBundleButton.IsEnabled = !isBusy &&
@@ -7639,11 +7694,30 @@ public partial class MainWindow : Window
         DownloadSelectedRemoteDiarizationAssetButton.IsEnabled = !isBusy &&
             AvailableRemoteDiarizationAssetsComboBox.SelectedItem is DiarizationRemoteAssetListRow;
         ImportApprovedSpeakerLabelingButton.IsEnabled = !isBusy;
-        OpenSpeakerLabelingAssetFolderButton.IsEnabled = true;
+        OpenSpeakerLabelingAssetFolderButton.IsEnabled = !string.IsNullOrWhiteSpace(_liveConfig.Current.DiarizationAssetPath);
         ImportDiarizationAssetButton.IsEnabled = !isBusy;
-        OpenDiarizationFolderButton.IsEnabled = true;
+        OpenDiarizationFolderButton.IsEnabled = !string.IsNullOrWhiteSpace(_liveConfig.Current.DiarizationAssetPath);
         SpeakerLabelingOverviewPrimaryButton.IsEnabled = !isBusy;
         DiarizationOperationProgressBar.Visibility = isBusy ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private bool HasReadyTranscriptionModel()
+    {
+        return _currentWhisperModelDisplayState?.IsHealthy == true;
+    }
+
+    private void ShowTranscriptionSetupRequiredMessage()
+    {
+        MessageBox.Show(
+            "Recording is blocked until transcription is ready. Open Settings > Setup to download Standard, try Higher Accuracy, or import an approved local model.",
+            AppBranding.DisplayNameWithVersion,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        OpenSetupWindow(
+            SetupWindowSection.Transcription,
+            SettingsTranscriptionSetupSectionBorder,
+            _currentTranscriptionSetupState,
+            ModelActionStatusTextBlock);
     }
 
     private static string GetDiarizationAvailabilityText(DiarizationAssetInstallStatus status)

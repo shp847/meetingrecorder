@@ -1,35 +1,31 @@
 {
   "formatVersion": 1,
   "transcription": {
-    "standardIncluded": {
+    "standard": {
       "fileName": "ggml-base.en-q8_0.bin",
       "label": "Standard",
-      "description": "Included with the installer. Best balance of setup speed, download size, and transcript quality.",
-      "managedRelativePath": "asr/ggml-base.en-q8_0.bin",
-      "seedRelativePath": "model-seed/transcription/ggml-base.en-q8_0.bin"
+      "description": "Recommended default download for most laptops. Best balance of setup speed, download size, and transcript quality.",
+      "managedRelativePath": "asr/ggml-base.en-q8_0.bin"
     },
     "highAccuracy": {
       "fileName": "ggml-small.en-q8_0.bin",
       "label": "Higher Accuracy",
       "description": "Optional larger download for better transcript quality after install.",
-      "managedRelativePath": "asr/ggml-small.en-q8_0.bin",
-      "seedRelativePath": null
+      "managedRelativePath": "asr/ggml-small.en-q8_0.bin"
     }
   },
   "speakerLabeling": {
-    "standardIncluded": {
+    "standard": {
       "fileName": "meeting-recorder-diarization-bundle-standard-win-x64.zip",
       "label": "Standard",
-      "description": "Included with the installer so speaker labeling can be ready even when downloads are unavailable.",
-      "managedRelativePath": "diarization/standard",
-      "seedRelativePath": "model-seed/speaker-labeling/meeting-recorder-diarization-bundle-standard-win-x64.zip"
+      "description": "Recommended default download when you want speaker labeling ready after setup.",
+      "managedRelativePath": "diarization/standard"
     },
     "highAccuracy": {
       "fileName": "meeting-recorder-diarization-bundle-accurate-win-x64.zip",
       "label": "Higher Accuracy",
       "description": "Optional larger download for stronger speaker separation after install.",
-      "managedRelativePath": "diarization/high-accuracy",
-      "seedRelativePath": null
+      "managedRelativePath": "diarization/high-accuracy"
     }
   }
 }

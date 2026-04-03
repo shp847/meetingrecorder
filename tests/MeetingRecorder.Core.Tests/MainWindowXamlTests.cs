@@ -533,9 +533,25 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"UseHighAccuracyTranscriptionProfileButton\"", xaml);
         Assert.Contains("x:Name=\"UseStandardSpeakerLabelingProfileButton\"", xaml);
         Assert.Contains("x:Name=\"UseHighAccuracySpeakerLabelingProfileButton\"", xaml);
+        Assert.Contains("x:Name=\"SkipSpeakerLabelingForNowButton\"", xaml);
         Assert.Contains("Content=\"Use Standard\"", xaml);
         Assert.Contains("Content=\"Use Higher Accuracy\"", xaml);
+        Assert.Contains("Content=\"Skip for now\"", xaml);
         Assert.Contains("Import approved file", xaml);
+    }
+
+    [Fact]
+    public void Home_Recording_And_AutoDetect_Stay_Gated_Behind_Transcription_Readiness()
+    {
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("if (!HasReadyTranscriptionModel())", source, StringComparison.Ordinal);
+        Assert.Contains("ShowTranscriptionSetupRequiredMessage();", source, StringComparison.Ordinal);
+        Assert.Contains("HasReadyTranscriptionModel() &&", source, StringComparison.Ordinal);
+        Assert.Contains("Blocked until transcription is ready. Finish Setup before automatic meeting detection can start.", source, StringComparison.Ordinal);
+        Assert.Contains("Finish Setup before auto-detect can turn on.", source, StringComparison.Ordinal);
     }
 
     [Fact]

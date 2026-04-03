@@ -353,7 +353,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void PublishPortableScript_Bundles_The_Curated_Model_Catalog_And_Offline_Standard_Model_Seeds()
+    public void PublishPortableScript_Bundles_The_Curated_Model_Catalog_Without_Offline_Standard_Model_Seeds()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -366,9 +366,26 @@ public sealed class InstallerScriptTests
 
         Assert.Contains("model-catalog.json", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Read-ModelCatalog", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Copy-BundledStandardModelSeedAssets", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("$modelCatalog.transcription.standardIncluded.seedRelativePath", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("$modelCatalog.speakerLabeling.standardIncluded.seedRelativePath", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Copy-BundledStandardModelSeedAssets", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("seedRelativePath", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("standard.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishPortableScript_Does_Not_Add_Standard_Model_Payloads_To_The_Bundle_Integrity_Manifest()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected publish script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.DoesNotContain("ggml-base.en-q8_0.bin", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("meeting-recorder-diarization-bundle-standard-win-x64.zip", scriptContents, StringComparison.Ordinal);
         Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
     }
 
@@ -483,7 +500,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void BuildInstallerScript_Publishes_HigherAccuracy_Model_Assets_As_Separate_Stable_Release_Files()
+    public void BuildInstallerScript_Publishes_All_Curated_Model_Assets_As_Separate_Stable_Release_Files()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -494,8 +511,10 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains("Publish-HighAccuracyReleaseAssets", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Read-ModelCatalog", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.transcription.standard.fileName", scriptContents, StringComparison.Ordinal);
         Assert.Contains("$catalog.transcription.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.speakerLabeling.standard.fileName", scriptContents, StringComparison.Ordinal);
         Assert.Contains("$catalog.speakerLabeling.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Publish-StableAsset", scriptContents, StringComparison.Ordinal);
     }
@@ -638,6 +657,41 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void UploadReleaseAssetsScript_SelfHeals_Stale_Installer_Assets_By_Rebuilding_From_A_Clean_Repo_State()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Upload-ReleaseAssets.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected release upload script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Repair-ReleaseAssetsForUploadIfNeeded", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Build-Installer.ps1", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Rebuilding installer assets from the current clean repo state before upload", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Installer assets are stale for upload", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UploadReleaseAssetsScript_Prioritizes_The_Current_Dirty_Worktree_Error_Over_Stale_Asset_Metadata()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Upload-ReleaseAssets.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected release upload script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("The current repo worktree is dirty", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Commit or stash your changes, rebuild installer assets, and then upload the release.", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("if ([bool]$metadata.isWorktreeDirty)", scriptContents[..scriptContents.IndexOf("if ($currentState.IsWorktreeDirty)", StringComparison.Ordinal)], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void UploadReleaseAssetsScript_Uses_Msi_Only_For_Installer_Uploads_And_Removes_The_Deprecated_Exe_Asset()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -651,8 +705,31 @@ public sealed class InstallerScriptTests
 
         Assert.Contains("MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorderInstaller.exe", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("ggml-base.en-q8_0.bin", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("ggml-small.en-q8_0.bin", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("meeting-recorder-diarization-bundle-standard-win-x64.zip", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("meeting-recorder-diarization-bundle-accurate-win-x64.zip", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Get-DeprecatedReleaseAssetNames", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Remove-GitHubReleaseAsset", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstallerScript_Publishes_All_Curated_Model_Assets_As_Separate_Release_Files()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Installer.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected installer build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.DoesNotContain("Publish-HighAccuracyReleaseAssets", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.transcription.standard.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.transcription.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.speakerLabeling.standard.fileName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$catalog.speakerLabeling.highAccuracy.fileName", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]

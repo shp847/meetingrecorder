@@ -8,6 +8,7 @@
     ".NETCoreApp,Version=v8.0": {
       "MeetingRecorder.Core.Tests/0.3.0": {
         "dependencies": {
+          "AppPlatform.Deployment.Cli": "0.3.0",
           "MeetingRecorder.App": "0.3.0",
           "MeetingRecorder.Core": "0.3.0",
           "MeetingRecorder.Product": "0.3.0",
@@ -1215,6 +1216,19 @@
           }
         }
       },
+      "AppPlatform.Deployment.Cli/0.3.0": {
+        "dependencies": {
+          "AppPlatform.Abstractions": "0.3.0",
+          "AppPlatform.Deployment": "0.3.0",
+          "MeetingRecorder.Core": "0.3.0"
+        },
+        "runtime": {
+          "AppPlatform.Deployment.Cli.dll": {
+            "assemblyVersion": "0.3.0",
+            "fileVersion": "0.3.0.0"
+          }
+        }
+      },
       "AppPlatform.Deployment.WpfHost/0.3.0": {
         "dependencies": {
           "AppPlatform.Abstractions": "0.3.0",
@@ -2066,6 +2080,11 @@
       "sha512": ""
     },
     "AppPlatform.Deployment/0.3.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "AppPlatform.Deployment.Cli/0.3.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

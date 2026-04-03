@@ -34,9 +34,9 @@ public sealed class AppConfigStoreTests
         Assert.Equal(Path.Combine(root, "work"), config.WorkDir);
         Assert.Equal(Path.Combine(root, "models"), config.ModelCacheDir);
         Assert.Equal(Path.Combine(root, "models", "asr", "ggml-base.en-q8_0.bin"), config.TranscriptionModelPath);
-        Assert.Equal(TranscriptionModelProfilePreference.StandardIncluded, config.TranscriptionModelProfilePreference);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, config.TranscriptionModelProfilePreference);
         Assert.Equal(Path.Combine(root, "models", "diarization", "standard"), config.DiarizationAssetPath);
-        Assert.Equal(SpeakerLabelingModelProfilePreference.StandardIncluded, config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, config.SpeakerLabelingModelProfilePreference);
         Assert.Equal(0.02d, config.AutoDetectAudioPeakThreshold);
         Assert.Equal(InferenceAccelerationPreference.Auto, config.DiarizationAccelerationPreference);
         Assert.True(config.MicCaptureEnabled);
@@ -338,5 +338,27 @@ public sealed class AppConfigStoreTests
         Assert.Equal(
             SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
             migrated.SpeakerLabelingModelProfilePreference);
+    }
+
+    [Fact]
+    public async Task SaveAsync_Preserves_An_Explicit_SpeakerLabeling_Off_State()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var defaults = await store.LoadOrCreateAsync();
+
+        var saved = await store.SaveAsync(defaults with
+        {
+            DiarizationAssetPath = string.Empty,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Disabled,
+        });
+        var reloaded = await store.LoadOrCreateAsync();
+
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, saved.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(string.Empty, saved.DiarizationAssetPath);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, reloaded.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(string.Empty, reloaded.DiarizationAssetPath);
     }
 }

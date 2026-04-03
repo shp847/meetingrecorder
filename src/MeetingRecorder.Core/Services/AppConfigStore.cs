@@ -143,10 +143,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var catalog = MeetingRecorderModelCatalog.CreateDefault();
         var defaultTranscriptionModelPath = Path.Combine(
             modelCache,
-            catalog.Transcription.StandardIncluded.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            catalog.Transcription.Standard.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
         var defaultDiarizationAssetPath = Path.Combine(
             modelCache,
-            catalog.SpeakerLabeling.StandardIncluded.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            catalog.SpeakerLabeling.Standard.ManagedRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
         return new AppConfig
         {
@@ -155,9 +155,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             WorkDir = Path.Combine(rootDirectory, "work"),
             ModelCacheDir = modelCache,
             TranscriptionModelPath = defaultTranscriptionModelPath,
-            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.StandardIncluded,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
             DiarizationAssetPath = defaultDiarizationAssetPath,
-            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.StandardIncluded,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Standard,
             DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
             MicCaptureEnabled = true,
             LaunchOnLoginEnabled = true,
@@ -208,7 +208,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             ? defaults.TranscriptionModelPath
             : config.TranscriptionModelPath;
         var normalizedDiarizationAssetPath = string.IsNullOrWhiteSpace(config.DiarizationAssetPath)
-            ? defaults.DiarizationAssetPath
+            ? config.SpeakerLabelingModelProfilePreference == SpeakerLabelingModelProfilePreference.Disabled
+                ? string.Empty
+                : defaults.DiarizationAssetPath
             : config.DiarizationAssetPath;
         var isLegacyMeetingsWorkspaceConfig = !config.MeetingsGroupedViewMigrationApplied;
         var groupedViewMigrationApplied = config.MeetingsGroupedViewMigrationApplied;
@@ -310,7 +312,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     {
         if (string.IsNullOrWhiteSpace(transcriptionModelPath))
         {
-            return TranscriptionModelProfilePreference.StandardIncluded;
+            return TranscriptionModelProfilePreference.Standard;
         }
 
         var normalizedPath = NormalizeComparablePath(transcriptionModelPath);
@@ -334,7 +336,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             string.Equals(fileName, "ggml-base.bin", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(fileName, "ggml-base.en.bin", StringComparison.OrdinalIgnoreCase))
         {
-            return TranscriptionModelProfilePreference.StandardIncluded;
+            return TranscriptionModelProfilePreference.Standard;
         }
 
         if (normalizedPath.StartsWith(normalizedManagedAsrDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
@@ -359,9 +361,14 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         string diarizationAssetPath,
         string defaultDiarizationAssetPath)
     {
+        if (configuredPreference == SpeakerLabelingModelProfilePreference.Disabled)
+        {
+            return SpeakerLabelingModelProfilePreference.Disabled;
+        }
+
         if (string.IsNullOrWhiteSpace(diarizationAssetPath))
         {
-            return SpeakerLabelingModelProfilePreference.StandardIncluded;
+            return SpeakerLabelingModelProfilePreference.Standard;
         }
 
         var normalizedPath = NormalizeComparablePath(diarizationAssetPath);
@@ -376,13 +383,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
 
         if (string.Equals(normalizedPath, normalizedDefaultPath, StringComparison.OrdinalIgnoreCase))
         {
-            return SpeakerLabelingModelProfilePreference.StandardIncluded;
+            return SpeakerLabelingModelProfilePreference.Standard;
         }
 
         if (string.Equals(normalizedPath, legacyManagedDiarizationPath, StringComparison.OrdinalIgnoreCase))
         {
-            return configuredPreference == SpeakerLabelingModelProfilePreference.StandardIncluded
-                ? SpeakerLabelingModelProfilePreference.StandardIncluded
+            return configuredPreference == SpeakerLabelingModelProfilePreference.Standard
+                ? SpeakerLabelingModelProfilePreference.Standard
                 : configuredPreference;
         }
 
@@ -513,6 +520,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         Directory.CreateDirectory(config.WorkDir);
         Directory.CreateDirectory(config.ModelCacheDir);
         Directory.CreateDirectory(Path.GetDirectoryName(config.TranscriptionModelPath) ?? config.ModelCacheDir);
-        Directory.CreateDirectory(config.DiarizationAssetPath);
+        if (!string.IsNullOrWhiteSpace(config.DiarizationAssetPath))
+        {
+            Directory.CreateDirectory(config.DiarizationAssetPath);
+        }
     }
 }

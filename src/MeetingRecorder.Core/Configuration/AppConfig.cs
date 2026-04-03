@@ -174,12 +174,12 @@ public sealed record AppConfig
     public string TranscriptionModelPath { get; init; } = string.Empty;
 
     public TranscriptionModelProfilePreference TranscriptionModelProfilePreference { get; init; } =
-        TranscriptionModelProfilePreference.StandardIncluded;
+        TranscriptionModelProfilePreference.Standard;
 
     public string DiarizationAssetPath { get; init; } = string.Empty;
 
     public SpeakerLabelingModelProfilePreference SpeakerLabelingModelProfilePreference { get; init; } =
-        SpeakerLabelingModelProfilePreference.StandardIncluded;
+        SpeakerLabelingModelProfilePreference.Standard;
 
     public InferenceAccelerationPreference DiarizationAccelerationPreference { get; init; } =
         InferenceAccelerationPreference.Auto;

@@ -61,7 +61,7 @@ The current documented release line is **v0.3**.
 
 - `MeetingRecorderInstaller.msi`
 
-This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files. A fresh MSI install always seeds the included Standard transcription and Standard speaker-labeling assets locally, then offers a first-install-only choice to keep Standard or also try the optional Higher Accuracy download for each capability.
+This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files. A fresh MSI install now tries the recommended Standard transcription and Standard speaker-labeling downloads first, then offers first-install Advanced options to try Higher Accuracy or skip speaker labeling for now.
 
 ### Other supported install paths
 
@@ -189,7 +189,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Non-urgent Meetings refreshes are now coalesced while `Home` is active or a recording is still live, then caught up automatically when `Meetings` becomes visible again, so config saves and stop-time publish no longer interrupt typing or start/stop transitions
 - The Home screen now uses a wider full-canvas recording layout that stretches across the available tab width, keeps the quick settings underneath the main console, and uses fixed toggle widths so the setting cards do not resize when states change
 - A second launch now waits briefly for a winding-down prior instance before it reports that the app is still running
-- MSI, EXE, ZIP, and command bootstrap release assets
+- MSI, ZIP, curated model downloads, and command bootstrap release assets
 
 ## Reusable Platform Layers
 
@@ -282,8 +282,8 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
 - `Standard` transcription (`ggml-base.en-q8_0.bin`) and `Standard` speaker labeling (`meeting-recorder-diarization-bundle-standard-win-x64.zip`) are bundled into the main app payload for offline-first installs
 - `Higher Accuracy` transcription (`ggml-small.en-q8_0.bin`) and `Higher Accuracy` speaker labeling (`meeting-recorder-diarization-bundle-accurate-win-x64.zip`) remain separate GitHub release downloads
-- The MSI can offer those optional Higher Accuracy downloads during first install, but if downloads fail the included Standard assets stay active and the user can retry later from `Settings > Setup`
-- `Settings > Setup` separates `Transcription` and `Speaker labeling` into dedicated sections with curated `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics actions for lay users
+- The MSI can offer Higher Accuracy downloads during first install, but install still completes if downloads are blocked and `Settings > Setup` resumes transcription setup at first launch when needed
+- `Settings > Setup` separates `Transcription` and `Speaker labeling` into dedicated sections with curated `Use Standard`, `Use Higher Accuracy`, `Skip for now` for optional speaker labeling, `Import approved file`, and open-folder diagnostics actions for lay users
 - `Settings > Setup` now also includes `Teams integration`, where you can choose `Auto`, `Fallback only`, or `Third-party API`, then run a probe that saves the last probe time, strongest promotable path, and any block reason alongside the current Teams capability snapshot
 - Built-in automatic model and speaker-labeling downloads use GitHub release assets only
 - Alternate public speaker-labeling download locations are curated links and may currently be unavailable

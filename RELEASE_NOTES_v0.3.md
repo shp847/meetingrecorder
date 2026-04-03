@@ -41,7 +41,7 @@ Current releases also support:
 
 The app uses an offline-first setup model:
 
-- a fresh MSI install always seeds the Standard transcription asset and the Standard speaker-labeling asset locally
+- a fresh MSI install now tries the Standard transcription download and the Standard speaker-labeling download during setup
 - the installer can optionally try a Higher Accuracy transcription download and a Higher Accuracy speaker-labeling download
 - install still succeeds if those optional downloads fail
 - users can retry those optional downloads later from `Settings > Setup`

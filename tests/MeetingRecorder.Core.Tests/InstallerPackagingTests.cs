@@ -100,7 +100,8 @@ public sealed class InstallerPackagingTests
 
         Assert.Contains("WixUI_InstallDir", packageContents, StringComparison.Ordinal);
         Assert.Contains("WIXUI_EXITDIALOGOPTIONALTEXT", packageContents, StringComparison.Ordinal);
-        Assert.Contains("installed and ready to use", packageContents, StringComparison.Ordinal);
+        Assert.Contains("installed successfully", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("setup can continue at first launch", packageContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT", packageContents, StringComparison.Ordinal);
         Assert.Contains("Launch Meeting Recorder", packageContents, StringComparison.Ordinal);
         Assert.Contains("<Property Id=\"WIXUI_EXITDIALOGOPTIONALCHECKBOX\" Value=\"1\" />", packageContents, StringComparison.Ordinal);
@@ -180,9 +181,33 @@ public sealed class InstallerPackagingTests
         Assert.Contains("MODEL_OPTION_TRANSCRIPTION", packageContents, StringComparison.Ordinal);
         Assert.Contains("MODEL_OPTION_SPEAKER_LABELING", packageContents, StringComparison.Ordinal);
         Assert.Contains("ModelOptionsDlg", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Standard is included in this package", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Recommended setup", packageContents, StringComparison.Ordinal);
+        Assert.Contains("tries the Standard transcription download", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("tries the Standard speaker-labeling download", packageContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Higher Accuracy", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Skip speaker labeling for now", packageContents, StringComparison.Ordinal);
         Assert.Contains("Settings > Setup", packageContents, StringComparison.Ordinal);
+        Assert.Contains("NOT Installed", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_ModelOptionsDialog_Uses_DownloadFirst_Recommended_And_Advanced_Copy()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("Recommended setup", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Advanced options", packageContents, StringComparison.Ordinal);
+        Assert.Contains("download is blocked", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("recording stays blocked until transcription is ready", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("speaker labeling stays optional", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("skip speaker labeling for now", packageContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("NOT Installed", packageContents, StringComparison.Ordinal);
     }
 
@@ -206,7 +231,7 @@ public sealed class InstallerPackagingTests
         Assert.DoesNotContain("[ButtonText_Cancel]", packageContents, StringComparison.Ordinal);
         Assert.Contains("larger download", packageContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("slower processing", packageContents, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Standard stays active", packageContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("setup can continue at first launch", packageContents, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -253,6 +278,22 @@ public sealed class InstallerPackagingTests
         Assert.DoesNotContain("--transcription-profile", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("--speaker-labeling-profile", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("--log-path", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_ProvisionModels_Command_Does_Not_Quote_A_Raw_Trailing_Backslash_InstallRoot()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("-i &quot;[INSTALLFOLDER].&quot;", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("-i &quot;[INSTALLFOLDER]&quot;", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

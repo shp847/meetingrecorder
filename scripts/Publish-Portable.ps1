@@ -124,35 +124,6 @@ function Read-ModelCatalog {
     return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
 }
 
-function Copy-BundledStandardModelSeedAssets {
-    param(
-        [string]$RepoRoot,
-        [pscustomobject]$Catalog,
-        [string]$BundleRoot
-    )
-
-    $bundledAssets = @(
-        @{
-            SourcePath = Join-Path $RepoRoot ("assets\models\asr\" + $Catalog.transcription.standardIncluded.fileName)
-            RelativeDestinationPath = ($Catalog.transcription.standardIncluded.seedRelativePath -replace '/', '\')
-        },
-        @{
-            SourcePath = Join-Path $RepoRoot ("assets\models\diarization\" + $Catalog.speakerLabeling.standardIncluded.fileName)
-            RelativeDestinationPath = ($Catalog.speakerLabeling.standardIncluded.seedRelativePath -replace '/', '\')
-        }
-    )
-
-    foreach ($asset in $bundledAssets) {
-        if (-not (Test-Path $asset.SourcePath)) {
-            throw "Required bundled standard model asset was not found at '$($asset.SourcePath)'."
-        }
-
-        $destinationPath = Join-Path $BundleRoot $asset.RelativeDestinationPath
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destinationPath) | Out-Null
-        Copy-Item -Path $asset.SourcePath -Destination $destinationPath -Force
-    }
-}
-
 function New-BundleIntegrityEntry {
     param(
         [string]$BundleRoot,
@@ -277,9 +248,6 @@ if (Test-Path $appAssetPath) {
 
 Copy-Item -Path (Join-Path $workerTemp "*") -Destination $finalPath -Recurse -Force
 
-$modelCatalog = Read-ModelCatalog -CatalogPath $modelCatalogSourcePath
-Copy-BundledStandardModelSeedAssets -RepoRoot $repoRoot -Catalog $modelCatalog -BundleRoot $finalPath
-
 Assert-SingleFileWpfShellBundleLayout -BundleRoot $finalPath
 
 $bundleIntegrityManifest = [ordered]@{
@@ -294,8 +262,6 @@ $bundleIntegrityManifest = [ordered]@{
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.Core.dll"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.product.json"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "model-catalog.json"),
-        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath ($modelCatalog.transcription.standardIncluded.seedRelativePath -replace '/', '\')),
-        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath ($modelCatalog.speakerLabeling.standardIncluded.seedRelativePath -replace '/', '\')),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "Run-MeetingRecorder.cmd"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "Launch-MeetingRecorder-AfterInstall.vbs")
     )

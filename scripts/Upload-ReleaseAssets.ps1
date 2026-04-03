@@ -148,17 +148,98 @@ function Assert-ReleaseAssetsMatchCurrentRepoState {
     $metadata = Get-ReleaseSourceMetadata -PackagePath $PackagePath
     $currentState = Get-CurrentRepoSourceState -RepoRoot $RepoRoot
 
-    if ([bool]$metadata.isWorktreeDirty) {
-        throw "Installer assets in '$PackagePath' were built from a dirty worktree and must be rebuilt from the current clean repo state before uploading."
-    }
-
     if ($currentState.IsWorktreeDirty) {
         throw "The current repo worktree is dirty. Commit or stash your changes, rebuild installer assets, and then upload the release."
+    }
+
+    if ([bool]$metadata.isWorktreeDirty) {
+        throw "Installer assets in '$PackagePath' were built from a dirty worktree and must be rebuilt from the current clean repo state before uploading."
     }
 
     if ([string]$metadata.gitCommit -ne $currentState.GitCommit) {
         throw "Installer assets in '$PackagePath' target commit '$($metadata.gitCommit)', but the current repo is at '$($currentState.GitCommit)'. The assets must be rebuilt from the current clean repo state before uploading."
     }
+}
+
+function Test-ReleaseAssetsRequireRebuild {
+    param(
+        [string]$RepoRoot,
+        [string]$PackagePath
+    )
+
+    $currentState = Get-CurrentRepoSourceState -RepoRoot $RepoRoot
+    $metadata = $null
+    $rebuildReason = ""
+
+    try {
+        $metadata = Get-ReleaseSourceMetadata -PackagePath $PackagePath
+    }
+    catch {
+        $rebuildReason = $_.Exception.Message
+    }
+
+    if ([string]::IsNullOrWhiteSpace($rebuildReason) -and [bool]$metadata.isWorktreeDirty) {
+        $rebuildReason = "Installer assets in '$PackagePath' were built from a dirty worktree and must be rebuilt from the current clean repo state before uploading."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($rebuildReason) -and [string]$metadata.gitCommit -ne $currentState.GitCommit) {
+        $rebuildReason = "Installer assets in '$PackagePath' target commit '$($metadata.gitCommit)', but the current repo is at '$($currentState.GitCommit)'. The assets must be rebuilt from the current clean repo state before uploading."
+    }
+
+    return [pscustomobject]@{
+        CurrentState    = $currentState
+        RequiresRebuild = (-not [string]::IsNullOrWhiteSpace($rebuildReason))
+        RebuildReason   = $rebuildReason
+    }
+}
+
+function Invoke-InstallerAssetRebuild {
+    param(
+        [string]$RepoRoot,
+        [string]$PackageRootArgument
+    )
+
+    $buildInstallerScriptPath = Join-Path $RepoRoot "scripts\\Build-Installer.ps1"
+    if (-not (Test-Path $buildInstallerScriptPath)) {
+        throw "Could not find Build-Installer.ps1 at '$buildInstallerScriptPath'."
+    }
+
+    $commandArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $buildInstallerScriptPath,
+        "-PackageRoot",
+        $PackageRootArgument
+    )
+
+    Write-Host ("Running installer rebuild command: powershell {0}" -f ($commandArguments -join " "))
+    & powershell @commandArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build-Installer.ps1 failed while rebuilding stale installer assets for upload."
+    }
+}
+
+function Repair-ReleaseAssetsForUploadIfNeeded {
+    param(
+        [string]$RepoRoot,
+        [string]$PackagePath,
+        [string]$PackageRootArgument
+    )
+
+    $evaluation = Test-ReleaseAssetsRequireRebuild -RepoRoot $RepoRoot -PackagePath $PackagePath
+    if (-not $evaluation.RequiresRebuild) {
+        return
+    }
+
+    if ($evaluation.CurrentState.IsWorktreeDirty) {
+        return
+    }
+
+    Write-Host ("Installer assets are stale for upload: {0}" -f $evaluation.RebuildReason)
+    Write-Host "Rebuilding installer assets from the current clean repo state before upload..."
+    Invoke-InstallerAssetRebuild -RepoRoot $RepoRoot -PackageRootArgument $PackageRootArgument
 }
 
 function Get-GitHubApiHeaders {
@@ -705,7 +786,11 @@ function Get-InstallerAssetFiles {
     $assetPatterns = @(
         "MeetingRecorder-v*-win-x64.zip",
         "Install-LatestFromGitHub.cmd",
-        "Install-LatestFromGitHub.ps1"
+        "Install-LatestFromGitHub.ps1",
+        "ggml-base.en-q8_0.bin",
+        "ggml-small.en-q8_0.bin",
+        "meeting-recorder-diarization-bundle-standard-win-x64.zip",
+        "meeting-recorder-diarization-bundle-accurate-win-x64.zip"
     )
 
     if ($Installers.IsPresent) {
@@ -820,6 +905,7 @@ $script:RepoInformationalVersion = Get-RepoInformationalVersion -RepoRoot $repoR
 $packagePath = Join-Path $repoRoot $PackageRoot
 $repositoryInfo = Get-GitHubRepositoryInfo -RepoRoot $repoRoot
 $resolvedGitHubToken = Resolve-GitHubToken -ExplicitToken $GitHubToken
+Repair-ReleaseAssetsForUploadIfNeeded -RepoRoot $repoRoot -PackagePath $packagePath -PackageRootArgument $PackageRoot
 Assert-ReleaseAssetsMatchCurrentRepoState -RepoRoot $repoRoot -PackagePath $packagePath
 $assetFiles = Get-InstallerAssetFiles -PackagePath $packagePath -Installers:$Installers
 

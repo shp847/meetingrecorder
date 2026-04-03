@@ -438,15 +438,15 @@ public sealed class MainWindowInteractionLogicTests
     public void BuildModelsTabTranscriptionSetupState_Prefers_Setup_When_No_Valid_Model_Is_Configured()
     {
         var result = MainWindowInteractionLogic.BuildModelsTabTranscriptionSetupState(
-            requestedProfile: TranscriptionModelProfilePreference.StandardIncluded,
-            activeProfile: TranscriptionModelProfilePreference.StandardIncluded,
+            requestedProfile: TranscriptionModelProfilePreference.Standard,
+            activeProfile: TranscriptionModelProfilePreference.Standard,
             hasValidModel: false,
             retryRecommended: false);
 
         Assert.Equal("Needs setup", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Transcription is not ready yet. Use Standard to restore the included model, choose Higher Accuracy to try the optional download, or import an approved local file.",
+            "Transcription is not ready yet. Download Standard now, choose Higher Accuracy to try the optional larger download, or import an approved local file.",
             result.Body);
     }
 
@@ -470,15 +470,31 @@ public sealed class MainWindowInteractionLogicTests
     public void BuildModelsTabSpeakerLabelingSetupState_Uses_Setup_When_Sidecar_Is_Not_Ready()
     {
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
-            requestedProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
-            activeProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
+            requestedProfile: SpeakerLabelingModelProfilePreference.Standard,
+            activeProfile: SpeakerLabelingModelProfilePreference.Standard,
             isReady: false,
             retryRecommended: false);
 
-        Assert.Equal("Needs setup", result.Status);
+        Assert.Equal("Optional", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
+            "Speaker labeling is optional right now. Download Standard or Higher Accuracy when you want grouped-by-speaker output, or import an approved local bundle.",
+            result.Body);
+    }
+
+    [Fact]
+    public void BuildModelsTabSpeakerLabelingSetupState_Uses_OffForNow_Copy_When_SpeakerLabeling_Is_Disabled()
+    {
+        var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            requestedProfile: SpeakerLabelingModelProfilePreference.Disabled,
+            activeProfile: SpeakerLabelingModelProfilePreference.Disabled,
+            isReady: false,
+            retryRecommended: false);
+
+        Assert.Equal("Optional", result.Status);
+        Assert.Equal("Open Setup", result.PrimaryActionLabel);
+        Assert.Equal(
+            "Speaker labeling is off for now. Download Standard or Higher Accuracy later when you want grouped-by-speaker output, or import an approved local bundle.",
             result.Body);
     }
 
@@ -521,18 +537,18 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void BuildModelsTabSpeakerLabelingSetupState_Uses_StandardReady_Copy_When_Standard_Bundle_Is_Ready()
+    public void BuildModelsTabSpeakerLabelingSetupState_Keeps_SpeakerLabeling_Optional_When_Standard_Bundle_Is_Not_Ready()
     {
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
-            requestedProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
-            activeProfile: SpeakerLabelingModelProfilePreference.StandardIncluded,
+            requestedProfile: SpeakerLabelingModelProfilePreference.Standard,
+            activeProfile: SpeakerLabelingModelProfilePreference.Standard,
             isReady: false,
             retryRecommended: true);
 
-        Assert.Equal("Needs setup", result.Status);
+        Assert.Equal("Optional", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
-            "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
+            "Speaker labeling is optional right now. Download Standard or Higher Accuracy when you want grouped-by-speaker output, or import an approved local bundle.",
             result.Body);
     }
 

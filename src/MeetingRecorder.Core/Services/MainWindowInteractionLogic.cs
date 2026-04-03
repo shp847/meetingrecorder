@@ -482,11 +482,11 @@ internal static class MainWindowInteractionLogic
         {
             return new ModelsTabSetupState(
                 "Needs setup",
-                "Transcription is not ready yet. Use Standard to restore the included model, choose Higher Accuracy to try the optional download, or import an approved local file.",
+                "Transcription is not ready yet. Download Standard now, choose Higher Accuracy to try the optional larger download, or import an approved local file.",
                 new ModelsTabSetupAction(
                     ModelsTabSetupActionKind.OpenTranscriptionManagement,
                     "Open Setup",
-                    "Review the transcription setup section below to restore the included Standard model, try Higher Accuracy, or import an approved local file.",
+                    "Review the transcription setup section below to download Standard, try Higher Accuracy, or import an approved local file.",
                     "UseStandardTranscriptionProfileButton"));
         }
 
@@ -494,11 +494,11 @@ internal static class MainWindowInteractionLogic
         {
             return new ModelsTabSetupState(
                 "Standard active",
-                "Higher Accuracy transcription was requested, but the included Standard model is active right now. Retry Higher Accuracy from Setup when downloads are available.",
+                "Higher Accuracy transcription was requested earlier, but Standard is active right now. Retry Higher Accuracy from Setup when downloads are available.",
                 new ModelsTabSetupAction(
                     ModelsTabSetupActionKind.RetryHigherAccuracyTranscription,
                     "Retry Higher Accuracy",
-                    "Review the transcription setup section below to retry the Higher Accuracy download. Standard stays ready either way.",
+                    "Review the transcription setup section below to retry the Higher Accuracy download. Standard remains the fallback when downloads are unavailable.",
                     "UseHighAccuracyTranscriptionProfileButton"));
         }
 
@@ -506,7 +506,7 @@ internal static class MainWindowInteractionLogic
         {
             TranscriptionModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy transcription is active.",
             TranscriptionModelProfilePreference.Custom => "A custom transcription model is active.",
-            _ => "The included Standard transcription model is active.",
+            _ => "The Standard transcription model is active.",
         };
 
         return new ModelsTabSetupState(
@@ -530,15 +530,27 @@ internal static class MainWindowInteractionLogic
         bool isReady,
         bool retryRecommended)
     {
-        if (!isReady)
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.Disabled)
         {
             return new ModelsTabSetupState(
-                "Needs setup",
-                "Speaker labeling is not ready yet. Use Standard to restore the included bundle, choose Higher Accuracy to try the optional download, or import an approved local file.",
+                "Optional",
+                "Speaker labeling is off for now. Download Standard or Higher Accuracy later when you want grouped-by-speaker output, or import an approved local bundle.",
                 new ModelsTabSetupAction(
                     ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
                     "Open Setup",
-                    "Review the speaker-labeling setup section below to restore the included Standard bundle, try Higher Accuracy, or import an approved local bundle.",
+                    "Review the speaker-labeling setup section below to download Standard, try Higher Accuracy, or import an approved local bundle.",
+                    "UseStandardSpeakerLabelingProfileButton"));
+        }
+
+        if (!isReady)
+        {
+            return new ModelsTabSetupState(
+                "Optional",
+                "Speaker labeling is optional right now. Download Standard or Higher Accuracy when you want grouped-by-speaker output, or import an approved local bundle.",
+                new ModelsTabSetupAction(
+                    ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
+                    "Open Setup",
+                    "Review the speaker-labeling setup section below to download Standard, try Higher Accuracy, or import an approved local bundle.",
                     "UseStandardSpeakerLabelingProfileButton"));
         }
 
@@ -546,11 +558,11 @@ internal static class MainWindowInteractionLogic
         {
             return new ModelsTabSetupState(
                 "Standard active",
-                "Higher Accuracy speaker labeling was requested, but the included Standard bundle is active right now. Retry Higher Accuracy from Setup when downloads are available.",
+                "Higher Accuracy speaker labeling was requested earlier, but Standard is active right now. Retry Higher Accuracy from Setup when downloads are available.",
                 new ModelsTabSetupAction(
                     ModelsTabSetupActionKind.RetryHigherAccuracySpeakerLabeling,
                     "Retry Higher Accuracy",
-                    "Review the speaker-labeling setup section below to retry the Higher Accuracy bundle. Standard stays ready either way.",
+                    "Review the speaker-labeling setup section below to retry the Higher Accuracy bundle. Standard remains the fallback when downloads are unavailable.",
                     "UseHighAccuracySpeakerLabelingProfileButton"));
         }
 
@@ -558,7 +570,8 @@ internal static class MainWindowInteractionLogic
         {
             SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy speaker labeling is active.",
             SpeakerLabelingModelProfilePreference.Custom => "A custom speaker-labeling bundle is active.",
-            _ => "The included Standard speaker-labeling bundle is active.",
+            SpeakerLabelingModelProfilePreference.Disabled => "Speaker labeling is turned off for now.",
+            _ => "The Standard speaker-labeling bundle is active.",
         };
 
         return new ModelsTabSetupState(
@@ -566,6 +579,7 @@ internal static class MainWindowInteractionLogic
             {
                 SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded => "Higher Accuracy ready",
                 SpeakerLabelingModelProfilePreference.Custom => "Custom ready",
+                SpeakerLabelingModelProfilePreference.Disabled => "Optional",
                 _ => "Standard ready",
             },
             configuredPathText,

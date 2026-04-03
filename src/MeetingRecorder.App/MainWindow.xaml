@@ -1665,7 +1665,7 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
-                                               Text="Meeting Recorder always includes the Standard transcription model. Choose Higher Accuracy only when you want setup to try the larger optional download now." />
+                                               Text="Recording stays blocked until a transcription model is ready. Use Standard for the recommended smaller download, choose Higher Accuracy for the larger optional download, or import an approved local model." />
 
                                     <TextBlock Margin="0,12,0,0"
                                                FontWeight="SemiBold"
@@ -1916,7 +1916,7 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
-                                               Text="Meeting Recorder always includes the Standard speaker-labeling bundle. Higher Accuracy is optional, and if that download fails you can keep working with Standard and retry later from Settings > Setup." />
+                                               Text="Speaker labeling stays optional. Download Standard for the recommended smaller setup, choose Higher Accuracy for the larger optional download, skip it for now, or import an approved local bundle later." />
                                     <WrapPanel Margin="0,12,0,0">
                                         <Button x:Name="UseStandardSpeakerLabelingProfileButton"
                                                 Width="160"
@@ -1930,6 +1930,12 @@
                                                 Margin="0,0,12,12"
                                                 Click="UseHighAccuracySpeakerLabelingProfileButton_OnClick"
                                                 Content="Use Higher Accuracy" />
+                                        <Button x:Name="SkipSpeakerLabelingForNowButton"
+                                                Width="150"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="SkipSpeakerLabelingForNowButton_OnClick"
+                                                Content="Skip for now" />
                                         <Button x:Name="ImportApprovedSpeakerLabelingButton"
                                                 Width="170"
                                                 Height="34"
@@ -1970,7 +1976,7 @@
                                             <TextBlock Margin="0,6,0,0"
                                                        Foreground="#45504D"
                                                        TextWrapping="Wrap"
-                                                       Text="Meeting Recorder always keeps the included Standard bundle as the safe fallback. Use the controls below only when you need to inspect alternate downloads, mirrors, or imported bundles." />
+                                                       Text="Use the controls below when you need a different download source, want to retry setup, or want to import an approved speaker-labeling bundle manually." />
                                             <TextBlock Margin="0,12,0,0"
                                                        FontWeight="SemiBold"
                                                        Text="Recommended Higher Accuracy bundle" />

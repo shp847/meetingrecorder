@@ -53,16 +53,6 @@ public sealed class MeetingRecorderModelCatalogService
         return Path.Combine(resolvedBaseDirectory, CatalogFileName);
     }
 
-    public string ResolveSeedSourcePath(string installRoot, CuratedModelArtifact artifact)
-    {
-        if (!artifact.IsBundled)
-        {
-            throw new InvalidOperationException($"Artifact '{artifact.FileName}' is not bundled in the installer.");
-        }
-
-        return Path.GetFullPath(Path.Combine(installRoot, artifact.SeedRelativePath!));
-    }
-
     public string ResolveManagedPath(string modelCacheDir, CuratedModelArtifact artifact)
     {
         return Path.GetFullPath(
@@ -79,10 +69,10 @@ public sealed class MeetingRecorderModelCatalogService
         var normalizedPath = Path.GetFullPath(modelPath);
         if (string.Equals(
             normalizedPath,
-            ResolveManagedPath(modelCacheDir, catalog.Transcription.StandardIncluded),
+            ResolveManagedPath(modelCacheDir, catalog.Transcription.Standard),
             StringComparison.OrdinalIgnoreCase))
         {
-            return TranscriptionModelProfilePreference.StandardIncluded;
+            return TranscriptionModelProfilePreference.Standard;
         }
 
         if (string.Equals(
@@ -101,13 +91,18 @@ public sealed class MeetingRecorderModelCatalogService
         string modelCacheDir,
         string assetPath)
     {
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return SpeakerLabelingModelProfilePreference.Disabled;
+        }
+
         var normalizedPath = Path.GetFullPath(assetPath);
         if (string.Equals(
             normalizedPath,
-            ResolveManagedPath(modelCacheDir, catalog.SpeakerLabeling.StandardIncluded),
+            ResolveManagedPath(modelCacheDir, catalog.SpeakerLabeling.Standard),
             StringComparison.OrdinalIgnoreCase))
         {
-            return SpeakerLabelingModelProfilePreference.StandardIncluded;
+            return SpeakerLabelingModelProfilePreference.Standard;
         }
 
         if (string.Equals(
@@ -132,6 +127,17 @@ public sealed class MeetingRecorderModelCatalogService
                 StringComparison.OrdinalIgnoreCase));
     }
 
+    public WhisperRemoteModelAsset? FindTranscriptionStandardAsset(
+        MeetingRecorderModelCatalog catalog,
+        IReadOnlyList<WhisperRemoteModelAsset> remoteModels)
+    {
+        return remoteModels.FirstOrDefault(asset =>
+            string.Equals(
+                asset.FileName,
+                catalog.Transcription.Standard.FileName,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
     public DiarizationRemoteAsset? FindSpeakerLabelingHighAccuracyAsset(
         MeetingRecorderModelCatalog catalog,
         IReadOnlyList<DiarizationRemoteAsset> remoteAssets)
@@ -140,6 +146,17 @@ public sealed class MeetingRecorderModelCatalogService
             string.Equals(
                 asset.FileName,
                 catalog.SpeakerLabeling.HighAccuracy.FileName,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    public DiarizationRemoteAsset? FindSpeakerLabelingStandardAsset(
+        MeetingRecorderModelCatalog catalog,
+        IReadOnlyList<DiarizationRemoteAsset> remoteAssets)
+    {
+        return remoteAssets.FirstOrDefault(asset =>
+            string.Equals(
+                asset.FileName,
+                catalog.SpeakerLabeling.Standard.FileName,
                 StringComparison.OrdinalIgnoreCase));
     }
 }
@@ -154,44 +171,36 @@ public sealed record MeetingRecorderModelCatalog(
         return new MeetingRecorderModelCatalog(
             FormatVersion: 1,
             Transcription: new CuratedModelCatalogSection(
-                StandardIncluded: new CuratedModelArtifact(
+                Standard: new CuratedModelArtifact(
                     FileName: "ggml-base.en-q8_0.bin",
                     Label: "Standard",
-                    Description: "Included with the installer. Best balance of setup speed, download size, and transcript quality.",
-                    ManagedRelativePath: "asr/ggml-base.en-q8_0.bin",
-                    SeedRelativePath: "model-seed/transcription/ggml-base.en-q8_0.bin"),
+                    Description: "Recommended default download for most laptops. Best balance of setup speed, download size, and transcript quality.",
+                    ManagedRelativePath: "asr/ggml-base.en-q8_0.bin"),
                 HighAccuracy: new CuratedModelArtifact(
                     FileName: "ggml-small.en-q8_0.bin",
                     Label: "Higher Accuracy",
                     Description: "Optional larger download for better transcript quality after install.",
-                    ManagedRelativePath: "asr/ggml-small.en-q8_0.bin",
-                    SeedRelativePath: null)),
+                    ManagedRelativePath: "asr/ggml-small.en-q8_0.bin")),
             SpeakerLabeling: new CuratedModelCatalogSection(
-                StandardIncluded: new CuratedModelArtifact(
+                Standard: new CuratedModelArtifact(
                     FileName: "meeting-recorder-diarization-bundle-standard-win-x64.zip",
                     Label: "Standard",
-                    Description: "Included with the installer so speaker labeling can be ready even when downloads are unavailable.",
-                    ManagedRelativePath: "diarization/standard",
-                    SeedRelativePath: "model-seed/speaker-labeling/meeting-recorder-diarization-bundle-standard-win-x64.zip"),
+                    Description: "Recommended default download when you want speaker labeling ready after setup.",
+                    ManagedRelativePath: "diarization/standard"),
                 HighAccuracy: new CuratedModelArtifact(
                     FileName: "meeting-recorder-diarization-bundle-accurate-win-x64.zip",
                     Label: "Higher Accuracy",
                     Description: "Optional larger download for stronger speaker separation after install.",
-                    ManagedRelativePath: "diarization/high-accuracy",
-                    SeedRelativePath: null)));
+                    ManagedRelativePath: "diarization/high-accuracy")));
     }
 }
 
 public sealed record CuratedModelCatalogSection(
-    CuratedModelArtifact StandardIncluded,
+    CuratedModelArtifact Standard,
     CuratedModelArtifact HighAccuracy);
 
 public sealed record CuratedModelArtifact(
     string FileName,
     string Label,
     string Description,
-    string ManagedRelativePath,
-    string? SeedRelativePath)
-{
-    public bool IsBundled => !string.IsNullOrWhiteSpace(SeedRelativePath);
-}
+    string ManagedRelativePath);

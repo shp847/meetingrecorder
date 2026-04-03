@@ -17,10 +17,10 @@ That installer path:
 
 - installs the app into `%USERPROFILE%\Documents\MeetingRecorder`
 - keeps writable runtime data such as config, logs, models, work files, and install provenance under `%LOCALAPPDATA%\MeetingRecorder`
-- always seeds the included Standard transcription and Standard speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models` so offline installs still finish ready to use
+- tries the recommended Standard transcription and Standard speaker-labeling downloads into `%LOCALAPPDATA%\MeetingRecorder\models` during install
 - shows a first-install `Choose model options` page where users can keep `Standard` or also ask setup to try one optional `Higher Accuracy` download for transcription and speaker labeling
 - explains the tradeoff clearly: `Higher Accuracy` can improve transcript or speaker-label quality, but it uses a larger download and may lead to slower processing than the included `Standard` option
-- keeps the install successful even if those optional Higher Accuracy downloads fail, then tells the user to retry later from `Settings > Setup`
+- keeps the install successful even if setup downloads are blocked, then tells the user to resume setup from `Settings > Setup`
 - creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%USERPROFILE%\Documents\MeetingRecorder`
 - skips the stock license-agreement page so the install flow stays short
 - shows a final completion screen so users can confirm the install succeeded
@@ -59,6 +59,7 @@ User-facing installer and updater rule:
 - do not enumerate, close, or kill Meeting Recorder processes from installer flows; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
 - all actual install and update writes flow through `AppPlatform.Deployment.Cli`
 - the MSI post-copy `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
+- that MSI handoff now also passes the install root as `INSTALLFOLDER.` instead of a raw quoted trailing-backslash directory, so Windows command-line parsing cannot break the custom-action launch with `0x80070002`
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
 
 For newer managed installs:
@@ -136,7 +137,7 @@ The portable bundle also includes:
 2. If the dependency checker reports a missing runtime, run `Install-Dependencies.cmd`.
 3. Open `Settings` from the header and review `Setup`.
 4. Confirm `Transcription` shows either `Standard ready` or `Higher Accuracy ready`.
-5. If the installer reported that an optional Higher Accuracy download did not finish, leave `Standard` active and retry from `Settings > Setup` when downloads are available.
+5. If the installer reported that a download did not finish, open `Settings > Setup` after launch. Recording stays blocked until transcription is ready, while speaker labeling can stay optional.
 6. If you plan to rely on Teams auto-detection, open `Settings > Setup > Teams integration`, choose the preferred mode, and run the Teams probe so the app can capture the current local detector baseline, test whether the Teams third-party API candidate exposes readable meeting state on this machine, and fall back cleanly when it does not. The Setup card now also saves and shows `Last probe`, `Promotable path`, and `Block reason`.
 7. Confirm `Speaker labeling` shows either `Standard ready`, `Higher Accuracy ready`, or your preferred custom import state if you plan to use diarization.
 8. If the output folders are not acceptable, review `Settings > Files`.
@@ -158,7 +159,7 @@ The app now keeps the main workflow in two primary destinations inside one visib
 
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, the detected audio source summary, live audio graph, start/stop controls, and quick settings for microphone capture and auto-detection
 - `Meetings` for the recent-and-published meetings workspace, grouped browsing, cleanup review, quick actions, and compact meeting drafts
-Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file`, then use the built-in open-folder diagnostics only when you need to troubleshoot or verify what is on disk.
+Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. Recording and auto-detect stay blocked until transcription is ready.
 When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
 When the backlog includes repaired sessions that already finished transcription, startup now resumes those publish-ready items before fresh untouched queue work so the visible queue can shrink faster after a crash backlog.

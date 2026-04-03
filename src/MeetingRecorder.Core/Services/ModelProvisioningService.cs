@@ -41,17 +41,6 @@ public sealed class ModelProvisioningService
         var config = await _configStore.LoadOrCreateAsync(cancellationToken);
         var catalog = _catalogService.Load(request.ModelCatalogPath);
 
-        var standardTranscriptionPath = await SeedStandardTranscriptionAsync(
-            request.InstallRoot,
-            config.ModelCacheDir,
-            catalog.Transcription.StandardIncluded,
-            cancellationToken);
-        var standardSpeakerLabelingPath = await SeedStandardSpeakerLabelingAsync(
-            request.InstallRoot,
-            config.ModelCacheDir,
-            catalog.SpeakerLabeling.StandardIncluded,
-            cancellationToken);
-
         var requestedTranscriptionProfile = existingConfigDetected && request.RespectExistingConfigPreferences
             ? config.TranscriptionModelProfilePreference
             : request.TranscriptionProfile;
@@ -59,21 +48,38 @@ public sealed class ModelProvisioningService
             ? config.SpeakerLabelingModelProfilePreference
             : request.SpeakerLabelingProfile;
 
+        IReadOnlyList<WhisperRemoteModelAsset>? remoteModels = null;
+        IReadOnlyList<DiarizationRemoteAsset>? remoteDiarizationAssets = null;
+
+        async Task<IReadOnlyList<WhisperRemoteModelAsset>> GetRemoteModelsAsync()
+        {
+            remoteModels ??= await _whisperModelReleaseCatalogService.ListAvailableRemoteModelsAsync(
+                request.UpdateFeedUrl,
+                cancellationToken);
+            return remoteModels;
+        }
+
+        async Task<IReadOnlyList<DiarizationRemoteAsset>> GetRemoteDiarizationAssetsAsync()
+        {
+            remoteDiarizationAssets ??= await _diarizationAssetReleaseCatalogService.ListAvailableRemoteAssetsAsync(
+                request.UpdateFeedUrl,
+                cancellationToken);
+            return remoteDiarizationAssets;
+        }
+
         var transcriptionStatus = await ProvisionTranscriptionAsync(
             existingConfigDetected,
             config,
             catalog,
-            request.UpdateFeedUrl,
             requestedTranscriptionProfile,
-            standardTranscriptionPath,
+            GetRemoteModelsAsync,
             cancellationToken);
         var speakerLabelingStatus = await ProvisionSpeakerLabelingAsync(
             existingConfigDetected,
             config,
             catalog,
-            request.UpdateFeedUrl,
             requestedSpeakerLabelingProfile,
-            standardSpeakerLabelingPath,
+            GetRemoteDiarizationAssetsAsync,
             cancellationToken);
 
         var updatedConfig = await _configStore.SaveAsync(config with
@@ -87,265 +93,435 @@ public sealed class ModelProvisioningService
         var result = new ModelProvisioningResult(
             DateTimeOffset.UtcNow,
             transcriptionStatus,
-            speakerLabelingStatus);
+            speakerLabelingStatus,
+            RequiresFirstLaunchSetupBeforeRecording: !transcriptionStatus.IsReady);
         await _resultStore.SaveAsync(result, cancellationToken);
 
         return new ModelProvisioningExecutionResult(updatedConfig, result, existingConfigDetected);
-    }
-
-    private async Task<string> SeedStandardTranscriptionAsync(
-        string installRoot,
-        string modelCacheDir,
-        CuratedModelArtifact standardArtifact,
-        CancellationToken cancellationToken)
-    {
-        var targetPath = _catalogService.ResolveManagedPath(modelCacheDir, standardArtifact);
-        var currentStatus = _whisperModelService.Inspect(targetPath);
-        if (currentStatus.Kind == WhisperModelStatusKind.Valid)
-        {
-            return targetPath;
-        }
-
-        var sourcePath = _catalogService.ResolveSeedSourcePath(installRoot, standardArtifact);
-        await _whisperModelService.ImportModelAsync(sourcePath, targetPath, cancellationToken);
-        return targetPath;
-    }
-
-    private async Task<string> SeedStandardSpeakerLabelingAsync(
-        string installRoot,
-        string modelCacheDir,
-        CuratedModelArtifact standardArtifact,
-        CancellationToken cancellationToken)
-    {
-        var targetPath = _catalogService.ResolveManagedPath(modelCacheDir, standardArtifact);
-        var currentStatus = _diarizationAssetCatalogService.InspectInstalledAssets(targetPath);
-        if (currentStatus.IsReady)
-        {
-            return targetPath;
-        }
-
-        var sourcePath = _catalogService.ResolveSeedSourcePath(installRoot, standardArtifact);
-        var installed = await _diarizationAssetCatalogService.ImportAssetIntoDirectoryAsync(
-            sourcePath,
-            targetPath,
-            cancellationToken);
-        if (!installed.IsReady)
-        {
-            throw new InvalidOperationException(installed.DetailsText);
-        }
-
-        return installed.AssetRootPath;
     }
 
     private async Task<TranscriptionModelProvisioningStatus> ProvisionTranscriptionAsync(
         bool existingConfigDetected,
         AppConfig config,
         MeetingRecorderModelCatalog catalog,
-        string updateFeedUrl,
         TranscriptionModelProfilePreference requestedProfile,
-        string standardTranscriptionPath,
+        Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
         CancellationToken cancellationToken)
     {
         var configuredStatus = _whisperModelService.Inspect(config.TranscriptionModelPath);
+        var standardTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.Standard);
 
-        if (existingConfigDetected)
-        {
-            return requestedProfile switch
-            {
-                TranscriptionModelProfilePreference.StandardIncluded => BuildTranscriptionStatus(
-                    requestedProfile,
-                    TranscriptionModelProfilePreference.StandardIncluded,
-                    retryRecommended: false,
-                    "Transcription is ready with the included Standard model.",
-                    "The bundled Standard transcription model is installed and active.",
-                    standardTranscriptionPath),
-                TranscriptionModelProfilePreference.HighAccuracyDownloaded when configuredStatus.Kind == WhisperModelStatusKind.Valid => BuildTranscriptionStatus(
-                    requestedProfile,
-                    TranscriptionModelProfilePreference.HighAccuracyDownloaded,
-                    retryRecommended: false,
-                    "Transcription is ready with the Higher Accuracy model.",
-                    "Your existing Higher Accuracy transcription model is still available and active.",
-                    config.TranscriptionModelPath),
-                TranscriptionModelProfilePreference.HighAccuracyDownloaded => BuildTranscriptionStatus(
-                    requestedProfile,
-                    TranscriptionModelProfilePreference.StandardIncluded,
-                    retryRecommended: true,
-                    "Transcription is ready with the included Standard model.",
-                    "The previous Higher Accuracy transcription model is unavailable right now. You can retry it from Settings > Setup.",
-                    standardTranscriptionPath),
-                TranscriptionModelProfilePreference.Custom when configuredStatus.Kind == WhisperModelStatusKind.Valid => BuildTranscriptionStatus(
-                    requestedProfile,
-                    TranscriptionModelProfilePreference.Custom,
-                    retryRecommended: false,
-                    "Transcription is ready with your imported custom model.",
-                    "Your existing custom transcription model is still available and active.",
-                    config.TranscriptionModelPath),
-                TranscriptionModelProfilePreference.Custom => BuildTranscriptionStatus(
-                    requestedProfile,
-                    TranscriptionModelProfilePreference.StandardIncluded,
-                    retryRecommended: true,
-                    "Transcription is ready with the included Standard model.",
-                    "Your imported custom transcription model is unavailable right now. You can import it again from Settings > Setup.",
-                    standardTranscriptionPath),
-                _ => BuildTranscriptionStatus(
-                    TranscriptionModelProfilePreference.StandardIncluded,
-                    TranscriptionModelProfilePreference.StandardIncluded,
-                    retryRecommended: false,
-                    "Transcription is ready with the included Standard model.",
-                    "The bundled Standard transcription model is installed and active.",
-                    standardTranscriptionPath),
-            };
-        }
-
-        if (requestedProfile != TranscriptionModelProfilePreference.HighAccuracyDownloaded)
+        if (requestedProfile == TranscriptionModelProfilePreference.Custom &&
+            configuredStatus.Kind == WhisperModelStatusKind.Valid)
         {
             return BuildTranscriptionStatus(
-                TranscriptionModelProfilePreference.StandardIncluded,
-                TranscriptionModelProfilePreference.StandardIncluded,
+                requestedProfile,
+                TranscriptionModelProfilePreference.Custom,
                 retryRecommended: false,
-                "Transcription is ready with the included Standard model.",
-                "The bundled Standard transcription model was installed during setup.",
-                standardTranscriptionPath);
+                isReady: true,
+                "Transcription is ready with your imported custom model.",
+                "Your existing custom transcription model is still available and active.",
+                config.TranscriptionModelPath);
         }
 
-        try
+        if (requestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded &&
+            configuredStatus.Kind == WhisperModelStatusKind.Valid)
         {
-            var remoteModels = await _whisperModelReleaseCatalogService.ListAvailableRemoteModelsAsync(
-                updateFeedUrl,
-                cancellationToken);
-            var highAccuracyAsset = _catalogService.FindTranscriptionHighAccuracyAsset(catalog, remoteModels)
-                ?? throw new InvalidOperationException(
-                    $"The Higher Accuracy transcription asset '{catalog.Transcription.HighAccuracy.FileName}' is not available in the current release.");
-            var installed = await _whisperModelReleaseCatalogService.DownloadRemoteModelIntoManagedDirectoryAsync(
-                highAccuracyAsset,
-                config.ModelCacheDir,
-                progress: null,
-                cancellationToken);
-
             return BuildTranscriptionStatus(
                 requestedProfile,
                 TranscriptionModelProfilePreference.HighAccuracyDownloaded,
                 retryRecommended: false,
+                isReady: true,
                 "Transcription is ready with the Higher Accuracy model.",
-                "The optional Higher Accuracy transcription download finished during setup.",
-                installed.ModelPath);
+                existingConfigDetected
+                    ? "Your existing Higher Accuracy transcription model is still available and active."
+                    : "The Higher Accuracy transcription download finished during setup.",
+                config.TranscriptionModelPath);
         }
-        catch (Exception exception)
+
+        if (requestedProfile == TranscriptionModelProfilePreference.Standard &&
+            configuredStatus.Kind == WhisperModelStatusKind.Valid &&
+            string.Equals(
+                Path.GetFullPath(config.TranscriptionModelPath),
+                Path.GetFullPath(standardTargetPath),
+                StringComparison.OrdinalIgnoreCase))
         {
             return BuildTranscriptionStatus(
                 requestedProfile,
-                TranscriptionModelProfilePreference.StandardIncluded,
-                retryRecommended: true,
-                "Transcription is ready with the included Standard model.",
-                $"The optional Higher Accuracy transcription download did not finish during setup. Retry it from Settings > Setup. Details: {exception.Message}",
-                standardTranscriptionPath);
+                TranscriptionModelProfilePreference.Standard,
+                retryRecommended: false,
+                isReady: true,
+                "Transcription is ready with the Standard model.",
+                existingConfigDetected
+                    ? "The Standard transcription model is still available and active."
+                    : "The Standard transcription download finished during setup.",
+                config.TranscriptionModelPath);
         }
+
+        DownloadedWhisperModel? standardDownload = null;
+
+        if (requestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded)
+        {
+            var highAccuracyDownload = await TryDownloadHighAccuracyTranscriptionAsync(
+                config,
+                catalog,
+                getRemoteModelsAsync,
+                cancellationToken);
+            if (highAccuracyDownload.IsReady)
+            {
+                return BuildTranscriptionStatus(
+                    requestedProfile,
+                    TranscriptionModelProfilePreference.HighAccuracyDownloaded,
+                    retryRecommended: false,
+                    isReady: true,
+                    "Transcription is ready with the Higher Accuracy model.",
+                    "The Higher Accuracy transcription download finished during setup.",
+                    highAccuracyDownload.ModelPath);
+            }
+
+            standardDownload = await TryDownloadStandardTranscriptionAsync(
+                config,
+                catalog,
+                getRemoteModelsAsync,
+                cancellationToken);
+            if (standardDownload.IsReady)
+            {
+                return BuildTranscriptionStatus(
+                    requestedProfile,
+                    TranscriptionModelProfilePreference.Standard,
+                    retryRecommended: true,
+                    isReady: true,
+                    "Transcription is ready with the Standard model.",
+                    $"The Higher Accuracy transcription download did not finish during setup. Retry it from Settings > Setup. Details: {highAccuracyDownload.FailureMessage}",
+                    standardDownload.ModelPath);
+            }
+
+            return BuildTranscriptionStatus(
+                requestedProfile,
+                TranscriptionModelProfilePreference.Standard,
+                retryRecommended: true,
+                isReady: false,
+                "Transcription still needs setup.",
+                    $"Meeting Recorder could not finish the Higher Accuracy or Standard transcription downloads. Recording stays blocked until you resume setup at first launch or import an approved model. Details: {highAccuracyDownload.FailureMessage} {standardDownload.FailureMessage}".Trim(),
+                standardTargetPath);
+        }
+
+        standardDownload = await TryDownloadStandardTranscriptionAsync(
+            config,
+            catalog,
+            getRemoteModelsAsync,
+            cancellationToken);
+        if (standardDownload.IsReady)
+        {
+            return BuildTranscriptionStatus(
+                requestedProfile,
+                TranscriptionModelProfilePreference.Standard,
+                retryRecommended: false,
+                isReady: true,
+                "Transcription is ready with the Standard model.",
+                "The Standard transcription download finished during setup.",
+                standardDownload.ModelPath);
+        }
+
+        if (requestedProfile == TranscriptionModelProfilePreference.Custom)
+        {
+            return BuildTranscriptionStatus(
+                requestedProfile,
+                TranscriptionModelProfilePreference.Standard,
+                retryRecommended: true,
+                isReady: false,
+                "Transcription still needs setup.",
+                $"Your imported custom transcription model is unavailable, and Meeting Recorder could not finish the Standard transcription download. Recording stays blocked until you resume setup at first launch or import an approved model. Details: {standardDownload.FailureMessage}",
+                standardTargetPath);
+        }
+
+        return BuildTranscriptionStatus(
+            requestedProfile,
+            TranscriptionModelProfilePreference.Standard,
+            retryRecommended: true,
+            isReady: false,
+            "Transcription still needs setup.",
+            $"Meeting Recorder could not finish the Standard transcription download during install. Recording stays blocked until you resume setup at first launch or import an approved model. Details: {standardDownload.FailureMessage}",
+            standardTargetPath);
     }
 
     private async Task<SpeakerLabelingModelProvisioningStatus> ProvisionSpeakerLabelingAsync(
         bool existingConfigDetected,
         AppConfig config,
         MeetingRecorderModelCatalog catalog,
-        string updateFeedUrl,
         SpeakerLabelingModelProfilePreference requestedProfile,
-        string standardSpeakerLabelingPath,
+        Func<Task<IReadOnlyList<DiarizationRemoteAsset>>> getRemoteDiarizationAssetsAsync,
         CancellationToken cancellationToken)
     {
-        var configuredStatus = _diarizationAssetCatalogService.InspectInstalledAssets(config.DiarizationAssetPath);
-
-        if (existingConfigDetected)
-        {
-            return requestedProfile switch
-            {
-                SpeakerLabelingModelProfilePreference.StandardIncluded => BuildSpeakerLabelingStatus(
-                    requestedProfile,
-                    SpeakerLabelingModelProfilePreference.StandardIncluded,
-                    retryRecommended: false,
-                    "Speaker labeling is ready with the included Standard bundle.",
-                    "The bundled Standard speaker-labeling bundle is installed and active.",
-                    standardSpeakerLabelingPath),
-                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded when configuredStatus.IsReady => BuildSpeakerLabelingStatus(
-                    requestedProfile,
-                    SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
-                    retryRecommended: false,
-                    "Speaker labeling is ready with the Higher Accuracy bundle.",
-                    "Your existing Higher Accuracy speaker-labeling bundle is still available and active.",
-                    config.DiarizationAssetPath),
-                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded => BuildSpeakerLabelingStatus(
-                    requestedProfile,
-                    SpeakerLabelingModelProfilePreference.StandardIncluded,
-                    retryRecommended: true,
-                    "Speaker labeling is ready with the included Standard bundle.",
-                    "The previous Higher Accuracy speaker-labeling bundle is unavailable right now. You can retry it from Settings > Setup.",
-                    standardSpeakerLabelingPath),
-                SpeakerLabelingModelProfilePreference.Custom when configuredStatus.IsReady => BuildSpeakerLabelingStatus(
-                    requestedProfile,
-                    SpeakerLabelingModelProfilePreference.Custom,
-                    retryRecommended: false,
-                    "Speaker labeling is ready with your imported custom bundle.",
-                    "Your existing custom speaker-labeling bundle is still available and active.",
-                    config.DiarizationAssetPath),
-                SpeakerLabelingModelProfilePreference.Custom => BuildSpeakerLabelingStatus(
-                    requestedProfile,
-                    SpeakerLabelingModelProfilePreference.StandardIncluded,
-                    retryRecommended: true,
-                    "Speaker labeling is ready with the included Standard bundle.",
-                    "Your imported custom speaker-labeling bundle is unavailable right now. You can import it again from Settings > Setup.",
-                    standardSpeakerLabelingPath),
-                _ => BuildSpeakerLabelingStatus(
-                    SpeakerLabelingModelProfilePreference.StandardIncluded,
-                    SpeakerLabelingModelProfilePreference.StandardIncluded,
-                    retryRecommended: false,
-                    "Speaker labeling is ready with the included Standard bundle.",
-                    "The bundled Standard speaker-labeling bundle is installed and active.",
-                    standardSpeakerLabelingPath),
-            };
-        }
-
-        if (requestedProfile != SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded)
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.Disabled)
         {
             return BuildSpeakerLabelingStatus(
-                SpeakerLabelingModelProfilePreference.StandardIncluded,
-                SpeakerLabelingModelProfilePreference.StandardIncluded,
+                requestedProfile,
+                SpeakerLabelingModelProfilePreference.Disabled,
                 retryRecommended: false,
-                "Speaker labeling is ready with the included Standard bundle.",
-                "The bundled Standard speaker-labeling bundle was installed during setup.",
-                standardSpeakerLabelingPath);
+                isReady: false,
+                "Optional",
+                existingConfigDetected
+                    ? "Speaker labeling is turned off for now. Recording stays available as long as transcription is ready."
+                    : "Speaker labeling was skipped during setup. Recording stays available as long as transcription is ready, and you can add speaker labeling later from Settings > Setup.",
+                string.Empty);
         }
 
-        try
-        {
-            var remoteAssets = await _diarizationAssetReleaseCatalogService.ListAvailableRemoteAssetsAsync(
-                updateFeedUrl,
-                cancellationToken);
-            var highAccuracyAsset = _catalogService.FindSpeakerLabelingHighAccuracyAsset(catalog, remoteAssets)
-                ?? throw new InvalidOperationException(
-                    $"The Higher Accuracy speaker-labeling asset '{catalog.SpeakerLabeling.HighAccuracy.FileName}' is not available in the current release.");
-            var highAccuracyPath = _catalogService.ResolveManagedPath(
-                config.ModelCacheDir,
-                catalog.SpeakerLabeling.HighAccuracy);
-            var installed = await _diarizationAssetReleaseCatalogService.DownloadRemoteAssetIntoDirectoryAsync(
-                highAccuracyAsset,
-                highAccuracyPath,
-                cancellationToken);
+        var configuredStatus = _diarizationAssetCatalogService.InspectInstalledAssets(config.DiarizationAssetPath);
+        var standardTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.SpeakerLabeling.Standard);
 
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.Custom &&
+            configuredStatus.IsReady)
+        {
+            return BuildSpeakerLabelingStatus(
+                requestedProfile,
+                SpeakerLabelingModelProfilePreference.Custom,
+                retryRecommended: false,
+                isReady: true,
+                "Speaker labeling is ready with your imported custom bundle.",
+                "Your existing custom speaker-labeling bundle is still available and active.",
+                config.DiarizationAssetPath);
+        }
+
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded &&
+            configuredStatus.IsReady)
+        {
             return BuildSpeakerLabelingStatus(
                 requestedProfile,
                 SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
                 retryRecommended: false,
+                isReady: true,
                 "Speaker labeling is ready with the Higher Accuracy bundle.",
-                "The optional Higher Accuracy speaker-labeling download finished during setup.",
-                installed.AssetRootPath);
+                existingConfigDetected
+                    ? "Your existing Higher Accuracy speaker-labeling bundle is still available and active."
+                    : "The Higher Accuracy speaker-labeling download finished during setup.",
+                config.DiarizationAssetPath);
         }
-        catch (Exception exception)
+
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.Standard &&
+            configuredStatus.IsReady &&
+            string.Equals(
+                Path.GetFullPath(config.DiarizationAssetPath),
+                Path.GetFullPath(standardTargetPath),
+                StringComparison.OrdinalIgnoreCase))
         {
             return BuildSpeakerLabelingStatus(
                 requestedProfile,
-                SpeakerLabelingModelProfilePreference.StandardIncluded,
+                SpeakerLabelingModelProfilePreference.Standard,
+                retryRecommended: false,
+                isReady: true,
+                "Speaker labeling is ready with the Standard bundle.",
+                existingConfigDetected
+                    ? "The Standard speaker-labeling bundle is still available and active."
+                    : "The Standard speaker-labeling download finished during setup.",
+                config.DiarizationAssetPath);
+        }
+
+        DownloadedDiarizationAsset? standardDownload = null;
+
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded)
+        {
+            var highAccuracyDownload = await TryDownloadHighAccuracySpeakerLabelingAsync(
+                config,
+                catalog,
+                getRemoteDiarizationAssetsAsync,
+                cancellationToken);
+            if (highAccuracyDownload.IsReady)
+            {
+                return BuildSpeakerLabelingStatus(
+                    requestedProfile,
+                    SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+                    retryRecommended: false,
+                    isReady: true,
+                    "Speaker labeling is ready with the Higher Accuracy bundle.",
+                    "The Higher Accuracy speaker-labeling download finished during setup.",
+                    highAccuracyDownload.AssetPath);
+            }
+
+            standardDownload = await TryDownloadStandardSpeakerLabelingAsync(
+                config,
+                catalog,
+                getRemoteDiarizationAssetsAsync,
+                cancellationToken);
+            if (standardDownload.IsReady)
+            {
+                return BuildSpeakerLabelingStatus(
+                    requestedProfile,
+                    SpeakerLabelingModelProfilePreference.Standard,
+                    retryRecommended: true,
+                    isReady: true,
+                    "Speaker labeling is ready with the Standard bundle.",
+                    $"The Higher Accuracy speaker-labeling download did not finish during setup. Retry it from Settings > Setup. Details: {highAccuracyDownload.FailureMessage}",
+                    standardDownload.AssetPath);
+            }
+
+            return BuildSpeakerLabelingStatus(
+                requestedProfile,
+                SpeakerLabelingModelProfilePreference.Standard,
                 retryRecommended: true,
-                "Speaker labeling is ready with the included Standard bundle.",
-                $"The optional Higher Accuracy speaker-labeling download did not finish during setup. Retry it from Settings > Setup. Details: {exception.Message}",
-                standardSpeakerLabelingPath);
+                isReady: false,
+                "Speaker labeling is optional right now.",
+                $"Meeting Recorder could not finish the Higher Accuracy or Standard speaker-labeling downloads. Speaker labeling stays optional and can resume later from Settings > Setup. Details: {highAccuracyDownload.FailureMessage} {standardDownload.FailureMessage}".Trim(),
+                standardTargetPath);
+        }
+
+        standardDownload = await TryDownloadStandardSpeakerLabelingAsync(
+            config,
+            catalog,
+            getRemoteDiarizationAssetsAsync,
+            cancellationToken);
+        if (standardDownload.IsReady)
+        {
+            return BuildSpeakerLabelingStatus(
+                requestedProfile,
+                SpeakerLabelingModelProfilePreference.Standard,
+                retryRecommended: false,
+                isReady: true,
+                "Speaker labeling is ready with the Standard bundle.",
+                "The Standard speaker-labeling download finished during setup.",
+                standardDownload.AssetPath);
+        }
+
+        if (requestedProfile == SpeakerLabelingModelProfilePreference.Custom)
+        {
+            return BuildSpeakerLabelingStatus(
+                requestedProfile,
+                SpeakerLabelingModelProfilePreference.Standard,
+                retryRecommended: true,
+                isReady: false,
+                "Speaker labeling is optional right now.",
+                $"Your imported custom speaker-labeling bundle is unavailable, and Meeting Recorder could not finish the Standard speaker-labeling download. Speaker labeling stays optional and can resume later from Settings > Setup. Details: {standardDownload.FailureMessage}",
+                standardTargetPath);
+        }
+
+        return BuildSpeakerLabelingStatus(
+            requestedProfile,
+            SpeakerLabelingModelProfilePreference.Standard,
+            retryRecommended: true,
+            isReady: false,
+            "Speaker labeling is optional right now.",
+            $"Meeting Recorder could not finish the Standard speaker-labeling download during install. Speaker labeling stays optional and can resume later from Settings > Setup. Details: {standardDownload.FailureMessage}",
+            standardTargetPath);
+    }
+
+    private async Task<DownloadedWhisperModel> TryDownloadStandardTranscriptionAsync(
+        AppConfig config,
+        MeetingRecorderModelCatalog catalog,
+        Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.Standard);
+        return await TryDownloadTranscriptionAsync(
+            targetPath,
+            catalog.Transcription.Standard.FileName,
+            getRemoteModelsAsync,
+            remoteModels => _catalogService.FindTranscriptionStandardAsset(catalog, remoteModels),
+            config.ModelCacheDir,
+            cancellationToken);
+    }
+
+    private async Task<DownloadedWhisperModel> TryDownloadHighAccuracyTranscriptionAsync(
+        AppConfig config,
+        MeetingRecorderModelCatalog catalog,
+        Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.HighAccuracy);
+        return await TryDownloadTranscriptionAsync(
+            targetPath,
+            catalog.Transcription.HighAccuracy.FileName,
+            getRemoteModelsAsync,
+            remoteModels => _catalogService.FindTranscriptionHighAccuracyAsset(catalog, remoteModels),
+            config.ModelCacheDir,
+            cancellationToken);
+    }
+
+    private async Task<DownloadedWhisperModel> TryDownloadTranscriptionAsync(
+        string targetPath,
+        string expectedFileName,
+        Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        Func<IReadOnlyList<WhisperRemoteModelAsset>, WhisperRemoteModelAsset?> selectAsset,
+        string modelCacheDir,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var remoteModels = await getRemoteModelsAsync();
+            var asset = selectAsset(remoteModels)
+                ?? throw new InvalidOperationException(
+                    $"The transcription asset '{expectedFileName}' is not available in the current release.");
+            var installed = await _whisperModelReleaseCatalogService.DownloadRemoteModelIntoManagedDirectoryAsync(
+                asset,
+                modelCacheDir,
+                progress: null,
+                cancellationToken);
+
+            return new DownloadedWhisperModel(true, installed.ModelPath, string.Empty);
+        }
+        catch (Exception exception)
+        {
+            return new DownloadedWhisperModel(false, targetPath, exception.Message);
+        }
+    }
+
+    private async Task<DownloadedDiarizationAsset> TryDownloadStandardSpeakerLabelingAsync(
+        AppConfig config,
+        MeetingRecorderModelCatalog catalog,
+        Func<Task<IReadOnlyList<DiarizationRemoteAsset>>> getRemoteDiarizationAssetsAsync,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.SpeakerLabeling.Standard);
+        return await TryDownloadSpeakerLabelingAsync(
+            targetPath,
+            catalog.SpeakerLabeling.Standard.FileName,
+            getRemoteDiarizationAssetsAsync,
+            remoteAssets => _catalogService.FindSpeakerLabelingStandardAsset(catalog, remoteAssets),
+            cancellationToken);
+    }
+
+    private async Task<DownloadedDiarizationAsset> TryDownloadHighAccuracySpeakerLabelingAsync(
+        AppConfig config,
+        MeetingRecorderModelCatalog catalog,
+        Func<Task<IReadOnlyList<DiarizationRemoteAsset>>> getRemoteDiarizationAssetsAsync,
+        CancellationToken cancellationToken)
+    {
+        var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.SpeakerLabeling.HighAccuracy);
+        return await TryDownloadSpeakerLabelingAsync(
+            targetPath,
+            catalog.SpeakerLabeling.HighAccuracy.FileName,
+            getRemoteDiarizationAssetsAsync,
+            remoteAssets => _catalogService.FindSpeakerLabelingHighAccuracyAsset(catalog, remoteAssets),
+            cancellationToken);
+    }
+
+    private async Task<DownloadedDiarizationAsset> TryDownloadSpeakerLabelingAsync(
+        string targetPath,
+        string expectedFileName,
+        Func<Task<IReadOnlyList<DiarizationRemoteAsset>>> getRemoteDiarizationAssetsAsync,
+        Func<IReadOnlyList<DiarizationRemoteAsset>, DiarizationRemoteAsset?> selectAsset,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var remoteAssets = await getRemoteDiarizationAssetsAsync();
+            var asset = selectAsset(remoteAssets)
+                ?? throw new InvalidOperationException(
+                    $"The speaker-labeling asset '{expectedFileName}' is not available in the current release.");
+            var installed = await _diarizationAssetReleaseCatalogService.DownloadRemoteAssetIntoDirectoryAsync(
+                asset,
+                targetPath,
+                cancellationToken);
+
+            if (!installed.IsReady)
+            {
+                throw new InvalidOperationException(installed.DetailsText);
+            }
+
+            return new DownloadedDiarizationAsset(true, installed.AssetRootPath, string.Empty);
+        }
+        catch (Exception exception)
+        {
+            return new DownloadedDiarizationAsset(false, targetPath, exception.Message);
         }
     }
 
@@ -353,6 +529,7 @@ public sealed class ModelProvisioningService
         TranscriptionModelProfilePreference requestedProfile,
         TranscriptionModelProfilePreference activeProfile,
         bool retryRecommended,
+        bool isReady,
         string summary,
         string detail,
         string activeModelPath)
@@ -361,6 +538,7 @@ public sealed class ModelProvisioningService
             requestedProfile,
             activeProfile,
             retryRecommended,
+            isReady,
             summary,
             detail,
             activeModelPath);
@@ -370,6 +548,7 @@ public sealed class ModelProvisioningService
         SpeakerLabelingModelProfilePreference requestedProfile,
         SpeakerLabelingModelProfilePreference activeProfile,
         bool retryRecommended,
+        bool isReady,
         string summary,
         string detail,
         string activeAssetPath)
@@ -378,10 +557,15 @@ public sealed class ModelProvisioningService
             requestedProfile,
             activeProfile,
             retryRecommended,
+            isReady,
             summary,
             detail,
             activeAssetPath);
     }
+
+    private sealed record DownloadedWhisperModel(bool IsReady, string ModelPath, string FailureMessage);
+
+    private sealed record DownloadedDiarizationAsset(bool IsReady, string AssetPath, string FailureMessage);
 }
 
 public sealed record ModelProvisioningRequest(
