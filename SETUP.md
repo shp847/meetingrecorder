@@ -58,8 +58,9 @@ User-facing installer and updater rule:
 - do not wait forever on app shutdown during update apply; if the running app does not exit promptly, the updater should escalate the release sequence and then fail with a clear message instead of hanging indefinitely
 - do not enumerate, close, or kill Meeting Recorder processes from installer flows; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
 - all actual install and update writes flow through `AppPlatform.Deployment.Cli`
-- the MSI post-copy `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
+- the MSI post-finalize `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
 - that MSI handoff now also passes the install root as `INSTALLFOLDER.` instead of a raw quoted trailing-backslash directory, so Windows command-line parsing cannot break the custom-action launch with `0x80070002`
+- that MSI handoff now runs after `InstallFinalize` and is best-effort, so a provisioning launch or download failure no longer aborts the installer itself
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
 
 For newer managed installs:

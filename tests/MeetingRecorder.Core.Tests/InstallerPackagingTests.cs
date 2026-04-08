@@ -253,7 +253,8 @@ public sealed class InstallerPackagingTests
         Assert.Contains(" -t ", packageContents, StringComparison.Ordinal);
         Assert.Contains(" -s ", packageContents, StringComparison.Ordinal);
         Assert.Contains(" -l ", packageContents, StringComparison.Ordinal);
-        Assert.Contains("After=\"InstallFiles\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("After=\"InstallFinalize\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Return=\"ignore\"", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

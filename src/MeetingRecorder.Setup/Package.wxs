@@ -40,7 +40,7 @@
     <SetProperty
       Id="WixQuietExecCmdLine"
       Value="&quot;[INSTALLFOLDER]AppPlatform.Deployment.Cli.exe&quot; provision-models -i &quot;[INSTALLFOLDER].&quot; -m &quot;[INSTALLFOLDER]MeetingRecorder.product.json&quot; -t [MODEL_OPTION_TRANSCRIPTION] -s [MODEL_OPTION_SPEAKER_LABELING] -l &quot;[LocalAppDataFolder]MeetingRecorder\m.log&quot;"
-      After="InstallFiles"
+      After="InstallFinalize"
       Sequence="execute"
       Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
 
@@ -55,7 +55,7 @@
       BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
       DllEntry="WixQuietExec"
       Execute="immediate"
-      Return="check" />
+      Return="ignore" />
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
@@ -130,7 +130,7 @@
     </UI>
 
     <InstallExecuteSequence>
-      <Custom Action="ProvisionModelsCustomAction" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="ProvisionModelsCustomAction" After="InstallFinalize" Condition="NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
     <StandardDirectory Id="TARGETDIR">

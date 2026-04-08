@@ -498,7 +498,7 @@ That MSI path:
 - keeps writable runtime data outside the installed binaries
 - downloads the selected Standard or Higher Accuracy transcription and speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
 - shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
-- invokes the installed `AppPlatform.Deployment.Cli provision-models` step after file copy so provisioning and later update repair share one model-management path
+- invokes the installed `AppPlatform.Deployment.Cli provision-models` step after `InstallFinalize` so provisioning and later update repair share one model-management path without depending on pre-commit file visibility
 - keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow
 - keeps the install successful when optional Higher Accuracy downloads fail, records a one-time retry-needed result, and leaves Standard active
 - enables verbose Windows Installer logging by default for direct MSI troubleshooting
