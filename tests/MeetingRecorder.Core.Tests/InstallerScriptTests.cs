@@ -733,6 +733,23 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void BuildInstallerScript_Fails_Fast_When_Curated_Model_Assets_Are_Still_GitLfs_Pointers()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Installer.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected installer build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("git-lfs.github.com/spec/v1", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("git lfs pull", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Assert-ModelAssetIsMaterialized", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReleaseScripts_Ignore_Generated_Build_Output_When_Validating_Source_State()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

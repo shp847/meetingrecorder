@@ -239,6 +239,22 @@ function Publish-StableAsset {
     return $PreferredPath
 }
 
+function Assert-ModelAssetIsMaterialized {
+    param(
+        [string]$AssetPath
+    )
+
+    if (-not (Test-Path $AssetPath)) {
+        throw "Expected curated model asset at '$AssetPath', but the file does not exist."
+    }
+
+    $headerLines = Get-Content -Path $AssetPath -TotalCount 3 -ErrorAction Stop
+    $headerText = ($headerLines -join "`n")
+    if ($headerText -like "*git-lfs.github.com/spec/v1*") {
+        throw "Curated model asset '$AssetPath' is still a Git LFS pointer. Run 'git lfs pull' and rebuild the installer assets."
+    }
+}
+
 function Read-ModelCatalog {
     param(
         [string]$CatalogPath
@@ -283,6 +299,7 @@ function Publish-CuratedModelReleaseAssets {
             throw "Required curated model release asset was not found at '$($asset.SourcePath)'."
         }
 
+        Assert-ModelAssetIsMaterialized -AssetPath $asset.SourcePath
         Publish-StableAsset -SourcePath $asset.SourcePath -PreferredPath $asset.PreferredPath | Out-Null
     }
 }

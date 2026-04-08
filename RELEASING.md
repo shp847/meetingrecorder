@@ -58,6 +58,7 @@ What it does:
 - emits `bundle-integrity.json` into the portable bundle so the shared deployment CLI can validate required files before promoting a bundle
 - bundles the curated Standard transcription and Standard speaker-labeling seed assets into the main portable/MSI payload under `model-seed\...`
 - publishes all four curated Whisper and speaker-labeling assets as separate stable GitHub release downloads
+- fails fast if any curated model asset is still only a Git LFS pointer, so release packaging cannot silently republish placeholder pointer files
 - creates:
   - the per-user installer MSI
   - the lightweight installer EXE
