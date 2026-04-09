@@ -204,9 +204,6 @@ public partial class MainWindow : Window
             new SystemAudioActivityProbe(),
             new MeetingTitleEnricher(_outlookCalendarMeetingTitleProvider),
             WindowMeetingDetector.EnumerateCandidateWindows,
-            WindowMeetingDetector.EnumerateBrowserTabTitles,
-            TimeSpan.FromMilliseconds(750),
-            TimeSpan.FromMinutes(2),
             TimeSpan.FromMilliseconds(750),
             TimeSpan.FromMinutes(2),
             logger.Log);
@@ -301,6 +298,7 @@ public partial class MainWindow : Window
         UpdateModelsTabGuidance();
         UpdateConfigActionState();
         UpdateAudioCaptureGraph();
+        UpdateCaptureStatusSurface();
         UpdateDashboardReadiness();
         UpdateMeetingsRefreshStateText();
         UpdateProcessingQueueStatusUi();
@@ -1226,6 +1224,30 @@ public partial class MainWindow : Window
             }
         }
 
+        var loopbackStatus = _recordingCoordinator.GetLoopbackCaptureStatusSnapshot();
+        if (loopbackStatus.ActiveSelection is { } activeSelection)
+        {
+            diagnosticsLines.Add($"Active loopback endpoint: {activeSelection.FriendlyName} ({activeSelection.Role})");
+            diagnosticsLines.Add($"Loopback capture mode: {BuildLoopbackCaptureModeText(loopbackStatus)}");
+        }
+
+        if (loopbackStatus.PreferredSelection is { } preferredSelection)
+        {
+            diagnosticsLines.Add(
+                $"Preferred loopback candidate: {preferredSelection.FriendlyName} ({preferredSelection.Role}); reason={preferredSelection.Reason}");
+        }
+
+        if (loopbackStatus.PendingSelection is { } pendingSelection)
+        {
+            diagnosticsLines.Add(
+                $"Pending loopback candidate: {pendingSelection.FriendlyName} ({pendingSelection.Role}); stability={loopbackStatus.PendingSelectionStableCount}");
+        }
+
+        foreach (var entry in loopbackStatus.RecentTimeline)
+        {
+            diagnosticsLines.Add($"Capture event: {entry.Summary}");
+        }
+
         if (!File.Exists(manifestPath))
         {
             diagnosticsLines.Add("Bundled manifest install root: unavailable (manifest not found).");
@@ -1399,6 +1421,28 @@ public partial class MainWindow : Window
                     _lifetimeCts.Token))
             {
                 activeSession = _recordingCoordinator.ActiveSession;
+            }
+
+            if (activeSession is not null)
+            {
+                var loopbackRefresh = await _recordingCoordinator.RefreshLoopbackCaptureAsync(
+                    activeSession.Manifest.Platform,
+                    decision?.DetectedAudioSource,
+                    _lifetimeCts.Token);
+                if (!string.IsNullOrWhiteSpace(loopbackRefresh.StatusMessage) &&
+                    (loopbackRefresh.SwapPerformed || loopbackRefresh.SwapFailed))
+                {
+                    AppendActivity(loopbackRefresh.StatusMessage);
+                }
+
+                var microphoneRefresh = await _recordingCoordinator.RefreshMicrophoneCaptureAsync(_lifetimeCts.Token);
+                if (!string.IsNullOrWhiteSpace(microphoneRefresh.StatusMessage) &&
+                    (microphoneRefresh.SwapPerformed || microphoneRefresh.SwapFailed))
+                {
+                    AppendActivity(microphoneRefresh.StatusMessage);
+                }
+
+                UpdateCaptureStatusSurface();
             }
 
             var activeMeetingManagedSession = _recordingCoordinator.ActiveSession is { MeetingLifecycleManaged: true } reclassifiedSession
@@ -1589,6 +1633,56 @@ public partial class MainWindow : Window
                 ? $"Switched the active recording from {previousPlatform} to {decision.Platform} using the current detected meeting window '{decision.SessionTitle}'."
                 : $"Reclassified active recording from {previousPlatform} to {decision.Platform}, switched to '{decision.SessionTitle}', and enabled automatic meeting-end stop handling.");
         return true;
+    }
+
+    private void UpdateCaptureStatusSurface()
+    {
+        var loopbackStatus = _recordingCoordinator.GetLoopbackCaptureStatusSnapshot();
+        if (!loopbackStatus.IsRecording || loopbackStatus.ActiveSelection is null)
+        {
+            LoopbackCaptureStatusTextBlock.Text = "Capture status appears here while recording.";
+            LoopbackCaptureRecentEventsTextBlock.Text = "Recent loopback events will be saved with the session.";
+            return;
+        }
+
+        var statusParts = new List<string>
+        {
+            $"Active loopback endpoint: {loopbackStatus.ActiveSelection.FriendlyName} ({loopbackStatus.ActiveSelection.Role}).",
+            $"Mode: {BuildLoopbackCaptureModeText(loopbackStatus)}.",
+        };
+        if (loopbackStatus.LastSuccessfulSwapAtUtc is { } lastSuccessfulSwapAtUtc)
+        {
+            statusParts.Add(
+                $"Last successful capture swap: {TimeZoneInfo.ConvertTime(lastSuccessfulSwapAtUtc, TimeZoneInfo.Local):g}.");
+        }
+
+        if (loopbackStatus.IsSwapPending && loopbackStatus.PendingSelection is not null)
+        {
+            statusParts.Add(
+                $"Candidate under review: {loopbackStatus.PendingSelection.FriendlyName} ({loopbackStatus.PendingSelection.Role}) {loopbackStatus.PendingSelectionStableCount}/2.");
+        }
+
+        LoopbackCaptureStatusTextBlock.Text = string.Join(" ", statusParts);
+        LoopbackCaptureRecentEventsTextBlock.Text = loopbackStatus.RecentTimeline.Count == 0
+            ? "Recent loopback events will appear here."
+            : string.Join(Environment.NewLine, loopbackStatus.RecentTimeline.Select(entry => $"- {entry.Summary}"));
+    }
+
+    private string BuildLoopbackCaptureModeText(LoopbackCaptureStatusSnapshot loopbackStatus)
+    {
+        if (loopbackStatus.IsSwapPending)
+        {
+            return "Swapping loopback";
+        }
+
+        if (loopbackStatus.IsFallbackActive)
+        {
+            return "Fallback capture active";
+        }
+
+        return _recordingCoordinator.ActiveSession?.MicrophoneRecorder is null
+            ? "Loopback live"
+            : "Loopback + mic live";
     }
 
     private async void UpdateTimer_OnTick(object? sender, EventArgs e)
@@ -3554,6 +3648,7 @@ public partial class MainWindow : Window
         CurrentMeetingKeyAttendeesTextBox.IsEnabled = _recordingCoordinator.IsRecording && !_isUpdateInstallInProgress && !_isRecordingTransitionInProgress;
         UpdateCurrentMeetingTitleStatus();
         UpdateAudioGraphTimerState();
+        UpdateCaptureStatusSurface();
         UpdateUpdateActionButtons();
         UpdateDashboardReadiness();
     }
@@ -3568,6 +3663,7 @@ public partial class MainWindow : Window
             ? "Detected audio source: waiting for supported meeting audio."
             : $"Detected audio source: {MainWindowInteractionLogic.BuildDetectedAudioSourceSummary(audioSource)}";
 
+        UpdateCaptureStatusSurface();
         _helpWindow?.SetRuntimeDiagnostics(BuildRuntimeDiagnosticsText());
     }
 
@@ -4447,6 +4543,7 @@ public partial class MainWindow : Window
             SelectedMeetingInspectorTranscriptModelTextBlock.Text = "Not recorded";
             SelectedMeetingInspectorSpeakerLabelsTextBlock.Text = "Speaker labels are missing.";
             SelectedMeetingInspectorDetectedAudioSourceTextBlock.Text = "Not captured.";
+            SelectedMeetingInspectorCaptureDiagnosticsTextBlock.Text = "No capture diagnostics were recorded.";
             SelectedMeetingInspectorRecommendationItemsControl.ItemsSource = Array.Empty<string>();
             SelectedMeetingInspectorAttendeesItemsControl.ItemsSource = Array.Empty<string>();
             SelectedMeetingInspectorAttendeesEmptyTextBlock.Text = "No attendees captured yet.";
@@ -4472,6 +4569,7 @@ public partial class MainWindow : Window
         SelectedMeetingInspectorTranscriptModelTextBlock.Text = inspectorState.TranscriptionModelFileName;
         SelectedMeetingInspectorSpeakerLabelsTextBlock.Text = inspectorState.SpeakerLabelState;
         SelectedMeetingInspectorDetectedAudioSourceTextBlock.Text = inspectorState.DetectedAudioSourceSummary;
+        SelectedMeetingInspectorCaptureDiagnosticsTextBlock.Text = inspectorState.CaptureDiagnosticsSummary;
         SelectedMeetingInspectorRecommendationItemsControl.ItemsSource = inspectorState.RecommendationBadges;
         SelectedMeetingInspectorAttendeesItemsControl.ItemsSource = inspectorState.AttendeeNames;
         SelectedMeetingInspectorAttendeesEmptyTextBlock.Text = inspectorState.AttendeeNames.Count == 0
@@ -8608,6 +8706,7 @@ public partial class MainWindow : Window
         }
 
         AudioCaptureGraphStatusTextBlock.Text = statusText + $" Current peak: {currentPeak:0.000}.";
+        UpdateCaptureStatusSurface();
     }
 
     private (IReadOnlyList<double> Levels, double CurrentPeak, string StatusText) BuildAudioGraphSnapshot()

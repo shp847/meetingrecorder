@@ -306,6 +306,8 @@ public sealed class MeetingOutputCatalogService
             KeyAttendees = NormalizeKeyAttendees(record.KeyAttendees ?? Array.Empty<string>()),
             DetectedAudioSource = NormalizeDetectedAudioSource(record.DetectedAudioSource),
             Attendees = record.Attendees,
+            CaptureTimeline = record.CaptureTimeline ?? Array.Empty<CaptureTimelineEntry>(),
+            LoopbackCaptureSegments = record.LoopbackCaptureSegments ?? Array.Empty<LoopbackCaptureSegment>(),
             ProcessingMetadata = new MeetingProcessingMetadata(
                 record.TranscriptionModelFileName,
                 record.HasSpeakerLabels),
@@ -564,7 +566,9 @@ public sealed class MeetingOutputCatalogService
                 manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
                 projectName,
                 manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
-                keyAttendees);
+                keyAttendees,
+                manifestInfo?.CaptureTimeline,
+                manifestInfo?.LoopbackCaptureSegments);
         }
 
         var fallbackTimestamp = record.AudioPath is not null
@@ -587,7 +591,9 @@ public sealed class MeetingOutputCatalogService
             manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
             manifestInfo?.ProjectName ?? jsonMetadata?.ProjectName ?? TryReadMarkdownProject(record.MarkdownPath),
             manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
-            manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath));
+            manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath),
+            manifestInfo?.CaptureTimeline,
+            manifestInfo?.LoopbackCaptureSegments);
     }
 
     private static SessionState? ResolveManifestState(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
@@ -650,6 +656,8 @@ public sealed class MeetingOutputCatalogService
                     NormalizeAttendees(manifest.Attendees),
                     manifest.ProcessingMetadata,
                     NormalizeDetectedAudioSource(manifest.DetectedAudioSource),
+                    manifest.CaptureTimeline,
+                    manifest.LoopbackCaptureSegments,
                     manifest.ImportedSourceAudio is not null);
                 if (!infoByStem.TryGetValue(stem, out var existing) || ShouldReplaceManifestInfo(existing, candidate))
                 {
@@ -1899,6 +1907,8 @@ public sealed class MeetingOutputCatalogService
         IReadOnlyList<MeetingAttendee> Attendees,
         MeetingProcessingMetadata? ProcessingMetadata,
         DetectedAudioSource? DetectedAudioSource,
+        IReadOnlyList<CaptureTimelineEntry> CaptureTimeline,
+        IReadOnlyList<LoopbackCaptureSegment> LoopbackCaptureSegments,
         bool IsImportedSource);
 
     private sealed record JsonTranscriptMetadata(
@@ -1958,7 +1968,9 @@ public sealed record MeetingOutputRecord(
     string? TranscriptionModelFileName,
     string? ProjectName = null,
     DetectedAudioSource? DetectedAudioSource = null,
-    IReadOnlyList<string>? KeyAttendees = null);
+    IReadOnlyList<string>? KeyAttendees = null,
+    IReadOnlyList<CaptureTimelineEntry>? CaptureTimeline = null,
+    IReadOnlyList<LoopbackCaptureSegment>? LoopbackCaptureSegments = null);
 
 public sealed record MergedMeetingResult(
     string ManifestPath,

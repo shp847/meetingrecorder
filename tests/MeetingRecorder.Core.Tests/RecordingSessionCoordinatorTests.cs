@@ -2,6 +2,7 @@ using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using System.Reflection;
 
@@ -9,6 +10,69 @@ namespace MeetingRecorder.Core.Tests;
 
 public sealed class RecordingSessionCoordinatorTests
 {
+    [Fact]
+    public async Task StartAsync_Persists_The_Initial_Loopback_Segment_And_Started_Timeline_Event()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-factory-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var loopbackFactory = new SpyLoopbackCaptureFactory(
+                new LoopbackCaptureEvaluation(
+                    new LoopbackCaptureSelection(
+                        Role.Multimedia,
+                        "device-1",
+                        "Laptop speakers",
+                        0.20d,
+                        true,
+                        0,
+                        0,
+                        "Preferred multimedia render endpoint.",
+                        false),
+                    Multimedia: null,
+                    Communications: null));
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            var detectedAudioSource = new DetectedAudioSource(
+                "Google Meet",
+                "Meet - abc-defg-hij - Work - Microsoft Edge",
+                "Meet - abc-defg-hij",
+                AudioSourceMatchKind.BrowserTab,
+                AudioSourceConfidence.High,
+                DateTimeOffset.UtcNow);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.GoogleMeet,
+                "Meet - abc-defg-hij",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true,
+                detectedAudioSource);
+
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.Equal(MeetingPlatform.GoogleMeet, loopbackFactory.LastPlatform);
+            Assert.Equal(detectedAudioSource, loopbackFactory.LastDetectedAudioSource);
+            Assert.Equal(liveConfig.Current.AutoDetectAudioPeakThreshold, loopbackFactory.LastThreshold, 3);
+            Assert.Single(reloadedManifest.LoopbackCaptureSegments);
+            Assert.Single(reloadedManifest.CaptureTimeline);
+            Assert.Equal(CaptureTimelineEventKind.Started, reloadedManifest.CaptureTimeline[0].Kind);
+            Assert.Equal("device-1", reloadedManifest.LoopbackCaptureSegments[0].EndpointDeviceId);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     [Fact]
     public async Task SetMicrophoneCaptureEnabledAsync_Starts_Capture_And_Persists_An_Open_Segment_When_Enabled_During_Recording()
     {
@@ -198,6 +262,17 @@ public sealed class RecordingSessionCoordinatorTests
                 Manifest = activeManifest,
                 ManifestPath = manifestPath,
                 LoopbackRecorder = CreateRecorder(root, "loopback", logger),
+                ActiveLoopbackSelection = new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.15d,
+                    true,
+                    0,
+                    0,
+                    "Preferred multimedia render endpoint.",
+                    false),
+                ActiveLoopbackSegmentStartedAtUtc = activeManifest.StartedAtUtc,
                 MicrophoneRecorder = CreateRecorder(root, "microphone", logger),
                 AutoStarted = true,
             };
@@ -300,6 +375,17 @@ public sealed class RecordingSessionCoordinatorTests
             Manifest = activeManifest,
             ManifestPath = manifestPath,
             LoopbackRecorder = CreateRecorder(root, "loopback", logger),
+            ActiveLoopbackSelection = new LoopbackCaptureSelection(
+                Role.Multimedia,
+                "device-1",
+                "Laptop speakers",
+                0.15d,
+                true,
+                0,
+                0,
+                "Preferred multimedia render endpoint.",
+                false),
+            ActiveLoopbackSegmentStartedAtUtc = activeManifest.StartedAtUtc,
             MicrophoneRecorder = microphoneRecorder,
             ActiveMicrophoneSegmentStartedAtUtc = microphoneSegmentStartedAtUtc,
             CompletedMicrophoneCaptureSegments = completedMicrophoneCaptureSegments?.ToList() ?? [],
@@ -358,6 +444,532 @@ public sealed class RecordingSessionCoordinatorTests
 
         public void Dispose()
         {
+        }
+    }
+
+    [Fact]
+    public async Task RefreshLoopbackCaptureAsync_Swaps_To_A_Stable_Better_Endpoint_And_Persists_Segments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-swap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var firstEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.15d,
+                    true,
+                    0,
+                    0,
+                    "Preferred multimedia render endpoint.",
+                    false),
+                Multimedia: null,
+                Communications: null);
+            var secondEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Communications,
+                    "device-2",
+                    "USB headset",
+                    0.35d,
+                    true,
+                    1,
+                    1,
+                    "Communications endpoint has supported meeting audio.",
+                    false),
+                Multimedia: null,
+                Communications: null);
+            var loopbackFactory = new SpyLoopbackCaptureFactory(firstEvaluation, secondEvaluation, secondEvaluation);
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var firstRefresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var secondRefresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var manifestPath = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession).ManifestPath;
+            var reloadedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.False(firstRefresh.SwapPerformed);
+            Assert.True(secondRefresh.SwapPerformed);
+            Assert.Equal(2, reloadedManifest.LoopbackCaptureSegments.Count);
+            Assert.Equal(
+                reloadedManifest.LoopbackCaptureSegments.SelectMany(segment => segment.ChunkPaths),
+                reloadedManifest.RawChunkPaths);
+            Assert.Contains(reloadedManifest.CaptureTimeline, entry => entry.Kind == CaptureTimelineEventKind.Swapped);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshLoopbackCaptureAsync_Allows_Immediate_Swap_When_The_Current_Endpoint_Is_Quiet()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-immediate-swap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var firstEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.10d,
+                    true,
+                    0,
+                    0,
+                    "Preferred multimedia render endpoint.",
+                    false),
+                new LoopbackCaptureProbeSnapshot(Role.Multimedia, "device-1", "Laptop speakers", 0d, false, Array.Empty<AudioSourceSessionSnapshot>()),
+                new LoopbackCaptureProbeSnapshot(Role.Communications, "device-2", "USB headset", 0.40d, true,
+                [
+                    new AudioSourceSessionSnapshot(1, "ms-teams", 0.40d, true, false, false, "Microsoft Teams", "teams-session"),
+                ]));
+            var secondEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Communications,
+                    "device-2",
+                    "USB headset",
+                    0.40d,
+                    true,
+                    1,
+                    1,
+                    "Communications endpoint has supported meeting audio.",
+                    false),
+                new LoopbackCaptureProbeSnapshot(Role.Multimedia, "device-1", "Laptop speakers", 0d, false, Array.Empty<AudioSourceSessionSnapshot>()),
+                new LoopbackCaptureProbeSnapshot(Role.Communications, "device-2", "USB headset", 0.40d, true,
+                [
+                    new AudioSourceSessionSnapshot(1, "ms-teams", 0.40d, true, false, false, "Microsoft Teams", "teams-session"),
+                ]));
+            var loopbackFactory = new SpyLoopbackCaptureFactory(firstEvaluation, secondEvaluation);
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var refresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var manifestPath = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession).ManifestPath;
+            var reloadedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.True(refresh.SwapPerformed);
+            Assert.Equal(2, reloadedManifest.LoopbackCaptureSegments.Count);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshLoopbackCaptureAsync_Records_SwapFailure_And_Keeps_The_Current_Recorder_Active()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-swap-failure-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var firstEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.10d,
+                    true,
+                    0,
+                    0,
+                    "Preferred multimedia render endpoint.",
+                    false),
+                Multimedia: null,
+                Communications: null);
+            var secondEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Communications,
+                    "device-2",
+                    "USB headset",
+                    0.40d,
+                    true,
+                    1,
+                    1,
+                    "Communications endpoint has supported meeting audio.",
+                    false),
+                Multimedia: null,
+                Communications: null);
+            var loopbackFactory = new SpyLoopbackCaptureFactory(firstEvaluation, secondEvaluation, secondEvaluation)
+            {
+                FailingDeviceId = "device-2",
+            };
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var refresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.False(refresh.SwapPerformed);
+            Assert.True(refresh.SwapFailed);
+            Assert.Single(reloadedManifest.LoopbackCaptureSegments);
+            Assert.Contains(reloadedManifest.CaptureTimeline, entry => entry.Kind == CaptureTimelineEventKind.SwapFailed);
+            Assert.Equal("device-1", activeSession.ActiveLoopbackSelection.DeviceId);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Swaps_To_A_Stable_Better_Input_And_Persists_Segments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-swap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.05d,
+                        true,
+                        "Preferred default microphone.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null));
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var firstRefresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var secondRefresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var manifestPath = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession).ManifestPath;
+            var reloadedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.False(firstRefresh.SwapPerformed);
+            Assert.True(secondRefresh.SwapPerformed);
+            Assert.Equal(2, reloadedManifest.MicrophoneCaptureSegments.Count);
+            Assert.Equal(
+                reloadedManifest.MicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths),
+                reloadedManifest.MicrophoneChunkPaths);
+            Assert.Contains(reloadedManifest.CaptureTimeline, entry => entry.Kind == CaptureTimelineEventKind.Swapped && entry.Summary.Contains("microphone", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Allows_Immediate_Swap_When_The_Current_Input_Is_Inactive()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-immediate-swap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.00d,
+                        false,
+                        "Preferred default microphone.",
+                        false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Multimedia, "mic-1", "Laptop microphone", 0.00d, false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Communications, "mic-2", "USB headset microphone", 0.28d, true)),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.28d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Multimedia, "mic-1", "Laptop microphone", 0.00d, false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Communications, "mic-2", "USB headset microphone", 0.28d, true)));
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var refresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var manifestPath = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession).ManifestPath;
+            var reloadedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.True(refresh.SwapPerformed);
+            Assert.Equal(2, reloadedManifest.MicrophoneCaptureSegments.Count);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Records_SwapFailure_And_Keeps_The_Current_Recorder_Active()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-swap-failure-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.05d,
+                        true,
+                        "Preferred default microphone.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null))
+            {
+                FailingDeviceId = "mic-2",
+            };
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            await coordinator.RefreshMicrophoneCaptureAsync();
+            var refresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.False(refresh.SwapPerformed);
+            Assert.True(refresh.SwapFailed);
+            Assert.Single(reloadedManifest.MicrophoneCaptureSegments);
+            Assert.Contains(reloadedManifest.CaptureTimeline, entry => entry.Kind == CaptureTimelineEventKind.SwapFailed && entry.Summary.Contains("microphone", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(activeSession.MicrophoneRecorder);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    private sealed class SpyLoopbackCaptureFactory : ILoopbackCaptureFactory
+    {
+        private readonly Queue<LoopbackCaptureEvaluation> _evaluations;
+
+        public SpyLoopbackCaptureFactory(params LoopbackCaptureEvaluation[] evaluations)
+        {
+            _evaluations = new Queue<LoopbackCaptureEvaluation>(evaluations);
+        }
+
+        public MeetingPlatform? LastPlatform { get; private set; }
+
+        public DetectedAudioSource? LastDetectedAudioSource { get; private set; }
+
+        public double LastThreshold { get; private set; }
+
+        public string? FailingDeviceId { get; set; }
+
+        public LoopbackCaptureEvaluation Evaluate(MeetingPlatform platform, DetectedAudioSource? detectedAudioSource, double activityThreshold)
+        {
+            LastPlatform = platform;
+            LastDetectedAudioSource = detectedAudioSource;
+            LastThreshold = activityThreshold;
+            return _evaluations.Count > 1
+                ? _evaluations.Dequeue()
+                : _evaluations.Peek();
+        }
+
+        public IWaveIn Create(LoopbackCaptureSelection selection)
+        {
+            if (string.Equals(selection.DeviceId, FailingDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
+            }
+
+            return new StubWaveIn();
+        }
+    }
+
+    private sealed class SpyMicrophoneCaptureFactory : IMicrophoneCaptureFactory
+    {
+        private readonly Queue<MicrophoneCaptureEvaluation> _evaluations;
+
+        public SpyMicrophoneCaptureFactory(params MicrophoneCaptureEvaluation[] evaluations)
+        {
+            _evaluations = new Queue<MicrophoneCaptureEvaluation>(evaluations);
+        }
+
+        public string? FailingDeviceId { get; set; }
+
+        public MicrophoneCaptureEvaluation Evaluate(double activityThreshold)
+        {
+            return _evaluations.Count > 1
+                ? _evaluations.Dequeue()
+                : _evaluations.Peek();
+        }
+
+        public IWaveIn Create(MicrophoneCaptureSelection selection)
+        {
+            if (string.Equals(selection.DeviceId, FailingDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
+            }
+
+            return new StubWaveIn();
         }
     }
 }

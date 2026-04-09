@@ -3,7 +3,6 @@ using MeetingRecorder.Core.Services;
 using NAudio.CoreAudioApi;
 using System.Globalization;
 using System.Diagnostics;
-using System.Windows.Automation;
 using System.Threading;
 
 namespace MeetingRecorder.App.Services;
@@ -33,13 +32,9 @@ internal sealed class WindowMeetingDetector
     private readonly IAudioActivityProbe _audioActivityProbe;
     private readonly MeetingTitleEnricher _meetingTitleEnricher;
     private readonly Func<IReadOnlyList<MeetingWindowCandidate>> _enumerateCandidates;
-    private readonly Func<MeetingWindowCandidate, IReadOnlyList<string>> _enumerateBrowserTabTitles;
-    private readonly TimeSpan _browserTabEnumerationTimeout;
-    private readonly TimeSpan _browserTabEnumerationBackoff;
     private readonly TimeSpan _audioProbeTimeout;
     private readonly TimeSpan _audioProbeBackoff;
     private readonly Action<string>? _log;
-    private long _browserTabEnumerationDisabledUntilUtcTicks;
     private long _audioProbeDisabledUntilUtcTicks;
     private readonly object _audioProbeTaskGate = new();
     private Task<AudioSourceAttributionSnapshot>? _activeAudioProbeTask;
@@ -55,9 +50,6 @@ internal sealed class WindowMeetingDetector
             audioActivityProbe,
             meetingTitleEnricher,
             EnumerateCandidateWindows,
-            EnumerateBrowserTabTitles,
-            TimeSpan.FromMilliseconds(750),
-            TimeSpan.FromMinutes(2),
             TimeSpan.FromMilliseconds(750),
             TimeSpan.FromMinutes(2),
             null)
@@ -70,9 +62,6 @@ internal sealed class WindowMeetingDetector
         IAudioActivityProbe audioActivityProbe,
         MeetingTitleEnricher meetingTitleEnricher,
         Func<IReadOnlyList<MeetingWindowCandidate>> enumerateCandidates,
-        Func<MeetingWindowCandidate, IReadOnlyList<string>> enumerateBrowserTabTitles,
-        TimeSpan browserTabEnumerationTimeout,
-        TimeSpan browserTabEnumerationBackoff,
         TimeSpan audioProbeTimeout,
         TimeSpan audioProbeBackoff,
         Action<string>? log = null)
@@ -82,13 +71,6 @@ internal sealed class WindowMeetingDetector
         _audioActivityProbe = audioActivityProbe;
         _meetingTitleEnricher = meetingTitleEnricher;
         _enumerateCandidates = enumerateCandidates ?? throw new ArgumentNullException(nameof(enumerateCandidates));
-        _enumerateBrowserTabTitles = enumerateBrowserTabTitles ?? throw new ArgumentNullException(nameof(enumerateBrowserTabTitles));
-        _browserTabEnumerationTimeout = browserTabEnumerationTimeout > TimeSpan.Zero
-            ? browserTabEnumerationTimeout
-            : throw new ArgumentOutOfRangeException(nameof(browserTabEnumerationTimeout), "The browser tab enumeration timeout must be greater than zero.");
-        _browserTabEnumerationBackoff = browserTabEnumerationBackoff > TimeSpan.Zero
-            ? browserTabEnumerationBackoff
-            : throw new ArgumentOutOfRangeException(nameof(browserTabEnumerationBackoff), "The browser tab enumeration backoff must be greater than zero.");
         _audioProbeTimeout = audioProbeTimeout > TimeSpan.Zero
             ? audioProbeTimeout
             : throw new ArgumentOutOfRangeException(nameof(audioProbeTimeout), "The audio probe timeout must be greater than zero.");
@@ -110,7 +92,7 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
-            foreach (var detectionTitle in EnumerateDetectionTitles(candidateWindow))
+            foreach (var detectionTitle in EnumerateDetectionTitles(candidateWindow, audioAttribution))
             {
                 var signals = BuildSignals(candidateWindow, audioAttribution, detectionTitle, out var audioMatch);
                 if (signals.Count == 0)
@@ -357,7 +339,9 @@ internal sealed class WindowMeetingDetector
         return signals;
     }
 
-    private IReadOnlyList<CandidateDetectionTitle> EnumerateDetectionTitles(MeetingWindowCandidate candidateWindow)
+    private static IReadOnlyList<CandidateDetectionTitle> EnumerateDetectionTitles(
+        MeetingWindowCandidate candidateWindow,
+        AudioSourceAttributionSnapshot audioAttribution)
     {
         var titles = new List<CandidateDetectionTitle>();
 
@@ -367,24 +351,13 @@ internal sealed class WindowMeetingDetector
             titles.Add(new CandidateDetectionTitle(candidateWindow.MainWindowTitle, false));
         }
 
-        if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName) ||
-            candidateWindow.WindowHandle == nint.Zero)
+        if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName))
         {
             return titles;
         }
 
-        if (!ShouldInspectBrowserTabs(candidateWindow.ProcessName))
+        foreach (var tabTitle in EnumerateAudioDerivedGoogleMeetTitles(candidateWindow, audioAttribution))
         {
-            return titles;
-        }
-
-        foreach (var tabTitle in TryEnumerateBrowserTabTitles(candidateWindow))
-        {
-            if (!LooksLikeGoogleMeetWindowTitle(tabTitle))
-            {
-                continue;
-            }
-
             if (titles.Any(existing =>
                 string.Equals(existing.Title, tabTitle, StringComparison.OrdinalIgnoreCase)))
             {
@@ -466,58 +439,48 @@ internal sealed class WindowMeetingDetector
             null);
     }
 
-    private IReadOnlyList<string> TryEnumerateBrowserTabTitles(MeetingWindowCandidate candidateWindow)
+    private static IReadOnlyList<string> EnumerateAudioDerivedGoogleMeetTitles(
+        MeetingWindowCandidate candidateWindow,
+        AudioSourceAttributionSnapshot audioAttribution)
     {
-        var disabledUntilUtcTicks = Interlocked.Read(ref _browserTabEnumerationDisabledUntilUtcTicks);
-        if (disabledUntilUtcTicks > 0 && DateTimeOffset.UtcNow.UtcTicks < disabledUntilUtcTicks)
+        if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName))
         {
             return Array.Empty<string>();
         }
 
-        IReadOnlyList<string>? titles = null;
-        Exception? enumerationException = null;
-        using var completed = new ManualResetEventSlim(false);
-        var thread = new Thread(() =>
+        var candidateProcessName = NormalizeProcessName(candidateWindow.ProcessName);
+        if (string.IsNullOrWhiteSpace(candidateProcessName))
         {
-            try
-            {
-                titles = _enumerateBrowserTabTitles(candidateWindow);
-            }
-            catch (Exception exception)
-            {
-                enumerationException = exception;
-            }
-            finally
-            {
-                completed.Set();
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "MeetingRecorder Browser Tab Enumeration",
-        };
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-
-        if (!completed.Wait(_browserTabEnumerationTimeout))
-        {
-            var disabledUntilUtc = DateTimeOffset.UtcNow + _browserTabEnumerationBackoff;
-            Interlocked.Exchange(ref _browserTabEnumerationDisabledUntilUtcTicks, disabledUntilUtc.UtcTicks);
-            _log?.Invoke(
-                $"Browser tab enumeration timed out after {_browserTabEnumerationTimeout.TotalMilliseconds:0}ms for window '{candidateWindow.MainWindowTitle}'. " +
-                $"Skipping browser tab inspection until {disabledUntilUtc:O}.");
             return Array.Empty<string>();
         }
 
-        if (enumerationException is not null)
+        var titles = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var session in audioAttribution.Sessions)
         {
-            _log?.Invoke(
-                $"Browser tab enumeration failed for window '{candidateWindow.MainWindowTitle}': {enumerationException.Message}");
-            return Array.Empty<string>();
+            if (!session.IsActive || session.IsCurrentProcess || session.IsSystemSounds)
+            {
+                continue;
+            }
+
+            if (!IsBrowserFamilyMatch(candidateProcessName, NormalizeProcessName(session.ProcessName)))
+            {
+                continue;
+            }
+
+            var title = TryExtractGoogleMeetTitleFromSession(session);
+            if (string.IsNullOrWhiteSpace(title) || !LooksLikeGoogleMeetWindowTitle(title))
+            {
+                continue;
+            }
+
+            if (seen.Add(title))
+            {
+                titles.Add(title);
+            }
         }
 
-        return titles ?? Array.Empty<string>();
+        return titles;
     }
 
     private static AudioSourceAttributionMatch? MatchAudioSource(
@@ -873,51 +836,10 @@ internal sealed class WindowMeetingDetector
         return string.Join("; ", details);
     }
 
-    internal static IReadOnlyList<string> EnumerateBrowserTabTitles(MeetingWindowCandidate candidateWindow)
+    private static string? TryExtractGoogleMeetTitleFromSession(AudioSourceSessionSnapshot session)
     {
-        if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName) ||
-            candidateWindow.WindowHandle == nint.Zero)
-        {
-            return Array.Empty<string>();
-        }
-
-        try
-        {
-            var root = AutomationElement.FromHandle(candidateWindow.WindowHandle);
-            if (root is null)
-            {
-                return Array.Empty<string>();
-            }
-
-            var tabItems = root.FindAll(
-                TreeScope.Descendants,
-                new PropertyCondition(
-                    AutomationElement.ControlTypeProperty,
-                    ControlType.TabItem));
-            if (tabItems.Count == 0)
-            {
-                return Array.Empty<string>();
-            }
-
-            var titles = new List<string>(tabItems.Count);
-            for (var index = 0; index < tabItems.Count; index++)
-            {
-                var tabItem = tabItems[index];
-                var title = tabItem.GetCurrentPropertyValue(AutomationElement.NameProperty, true) as string;
-                if (string.IsNullOrWhiteSpace(title))
-                {
-                    continue;
-                }
-
-                titles.Add(title.Trim());
-            }
-
-            return titles;
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
+        return TryExtractGoogleMeetTitle(session.DisplayName) ??
+            TryExtractGoogleMeetTitle(session.SessionIdentifier);
     }
 
     internal static bool LooksLikeGoogleMeetWindowTitle(string title)
@@ -968,7 +890,45 @@ internal sealed class WindowMeetingDetector
 
         var normalized = title.Trim();
         return !string.IsNullOrWhiteSpace(normalized) &&
-            normalized.Contains('|', StringComparison.Ordinal);
+            (normalized.Contains('|', StringComparison.Ordinal) ||
+             LooksLikeSpecificPlainTeamsMeetingTitle(normalized));
+    }
+
+    private static bool LooksLikeSpecificPlainTeamsMeetingTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim();
+        var lower = normalized.ToLowerInvariant();
+        if (lower is "microsoft teams" or "teams" or "ms teams" or
+            "chat" or "activity" or "calendar" or "files" or "approvals" or
+            "assignments" or "calls" or "search" or "people" or "view" or
+            "copilot" or "apps" or "more" or "camera")
+        {
+            return false;
+        }
+
+        if (LooksLikeGoogleMeetWindowTitle(normalized) ||
+            !normalized.Any(char.IsLetterOrDigit))
+        {
+            return false;
+        }
+
+        if (normalized.Contains(',', StringComparison.Ordinal) ||
+            normalized.Contains('&', StringComparison.Ordinal) ||
+            normalized.Contains('/', StringComparison.Ordinal) ||
+            normalized.Contains('-', StringComparison.Ordinal) ||
+            normalized.Contains(':', StringComparison.Ordinal) ||
+            normalized.Contains('(', StringComparison.Ordinal) ||
+            normalized.Contains(')', StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 2;
     }
 
     private static bool LooksLikeTeamsProcessName(string? processName)
@@ -993,19 +953,24 @@ internal sealed class WindowMeetingDetector
         };
     }
 
-    private static bool ShouldInspectBrowserTabs(string? processName)
+    private static string? TryExtractGoogleMeetTitle(string? metadataValue)
     {
-        var normalized = NormalizeProcessName(processName);
-        if (string.IsNullOrWhiteSpace(normalized))
+        if (string.IsNullOrWhiteSpace(metadataValue))
         {
-            return true;
+            return null;
         }
 
-        return normalized.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Equals("brave", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Equals("vivaldi", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Equals("opera", StringComparison.OrdinalIgnoreCase);
+        var trimmedMetadata = metadataValue.Trim();
+        if (trimmedMetadata.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase) ||
+            trimmedMetadata.Contains("google meet", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmedMetadata;
+        }
+
+        var meetCode = TryExtractGoogleMeetCode(trimmedMetadata);
+        return string.IsNullOrWhiteSpace(meetCode)
+            ? null
+            : $"Meet - {meetCode}";
     }
 
     private static string NormalizeProcessName(string? processName)

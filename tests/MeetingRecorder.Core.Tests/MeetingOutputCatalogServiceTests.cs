@@ -609,6 +609,64 @@ public sealed class MeetingOutputCatalogServiceTests
     }
 
     [Fact]
+    public async Task ListMeetings_Projects_Capture_Timeline_And_Loopback_Segments_From_The_Manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Capture Timeline",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var enrichedManifest = manifest with
+        {
+            LoopbackCaptureSegments =
+            [
+                new LoopbackCaptureSegment(
+                    manifest.StartedAtUtc,
+                    manifest.StartedAtUtc.AddMinutes(2),
+                    [Path.Combine(workDir, manifest.SessionId, "raw", "loopback-0001-chunk-0001.wav")],
+                    "device-1",
+                    "Laptop speakers",
+                    "Multimedia"),
+                new LoopbackCaptureSegment(
+                    manifest.StartedAtUtc.AddMinutes(2),
+                    manifest.StartedAtUtc.AddMinutes(10),
+                    [Path.Combine(workDir, manifest.SessionId, "raw", "loopback-0002-chunk-0001.wav")],
+                    "device-2",
+                    "USB headset",
+                    "Communications"),
+            ],
+            CaptureTimeline =
+            [
+                new CaptureTimelineEntry(manifest.StartedAtUtc, CaptureTimelineEventKind.Started, "Started on Laptop speakers (Multimedia).", null),
+                new CaptureTimelineEntry(manifest.StartedAtUtc.AddMinutes(2), CaptureTimelineEventKind.Swapped, "Swapped to USB headset (Communications).", "Meeting audio moved."),
+            ],
+        };
+        await manifestStore.SaveAsync(enrichedManifest, manifestPath);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, manifest.StartedAtUtc, manifest.DetectedTitle);
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.Equal(2, meeting.LoopbackCaptureSegments?.Count);
+        Assert.Equal(2, meeting.CaptureTimeline?.Count);
+        Assert.Equal(CaptureTimelineEventKind.Swapped, meeting.CaptureTimeline?[1].Kind);
+    }
+
+    [Fact]
     public async Task ListMeetings_Falls_Back_To_Json_Attendees_And_Processing_Metadata_When_Manifest_Is_Missing()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

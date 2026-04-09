@@ -18,9 +18,13 @@ public sealed record MeetingSessionManifest
 
     public IReadOnlyList<string> RawChunkPaths { get; init; } = Array.Empty<string>();
 
+    public IReadOnlyList<LoopbackCaptureSegment> LoopbackCaptureSegments { get; init; } = Array.Empty<LoopbackCaptureSegment>();
+
     public IReadOnlyList<string> MicrophoneChunkPaths { get; init; } = Array.Empty<string>();
 
     public IReadOnlyList<MicrophoneCaptureSegment> MicrophoneCaptureSegments { get; init; } = Array.Empty<MicrophoneCaptureSegment>();
+
+    public IReadOnlyList<CaptureTimelineEntry> CaptureTimeline { get; init; } = Array.Empty<CaptureTimelineEntry>();
 
     public string? MergedAudioPath { get; init; }
 

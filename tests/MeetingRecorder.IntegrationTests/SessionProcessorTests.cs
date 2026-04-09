@@ -65,6 +65,65 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_Merges_Loopback_Audio_From_Multiple_Loopback_Segments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = new AppConfig
+        {
+            AudioOutputDir = Path.Combine(root, "audio"),
+            TranscriptOutputDir = Path.Combine(root, "transcripts"),
+            WorkDir = Path.Combine(root, "work"),
+            ModelCacheDir = Path.Combine(root, "models"),
+            TranscriptionModelPath = Path.Combine(root, "models", "fake.bin"),
+            DiarizationAssetPath = Path.Combine(root, "models", "diarization"),
+        };
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            config.WorkDir,
+            MeetingPlatform.Manual,
+            "Segmented Loopback",
+            Array.Empty<DetectionSignal>());
+
+        var sessionRoot = Path.Combine(config.WorkDir, manifest.SessionId);
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        Directory.CreateDirectory(rawDir);
+        var firstChunkPath = Path.Combine(rawDir, "loopback-0001-chunk-0001.wav");
+        var secondChunkPath = Path.Combine(rawDir, "loopback-0002-chunk-0001.wav");
+        CreateWave(firstChunkPath, TimeSpan.FromMilliseconds(250));
+        CreateWave(secondChunkPath, TimeSpan.FromMilliseconds(250));
+
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                RawChunkPaths = Array.Empty<string>(),
+                LoopbackCaptureSegments =
+                [
+                    new LoopbackCaptureSegment(manifest.StartedAtUtc, manifest.StartedAtUtc.AddMilliseconds(250), [firstChunkPath], "device-1", "Laptop speakers", "Multimedia"),
+                    new LoopbackCaptureSegment(manifest.StartedAtUtc.AddMilliseconds(250), manifest.StartedAtUtc.AddMilliseconds(500), [secondChunkPath], "device-2", "USB headset", "Communications"),
+                ],
+            },
+            manifestPath);
+
+        var processor = new SessionProcessor(
+            manifestStore,
+            pathBuilder,
+            new WaveChunkMerger(),
+            new FakeTranscriptionProvider(),
+            new FakeDiarizationProvider(),
+            new TranscriptRenderer(),
+            new FilePublishService());
+
+        var published = await processor.ProcessAsync(manifestPath, config);
+
+        using var reader = new AudioFileReader(published.AudioPath);
+        Assert.InRange(reader.TotalTime.TotalSeconds, 0.45d, 0.60d);
+    }
+
+    [Fact]
     public async Task ProcessAsync_Publishes_Speakers_Turns_And_Diarization_Metadata()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

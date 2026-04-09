@@ -17,7 +17,7 @@ Legal notice: You are responsible for complying with applicable recording, priva
 
 The app now uses a task-first shell with two main destinations in one visible segmented navigation strip:
 
-- `Home` for the recording console: editable title, client/project, and key-attendee metadata, a live recording timer, the live audio graph, start/stop controls, and quick microphone/auto-detect settings
+- `Home` for the recording console: editable title, client/project, and key-attendee metadata, a live recording timer, the live audio graph, start/stop controls, quick microphone/auto-detect settings, and a compact capture-status well for the active loopback path
 - `Meetings` for the recent-and-published meetings workspace and maintenance actions
 - backlog processing now also surfaces through a compact mono queue chip in the header and a denser processing strip at the top of `Meetings`, so you can see whether the queue is `Processing`, `Paused`, `Queued`, or `Idle`, why it is paused, and approximate current-item / overall ETAs without opening extra tools
 Capability setup is still first-class, but it now lives inside `Settings > Setup` instead of the primary navigation.
@@ -101,20 +101,24 @@ For newer managed installs, the app can also migrate prior portable data forward
 
 - Manual Start and Stop controls
 - Auto-detection for Teams desktop and Google Meet, off by default on new installs and reset off once for older configs to avoid extra permission prompts on some systems
-- Google Meet detection now also inspects visible Chromium tab titles, so a Meet tab can still be recognized when the main browser title is a shared Slides or Docs page
-- Chromium tab inspection now uses a short timeout and backoff window and only runs against real browser processes, so a stuck Edge or Chrome automation query cannot stall Teams or Google Meet detection for minutes while unrelated Electron-style `Chrome_WidgetWin_*` windows are open
+- Google Meet detection now relies on explicit browser titles plus Windows render-session metadata, so a Meet call can still be recognized when the visible Edge or Chrome window is a shared Slides or Docs page and Windows exposes Meet-specific session details
 - Windows audio-session probing now also uses a short timeout and backoff window, so a hung render-session query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
 - Windows audio-session probing now merges both the default multimedia and communications render endpoints, so Teams auto-start can recover when meeting audio moves onto a Bluetooth headset or other communications-only output after the original speaker path drops
-- Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or Chromium Meet tab and uses that source as a strong tie-breaker instead of a single shared audio bonus
-- Google Meet auto-start now prefers Meet-specific browser-audio attribution when Chromium render sessions are available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
+- Live recording loopback capture now also prefers the active communications render endpoint when meeting playback is routed there, so recorded meeting audio is less likely to flatten out while only microphone room pickup remains
+- Live recording now keeps a readable capture timeline that records which loopback endpoint was selected, when the app swapped endpoints, and whether a loopback fallback or swap failure happened during the session
+- While a recording is live, the app keeps reevaluating the preferred render endpoint and can hot-swap loopback capture in place when Windows moves meeting playback to a better device, preserving earlier chunks and continuing the same session without a stop/start restart
+- Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata, and uses that source as a strong tie-breaker instead of a single shared audio bonus
+- Google Meet auto-start now prefers Meet-specific browser-audio attribution when browser render-session metadata is available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
 - Google Meet auto-start can now also begin from a high-confidence explicit Meet window even before render audio becomes active, including `Meet - ...` browser surfaces and `meet.google.com is sharing ...` share surfaces; generic browser windows or tab-only Meet hints still wait for stronger evidence
 - Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session, including a quiet matched Teams session that is still present at `peak=0.000`; a stale remembered Teams window title on its own is no longer enough to start a recording
+- Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can still qualify for sustained quiet-meeting auto-start when Teams render-session evidence is present
 - A specific Teams desktop meeting with live Teams audio attribution now also outranks a stale Google Meet browser candidate that no longer has attributed Meet audio, so an old Edge Meet tab cannot steal auto-start after you switch the real call over to Teams
 - Auto-started Teams recordings no longer treat a stale same-title quiet window as a forever-positive signal; instead they use a bounded quiet grace period before auto-stop, and matching Teams shell/chat/share surfaces only keep the session alive when there is still recent Teams render activity, so ended calls stop instead of recording unrelated post-call silence or microphone-only activity indefinitely
 - When a validated official Teams path is enabled, stale same-title Teams shells also stop refreshing continuity once the official lookup reports that no current meeting is active, but a current official match can still preserve the bounded quiet grace period during real low-audio patches
 - Google Meet continuity now normalizes title variants that share the same Meet code, so browser captions like `...and 1 more page`, `...Work - Microsoft Edge`, and `...Camera and microphone recording...` stay attached to one live call instead of being treated as separate meetings
 - Google Meet continuity now also treats browser share-surface titles such as `meet.google.com is sharing a window.` as part of the active call when the session is already pinned to a specific Meet meeting, which prevents screen sharing from prematurely aging an auto-started recording into auto-stop
 - When microphone capture is enabled, the publish pipeline now reduces low-level mic bleed while strong loopback audio is present, which helps avoid speaker echo when the mic can hear meeting audio from speakers
+- When microphone capture is enabled, the app can now also hot-swap to a better default Windows microphone device during a live recording, preserving earlier mic chunks in the same session instead of requiring a manual stop/start restart after a headset or dock microphone change
 - If an auto-started recording is first classified from stale Google Meet browser evidence and a stronger Teams in-call window appears afterward, the app now reclassifies that live session in place instead of stopping and starting a second recording
 - Manual recordings now keep assisted detection running in the background, so a session you started yourself can still reclassify in place when a stronger Teams or Google Meet meeting window appears later without opting that session into auto-stop
 - Manual recordings now also switch in place when a clearly different specific Teams or Google Meet call takes over later, even if the replacement audio attribution is only medium-confidence, and the stale old title draft is reset to the new detected meeting title
@@ -144,7 +148,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Published audio/transcript artifacts now win over stale queued imported-source reprocessing manifests, so already-published meetings stay openable instead of regressing to false `Queued` / `Missing` rows
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges
 - Grouped browsing now opens the first visible group by default, keeps other groups collapsed initially, and exposes quick `Expand All` and `Collapse All` controls
-- Selected-meeting inspector showing attendees, project, recommendation badges, transcript model metadata, speaker-label state, and the persisted detected audio source summary
+- Selected-meeting inspector showing attendees, project, recommendation badges, transcript model metadata, speaker-label state, the persisted detected audio source summary, and a capture-diagnostics timeline for the finished meeting
 - Recommendation badges for likely cleanup actions directly in the meeting list
 - Dedicated cleanup recommendation review area for bulk apply, dismiss, and open-related flows without leaving the Meetings workspace
 - Per-meeting context menu for transcript, audio, archive, delete, rename, retry, split, merge, and speaker-label maintenance actions
@@ -230,7 +234,7 @@ Meeting Recorder still owns:
 - Webex
 - Other conferencing apps that use standard Windows playback and microphone devices
 
-Manual recording works more broadly than assisted auto-detection. Auto-detection currently focuses on Teams desktop and Google Meet browser heuristics, including Meet tabs inside visible Chromium browser windows.
+Manual recording works more broadly than assisted auto-detection. Auto-detection currently focuses on Teams desktop and Google Meet browser heuristics driven by visible browser titles plus Windows render-session metadata.
 
 ### Imported audio
 
@@ -264,6 +268,7 @@ When available, the published transcript JSON now also carries durable meeting m
 - cached Outlook no-match results for unchanged historical meetings so repeated Meetings-tab opens do not rescan the full backlog every time
 - an optional user-edited project name that is also persisted in the meeting manifest and Markdown transcript
 - the compact detected audio source summary that won the meeting classification, including the app plus the matched meeting window or browser tab when available
+- a persisted loopback capture timeline describing the chosen endpoint, endpoint swaps, fallback events, and stop-time capture summary
 - the transcription model file name used for the transcript run
 - whether speaker labels were present in the transcript
 
@@ -312,6 +317,7 @@ The app keeps only `Home` and `Meetings` in the primary navigation. `Settings > 
 
 The `Home` console is intentionally minimal. It uses a wider full-width recording canvas, keeps `Microphone capture` and `Automatic detection` underneath the main panel, treats `Client / project` and `Key attendees` as optional metadata next to the required title, keeps all three metadata fields editable during an active recording including manual starts, shows a live elapsed recording timer while capture is active, and keeps setup or update actions in the shell header status capsule when needed. `Key attendees` accepts comma- or semicolon-delimited names, stores them as separate attendee entries, and later reconciles them against richer Outlook or Teams attendee names when those are discovered. Microphone capture can also be turned on or off during an active recording, with the change applying from that moment forward while also updating the saved default.
 While a recording is active, edits to `Client / project` and `Key attendees` are now saved back into the live session shortly after you type instead of waiting until stop.
+The live capture-status well under `Detected audio source` keeps the active loopback endpoint visible in plain language, shows whether the app is in `Loopback live`, `Loopback + mic live`, `Swapping loopback`, or `Fallback capture active` mode, and lists the most recent capture events so users can tell when Windows moved the meeting onto a different playback device.
 If a manual recording is later strongly reclassified to a supported Teams or Google Meet call, that session now also adopts meeting-end auto-stop behavior so it does not keep recording unrelated system audio after the call closes. If a clearly different specific supported call takes over later on the same platform, the active session now switches to that new meeting identity instead of staying pinned to the stale earlier title.
 When automatic detection is turned off, the header status now switches into an explicit manual-mode state instead of continuing to imply that auto-detection is available.
 The packaged startup launcher now stays quiet on normal success. If no Whisper model is installed yet, that remains an in-app setup state instead of printing a recurring startup console warning every time you launch the app.

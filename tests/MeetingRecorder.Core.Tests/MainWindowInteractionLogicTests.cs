@@ -26,6 +26,51 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildMeetingInspectorState_Includes_Capture_Diagnostics_Summary()
+    {
+        var startedAtUtc = new DateTimeOffset(2026, 4, 9, 18, 0, 0, TimeSpan.Zero);
+        var meeting = new MeetingOutputRecord(
+            "2026-04-09_180000_teams_client-sync",
+            "Client Sync",
+            startedAtUtc,
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(20),
+            AudioPath: @"C:\Meetings\client-sync.wav",
+            MarkdownPath: @"C:\Meetings\client-sync.md",
+            JsonPath: @"C:\Meetings\json\client-sync.json",
+            ReadyMarkerPath: @"C:\Meetings\json\client-sync.ready",
+            ManifestPath: @"C:\Meetings\work\session\manifest.json",
+            ManifestState: SessionState.Published,
+            Attendees: Array.Empty<MeetingAttendee>(),
+            HasSpeakerLabels: false,
+            TranscriptionModelFileName: "ggml-small.bin",
+            ProjectName: "IonQ",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Client Sync | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.High,
+                startedAtUtc),
+            KeyAttendees: Array.Empty<string>(),
+            CaptureTimeline:
+            [
+                new CaptureTimelineEntry(startedAtUtc, CaptureTimelineEventKind.Started, "Started on Laptop speakers (Multimedia).", "Initial loopback selection."),
+                new CaptureTimelineEntry(startedAtUtc.AddMinutes(3), CaptureTimelineEventKind.Swapped, "Swapped to USB headset (Communications).", "Meeting audio moved to the communications device."),
+            ],
+            LoopbackCaptureSegments:
+            [
+                new LoopbackCaptureSegment(startedAtUtc, startedAtUtc.AddMinutes(3), [@"C:\Meetings\work\raw\loopback-0001.wav"], "device-1", "Laptop speakers", "Multimedia"),
+                new LoopbackCaptureSegment(startedAtUtc.AddMinutes(3), startedAtUtc.AddMinutes(20), [@"C:\Meetings\work\raw\loopback-0002.wav"], "device-2", "USB headset", "Communications"),
+            ]);
+
+        var result = MainWindowInteractionLogic.BuildMeetingInspectorState(meeting, Array.Empty<MeetingCleanupRecommendation>());
+
+        Assert.Contains("USB headset", result.CaptureDiagnosticsSummary, StringComparison.Ordinal);
+        Assert.Contains("Swapped", result.CaptureDiagnosticsSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildShellStatus_Points_To_Updates_When_Manual_Update_Is_Available()
     {
         var updateResult = new AppUpdateCheckResult(

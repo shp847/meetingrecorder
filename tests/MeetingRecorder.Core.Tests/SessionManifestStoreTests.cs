@@ -116,6 +116,86 @@ public sealed class SessionManifestStoreTests
     }
 
     [Fact]
+    public async Task LoadAsync_Normalizes_Legacy_RawChunkPaths_Into_A_Full_Session_Loopback_Segment()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var manifest = await store.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Legacy loopback chunks",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var startedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var endedAtUtc = startedAtUtc.AddMinutes(4);
+        var expected = manifest with
+        {
+            StartedAtUtc = startedAtUtc,
+            EndedAtUtc = endedAtUtc,
+            RawChunkPaths =
+            [
+                Path.Combine(workDir, manifest.SessionId, "raw", "loopback-chunk-0001.wav"),
+                Path.Combine(workDir, manifest.SessionId, "raw", "loopback-chunk-0002.wav"),
+            ],
+            LoopbackCaptureSegments = Array.Empty<LoopbackCaptureSegment>(),
+        };
+
+        await store.SaveAsync(expected, manifestPath);
+        var saved = await store.LoadAsync(manifestPath);
+
+        var segment = Assert.Single(saved.LoopbackCaptureSegments);
+        Assert.Equal(startedAtUtc, segment.StartedAtUtc);
+        Assert.Equal(endedAtUtc, segment.EndedAtUtc);
+        Assert.Equal(expected.RawChunkPaths, segment.ChunkPaths);
+        Assert.Equal(expected.RawChunkPaths, saved.RawChunkPaths);
+    }
+
+    [Fact]
+    public async Task SaveAsync_Flattens_Loopback_Segments_Back_Into_RawChunkPaths()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var manifest = await store.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Segment flattening",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var segmentOne = new LoopbackCaptureSegment(
+            manifest.StartedAtUtc,
+            manifest.StartedAtUtc.AddMinutes(1),
+            [Path.Combine(workDir, manifest.SessionId, "raw", "loopback-0001-chunk-0001.wav")],
+            "device-1",
+            "Laptop speakers",
+            "Multimedia");
+        var segmentTwo = new LoopbackCaptureSegment(
+            manifest.StartedAtUtc.AddMinutes(1),
+            manifest.StartedAtUtc.AddMinutes(2),
+            [Path.Combine(workDir, manifest.SessionId, "raw", "loopback-0002-chunk-0001.wav")],
+            "device-2",
+            "USB headset",
+            "Communications");
+
+        await store.SaveAsync(
+            manifest with
+            {
+                LoopbackCaptureSegments = [segmentOne, segmentTwo],
+                RawChunkPaths = Array.Empty<string>(),
+            },
+            manifestPath);
+        var saved = await store.LoadAsync(manifestPath);
+
+        Assert.Equal(2, saved.LoopbackCaptureSegments.Count);
+        Assert.Equal(
+            [segmentOne.ChunkPaths[0], segmentTwo.ChunkPaths[0]],
+            saved.RawChunkPaths);
+    }
+
+    [Fact]
     public async Task FindPendingManifestPathsAsync_Prioritizes_Already_Transcribed_Sessions_Before_Fresh_Queued_Work()
     {
         var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");

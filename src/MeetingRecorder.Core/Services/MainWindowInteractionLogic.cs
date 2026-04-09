@@ -103,6 +103,8 @@ internal sealed record MeetingInspectorState(
     public string ProjectName { get; init; } = string.Empty;
 
     public string DetectedAudioSourceSummary { get; init; } = string.Empty;
+
+    public string CaptureDiagnosticsSummary { get; init; } = string.Empty;
 }
 
 internal sealed record MeetingContextActionState(
@@ -1020,6 +1022,7 @@ internal static class MainWindowInteractionLogic
         {
             ProjectName = NormalizeText(meeting.ProjectName),
             DetectedAudioSourceSummary = BuildDetectedAudioSourceSummary(meeting.DetectedAudioSource),
+            CaptureDiagnosticsSummary = BuildCaptureDiagnosticsSummary(meeting.LoopbackCaptureSegments, meeting.CaptureTimeline),
         };
     }
 
@@ -1040,6 +1043,35 @@ internal static class MainWindowInteractionLogic
         return string.IsNullOrWhiteSpace(targetTitle)
             ? $"{audioSource.AppName.Trim()} ({confidenceLabel} confidence)"
             : $"{audioSource.AppName.Trim()} from '{targetTitle}' ({confidenceLabel} confidence)";
+    }
+
+    public static string BuildCaptureDiagnosticsSummary(
+        IReadOnlyList<LoopbackCaptureSegment>? loopbackCaptureSegments,
+        IReadOnlyList<CaptureTimelineEntry>? captureTimeline)
+    {
+        var hasSegments = loopbackCaptureSegments is { Count: > 0 };
+        var hasTimeline = captureTimeline is { Count: > 0 };
+        if (!hasSegments && !hasTimeline)
+        {
+            return "No capture diagnostics were recorded.";
+        }
+
+        var lines = new List<string>();
+        if (hasSegments)
+        {
+            var lastSegment = loopbackCaptureSegments![^1];
+            lines.Add($"Final loopback endpoint: {lastSegment.EndpointName} ({lastSegment.EndpointRole}).");
+        }
+
+        if (hasTimeline)
+        {
+            foreach (var entry in captureTimeline!.TakeLast(3))
+            {
+                lines.Add(entry.Summary);
+            }
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     public static MeetingContextActionState BuildMeetingContextActionState(

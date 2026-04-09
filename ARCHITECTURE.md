@@ -46,7 +46,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - `MeetingRecorder.App`
   - WPF desktop UI
   - recording orchestration
-  - local meeting detection for Teams and Google Meet, including Chromium browser tab-title inspection for visible Google Meet windows and Windows render-session audio attribution for process/window/tab tie-breaking
+  - local meeting detection for Teams and Google Meet, including visible browser-window title heuristics plus Windows render-session audio attribution and Meet metadata recovery for process/window/tab tie-breaking
 - guarded Google Meet browser-audio attribution that still refuses generic Chromium playback in shared-content browser windows, but allows an explicit active `Meet - ...` top-level browser window to auto-start from browser-family audio when exact tab attribution is unavailable
 - in-place reclassification of an auto-started live session from stale Google Meet browser evidence to a stronger Teams meeting window, so the recording is preserved as one session
 - continued background detection during manual recordings so a user-started session can still reclassify in place when a stronger live Teams or Google Meet signal appears later, while auto-stop remains limited to auto-started sessions
@@ -55,10 +55,13 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - same-platform live meeting takeovers for manual or already-managed sessions when a clearly different specific Teams or Google Meet call becomes the stronger detected identity later, so stale old titles do not remain pinned to the active recording
 - continuity protection for active auto-started Teams sessions when a weak unrelated Google Meet browser candidate is also visible, so quiet patches do not falsely age the Teams session into auto-stop
 - sustained specific Teams meeting-window evidence can now auto-start a quiet desktop call even before render audio rises above the normal auto-start threshold, including when the matched Teams render session is still present but currently reports `peak=0.000`, so the detector does not rely on title evidence alone
+- Teams detection now also treats newer in-call window titles that are just the attendee or meeting name as meeting surfaces when they come from a Teams host window, then relies on Teams render-session evidence plus the existing playback/chat demotion path to distinguish live calls from ordinary Teams content
 - once an auto-started Teams session is already live, a stale same-title quiet Teams window now extends the stop timeout only for a bounded grace period instead of resetting the positive-signal clock forever, and weaker matching Teams shell/chat/share surfaces only refresh continuity when recent capture activity still exists
-- Chromium browser tab-title inspection now runs behind a short timeout and cooldown and is limited to actual browser-family processes, so a stuck UI Automation query on Edge or Chrome cannot starve later detection cycles and unrelated Electron-style `Chrome_WidgetWin_*` shells are skipped entirely
+- Google Meet fallback no longer inspects Chromium tab UI directly; it now relies on explicit browser titles plus Windows render-session metadata from matching browser processes so Edge or Chrome are not probed through cross-process UI Automation during detection
 - Windows render-session audio probing now also runs behind a short timeout and cooldown so a hung Core Audio query cannot starve later detection cycles before Teams auto-start has a chance to react
 - Windows render-session audio probing now merges the multimedia and communications default render endpoints so Teams session attribution survives speaker crashes, Bluetooth headset handoffs, and other output-device switches that move meeting audio off the original default speaker path
+- live recording loopback capture now also prefers the active communications render endpoint when a meeting is routed there, so the recorded meeting audio does not fall back to microphone-only room pickup while a headset or communications-only output device is carrying the real call audio
+- live recording loopback capture now evaluates candidate render endpoints explicitly, persists the selected endpoint metadata into the session manifest, and can hot-swap to a stronger endpoint mid-recording without splitting the meeting into separate sessions
 - candidate ranking now prefers a specific Teams meeting with attributed Teams render audio over a stale Google Meet browser window that no longer has attributed Meet audio, which prevents old visible Meet tabs from stealing a real Teams auto-start
   - resilient Teams shell-title parsing so bare navigation surfaces like `Chat | Microsoft Teams` do not crash the background detection loop
   - config editing and hot reload
@@ -126,6 +129,7 @@ Responsibilities:
 - keep the editable session metadata visible
 - surface a live elapsed recording timer while capture is active
 - render the live audio graph inside a single recording console
+- surface a compact capture-status well that shows the active loopback endpoint, current capture mode, and the most recent capture timeline entries
 - expose manual start and stop controls
 - expose immediate-save quick settings for microphone capture and auto-detection
 - apply microphone capture changes to the active recording from the save/click moment forward while also updating the saved default
@@ -152,6 +156,7 @@ Responsibilities:
 - let search match title, project, key attendees, and captured attendee names
 - surface cleanup recommendation badges independently from publish status
 - host the one-time historical cleanup review banner and ongoing recommendation block
+- render persisted capture diagnostics in the selected-meeting inspector so finished sessions still show which loopback endpoint was used, when swaps happened, and whether capture fallback or swap-failure events occurred
 - host the selected-meeting inspector, quick-action launchers, and Meetings-tab context menu so manual maintenance actions reuse the same underlying meeting services
 - keep the lower Meetings area focused on compact recommendation review plus the small set of action drafts that still need extra user input
 - rename published meetings and keep stems aligned
@@ -249,6 +254,8 @@ The processing folder now also carries a fixed `transcription.snapshot.json` sid
 - attendee list
 - detection evidence
 - raw chunk paths
+- loopback capture segments, including endpoint identity and ordered chunk ownership across hot-swapped loopback recorders
+- capture timeline entries that explain endpoint choices, swaps, fallback decisions, and stop-time capture state
 - microphone chunk paths
 - processing overrides
 - whether speaker labeling should be skipped for a repaired or recovered processing run
@@ -318,11 +325,16 @@ The app records:
 - system output via Windows loopback capture
 - optional microphone input via a separate capture path
 
+When Windows routes meeting playback to a communications-only device such as a headset, the loopback recorder now prefers that active communications render endpoint instead of assuming the multimedia default speaker path.
+When microphone capture is enabled, the recorder now also binds to an explicit default Windows capture endpoint instead of a one-time generic mapper. During an active recording, the coordinator reevaluates the preferred default microphone endpoint and can hot-swap to a new headset, dock, or communications microphone by closing the current mic segment, starting a new mic segment on the replacement device, and keeping both segments in the same session manifest.
+During an active recording, the coordinator now reevaluates the preferred loopback endpoint on each detection cycle. A stronger alternate endpoint must generally win for two consecutive cycles before the app swaps, unless the current loopback endpoint has gone inactive and the alternate endpoint has stronger meeting-session evidence. Successful swaps start a new loopback recorder first, preserve the prior segment and chunk list, then retire the old recorder so the session can continue without losing already-captured audio. Failed swaps do not stop the session; they are recorded into the capture timeline and the current recorder stays active.
+
 Because capture is based on the Windows audio stack rather than a product-specific conferencing SDK, manual recording works for any meeting app whose audio is present on the normal Windows render path. The current platform-specific logic is only in auto-detection and platform labeling, not in the audio capture pipeline itself.
 
 ### Chunking
 
 Audio is written as rolling WAV chunks during recording to reduce data loss from crashes or abrupt shutdowns.
+Each loopback endpoint activation now owns its own loopback segment prefix, so hot-swapped loopback recorders do not collide on chunk filenames and the final merge can preserve the original capture order across multiple loopback devices.
 
 ### Final merge
 

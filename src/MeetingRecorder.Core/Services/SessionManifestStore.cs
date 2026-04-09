@@ -133,14 +133,56 @@ public sealed class SessionManifestStore
 
     private static MeetingSessionManifest NormalizeManifest(MeetingSessionManifest manifest)
     {
+        var normalizedLoopbackCaptureSegments = NormalizeLoopbackCaptureSegments(manifest);
         var normalizedMicrophoneCaptureSegments = NormalizeMicrophoneCaptureSegments(manifest);
         return manifest with
         {
+            LoopbackCaptureSegments = normalizedLoopbackCaptureSegments,
+            RawChunkPaths = normalizedLoopbackCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
             MicrophoneCaptureSegments = normalizedMicrophoneCaptureSegments,
             MicrophoneChunkPaths = normalizedMicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+            CaptureTimeline = NormalizeCaptureTimeline(manifest.CaptureTimeline),
             KeyAttendees = MeetingMetadataNameMatcher.MergeNames(manifest.KeyAttendees, Array.Empty<string>()),
             Attendees = NormalizeAttendees(manifest.Attendees),
         };
+    }
+
+    private static IReadOnlyList<LoopbackCaptureSegment> NormalizeLoopbackCaptureSegments(MeetingSessionManifest manifest)
+    {
+        if (manifest.LoopbackCaptureSegments.Count > 0)
+        {
+            return manifest.LoopbackCaptureSegments
+                .Where(segment => segment.ChunkPaths.Count > 0)
+                .Select(segment => segment with
+                {
+                    EndpointDeviceId = string.IsNullOrWhiteSpace(segment.EndpointDeviceId)
+                        ? string.Empty
+                        : segment.EndpointDeviceId.Trim(),
+                    EndpointName = string.IsNullOrWhiteSpace(segment.EndpointName)
+                        ? "Unknown endpoint"
+                        : segment.EndpointName.Trim(),
+                    EndpointRole = string.IsNullOrWhiteSpace(segment.EndpointRole)
+                        ? "Unknown"
+                        : segment.EndpointRole.Trim(),
+                })
+                .ToArray();
+        }
+
+        if (manifest.RawChunkPaths.Count == 0)
+        {
+            return Array.Empty<LoopbackCaptureSegment>();
+        }
+
+        return
+        [
+            new LoopbackCaptureSegment(
+                manifest.StartedAtUtc,
+                manifest.EndedAtUtc,
+                manifest.RawChunkPaths.ToArray(),
+                string.Empty,
+                "Unknown endpoint",
+                "Unknown"),
+        ];
     }
 
     private static IReadOnlyList<MicrophoneCaptureSegment> NormalizeMicrophoneCaptureSegments(MeetingSessionManifest manifest)
@@ -164,6 +206,25 @@ public sealed class SessionManifestStore
                 manifest.EndedAtUtc,
                 manifest.MicrophoneChunkPaths.ToArray()),
         ];
+    }
+
+    private static IReadOnlyList<CaptureTimelineEntry> NormalizeCaptureTimeline(IReadOnlyList<CaptureTimelineEntry>? captureTimeline)
+    {
+        if (captureTimeline is null || captureTimeline.Count == 0)
+        {
+            return Array.Empty<CaptureTimelineEntry>();
+        }
+
+        return captureTimeline
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Summary))
+            .Select(entry => entry with
+            {
+                Summary = entry.Summary.Trim(),
+                Detail = string.IsNullOrWhiteSpace(entry.Detail)
+                    ? null
+                    : entry.Detail.Trim(),
+            })
+            .ToArray();
     }
 
     private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<MeetingAttendee>? attendees)
