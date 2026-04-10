@@ -316,6 +316,70 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldClearAutoStopCountdown_Returns_False_For_Quiet_Same_Teams_Title_With_Only_Recent_Capture_Activity()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Advanced use cases from AI super users",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Advanced use cases from AI super users | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Device; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldClearCountdown = policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Advanced use cases from AI super users",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false);
+
+        Assert.False(shouldClearCountdown);
+    }
+
+    [Fact]
+    public void ShouldClearAutoStopCountdown_Returns_True_For_Strong_Resume_Signal()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Advanced use cases from AI super users",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Advanced use cases from AI super users | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("audio-window", "Microsoft Teams; process=ms-teams; peak=0.337; confidence=High", 0.35d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Advanced use cases from AI super users | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.High,
+                now));
+
+        var shouldClearCountdown = policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Advanced use cases from AI super users",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false);
+
+        Assert.True(shouldClearCountdown);
+    }
+
+    [Fact]
     public void ShouldRefreshLastPositiveSignal_Returns_False_For_Same_Specific_Teams_Title_When_Only_Microphone_Activity_Is_Recent()
     {
         var policy = new AutoRecordingContinuityPolicy();

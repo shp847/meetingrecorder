@@ -218,6 +218,42 @@ public sealed class AutoRecordingContinuityPolicy
         return HasWeakSamePlatformSignal(decision, activePlatform);
     }
 
+    internal bool ShouldClearAutoStopCountdown(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
+        bool hasRecentLoopbackActivity,
+        bool hasRecentMicrophoneActivity)
+    {
+        _ = activeSessionTitle;
+        _ = hasRecentMicrophoneActivity;
+
+        if (decision is null || activePlatform == MeetingPlatform.Unknown)
+        {
+            return false;
+        }
+
+        if (decision.ShouldStart || HasStrongAttributedAudioMatch(decision))
+        {
+            return true;
+        }
+
+        if (decision.Platform != activePlatform)
+        {
+            return false;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentLoopbackActivity &&
+            HasOfficialTeamsMatchSignal(decision) &&
+            !HasOfficialTeamsNoCurrentMatchSignal(decision))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool HasTeamsSpecificQuietContinuation(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
