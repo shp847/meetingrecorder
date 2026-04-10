@@ -130,6 +130,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Auto-stop when meeting signals disappear
 - Auto-stop now surfaces a live countdown on `Home` for auto-started sessions and switches immediately into an `Auto-stopping` state when the timeout expires, so controls disable before background finalization finishes
 - Once that countdown is visible, weak quiet-continuation signals no longer silently reset it; only a real resumed meeting signal clears the countdown and keeps the recording alive
+- A quiet Teams meeting with the same specific title can now also preserve the current session when Teams attribution still points at that meeting and recent microphone activity shows the call is still live, reducing false session splits during one-sided speaking stretches
 - Continuity handling for quiet patches, compact-view surfaces, and sharing-control surfaces in Teams
 - Teams chat-thread playback surfaces are now deprioritized so recording playback is less likely to auto-start as if it were a live meeting
 - Bare Teams shell or navigation titles such as `Chat | Microsoft Teams` and `Activity | Microsoft Teams` are now ignored safely instead of crashing the background detection loop
@@ -181,6 +182,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Pending downloaded update retry after restart when the app could not install immediately
 - CLI-only update apply flow for MSI, EXE, script, and ZIP-origin installs
 - In-app update asset selection now ignores bundled model and diarization ZIP assets on the GitHub release and only downloads the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle for apply-update handoff
+- `Settings > Updates` now separates local install facts from release-package metadata: `Current Installation` shows the actual installed-on timestamp and installed app footprint from the running machine, while `Latest GitHub Release` continues to show the remote package publish time and installer asset size
 - In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so single-file app launches do not accidentally look for the updater helper inside the temporary `.net` extraction folder
 - Launch-on-login registration now also resolves `MeetingRecorder.App.exe` from the installed app directory via the running process path, so single-file app launches no longer pin Windows startup to a temporary `.net` extraction folder
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory via the running process path, so queued sessions still publish correctly from single-file installs

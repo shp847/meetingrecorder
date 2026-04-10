@@ -195,7 +195,9 @@ public sealed class AutoRecordingContinuityPolicy
 
         if (HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
         {
-            return decision.Platform != MeetingPlatform.Teams || hasRecentLoopbackActivity;
+            return decision.Platform != MeetingPlatform.Teams ||
+                hasRecentLoopbackActivity ||
+                (hasRecentMicrophoneActivity && IsQuietSpecificTeamsMeetingCandidateCore(decision));
         }
 
         if (hasRecentLoopbackActivity &&
@@ -225,9 +227,6 @@ public sealed class AutoRecordingContinuityPolicy
         bool hasRecentLoopbackActivity,
         bool hasRecentMicrophoneActivity)
     {
-        _ = activeSessionTitle;
-        _ = hasRecentMicrophoneActivity;
-
         if (decision is null || activePlatform == MeetingPlatform.Unknown)
         {
             return false;
@@ -247,6 +246,14 @@ public sealed class AutoRecordingContinuityPolicy
             hasRecentLoopbackActivity &&
             HasOfficialTeamsMatchSignal(decision) &&
             !HasOfficialTeamsNoCurrentMatchSignal(decision))
+        {
+            return true;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentMicrophoneActivity &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle) &&
+            IsQuietSpecificTeamsMeetingCandidateCore(decision))
         {
             return true;
         }
