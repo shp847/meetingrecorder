@@ -39,6 +39,7 @@ The app is now split between reusable platform projects and Meeting Recorder-spe
   - product adapter that owns the manifest, shell registrations, about/support content, and default install/data layout
 
 For the shipped MSI flow, the managed install root in `MeetingRecorder.Product` and the bundled `MeetingRecorder.product.json` are expected to stay aligned with `%USERPROFILE%\Documents\MeetingRecorder`. Writable runtime data remains outside the install root under `%LOCALAPPDATA%\MeetingRecorder`.
+Managed-install update repair is also responsible for cleaning up stale launch surfaces around that canonical root: it now quarantines both the older `%LOCALAPPDATA%\Programs\Meeting Recorder` location and the legacy `%USERPROFILE%\Documents\Meeting Recorder` alias when those exist, and it rewrites existing Desktop or Start Menu shortcuts back to the canonical launcher after an update.
 The MSI finish-launch path is intentionally not a raw second launch of `MeetingRecorder.App.exe`; it uses an installed relaunch wrapper plus a short-lived marker under `%LOCALAPPDATA%\MeetingRecorder` so the app can distinguish installer relaunches from normal user activations and coordinate a clean close-and-reopen of an idle existing instance.
 
 ### Meeting Recorder-specific runtime projects
@@ -85,6 +86,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
 For self-contained release bundles, `MeetingRecorder.App` is now published as a single-file executable while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
+Because the shipped apphost is single-file, any runtime path that persists launch targets must resolve them from `Environment.ProcessPath` rather than `AppContext.BaseDirectory`; otherwise Windows startup can capture a temporary extraction path under `%TEMP%\.net\...` that disappears on the next launch.
 
 ## 3. Windows Deployment Constraints
 
@@ -328,6 +330,7 @@ The app records:
 When Windows routes meeting playback to a communications-only device such as a headset, the loopback recorder now prefers that active communications render endpoint instead of assuming the multimedia default speaker path.
 When microphone capture is enabled, the recorder now also binds to an explicit default Windows capture endpoint instead of a one-time generic mapper. During an active recording, the coordinator reevaluates the preferred default microphone endpoint and can hot-swap to a new headset, dock, or communications microphone by closing the current mic segment, starting a new mic segment on the replacement device, and keeping both segments in the same session manifest.
 During an active recording, the coordinator now reevaluates the preferred loopback endpoint on each detection cycle. A stronger alternate endpoint must generally win for two consecutive cycles before the app swaps, unless the current loopback endpoint has gone inactive and the alternate endpoint has stronger meeting-session evidence. Successful swaps start a new loopback recorder first, preserve the prior segment and chunk list, then retire the old recorder so the session can continue without losing already-captured audio. Failed swaps do not stop the session; they are recorded into the capture timeline and the current recorder stays active.
+If a live loopback or microphone recorder stops unexpectedly because Windows invalidates the underlying device, the coordinator treats that as a required recovery instead of a normal no-op. The dead segment is closed at the recorder's actual stop time, the best current endpoint is validated, and the replacement recorder is started only after the previous client has been fully stopped so overlapping capture clients do not keep audio devices wedged in a broken state.
 
 Because capture is based on the Windows audio stack rather than a product-specific conferencing SDK, manual recording works for any meeting app whose audio is present on the normal Windows render path. The current platform-specific logic is only in auto-detection and platform labeling, not in the audio capture pipeline itself.
 

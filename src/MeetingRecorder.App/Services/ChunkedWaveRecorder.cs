@@ -3,6 +3,10 @@ using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.App.Services;
 
+internal sealed record RecorderUnexpectedStopInfo(
+    DateTimeOffset OccurredAtUtc,
+    string Message);
+
 internal sealed class ChunkedWaveRecorder : IDisposable
 {
     private const int DefaultLevelHistoryCapacity = 180;
@@ -18,8 +22,10 @@ internal sealed class ChunkedWaveRecorder : IDisposable
     private Timer? _rotationTimer;
     private int _chunkIndex;
     private bool _isStarted;
+    private bool _isStopping;
     private long _totalBytesRecorded;
     private bool _loggedFirstAudioPacket;
+    private RecorderUnexpectedStopInfo? _unexpectedStop;
     private readonly AudioLevelHistory _levelHistory = new(DefaultLevelHistoryCapacity);
 
     public ChunkedWaveRecorder(
@@ -42,47 +48,107 @@ internal sealed class ChunkedWaveRecorder : IDisposable
 
     public AudioLevelHistory LevelHistory => _levelHistory;
 
+    public bool NeedsRecovery
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _unexpectedStop is not null;
+            }
+        }
+    }
+
+    public RecorderUnexpectedStopInfo? UnexpectedStop
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _unexpectedStop;
+            }
+        }
+    }
+
     public void Start()
     {
-        if (_isStarted)
+        lock (_syncRoot)
         {
-            return;
-        }
+            if (_isStarted)
+            {
+                return;
+            }
 
-        Directory.CreateDirectory(_directory);
-        _capture = _captureFactory();
-        _capture.DataAvailable += Capture_OnDataAvailable;
-        _capture.RecordingStopped += Capture_OnRecordingStopped;
-        OpenNewChunk();
-        _rotationTimer = new Timer(_ => RotateChunk(), null, _rotationInterval, _rotationInterval);
-        _capture.StartRecording();
-        _isStarted = true;
-        _logger.Log($"Recorder '{_filePrefix}' started. Format={_capture.WaveFormat}; rotation={_rotationInterval.TotalSeconds:0}s; directory='{_directory}'.");
+            _isStopping = false;
+            _unexpectedStop = null;
+            Directory.CreateDirectory(_directory);
+            _capture = _captureFactory();
+            _capture.DataAvailable += Capture_OnDataAvailable;
+            _capture.RecordingStopped += Capture_OnRecordingStopped;
+            OpenNewChunk();
+            _rotationTimer = new Timer(_ => RotateChunk(), null, _rotationInterval, _rotationInterval);
+            try
+            {
+                _capture.StartRecording();
+                _isStarted = true;
+                _logger.Log($"Recorder '{_filePrefix}' started. Format={_capture.WaveFormat}; rotation={_rotationInterval.TotalSeconds:0}s; directory='{_directory}'.");
+            }
+            catch
+            {
+                _rotationTimer?.Dispose();
+                _rotationTimer = null;
+                _writer?.Dispose();
+                _writer = null;
+                _capture.DataAvailable -= Capture_OnDataAvailable;
+                _capture.RecordingStopped -= Capture_OnRecordingStopped;
+                _capture.Dispose();
+                _capture = null;
+                throw;
+            }
+        }
     }
 
     public void Stop()
     {
-        if (!_isStarted || _capture is null)
+        IWaveIn? capture;
+        lock (_syncRoot)
         {
-            return;
+            if (!_isStarted && _capture is null)
+            {
+                return;
+            }
+
+            _isStopping = true;
+            capture = _capture;
+            _capture = null;
+            _rotationTimer?.Dispose();
+            _rotationTimer = null;
+            _logger.Log($"Recorder '{_filePrefix}' stopping. ChunkCount={_chunkPaths.Count}; audioBytes={TotalBytesRecorded}.");
+            _writer?.Dispose();
+            _writer = null;
+            _isStarted = false;
         }
 
-        _logger.Log($"Recorder '{_filePrefix}' stopping. ChunkCount={_chunkPaths.Count}; audioBytes={TotalBytesRecorded}.");
-        _rotationTimer?.Dispose();
-        _rotationTimer = null;
-        _capture.DataAvailable -= Capture_OnDataAvailable;
-        _capture.RecordingStopped -= Capture_OnRecordingStopped;
-        _capture.StopRecording();
-        _capture.Dispose();
-        _capture = null;
+        if (capture is not null)
+        {
+            capture.DataAvailable -= Capture_OnDataAvailable;
+            capture.RecordingStopped -= Capture_OnRecordingStopped;
+            try
+            {
+                capture.StopRecording();
+            }
+            catch (Exception exception)
+            {
+                _logger.Log($"Recorder '{_filePrefix}' failed while stopping: {exception.Message}");
+            }
+
+            capture.Dispose();
+        }
 
         lock (_syncRoot)
         {
-            _writer?.Dispose();
-            _writer = null;
+            _isStopping = false;
         }
-
-        _isStarted = false;
     }
 
     public void Dispose()
@@ -113,15 +179,41 @@ internal sealed class ChunkedWaveRecorder : IDisposable
 
     private void Capture_OnRecordingStopped(object? sender, StoppedEventArgs e)
     {
+        var stoppedAtUtc = DateTimeOffset.UtcNow;
         if (e.Exception is not null)
         {
             _logger.Log($"Recorder '{_filePrefix}' stopped with an exception: {e.Exception.Message}");
         }
+        else
+        {
+            _logger.Log($"Recorder '{_filePrefix}' stopped unexpectedly without an exception.");
+        }
 
+        IWaveIn? capture;
+        var wasStopping = false;
         lock (_syncRoot)
         {
+            wasStopping = _isStopping;
+            capture = _capture;
+            _capture = null;
+            _rotationTimer?.Dispose();
+            _rotationTimer = null;
             _writer?.Dispose();
             _writer = null;
+            _isStarted = false;
+            if (!wasStopping)
+            {
+                _unexpectedStop = new RecorderUnexpectedStopInfo(
+                    stoppedAtUtc,
+                    e.Exception?.Message ?? "Capture stopped unexpectedly.");
+            }
+        }
+
+        if (capture is not null)
+        {
+            capture.DataAvailable -= Capture_OnDataAvailable;
+            capture.RecordingStopped -= Capture_OnRecordingStopped;
+            capture.Dispose();
         }
     }
 

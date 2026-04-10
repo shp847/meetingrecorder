@@ -16,6 +16,19 @@ public sealed class UpdateInstallerLaunchBuilderTests
     }
 
     [Fact]
+    public void ResolveInstalledAppExecutablePath_Prefers_The_Installed_Process_Root_Over_The_Temporary_AppContext_Directory()
+    {
+        var executablePath = UpdateInstallerLaunchBuilder.ResolveInstalledAppExecutablePath(
+            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\",
+            "MeetingRecorder.App.exe");
+
+        Assert.Equal(
+            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            executablePath);
+    }
+
+    [Fact]
     public void Build_Uses_Deployment_Cli_For_Updater_Process()
     {
         var result = new AppUpdateCheckResult(

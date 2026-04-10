@@ -643,6 +643,8 @@ What the current app does:
 - app exit no longer blocks the UI thread waiting on the activation and installer-shutdown monitor tasks, which prevents a closed window from turning into a stuck headless background process
 - same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt when you launch them manually
 - background auto-install and pending-update retry only run for true version upgrades, so republished same-version builds do not immediately relaunch the updater against a still-running app
+- launch-on-login registration now resolves the installed `MeetingRecorder.App.exe` path from the running process instead of persisting a temporary `%TEMP%\\.net\\...` extraction path
+- update repair now rewrites existing Desktop and Start Menu launchers to the canonical `Documents\\MeetingRecorder` bundle and quarantines older `Documents\\Meeting Recorder` or `%LOCALAPPDATA%\\Programs\\Meeting Recorder` roots if they are still present
 
 If you still see the warning:
 

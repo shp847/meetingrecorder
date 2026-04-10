@@ -123,6 +123,24 @@ public sealed class PortableBundleInstaller
             var launcherPath = ResolveShortcutTargetPath(manifest, resolvedInstallRoot);
             var iconPath = Path.Combine(resolvedInstallRoot, "MeetingRecorder.ico");
 
+            if (isUpdate)
+            {
+                var shortcutRepairResult = _shortcutService.RepairExistingShortcuts(
+                    manifest.ShortcutPolicy,
+                    launcherPath,
+                    resolvedInstallRoot,
+                    iconPath);
+                foreach (var removedLegacyShortcutPath in shortcutRepairResult.RemovedLegacyPaths)
+                {
+                    _logger.Info($"Removed legacy shortcut artifact '{removedLegacyShortcutPath}'.");
+                }
+
+                foreach (var repairedShortcutPath in shortcutRepairResult.RepairedShortcutPaths)
+                {
+                    _logger.Info($"Repaired existing shortcut '{repairedShortcutPath}'.");
+                }
+            }
+
             if (request.CreateDesktopShortcut || request.CreateStartMenuShortcut)
             {
                 var removedLegacyShortcutPaths = _shortcutService.RemoveLegacyShortcuts(

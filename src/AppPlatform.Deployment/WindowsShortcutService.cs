@@ -104,6 +104,49 @@ public sealed class WindowsShortcutService
         return removedPaths;
     }
 
+    public ShortcutRepairResult RepairExistingShortcuts(
+        ShellShortcutPolicy shortcutPolicy,
+        string targetPath,
+        string workingDirectory,
+        string iconPath,
+        string? desktopRoot = null,
+        string? programsRoot = null,
+        bool repairDesktopShortcut = true,
+        bool repairStartMenuShortcut = true)
+    {
+        var resolvedDesktopRoot = desktopRoot
+            ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var resolvedProgramsRoot = programsRoot
+            ?? Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        var removedLegacyPaths = RemoveLegacyShortcuts(
+            shortcutPolicy,
+            resolvedDesktopRoot,
+            resolvedProgramsRoot,
+            repairDesktopShortcut,
+            repairStartMenuShortcut);
+        var repairedShortcutPaths = new List<string>();
+
+        if (repairDesktopShortcut && ShouldRepairShortcut(removedLegacyPaths, resolvedDesktopRoot))
+        {
+            var desktopShortcutPath = Path.Combine(resolvedDesktopRoot, shortcutPolicy.DesktopShortcutFileName);
+            if (TryCreateShortcut(desktopShortcutPath, targetPath, workingDirectory, iconPath).Success)
+            {
+                repairedShortcutPaths.Add(desktopShortcutPath);
+            }
+        }
+
+        if (repairStartMenuShortcut && ShouldRepairShortcut(removedLegacyPaths, resolvedProgramsRoot))
+        {
+            var startMenuShortcutPath = Path.Combine(resolvedProgramsRoot, shortcutPolicy.StartMenuShortcutFileName);
+            if (TryCreateShortcut(startMenuShortcutPath, targetPath, workingDirectory, iconPath).Success)
+            {
+                repairedShortcutPaths.Add(startMenuShortcutPath);
+            }
+        }
+
+        return new ShortcutRepairResult(removedLegacyPaths, repairedShortcutPaths);
+    }
+
     private static void CreateShortcut(
         string shortcutPath,
         string targetPath,
@@ -208,6 +251,25 @@ public sealed class WindowsShortcutService
             removedPaths.Add(path);
         }
     }
+
+    private static bool ShouldRepairShortcut(IEnumerable<string> removedLegacyPaths, string shellRoot)
+    {
+        foreach (var removedPath in removedLegacyPaths)
+        {
+            var parentPath = Path.GetDirectoryName(removedPath);
+            if (string.Equals(parentPath, shellRoot, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(removedPath, shellRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 public sealed record ShortcutCreationResult(bool Success, string? ErrorMessage);
+
+public sealed record ShortcutRepairResult(
+    IReadOnlyList<string> RemovedLegacyPaths,
+    IReadOnlyList<string> RepairedShortcutPaths);

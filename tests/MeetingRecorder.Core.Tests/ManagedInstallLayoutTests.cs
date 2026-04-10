@@ -52,6 +52,19 @@ public sealed class ManagedInstallLayoutTests
     }
 
     [Fact]
+    public void ProductModule_Declares_The_Legacy_Documents_Spaced_Install_Root()
+    {
+        var expectedLegacyInstallRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Documents",
+            "Meeting Recorder");
+
+        var layout = MeetingRecorderProductModule.Instance.GetManagedInstallLayout();
+
+        Assert.Contains(expectedLegacyInstallRoot, layout.LegacyInstallRoots);
+    }
+
+    [Fact]
     public void ProductModule_Uses_Lnk_Shortcuts_For_Desktop_And_StartMenu()
     {
         var manifest = MeetingRecorderProductModule.Instance.GetManifest();
@@ -90,6 +103,28 @@ public sealed class ManagedInstallLayoutTests
             .ToArray();
 
         Assert.Contains("%LOCALAPPDATA%\\Programs\\Meeting Recorder", legacyInstallRoots);
+    }
+
+    [Fact]
+    public void ProductManifest_Declares_The_Legacy_Documents_Spaced_Install_Root()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var manifestPath = Path.Combine(repoRoot, "src", "MeetingRecorder.Product", "MeetingRecorder.product.json");
+
+        Assert.True(File.Exists(manifestPath), $"Expected product manifest at '{manifestPath}'.");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var legacyInstallRoots = document.RootElement
+            .GetProperty("managedInstallLayout")
+            .GetProperty("legacyInstallRoots")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+
+        Assert.Contains("%USERPROFILE%\\Documents\\Meeting Recorder", legacyInstallRoots);
     }
 
     [Fact]

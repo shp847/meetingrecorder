@@ -32,6 +32,8 @@ internal interface ILoopbackCaptureFactory
 {
     LoopbackCaptureEvaluation Evaluate(MeetingPlatform platform, DetectedAudioSource? detectedAudioSource, double activityThreshold);
 
+    void Validate(LoopbackCaptureSelection selection);
+
     IWaveIn Create(LoopbackCaptureSelection selection);
 }
 
@@ -95,6 +97,24 @@ internal sealed class SystemLoopbackCaptureFactory : ILoopbackCaptureFactory
         _log?.Invoke(
             $"Loopback capture selected {selection.Role} render endpoint '{endpoint.FriendlyName}'.");
         return _captureFactory(endpoint);
+    }
+
+    public void Validate(LoopbackCaptureSelection selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+
+        if (selection.IsFallbackCapture)
+        {
+            return;
+        }
+
+        using var endpoint = _resolveRenderEndpoint(selection.Role);
+        if (endpoint is null ||
+            !string.Equals(endpoint.ID, selection.DeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Unable to resolve loopback render endpoint '{selection.FriendlyName}' ({selection.DeviceId}) for role '{selection.Role}'.");
+        }
     }
 
     internal static Role SelectPreferredEndpointRole(

@@ -220,10 +220,18 @@ internal sealed class RecordingSessionCoordinator
 
         var activeSession = ActiveSession;
         var preferredSelection = evaluation.PreferredSelection;
-        if (LoopbackSelectionsEqual(activeSession.ActiveLoopbackSelection, preferredSelection))
+        var requiresRecovery = activeSession.LoopbackRecorder.NeedsRecovery;
+        if (LoopbackSelectionsEqual(activeSession.ActiveLoopbackSelection, preferredSelection) &&
+            !requiresRecovery)
         {
             ClearPendingLoopbackSelection(activeSession);
             return new LoopbackCaptureRefreshResult(false, false, null);
+        }
+
+        if (requiresRecovery)
+        {
+            ClearPendingLoopbackSelection(activeSession);
+            return await TrySwapLoopbackCaptureAsync(activeSession, preferredSelection, recoveryRequired: true, cancellationToken: cancellationToken);
         }
 
         var currentSnapshot = SystemLoopbackCaptureFactory.GetSnapshotForSelection(evaluation, activeSession.ActiveLoopbackSelection);
@@ -238,7 +246,7 @@ internal sealed class RecordingSessionCoordinator
                 $"Watching {preferredSelection.FriendlyName} ({preferredSelection.Role}); stability {activeSession.PendingLoopbackSelectionStableCount}/{requiredStableCount}.");
         }
 
-        return await TrySwapLoopbackCaptureAsync(activeSession, preferredSelection, cancellationToken);
+        return await TrySwapLoopbackCaptureAsync(activeSession, preferredSelection, recoveryRequired: false, cancellationToken: cancellationToken);
     }
 
     public LoopbackCaptureStatusSnapshot GetLoopbackCaptureStatusSnapshot()
@@ -326,10 +334,18 @@ internal sealed class RecordingSessionCoordinator
 
         var activeSession = ActiveSession;
         var preferredSelection = evaluation.PreferredSelection;
-        if (MicrophoneSelectionsEqual(activeSession.ActiveMicrophoneSelection, preferredSelection))
+        var requiresRecovery = activeSession.MicrophoneRecorder.NeedsRecovery;
+        if (MicrophoneSelectionsEqual(activeSession.ActiveMicrophoneSelection, preferredSelection) &&
+            !requiresRecovery)
         {
             ClearPendingMicrophoneSelection(activeSession);
             return new MicrophoneCaptureRefreshResult(false, false, null);
+        }
+
+        if (requiresRecovery)
+        {
+            ClearPendingMicrophoneSelection(activeSession);
+            return await TrySwapMicrophoneCaptureAsync(activeSession, preferredSelection, recoveryRequired: true, cancellationToken: cancellationToken);
         }
 
         var currentSnapshot = SystemMicrophoneCaptureFactory.GetSnapshotForSelection(evaluation, activeSession.ActiveMicrophoneSelection);
@@ -341,7 +357,7 @@ internal sealed class RecordingSessionCoordinator
             return new MicrophoneCaptureRefreshResult(false, false, null);
         }
 
-        return await TrySwapMicrophoneCaptureAsync(activeSession, preferredSelection, cancellationToken);
+        return await TrySwapMicrophoneCaptureAsync(activeSession, preferredSelection, recoveryRequired: false, cancellationToken: cancellationToken);
     }
 
     public async Task<bool> RenameActiveSessionAsync(string newTitle, CancellationToken cancellationToken = default)
@@ -493,6 +509,7 @@ internal sealed class RecordingSessionCoordinator
     private async Task<LoopbackCaptureRefreshResult> TrySwapLoopbackCaptureAsync(
         ActiveRecordingSession activeSession,
         LoopbackCaptureSelection preferredSelection,
+        bool recoveryRequired,
         CancellationToken cancellationToken)
     {
         var rawDir = Path.Combine(
@@ -500,24 +517,27 @@ internal sealed class RecordingSessionCoordinator
                 ?? throw new InvalidOperationException("Active manifest path must include a session directory."),
             "raw");
 
+        var previousRecorder = activeSession.LoopbackRecorder;
+        var previousSelection = activeSession.ActiveLoopbackSelection;
+        var previousStartedAtUtc = activeSession.ActiveLoopbackSegmentStartedAtUtc;
+        var previousUnexpectedStop = previousRecorder.UnexpectedStop;
         ChunkedWaveRecorder? nextRecorder = null;
         try
         {
+            _loopbackCaptureFactory.Validate(preferredSelection);
             nextRecorder = CreateLoopbackRecorder(rawDir, activeSession.NextLoopbackSegmentSequence, preferredSelection);
-            nextRecorder.Start();
-
-            var swappedAtUtc = DateTimeOffset.UtcNow;
-            var previousRecorder = activeSession.LoopbackRecorder;
-            var previousSelection = activeSession.ActiveLoopbackSelection;
-            var previousStartedAtUtc = activeSession.ActiveLoopbackSegmentStartedAtUtc;
 
             previousRecorder.Stop();
+            var previousEndedAtUtc = GetRecorderEndedAtUtc(previousRecorder, DateTimeOffset.UtcNow);
             activeSession.CompletedLoopbackCaptureSegments.Add(
                 BuildLoopbackCaptureSegment(
                     previousRecorder,
                     previousSelection,
                     previousStartedAtUtc,
-                    swappedAtUtc));
+                    previousEndedAtUtc));
+
+            nextRecorder.Start();
+            var swappedAtUtc = DateTimeOffset.UtcNow;
 
             activeSession.LoopbackRecorder = nextRecorder;
             activeSession.ActiveLoopbackSelection = preferredSelection;
@@ -527,17 +547,25 @@ internal sealed class RecordingSessionCoordinator
                 new CaptureTimelineEntry(
                     swappedAtUtc,
                     preferredSelection.IsFallbackCapture ? CaptureTimelineEventKind.Fallback : CaptureTimelineEventKind.Swapped,
-                    $"Swapped to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
-                    $"Previous endpoint: {previousSelection.FriendlyName} ({previousSelection.Role}). Reason: {preferredSelection.Reason}"));
+                    recoveryRequired
+                        ? $"Recovered loopback capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                        : $"Swapped to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
+                    recoveryRequired
+                        ? $"Previous endpoint: {previousSelection.FriendlyName} ({previousSelection.Role}) stopped unexpectedly at {previousEndedAtUtc:O}. {previousUnexpectedStop?.Message ?? preferredSelection.Reason}"
+                        : $"Previous endpoint: {previousSelection.FriendlyName} ({previousSelection.Role}). Reason: {preferredSelection.Reason}"));
             ClearPendingLoopbackSelection(activeSession);
             await PersistActiveRecordingStateAsync(activeSession, cancellationToken);
 
             _logger.Log(
-                $"Loopback capture swapped for session '{activeSession.Manifest.SessionId}' from '{previousSelection.FriendlyName}' to '{preferredSelection.FriendlyName}'.");
+                recoveryRequired
+                    ? $"Loopback capture recovered for session '{activeSession.Manifest.SessionId}' on '{preferredSelection.FriendlyName}'."
+                    : $"Loopback capture swapped for session '{activeSession.Manifest.SessionId}' from '{previousSelection.FriendlyName}' to '{preferredSelection.FriendlyName}'.");
             return new LoopbackCaptureRefreshResult(
                 true,
                 false,
-                $"Swapped to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
+                recoveryRequired
+                    ? $"Recovered loopback capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                    : $"Swapped to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
         }
         catch (Exception exception)
         {
@@ -546,22 +574,29 @@ internal sealed class RecordingSessionCoordinator
                 new CaptureTimelineEntry(
                     DateTimeOffset.UtcNow,
                     CaptureTimelineEventKind.SwapFailed,
-                    $"Failed to swap loopback capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
+                    recoveryRequired
+                        ? $"Failed to recover loopback capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                        : $"Failed to swap loopback capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
                     exception.Message));
             ClearPendingLoopbackSelection(activeSession);
             await PersistActiveRecordingStateAsync(activeSession, cancellationToken);
             _logger.Log(
-                $"Loopback capture swap failed for session '{activeSession.Manifest.SessionId}': {exception.Message}");
+                recoveryRequired
+                    ? $"Loopback capture recovery failed for session '{activeSession.Manifest.SessionId}': {exception.Message}"
+                    : $"Loopback capture swap failed for session '{activeSession.Manifest.SessionId}': {exception.Message}");
             return new LoopbackCaptureRefreshResult(
                 false,
                 true,
-                $"Failed to swap loopback capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
+                recoveryRequired
+                    ? $"Failed to recover loopback capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                    : $"Failed to swap loopback capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
         }
     }
 
     private async Task<MicrophoneCaptureRefreshResult> TrySwapMicrophoneCaptureAsync(
         ActiveRecordingSession activeSession,
         MicrophoneCaptureSelection preferredSelection,
+        bool recoveryRequired,
         CancellationToken cancellationToken)
     {
         var rawDir = Path.Combine(
@@ -569,26 +604,29 @@ internal sealed class RecordingSessionCoordinator
                 ?? throw new InvalidOperationException("Active manifest path must include a session directory."),
             "raw");
 
+        var previousRecorder = activeSession.MicrophoneRecorder
+            ?? throw new InvalidOperationException("An active microphone recorder is required.");
+        var previousSelection = activeSession.ActiveMicrophoneSelection
+            ?? throw new InvalidOperationException("An active microphone selection is required.");
+        var previousStartedAtUtc = activeSession.ActiveMicrophoneSegmentStartedAtUtc
+            ?? throw new InvalidOperationException("An active microphone segment start time is required.");
+        var previousUnexpectedStop = previousRecorder.UnexpectedStop;
         ChunkedWaveRecorder? nextRecorder = null;
         try
         {
+            _microphoneCaptureFactory.Validate(preferredSelection);
             nextRecorder = CreateMicrophoneRecorder(rawDir, activeSession.NextMicrophoneSegmentSequence, preferredSelection);
-            nextRecorder.Start();
-
-            var swappedAtUtc = DateTimeOffset.UtcNow;
-            var previousRecorder = activeSession.MicrophoneRecorder
-                ?? throw new InvalidOperationException("An active microphone recorder is required.");
-            var previousSelection = activeSession.ActiveMicrophoneSelection
-                ?? throw new InvalidOperationException("An active microphone selection is required.");
-            var previousStartedAtUtc = activeSession.ActiveMicrophoneSegmentStartedAtUtc
-                ?? throw new InvalidOperationException("An active microphone segment start time is required.");
 
             previousRecorder.Stop();
+            var previousEndedAtUtc = GetRecorderEndedAtUtc(previousRecorder, DateTimeOffset.UtcNow);
             activeSession.CompletedMicrophoneCaptureSegments.Add(
                 new MicrophoneCaptureSegment(
                     previousStartedAtUtc,
-                    swappedAtUtc,
+                    previousEndedAtUtc,
                     previousRecorder.ChunkPaths.ToArray()));
+
+            nextRecorder.Start();
+            var swappedAtUtc = DateTimeOffset.UtcNow;
 
             activeSession.MicrophoneRecorder = nextRecorder;
             activeSession.ActiveMicrophoneSelection = preferredSelection;
@@ -598,17 +636,25 @@ internal sealed class RecordingSessionCoordinator
                 new CaptureTimelineEntry(
                     swappedAtUtc,
                     preferredSelection.IsFallbackCapture ? CaptureTimelineEventKind.Fallback : CaptureTimelineEventKind.Swapped,
-                    $"Swapped microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
-                    $"Previous microphone: {previousSelection.FriendlyName} ({previousSelection.Role}). Reason: {preferredSelection.Reason}"));
+                    recoveryRequired
+                        ? $"Recovered microphone capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                        : $"Swapped microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
+                    recoveryRequired
+                        ? $"Previous microphone: {previousSelection.FriendlyName} ({previousSelection.Role}) stopped unexpectedly at {previousEndedAtUtc:O}. {previousUnexpectedStop?.Message ?? preferredSelection.Reason}"
+                        : $"Previous microphone: {previousSelection.FriendlyName} ({previousSelection.Role}). Reason: {preferredSelection.Reason}"));
             ClearPendingMicrophoneSelection(activeSession);
             await PersistActiveRecordingStateAsync(activeSession, cancellationToken);
 
             _logger.Log(
-                $"Microphone capture swapped for session '{activeSession.Manifest.SessionId}' from '{previousSelection.FriendlyName}' to '{preferredSelection.FriendlyName}'.");
+                recoveryRequired
+                    ? $"Microphone capture recovered for session '{activeSession.Manifest.SessionId}' on '{preferredSelection.FriendlyName}'."
+                    : $"Microphone capture swapped for session '{activeSession.Manifest.SessionId}' from '{previousSelection.FriendlyName}' to '{preferredSelection.FriendlyName}'.");
             return new MicrophoneCaptureRefreshResult(
                 true,
                 false,
-                $"Swapped microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
+                recoveryRequired
+                    ? $"Recovered microphone capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                    : $"Swapped microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
         }
         catch (Exception exception)
         {
@@ -617,16 +663,22 @@ internal sealed class RecordingSessionCoordinator
                 new CaptureTimelineEntry(
                     DateTimeOffset.UtcNow,
                     CaptureTimelineEventKind.SwapFailed,
-                    $"Failed to swap microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
+                    recoveryRequired
+                        ? $"Failed to recover microphone capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                        : $"Failed to swap microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).",
                     exception.Message));
             ClearPendingMicrophoneSelection(activeSession);
             await PersistActiveRecordingStateAsync(activeSession, cancellationToken);
             _logger.Log(
-                $"Microphone capture swap failed for session '{activeSession.Manifest.SessionId}': {exception.Message}");
+                recoveryRequired
+                    ? $"Microphone capture recovery failed for session '{activeSession.Manifest.SessionId}': {exception.Message}"
+                    : $"Microphone capture swap failed for session '{activeSession.Manifest.SessionId}': {exception.Message}");
             return new MicrophoneCaptureRefreshResult(
                 false,
                 true,
-                $"Failed to swap microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
+                recoveryRequired
+                    ? $"Failed to recover microphone capture on {preferredSelection.FriendlyName} ({preferredSelection.Role})."
+                    : $"Failed to swap microphone capture to {preferredSelection.FriendlyName} ({preferredSelection.Role}).");
         }
     }
 
@@ -713,7 +765,7 @@ internal sealed class RecordingSessionCoordinator
                 activeSession.LoopbackRecorder,
                 activeSession.ActiveLoopbackSelection,
                 activeSession.ActiveLoopbackSegmentStartedAtUtc,
-                endedAtUtc));
+                GetRecorderEndedAtUtc(activeSession.LoopbackRecorder, endedAtUtc)));
         return segments.ToArray();
     }
 
@@ -770,12 +822,13 @@ internal sealed class RecordingSessionCoordinator
         var startedAtUtc = activeSession.ActiveMicrophoneSegmentStartedAtUtc
             ?? throw new InvalidOperationException("An active microphone segment start time is required.");
         microphoneRecorder.Stop();
+        var resolvedEndedAtUtc = GetRecorderEndedAtUtc(microphoneRecorder, endedAtUtc);
         activeSession.MicrophoneRecorder = null;
         activeSession.ActiveMicrophoneSelection = null;
         activeSession.ActiveMicrophoneSegmentStartedAtUtc = null;
         return new MicrophoneCaptureSegment(
             startedAtUtc,
-            endedAtUtc,
+            resolvedEndedAtUtc,
             microphoneRecorder.ChunkPaths.ToArray());
     }
 
@@ -809,6 +862,11 @@ internal sealed class RecordingSessionCoordinator
                left.Role == right.Role &&
                left.IsFallbackCapture == right.IsFallbackCapture &&
                string.Equals(left.DeviceId, right.DeviceId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DateTimeOffset GetRecorderEndedAtUtc(ChunkedWaveRecorder recorder, DateTimeOffset fallbackEndedAtUtc)
+    {
+        return recorder.UnexpectedStop?.OccurredAtUtc ?? fallbackEndedAtUtc;
     }
 
     private static bool ShouldSwapImmediately(

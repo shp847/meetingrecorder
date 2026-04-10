@@ -656,6 +656,85 @@ public sealed class RecordingSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshLoopbackCaptureAsync_Does_Not_Overlap_The_Previous_And_Next_Render_Capture_Clients()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-no-overlap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var tracker = new CaptureConcurrencyTracker();
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var loopbackFactory = new SpyLoopbackCaptureFactory(
+                new LoopbackCaptureEvaluation(
+                    new LoopbackCaptureSelection(
+                        Role.Multimedia,
+                        "device-1",
+                        "Laptop speakers",
+                        0.05d,
+                        true,
+                        0,
+                        0,
+                        "Preferred multimedia render endpoint.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new LoopbackCaptureEvaluation(
+                    new LoopbackCaptureSelection(
+                        Role.Communications,
+                        "device-2",
+                        "USB headset",
+                        0.31d,
+                        true,
+                        1,
+                        1,
+                        "Communications endpoint has supported meeting audio.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new LoopbackCaptureEvaluation(
+                    new LoopbackCaptureSelection(
+                        Role.Communications,
+                        "device-2",
+                        "USB headset",
+                        0.31d,
+                        true,
+                        1,
+                        1,
+                        "Communications endpoint has supported meeting audio.",
+                        false),
+                    Multimedia: null,
+                    Communications: null))
+            {
+                CaptureFactoryOverride = _ => new TrackingWaveIn(tracker),
+            };
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var refresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+
+            Assert.True(refresh.SwapPerformed);
+            Assert.Equal(1, tracker.MaxConcurrentCaptures);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RefreshMicrophoneCaptureAsync_Swaps_To_A_Stable_Better_Input_And_Persists_Segments()
     {
         var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-swap-{Guid.NewGuid():N}");
@@ -737,6 +816,176 @@ public sealed class RecordingSessionCoordinatorTests
                 reloadedManifest.MicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths),
                 reloadedManifest.MicrophoneChunkPaths);
             Assert.Contains(reloadedManifest.CaptureTimeline, entry => entry.Kind == CaptureTimelineEventKind.Swapped && entry.Summary.Contains("microphone", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Does_Not_Overlap_The_Previous_And_Next_Input_Capture_Clients()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-no-overlap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var tracker = new CaptureConcurrencyTracker();
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.05d,
+                        true,
+                        "Preferred default microphone.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-2",
+                        "USB headset microphone",
+                        0.31d,
+                        true,
+                        "Communications microphone is active.",
+                        false),
+                    Multimedia: null,
+                    Communications: null))
+            {
+                CaptureFactoryOverride = _ => new TrackingWaveIn(tracker),
+            };
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            await coordinator.RefreshMicrophoneCaptureAsync();
+            var refresh = await coordinator.RefreshMicrophoneCaptureAsync();
+
+            Assert.True(refresh.SwapPerformed);
+            Assert.Equal(1, tracker.MaxConcurrentCaptures);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Recovers_When_The_Active_Capture_Stops_Unexpectedly()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-recovery-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var tracker = new CaptureConcurrencyTracker();
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.05d,
+                        true,
+                        "Preferred default microphone.",
+                        false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Multimedia, "mic-1", "Laptop microphone", 0.05d, true),
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-1",
+                        "Laptop microphone",
+                        0.05d,
+                        true,
+                        "Preferred default microphone.",
+                        false),
+                    new MicrophoneCaptureProbeSnapshot(Role.Multimedia, "mic-1", "Laptop microphone", 0.05d, true),
+                    Communications: null))
+            {
+                CaptureFactoryOverride = _ => new TrackingWaveIn(tracker),
+            };
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var initialCapture = Assert.IsType<TrackingWaveIn>(Assert.Single(microphoneFactory.CreatedCaptures));
+            initialCapture.TriggerUnexpectedStop(new InvalidOperationException("Simulated device invalidation."));
+
+            var refresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.True(refresh.SwapPerformed);
+            Assert.Contains("recover", refresh.StatusMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, microphoneFactory.CreatedCaptures.Count);
+            Assert.Equal(1, tracker.ActiveCaptures);
+            Assert.Contains(
+                reloadedManifest.CaptureTimeline,
+                entry => entry.Summary.Contains("Recovered microphone capture", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -923,6 +1172,8 @@ public sealed class RecordingSessionCoordinatorTests
 
         public string? FailingDeviceId { get; set; }
 
+        public Func<LoopbackCaptureSelection, IWaveIn>? CaptureFactoryOverride { get; set; }
+
         public LoopbackCaptureEvaluation Evaluate(MeetingPlatform platform, DetectedAudioSource? detectedAudioSource, double activityThreshold)
         {
             LastPlatform = platform;
@@ -940,8 +1191,20 @@ public sealed class RecordingSessionCoordinatorTests
                 throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
             }
 
-            return new StubWaveIn();
+            var capture = CaptureFactoryOverride?.Invoke(selection) ?? new StubWaveIn();
+            CreatedCaptures.Add(capture);
+            return capture;
         }
+
+        public void Validate(LoopbackCaptureSelection selection)
+        {
+            if (string.Equals(selection.DeviceId, FailingDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
+            }
+        }
+
+        public List<IWaveIn> CreatedCaptures { get; } = [];
     }
 
     private sealed class SpyMicrophoneCaptureFactory : IMicrophoneCaptureFactory
@@ -954,6 +1217,10 @@ public sealed class RecordingSessionCoordinatorTests
         }
 
         public string? FailingDeviceId { get; set; }
+
+        public Func<MicrophoneCaptureSelection, IWaveIn>? CaptureFactoryOverride { get; set; }
+
+        public List<IWaveIn> CreatedCaptures { get; } = [];
 
         public MicrophoneCaptureEvaluation Evaluate(double activityThreshold)
         {
@@ -969,7 +1236,95 @@ public sealed class RecordingSessionCoordinatorTests
                 throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
             }
 
-            return new StubWaveIn();
+            var capture = CaptureFactoryOverride?.Invoke(selection) ?? new StubWaveIn();
+            CreatedCaptures.Add(capture);
+            return capture;
+        }
+
+        public void Validate(MicrophoneCaptureSelection selection)
+        {
+            if (string.Equals(selection.DeviceId, FailingDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"Simulated failure for {selection.DeviceId}.");
+            }
+        }
+    }
+
+    private sealed class CaptureConcurrencyTracker
+    {
+        private int _activeCaptures;
+
+        public int ActiveCaptures => Volatile.Read(ref _activeCaptures);
+
+        public int MaxConcurrentCaptures { get; private set; }
+
+        public void OnStart()
+        {
+            var activeCaptures = Interlocked.Increment(ref _activeCaptures);
+            if (activeCaptures > MaxConcurrentCaptures)
+            {
+                MaxConcurrentCaptures = activeCaptures;
+            }
+        }
+
+        public void OnStop()
+        {
+            Interlocked.Decrement(ref _activeCaptures);
+        }
+    }
+
+    private sealed class TrackingWaveIn : IWaveIn
+    {
+        private readonly CaptureConcurrencyTracker _tracker;
+        private bool _isStarted;
+
+        public TrackingWaveIn(CaptureConcurrencyTracker tracker)
+        {
+            _tracker = tracker;
+        }
+
+        public WaveFormat WaveFormat { get; set; } = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
+
+        public event EventHandler<WaveInEventArgs>? DataAvailable;
+
+        public event EventHandler<StoppedEventArgs>? RecordingStopped;
+
+        public void StartRecording()
+        {
+            if (_isStarted)
+            {
+                return;
+            }
+
+            _isStarted = true;
+            _tracker.OnStart();
+        }
+
+        public void StopRecording()
+        {
+            StopInternal();
+        }
+
+        public void Dispose()
+        {
+            StopInternal();
+        }
+
+        public void TriggerUnexpectedStop(Exception exception)
+        {
+            StopInternal();
+            RecordingStopped?.Invoke(this, new StoppedEventArgs(exception));
+        }
+
+        private void StopInternal()
+        {
+            if (!_isStarted)
+            {
+                return;
+            }
+
+            _isStarted = false;
+            _tracker.OnStop();
         }
     }
 }

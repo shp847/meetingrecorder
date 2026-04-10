@@ -28,6 +28,8 @@ internal interface IMicrophoneCaptureFactory
 {
     MicrophoneCaptureEvaluation Evaluate(double activityThreshold);
 
+    void Validate(MicrophoneCaptureSelection selection);
+
     IWaveIn Create(MicrophoneCaptureSelection selection);
 }
 
@@ -91,6 +93,23 @@ internal sealed class SystemMicrophoneCaptureFactory : IMicrophoneCaptureFactory
         }
 
         return _captureFactory(device);
+    }
+
+    public void Validate(MicrophoneCaptureSelection selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+
+        if (selection.IsFallbackCapture)
+        {
+            return;
+        }
+
+        using var device = ResolveCaptureEndpointForSelection(selection);
+        if (device is null)
+        {
+            throw new InvalidOperationException(
+                $"Unable to resolve microphone capture endpoint '{selection.FriendlyName}' ({selection.DeviceId}) for role '{selection.Role}'.");
+        }
     }
 
     internal static MicrophoneCaptureProbeSnapshot? GetSnapshotForSelection(
@@ -359,5 +378,9 @@ internal sealed class LegacyMicrophoneCaptureFactory : IMicrophoneCaptureFactory
     public IWaveIn Create(MicrophoneCaptureSelection selection)
     {
         return _captureFactory();
+    }
+
+    public void Validate(MicrophoneCaptureSelection selection)
+    {
     }
 }

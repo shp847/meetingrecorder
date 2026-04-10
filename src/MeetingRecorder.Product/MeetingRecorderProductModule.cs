@@ -78,6 +78,10 @@ public sealed class MeetingRecorderProductModule :
             LegacyInstallRoots:
             [
                 Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "Documents",
+                    "Meeting Recorder"),
+                Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "Programs",
                     "Meeting Recorder"),

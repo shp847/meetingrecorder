@@ -17,7 +17,7 @@
     "configPath": "%LOCALAPPDATA%\\MeetingRecorder\\config\\appsettings.json",
     "preservedDataDirectories": [ "config", "logs", "audio", "transcripts", "work" ],
     "mergeWithoutOverwriteDirectories": [ "models" ],
-    "legacyInstallRoots": [ "%LOCALAPPDATA%\\Programs\\Meeting Recorder" ]
+    "legacyInstallRoots": [ "%USERPROFILE%\\Documents\\Meeting Recorder", "%LOCALAPPDATA%\\Programs\\Meeting Recorder" ]
   },
   "releaseChannelPolicy": {
     "supportsPerUserMsi": true,

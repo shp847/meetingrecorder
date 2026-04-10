@@ -23,6 +23,20 @@ internal static class UpdateInstallerLaunchBuilder
         return appContextBaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
+    public static string ResolveInstalledAppExecutablePath(
+        string? processPath,
+        string appContextBaseDirectory,
+        string executableName)
+    {
+        if (string.IsNullOrWhiteSpace(executableName))
+        {
+            throw new ArgumentException("Executable name is required.", nameof(executableName));
+        }
+
+        var installRoot = ResolveInstalledAppRoot(processPath, appContextBaseDirectory);
+        return Path.Combine(installRoot, executableName);
+    }
+
     public static ProcessStartInfo Build(
         string deploymentCliPath,
         string downloadedPath,

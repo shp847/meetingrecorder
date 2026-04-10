@@ -5374,7 +5374,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var executablePath = Path.Combine(AppContext.BaseDirectory, "MeetingRecorder.App.exe");
+            var executablePath = UpdateInstallerLaunchBuilder.ResolveInstalledAppExecutablePath(
+                Environment.ProcessPath,
+                AppContext.BaseDirectory,
+                "MeetingRecorder.App.exe");
             var changed = _autoStartRegistrationService.SyncRegistration(config.LaunchOnLoginEnabled, executablePath);
             if (changed)
             {
