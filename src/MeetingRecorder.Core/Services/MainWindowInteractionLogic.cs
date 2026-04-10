@@ -121,6 +121,8 @@ internal sealed record MeetingContextActionState(
     bool CanRegenerateTranscript,
     bool CanReTranscribeWithDifferentModel,
     bool CanAddSpeakerLabels,
+    bool CanProcessAsap,
+    bool CanClearAsap,
     bool CanSplit,
     bool CanArchive,
     bool CanDeletePermanently,
@@ -146,6 +148,19 @@ internal sealed record ProcessingQueueHeaderState(
     bool IsVisible,
     string Label,
     string Detail);
+
+internal sealed record PersistedProcessingBacklogState(
+    int QueuedCount,
+    int ProcessingCount)
+{
+    public int TotalRemainingCount => QueuedCount + ProcessingCount;
+
+    public bool HasBacklog => TotalRemainingCount > 0;
+
+    public ProcessingQueueRunState RunState => ProcessingCount > 0
+        ? ProcessingQueueRunState.Processing
+        : ProcessingQueueRunState.Queued;
+}
 
 internal sealed record MeetingsProcessingStripState(
     bool IsVisible,
@@ -191,46 +206,68 @@ internal static class MainWindowInteractionLogic
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
         ProcessingQueueStatusSnapshot snapshot,
+        PersistedProcessingBacklogState? persistedBacklog,
         DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        if (!ShouldShowProcessingQueueStatus(snapshot))
+        if (ShouldShowProcessingQueueStatus(snapshot))
+        {
+            var label = $"{snapshot.RunState.ToString().ToUpperInvariant()} {snapshot.TotalRemainingCount}";
+            var detail = snapshot.RunState switch
+            {
+                ProcessingQueueRunState.Paused when snapshot.PauseReason == ProcessingQueuePauseReason.LiveRecordingResponsiveMode
+                    => "Paused by live recording",
+                ProcessingQueueRunState.Processing when FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) is { } eta
+                    => eta,
+                ProcessingQueueRunState.Queued => $"{snapshot.TotalRemainingCount} waiting",
+                _ => $"{snapshot.TotalRemainingCount} remaining",
+            };
+            detail = AppendRushQueueDetail(detail, snapshot, includeAsapPrefix: true);
+
+            return new ProcessingQueueHeaderState(true, label, detail);
+        }
+
+        if (persistedBacklog is not { HasBacklog: true })
         {
             return new ProcessingQueueHeaderState(false, string.Empty, string.Empty);
         }
 
-        var label = $"{snapshot.RunState.ToString().ToUpperInvariant()} {snapshot.TotalRemainingCount}";
-        var detail = snapshot.RunState switch
-        {
-            ProcessingQueueRunState.Paused when snapshot.PauseReason == ProcessingQueuePauseReason.LiveRecordingResponsiveMode
-                => "Paused by live recording",
-            ProcessingQueueRunState.Processing when FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) is { } eta
-                => eta,
-            ProcessingQueueRunState.Queued => $"{snapshot.TotalRemainingCount} waiting",
-            _ => $"{snapshot.TotalRemainingCount} remaining",
-        };
-
-        return new ProcessingQueueHeaderState(true, label, detail);
+        return new ProcessingQueueHeaderState(
+            true,
+            $"{persistedBacklog.RunState.ToString().ToUpperInvariant()} {persistedBacklog.TotalRemainingCount}",
+            "ETA unavailable");
     }
 
     public static MeetingsProcessingStripState BuildMeetingsProcessingStripState(
         ProcessingQueueStatusSnapshot snapshot,
         string? refreshStateText,
+        PersistedProcessingBacklogState? persistedBacklog,
         DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
         var hasQueueStatus = ShouldShowProcessingQueueStatus(snapshot);
+        var hasPersistedBacklog = persistedBacklog is { HasBacklog: true };
         var hasRefreshState = !string.IsNullOrWhiteSpace(refreshStateText);
-        if (!hasQueueStatus && !hasRefreshState)
+        if (!hasQueueStatus && !hasPersistedBacklog && !hasRefreshState)
         {
             return new MeetingsProcessingStripState(false, string.Empty, string.Empty, string.Empty, null);
         }
 
         if (!hasQueueStatus)
         {
-            return new MeetingsProcessingStripState(true, string.Empty, string.Empty, string.Empty, refreshStateText);
+            if (!hasPersistedBacklog)
+            {
+                return new MeetingsProcessingStripState(true, string.Empty, string.Empty, string.Empty, refreshStateText);
+            }
+
+            var fallbackLine1 = $"{persistedBacklog!.RunState.ToString().ToUpperInvariant()} · {persistedBacklog.TotalRemainingCount} remaining";
+            var fallbackLine2 = persistedBacklog.ProcessingCount > 0
+                ? "Current: saved meetings still show active work while live status reconnects."
+                : "Current: saved meetings still show queued work while live status reconnects.";
+            var fallbackLine3 = $"Overall queue: {persistedBacklog.TotalRemainingCount} remaining · ETA unavailable";
+            return new MeetingsProcessingStripState(true, fallbackLine1, fallbackLine2, fallbackLine3, refreshStateText);
         }
 
         var pauseReasonText = snapshot.PauseReason switch
@@ -242,9 +279,15 @@ internal static class MainWindowInteractionLogic
             ? $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining"
             : $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining · {pauseReasonText}";
         var line2 = BuildCurrentStageSummary(snapshot, nowUtc);
+        if (snapshot.RushRequest is { } rushRequest)
+        {
+            line1 += " · ASAP active";
+            line2 = $"{line2} · ASAP: {rushRequest.Title}";
+        }
         var overallEta = FormatApproximateEta(snapshot.OverallEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ?? "ETA unavailable";
         var line3 = $"Overall queue: {snapshot.TotalRemainingCount} remaining · {overallEta}";
 
+        line3 = AppendRushQueueDetail(line3, snapshot, includeAsapPrefix: false);
         return new MeetingsProcessingStripState(true, line1, line2, line3, refreshStateText);
     }
 
@@ -1082,6 +1125,8 @@ internal static class MainWindowInteractionLogic
         bool hasRecommendedAction,
         bool canRegenerateTranscript,
         bool canAddSpeakerLabels,
+        bool canProcessAsap,
+        bool isSelectedMeetingAsap,
         bool isBusy)
     {
         var isSingleSelection = selectedMeetingCount == 1;
@@ -1103,6 +1148,8 @@ internal static class MainWindowInteractionLogic
             CanRegenerateTranscript: canUseSingleMeetingActions && canRegenerateTranscript,
             CanReTranscribeWithDifferentModel: canUseSingleMeetingActions && canRegenerateTranscript,
             CanAddSpeakerLabels: canUseSingleMeetingActions && canAddSpeakerLabels,
+            CanProcessAsap: canUseSingleMeetingActions && canProcessAsap && !isSelectedMeetingAsap,
+            CanClearAsap: canUseSingleMeetingActions && isSelectedMeetingAsap,
             CanSplit: canUseSingleMeetingActions,
             CanArchive: canUseSingleMeetingActions,
             CanDeletePermanently: canUseSingleMeetingActions,
@@ -1112,6 +1159,36 @@ internal static class MainWindowInteractionLogic
             CanAddSpeakerLabelsToSelected: canUseBulkActions && canAddSpeakerLabels,
             CanArchiveSelected: canUseBulkActions,
             CanDeleteSelectedPermanently: canUseBulkActions);
+    }
+
+    private static string AppendRushQueueDetail(
+        string baseText,
+        ProcessingQueueStatusSnapshot snapshot,
+        bool includeAsapPrefix)
+    {
+        if (snapshot.RushRequest is not { } rushRequest)
+        {
+            return baseText;
+        }
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(baseText))
+        {
+            parts.Add(baseText);
+        }
+
+        parts.Add(includeAsapPrefix ? $"ASAP: {rushRequest.Title}" : "ASAP queued to run next");
+        if (snapshot.IsRushPauseBypassActive)
+        {
+            parts.Add("ignoring recording pause");
+        }
+
+        if (snapshot.HasPreemptedItem)
+        {
+            parts.Add("interrupted work requeued");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     public static MeetingWorkspaceToolState BuildMeetingWorkspaceToolState(

@@ -378,7 +378,7 @@ public sealed class MainWindowInteractionLogicTests
             null,
             DateTimeOffset.UtcNow);
 
-        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, DateTimeOffset.UtcNow);
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, DateTimeOffset.UtcNow);
 
         Assert.False(headerState.IsVisible);
         Assert.Equal(string.Empty, headerState.Label);
@@ -405,11 +405,74 @@ public sealed class MainWindowInteractionLogicTests
             null,
             now);
 
-        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, now);
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, now);
 
         Assert.True(headerState.IsVisible);
         Assert.Equal("PAUSED 5", headerState.Label);
         Assert.Equal("Paused by live recording", headerState.Detail);
+    }
+
+    [Fact]
+    public void BuildProcessingQueueHeaderState_Uses_Persisted_Backlog_When_Live_Snapshot_Is_Empty()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Idle,
+            ProcessingQueuePauseReason.None,
+            0,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now);
+        var persistedBacklog = new PersistedProcessingBacklogState(QueuedCount: 1, ProcessingCount: 1);
+
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, persistedBacklog, now);
+
+        Assert.True(headerState.IsVisible);
+        Assert.Equal("PROCESSING 2", headerState.Label);
+        Assert.Equal("ETA unavailable", headerState.Detail);
+    }
+
+    [Fact]
+    public void BuildProcessingQueueHeaderState_Mentions_Asap_Item_And_Pause_Bypass_When_Present()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Processing,
+            ProcessingQueuePauseReason.None,
+            2,
+            3,
+            @"C:\Meetings\work\abc\manifest.json",
+            "Normal backlog item",
+            MeetingPlatform.Teams,
+            "transcription",
+            StageExecutionState.Running,
+            now.AddMinutes(-1),
+            now.AddMinutes(-2),
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(12),
+            now,
+            new RushedProcessingQueueState(
+                @"C:\Meetings\work\rush\manifest.json",
+                "Board Readout",
+                RushProcessingBehavior.RunNextIgnoreRecordingPause,
+                now.AddMinutes(-3)),
+            IsRushPauseBypassActive: true,
+            HasPreemptedItem: true);
+
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, now);
+
+        Assert.True(headerState.IsVisible);
+        Assert.Equal("PROCESSING 3", headerState.Label);
+        Assert.Contains("ASAP: Board Readout", headerState.Detail);
+        Assert.Contains("ignoring recording pause", headerState.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -437,6 +500,7 @@ public sealed class MainWindowInteractionLogicTests
         var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(
             snapshot,
             "Loading cleanup suggestions in the background.",
+            null,
             snapshotTime.AddMinutes(1));
 
         Assert.True(stripState.IsVisible);
@@ -471,12 +535,83 @@ public sealed class MainWindowInteractionLogicTests
             null,
             now);
 
-        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, now);
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, now);
 
         Assert.True(stripState.IsVisible);
         Assert.Contains("QUEUED", stripState.Line1);
         Assert.Contains("3 remaining", stripState.Line1);
         Assert.Contains("ETA unavailable", stripState.Line3);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Uses_Persisted_Backlog_When_Live_Snapshot_Is_Empty()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Idle,
+            ProcessingQueuePauseReason.None,
+            0,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now);
+        var persistedBacklog = new PersistedProcessingBacklogState(QueuedCount: 2, ProcessingCount: 1);
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(
+            snapshot,
+            "Loading cleanup suggestions in the background.",
+            persistedBacklog,
+            now);
+
+        Assert.True(stripState.IsVisible);
+        Assert.Contains("PROCESSING", stripState.Line1);
+        Assert.Contains("3 remaining", stripState.Line1);
+        Assert.Contains("saved meetings still show active work", stripState.Line2, StringComparison.Ordinal);
+        Assert.Contains("ETA unavailable", stripState.Line3);
+        Assert.Equal("Loading cleanup suggestions in the background.", stripState.SecondaryText);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Mentions_Asap_Item_And_Preempted_Backlog_When_Present()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Queued,
+            ProcessingQueuePauseReason.None,
+            2,
+            2,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            now,
+            new RushedProcessingQueueState(
+                @"C:\Meetings\work\rush\manifest.json",
+                "Town Hall Follow-up",
+                RushProcessingBehavior.RunNextOnly,
+                now.AddMinutes(-4)),
+            IsRushPauseBypassActive: false,
+            HasPreemptedItem: true);
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, now);
+
+        Assert.True(stripState.IsVisible);
+        Assert.Contains("ASAP active", stripState.Line1);
+        Assert.Contains("Town Hall Follow-up", stripState.Line2);
+        Assert.Contains("ASAP queued to run next", stripState.Line3);
+        Assert.Contains("interrupted work requeued", stripState.Line3, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1455,6 +1590,8 @@ public sealed class MainWindowInteractionLogicTests
             hasRecommendedAction: true,
             canRegenerateTranscript: true,
             canAddSpeakerLabels: true,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
             isBusy: false);
 
         Assert.True(result.ShowSingleMeetingActionGroup);
@@ -1470,6 +1607,8 @@ public sealed class MainWindowInteractionLogicTests
         Assert.True(result.CanRegenerateTranscript);
         Assert.True(result.CanReTranscribeWithDifferentModel);
         Assert.True(result.CanAddSpeakerLabels);
+        Assert.True(result.CanProcessAsap);
+        Assert.False(result.CanClearAsap);
         Assert.True(result.CanSplit);
         Assert.True(result.CanArchive);
         Assert.True(result.CanDeletePermanently);
@@ -1488,6 +1627,8 @@ public sealed class MainWindowInteractionLogicTests
             hasRecommendedAction: true,
             canRegenerateTranscript: true,
             canAddSpeakerLabels: true,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
             isBusy: false);
 
         Assert.False(result.ShowSingleMeetingActionGroup);
@@ -1496,6 +1637,8 @@ public sealed class MainWindowInteractionLogicTests
         Assert.False(result.CanOpenTranscript);
         Assert.False(result.CanRename);
         Assert.False(result.CanSuggestTitle);
+        Assert.False(result.CanProcessAsap);
+        Assert.False(result.CanClearAsap);
         Assert.False(result.CanSplit);
         Assert.True(result.CanApplyRecommendationsForSelection);
         Assert.True(result.CanMergeSelected);
@@ -1503,6 +1646,25 @@ public sealed class MainWindowInteractionLogicTests
         Assert.True(result.CanAddSpeakerLabelsToSelected);
         Assert.True(result.CanArchiveSelected);
         Assert.True(result.CanDeleteSelectedPermanently);
+    }
+
+    [Fact]
+    public void BuildMeetingContextActionState_Shows_Clear_Asap_For_The_Current_Rushed_Meeting()
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingContextActionState(
+            selectedMeetingCount: 1,
+            hasFocusedMeeting: true,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            hasRecommendedAction: false,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: true,
+            isBusy: false);
+
+        Assert.False(result.CanProcessAsap);
+        Assert.True(result.CanClearAsap);
     }
 
     [Fact]

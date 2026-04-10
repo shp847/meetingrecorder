@@ -118,10 +118,11 @@ Capability setup is launched from `Settings > Setup` instead of living in the to
 Secondary maintenance and support live in header-level `Settings` and `Help` surfaces rather than the primary navigation row.
 
 Startup now favors shell responsiveness over full Meetings analysis. The initial load waits for the first shell render, performs a fast meeting refresh, and starts the long-lived detection/update timers only after that first paint so `Home` becomes interactive sooner. Heavier attendee enrichment, manifest inspection, and cleanup-analysis work stay deferred until `Meetings` is actually activated.
-Auto-stop now follows the same responsiveness rule: the Home console shows a visible countdown for auto-started sessions, flips into an immediate `Auto-stopping` transition when the timeout expires, and pushes attendee enrichment into the background queue so stop finalization no longer waits on Outlook lookups.
+Auto-stop now follows the same responsiveness rule: the Home console shows a visible countdown for auto-started sessions, flips into an immediate `Auto-stopping` transition when the timeout expires, and pushes attendee enrichment into the background queue so stop finalization no longer waits on Outlook lookups. Once that countdown is already active, weak quiet-continuation evidence no longer clears it; only a real resumed meeting signal resets the countdown and preserves the live session.
 Detection follows the same rule now: the dispatcher timer only schedules scans, the expensive window/audio probe runs off-thread, overlapping scans are skipped instead of queued, browser-tab and audio-session subprobes are both bounded by short timeouts/backoff windows, and only the final decision is applied back on the UI thread.
 Meetings refreshes are now treated as coalesced foreground-sensitive work. Config churn, stop-time publish, and similar non-urgent refresh requests can stay marked dirty while a recording is active or the user is still on `Home`, then one catch-up refresh runs automatically once `Meetings` is visible again.
-Backlog visibility is now additive to that shell responsiveness work: `MainWindow` subscribes to a queue-status snapshot from `ProcessingQueueService`, drives a compact header queue chip plus a fuller `Meetings` processing strip from the latest in-memory snapshot, and uses a dedicated 1-second UI timer only to refresh relative elapsed/ETA strings without rescanning manifests on every tick.
+Backlog visibility is now additive to that shell responsiveness work: `MainWindow` subscribes to a queue-status snapshot from `ProcessingQueueService`, drives a compact header queue chip plus a fuller `Meetings` processing strip from the latest in-memory snapshot, and uses a dedicated 1-second UI timer only to refresh relative elapsed/ETA strings without rescanning manifests on every tick. If that live snapshot is temporarily empty during startup or worker recovery, the shell falls back to persisted queued/processing meeting rows so backlog state stays visible with `ETA unavailable` instead of disappearing.
+That queue snapshot now also carries a single persisted `ASAP` request. `Meetings` can mark one eligible queued or in-progress manifest to run next, optionally let only that rushed item bypass the normal `Responsive` live-recording pause rule, and surface the rushed title plus any interrupted-and-requeued backlog item through the existing queue chip and Meetings strip.
 
 ### Home
 
@@ -130,10 +131,10 @@ Responsibilities:
 - show the current shell status through the header-level status capsule
 - keep the editable session metadata visible
 - surface a live elapsed recording timer while capture is active
-- render the live audio graph inside a single recording console
+- render the live audio graph inside a single recording console, using a shorter graph well in the default desktop shell so the active recording deck is less likely to need immediate vertical scrolling
 - surface a compact capture-status well that shows the active loopback endpoint, current capture mode, and the most recent capture timeline entries
 - expose manual start and stop controls
-- expose immediate-save quick settings for microphone capture and auto-detection
+- expose immediate-save quick settings for microphone capture and auto-detection, using side-by-side summary-plus-toggle cards so those controls stay visible in the default Home viewport more often
 - apply microphone capture changes to the active recording from the save/click moment forward while also updating the saved default
 - clarify that manual recording works beyond Teams and Google Meet, while auto-detection is narrower
 - allow editing the current meeting title, client/project, and key attendees while recording
@@ -230,9 +231,11 @@ The durable session lifecycle uses these states:
 13. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound.
 14. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
 15. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
-16. `ProcessingQueueService` now maintains an immutable queue-status snapshot with exact in-memory queued counts, current-item stage metadata, pause reason, and approximate ETA estimates, and it publishes those status changes to the shell without adding new queue controls or changing the actual pause rules.
-16. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
-17. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
+16. `ProcessingQueueService` now maintains an immutable queue-status snapshot with exact in-memory queued counts, current-item stage metadata, pause reason, approximate ETA estimates, and the optional persisted `ASAP` request. If the worker snapshot is not yet available but the meeting catalog still contains persisted `Queued`, `Processing`, or `Finalizing` rows, `MainWindowInteractionLogic` synthesizes a backlog-only shell fallback so the user still sees active queue state.
+17. When a different meeting is marked `ASAP` while work is already running, `ProcessingQueueService` preempts that worker, resets the interrupted manifest back to a queued stage-safe state, and re-inserts it directly behind the rushed meeting ahead of the normal backlog.
+18. A rushed meeting can either run next while still respecting the normal `Responsive` pause rule, or run next even while a live recording is active. That pause bypass applies only to the single rushed item and is cleared automatically once the meeting finishes or the request becomes stale.
+19. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
+20. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
 
 ## 6. Work Folders and Persistence
 

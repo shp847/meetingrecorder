@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 
 namespace MeetingRecorder.Core.Services;
@@ -16,6 +17,12 @@ internal enum ProcessingQueuePauseReason
     LiveRecordingResponsiveMode = 1,
 }
 
+internal sealed record RushedProcessingQueueState(
+    string ManifestPath,
+    string Title,
+    RushProcessingBehavior Behavior,
+    DateTimeOffset RequestedAtUtc);
+
 internal sealed record ProcessingQueueStatusSnapshot(
     ProcessingQueueRunState RunState,
     ProcessingQueuePauseReason PauseReason,
@@ -30,4 +37,7 @@ internal sealed record ProcessingQueueStatusSnapshot(
     DateTimeOffset? CurrentItemStartedAtUtc,
     TimeSpan? CurrentItemEstimatedRemaining,
     TimeSpan? OverallEstimatedRemaining,
-    DateTimeOffset LastUpdatedAtUtc);
+    DateTimeOffset LastUpdatedAtUtc,
+    RushedProcessingQueueState? RushRequest = null,
+    bool IsRushPauseBypassActive = false,
+    bool HasPreemptedItem = false);

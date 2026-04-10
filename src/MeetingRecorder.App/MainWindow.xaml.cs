@@ -112,6 +112,7 @@ public partial class MainWindow : Window
     private bool _isApplyingSafeMeetingCleanupFixes;
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
+    private bool _isUpdatingRushProcessing;
     private bool _isSavingConfig;
     private bool _isRunningTeamsIntegrationProbe;
     private int _updateCheckOperations;
@@ -669,12 +670,17 @@ public partial class MainWindow : Window
     private void UpdateProcessingQueueStatusUi()
     {
         var nowUtc = DateTimeOffset.UtcNow;
-        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(_latestProcessingQueueStatusSnapshot, nowUtc);
+        var persistedBacklog = BuildPersistedProcessingBacklogState();
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(_latestProcessingQueueStatusSnapshot, persistedBacklog, nowUtc);
         HeaderQueueStatusBorder.Visibility = headerState.IsVisible ? Visibility.Visible : Visibility.Collapsed;
         HeaderQueueStatusLabelTextBlock.Text = headerState.Label;
         HeaderQueueStatusDetailTextBlock.Text = headerState.Detail;
 
-        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(_latestProcessingQueueStatusSnapshot, _currentMeetingsRefreshStateText, nowUtc);
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(
+            _latestProcessingQueueStatusSnapshot,
+            _currentMeetingsRefreshStateText,
+            persistedBacklog,
+            nowUtc);
         MeetingsProcessingStatusBorder.Visibility = stripState.IsVisible ? Visibility.Visible : Visibility.Collapsed;
         MeetingsProcessingStatusLine1TextBlock.Text = stripState.Line1;
         MeetingsProcessingStatusLine1TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line1) ? Visibility.Collapsed : Visibility.Visible;
@@ -684,6 +690,22 @@ public partial class MainWindow : Window
         MeetingsProcessingStatusLine3TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line3) ? Visibility.Collapsed : Visibility.Visible;
         MeetingsRefreshStateTextBlock.Text = stripState.SecondaryText ?? string.Empty;
         MeetingsRefreshStateTextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.SecondaryText) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private PersistedProcessingBacklogState? BuildPersistedProcessingBacklogState()
+    {
+        if (_allMeetingRows.Length == 0)
+        {
+            return null;
+        }
+
+        var queuedCount = _allMeetingRows.Count(row => row.Source.ManifestState == SessionState.Queued);
+        var processingCount = _allMeetingRows.Count(
+            row => row.Source.ManifestState is SessionState.Processing or SessionState.Finalizing);
+
+        return queuedCount + processingCount == 0
+            ? null
+            : new PersistedProcessingBacklogState(queuedCount, processingCount);
     }
 
     private async void StartButton_OnClick(object sender, RoutedEventArgs e)
@@ -1448,13 +1470,26 @@ public partial class MainWindow : Window
             var activeMeetingManagedSession = _recordingCoordinator.ActiveSession is { MeetingLifecycleManaged: true } reclassifiedSession
                 ? reclassifiedSession
                 : null;
-            if (activeMeetingManagedSession is not null &&
+            var hasRecentLoopbackActivity = activeMeetingManagedSession is not null &&
+                HasRecentLoopbackActivity(activeMeetingManagedSession);
+            var hasRecentMicrophoneActivity = activeMeetingManagedSession is not null &&
+                HasRecentMicrophoneActivity(activeMeetingManagedSession);
+            var shouldRefreshLastPositiveSignal = activeMeetingManagedSession is not null &&
                 _autoRecordingContinuityPolicy.ShouldRefreshLastPositiveSignal(
                     decision,
                     activeMeetingManagedSession.Manifest.Platform,
                     activeMeetingManagedSession.Manifest.DetectedTitle,
-                    HasRecentLoopbackActivity(activeMeetingManagedSession),
-                    HasRecentMicrophoneActivity(activeMeetingManagedSession)))
+                    hasRecentLoopbackActivity,
+                    hasRecentMicrophoneActivity);
+            var shouldClearAutoStopCountdown = _autoStopCountdownSecondsRemaining is null ||
+                (activeMeetingManagedSession is not null &&
+                 _autoRecordingContinuityPolicy.ShouldClearAutoStopCountdown(
+                     decision,
+                     activeMeetingManagedSession.Manifest.Platform,
+                     activeMeetingManagedSession.Manifest.DetectedTitle,
+                     hasRecentLoopbackActivity,
+                     hasRecentMicrophoneActivity));
+            if (shouldRefreshLastPositiveSignal && shouldClearAutoStopCountdown)
             {
                 ClearAutoStopVisualState();
                 if (decision is { ShouldKeepRecording: true })
@@ -4016,6 +4051,7 @@ public partial class MainWindow : Window
         _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
         MeetingsDataGrid.ItemsSource = _allMeetingRows;
         ApplyMeetingsWorkspaceView(selectedStems, preserveEditorDrafts);
+        UpdateProcessingQueueStatusUi();
     }
 
     private MeetingListRow[] BuildMeetingRows(
@@ -4519,7 +4555,9 @@ public partial class MainWindow : Window
 
         SelectedMeetingStatusTextBlock.Text = row is null
             ? "Select a meeting to rename it directly, or select multiple meetings to apply suggestions in bulk."
-            : $"Status: {row.Status}. {row.RegenerationStatusText}";
+            : IsMeetingMarkedAsap(row)
+                ? $"Status: {row.Status}. Marked ASAP in the processing queue. {row.RegenerationStatusText}"
+                : $"Status: {row.Status}. {row.RegenerationStatusText}";
         UpdateSelectedMeetingInspector(row);
         UpdateMeetingProjectEditor(selectedMeetings, preserveDraftInputs);
         UpdateSpeakerLabelEditor(row, preserveDraftInputs);
@@ -4555,9 +4593,12 @@ public partial class MainWindow : Window
         MeetingWorkspaceStatusTextBlock.Text = selectedCount <= 1
             ? $"Focused on '{row.Title}'. Open artifacts directly or reveal compact tools below when you need deeper edits."
             : $"{selectedCount} meetings selected. Bulk actions stay available in the context menu and the compact drafts below.";
+        var asapInspectorText = IsMeetingMarkedAsap(row)
+            ? " This meeting is marked ASAP in the processing queue."
+            : string.Empty;
         SelectedMeetingInspectorStatusTextBlock.Text = selectedCount <= 1
-            ? "Focused details for the current meeting selection."
-            : $"Focused details for '{row.Title}'. {selectedCount} meetings are selected for bulk actions.";
+            ? $"Focused details for the current meeting selection.{asapInspectorText}"
+            : $"Focused details for '{row.Title}'. {selectedCount} meetings are selected for bulk actions.{asapInspectorText}";
         SelectedMeetingInspectorTitleTextBlock.Text = inspectorState.Title;
         SelectedMeetingInspectorStartedTextBlock.Text = inspectorState.StartedAtUtc;
         SelectedMeetingInspectorProjectTextBlock.Text = string.IsNullOrWhiteSpace(inspectorState.ProjectName)
@@ -4923,6 +4964,19 @@ public partial class MainWindow : Window
         RenameMeetingActionButton.IsEnabled = singleSelectedMeeting is not null && !isMeetingActionInProgress;
         SuggestMeetingTitleActionButton.IsEnabled = singleSelectedMeeting is not null && !isMeetingActionInProgress;
         RetryTranscriptActionButton.IsEnabled = singleSelectedMeeting?.CanRegenerateTranscript == true && !isMeetingActionInProgress;
+        var isSelectedMeetingAsap = IsMeetingMarkedAsap(singleSelectedMeeting);
+        ProcessAsapActionButton.Content = isSelectedMeetingAsap
+            ? "Clear ASAP"
+            : _isUpdatingRushProcessing
+                ? "Updating..."
+                : "Process ASAP...";
+        ProcessAsapActionButton.Visibility = singleSelectedMeeting is not null &&
+            (CanChangeRushProcessing(singleSelectedMeeting) || isSelectedMeetingAsap)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ProcessAsapActionButton.IsEnabled = singleSelectedMeeting is not null &&
+            (CanChangeRushProcessing(singleSelectedMeeting) || isSelectedMeetingAsap) &&
+            !isMeetingActionInProgress;
         SplitMeetingActionButton.IsEnabled = splitMeeting is not null && canEditSplitPoint;
         MergeMeetingsActionButton.IsEnabled = selectedMeetings.Length >= 2 && !isMeetingActionInProgress;
         SelectedMeetingTitleTextBox.IsEnabled = singleSelectedMeeting is not null && !isMeetingActionInProgress;
@@ -4979,6 +5033,7 @@ public partial class MainWindow : Window
                _isMergingMeetings ||
                _isSplittingMeeting ||
                _isArchivingMeetings ||
+               _isUpdatingRushProcessing ||
                _isDeletingMeetings ||
                _isApplyingMeetingCleanupRecommendations ||
                _isDismissingMeetingCleanupRecommendations ||
@@ -8087,6 +8142,11 @@ public partial class MainWindow : Window
         RetryMeetingTranscriptContextMenuItem_OnClick(sender, e);
     }
 
+    private async void ProcessAsapActionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await UpdateRushProcessingForSelectionAsync(sender);
+    }
+
     private void SplitMeetingActionButton_OnClick(object sender, RoutedEventArgs e)
     {
         SplitSelectedMeetingPointTextBox.SelectAll();
@@ -8116,6 +8176,8 @@ public partial class MainWindow : Window
         var focusedMeeting = MeetingsDataGrid.SelectedItem as MeetingListRow;
         var hasRecommendationInSelection = selectedMeetings.Any(row => row.PrimaryRecommendation is not null);
         var canAddSpeakerLabels = selectedMeetings.Any(CanQueueSpeakerLabelsForMeeting);
+        var canProcessAsap = focusedMeeting is not null && CanChangeRushProcessing(focusedMeeting);
+        var isSelectedMeetingAsap = IsMeetingMarkedAsap(focusedMeeting);
         var contextState = MainWindowInteractionLogic.BuildMeetingContextActionState(
             selectedMeetings.Length,
             focusedMeeting is not null,
@@ -8124,6 +8186,8 @@ public partial class MainWindow : Window
             hasRecommendationInSelection,
             focusedMeeting?.CanRegenerateTranscript == true,
             canAddSpeakerLabels,
+            canProcessAsap,
+            isSelectedMeetingAsap,
             IsMeetingActionInProgress());
 
         OpenMeetingTranscriptMenuItem.IsEnabled = contextState.CanOpenTranscript;
@@ -8143,6 +8207,8 @@ public partial class MainWindow : Window
         RetryMeetingTranscriptContextMenuItem.IsEnabled = contextState.CanRegenerateTranscript;
         ReTranscribeMeetingWithDifferentModelMenuItem.IsEnabled = contextState.CanReTranscribeWithDifferentModel;
         AddSpeakerLabelsContextMenuItem.IsEnabled = contextState.CanAddSpeakerLabels;
+        ProcessAsapContextMenuItem.IsEnabled = contextState.CanProcessAsap || contextState.CanClearAsap;
+        ProcessAsapContextMenuItem.Header = contextState.CanClearAsap ? "Clear ASAP" : "Process ASAP...";
         SplitMeetingContextMenuItem.IsEnabled = contextState.CanSplit;
         ArchiveMeetingContextMenuItem.IsEnabled = contextState.CanArchive;
         DeleteMeetingPermanentlyMenuItem.IsEnabled = contextState.CanDeletePermanently;
@@ -8152,6 +8218,10 @@ public partial class MainWindow : Window
         RetryMeetingTranscriptContextMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         ReTranscribeMeetingWithDifferentModelMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         AddSpeakerLabelsContextMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
+        ProcessAsapContextMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup &&
+            (contextState.CanProcessAsap || contextState.CanClearAsap)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         SplitMeetingContextMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         ArchiveMeetingContextMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         DeleteMeetingPermanentlyMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
@@ -8260,6 +8330,11 @@ public partial class MainWindow : Window
         }
 
         await QueueSpeakerLabelsForMeetingsAsync(selectedMeetings, "context-single-speaker-labels");
+    }
+
+    private async void ProcessAsapContextMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        await UpdateRushProcessingForSelectionAsync(sender);
     }
 
     private void SplitMeetingContextMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -8473,6 +8548,22 @@ public partial class MainWindow : Window
                !row.Source.HasSpeakerLabels;
     }
 
+    private bool CanChangeRushProcessing(MeetingListRow row)
+    {
+        return !string.IsNullOrWhiteSpace(row.Source.ManifestPath) &&
+               row.Source.ManifestState is SessionState.Queued or SessionState.Processing or SessionState.Finalizing;
+    }
+
+    private bool IsMeetingMarkedAsap(MeetingListRow? row)
+    {
+        return row is not null &&
+               !string.IsNullOrWhiteSpace(row.Source.ManifestPath) &&
+               string.Equals(
+                   _latestProcessingQueueStatusSnapshot.RushRequest?.ManifestPath,
+                   row.Source.ManifestPath,
+                   StringComparison.Ordinal);
+    }
+
     private void TryCopyPathToClipboard(string? path, string artifactLabel)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -8512,6 +8603,157 @@ public partial class MainWindow : Window
                    string.Equals(row.Source.Stem, contextRow.Source.Stem, StringComparison.OrdinalIgnoreCase))
             ? selectedRows
             : [contextRow];
+    }
+
+    private async Task UpdateRushProcessingForSelectionAsync(object sender)
+    {
+        var targetMeetings = GetMeetingRowsForContextMenuAction(sender);
+        if (targetMeetings.Length != 1)
+        {
+            SelectedMeetingStatusTextBlock.Text = "Select exactly one queued or processing meeting before changing ASAP processing.";
+            return;
+        }
+
+        var meeting = targetMeetings[0];
+        if (!CanChangeRushProcessing(meeting) || string.IsNullOrWhiteSpace(meeting.Source.ManifestPath))
+        {
+            SelectedMeetingStatusTextBlock.Text = $"'{meeting.Title}' is not eligible for ASAP processing.";
+            return;
+        }
+
+        _isUpdatingRushProcessing = true;
+        UpdateMeetingActionState();
+        try
+        {
+            if (IsMeetingMarkedAsap(meeting))
+            {
+                SelectedMeetingStatusTextBlock.Text = $"Clearing ASAP processing for '{meeting.Title}'...";
+                await _processingQueue.ClearRushProcessingAsync(meeting.Source.ManifestPath, _lifetimeCts.Token);
+                SelectedMeetingStatusTextBlock.Text = $"Cleared ASAP processing for '{meeting.Title}'.";
+                AppendActivity($"Cleared ASAP processing for '{meeting.Title}'.");
+                return;
+            }
+
+            var behavior = PromptRushProcessingBehavior(meeting);
+            if (behavior is null)
+            {
+                SelectedMeetingStatusTextBlock.Text = $"ASAP processing canceled for '{meeting.Title}'.";
+                return;
+            }
+
+            SelectedMeetingStatusTextBlock.Text = $"Marking '{meeting.Title}' for ASAP processing...";
+            await _processingQueue.RequestRushProcessingAsync(meeting.Source.ManifestPath, behavior.Value, _lifetimeCts.Token);
+            var behaviorLabel = behavior.Value == RushProcessingBehavior.RunNextIgnoreRecordingPause
+                ? "run next and ignore recording pause"
+                : "run next only";
+            SelectedMeetingStatusTextBlock.Text = $"Marked '{meeting.Title}' as ASAP ({behaviorLabel}).";
+            AppendActivity($"Marked '{meeting.Title}' as ASAP ({behaviorLabel}).");
+        }
+        catch (Exception exception)
+        {
+            SelectedMeetingStatusTextBlock.Text = $"Unable to update ASAP processing: {exception.Message}";
+        }
+        finally
+        {
+            _isUpdatingRushProcessing = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private RushProcessingBehavior? PromptRushProcessingBehavior(MeetingListRow meeting)
+    {
+        var selectionWindow = new Window
+        {
+            Title = "Process ASAP",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 420,
+            Background = Brushes.White,
+        };
+
+        RushProcessingBehavior? result = null;
+        var nextOnlyButton = new Button
+        {
+            Content = "Run next only",
+            Width = 150,
+            Height = 34,
+            IsDefault = true,
+        };
+        nextOnlyButton.Click += (_, _) =>
+        {
+            result = RushProcessingBehavior.RunNextOnly;
+            selectionWindow.DialogResult = true;
+            selectionWindow.Close();
+        };
+
+        var ignorePauseButton = new Button
+        {
+            Content = "Run next and ignore recording pause",
+            Width = 240,
+            Height = 34,
+            Margin = new Thickness(12, 0, 0, 0),
+        };
+        ignorePauseButton.Click += (_, _) =>
+        {
+            result = RushProcessingBehavior.RunNextIgnoreRecordingPause;
+            selectionWindow.DialogResult = true;
+            selectionWindow.Close();
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            Width = 90,
+            Height = 34,
+            Margin = new Thickness(12, 0, 0, 0),
+            IsCancel = true,
+        };
+        cancelButton.Click += (_, _) =>
+        {
+            selectionWindow.DialogResult = false;
+            selectionWindow.Close();
+        };
+
+        selectionWindow.Content = new Border
+        {
+            Padding = new Thickness(18),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"Process '{meeting.Title}' ASAP",
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new TextBlock
+                    {
+                        Margin = new Thickness(0, 10, 0, 0),
+                        Text = "Choose whether this meeting should simply run next, or run next even while a live recording is keeping responsive background work paused.",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new StackPanel
+                    {
+                        Margin = new Thickness(0, 16, 0, 0),
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children =
+                        {
+                            nextOnlyButton,
+                            ignorePauseButton,
+                            cancelButton,
+                        },
+                    },
+                },
+            },
+        };
+
+        return selectionWindow.ShowDialog() == true
+            ? result
+            : null;
     }
 
     private bool TryConfirmPermanentDelete(IReadOnlyList<MeetingListRow> meetings)

@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 
 namespace MeetingRecorder.App.Services;
 
@@ -25,11 +24,7 @@ internal sealed class ProcessingQueueService
     private readonly Func<bool> _isRecordingProvider;
     private readonly ProcessingTempCleanupService _tempCleanupService;
     private readonly CancellationTokenSource _shutdownCts = new();
-    private readonly Channel<string> _pendingManifestPaths = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
-    {
-        SingleReader = true,
-        SingleWriter = false,
-    });
+    private readonly SemaphoreSlim _pendingManifestSignal = new(0);
     private readonly object _processSyncRoot = new();
     private readonly Task _drainTask;
     private IWorkerProcess? _currentWorker;
@@ -41,6 +36,7 @@ internal sealed class ProcessingQueueService
     private ProcessingQueueStatusSnapshot _statusSnapshot;
     private CancellationTokenSource? _currentManifestMonitorCts;
     private Task? _currentManifestMonitorTask;
+    private string? _preemptedManifestPath;
 
     internal event Action<ProcessingQueueStatusSnapshot>? StatusChanged;
 
@@ -97,6 +93,7 @@ internal sealed class ProcessingQueueService
 
     public async Task ResumePendingSessionsAsync(CancellationToken cancellationToken = default)
     {
+        await NormalizeRushProcessingRequestAsync(cancellationToken);
         await _tempCleanupService.RunStartupCleanupAsync(cancellationToken);
         var deferredRepairCount = await ApplyDeferredSpeakerLabelingBacklogOverridesAsync(_config.Current.WorkDir, cancellationToken);
         if (deferredRepairCount > 0)
@@ -116,7 +113,18 @@ internal sealed class ProcessingQueueService
             _logger.Log($"Archived {archivedSupersededImportedCount} superseded imported-source reprocessing session(s) because published transcript artifacts already exist.");
         }
 
-        var pending = await _manifestStore.FindPendingManifestPathsAsync(_config.Current.WorkDir, cancellationToken);
+        var pending = (await _manifestStore.FindPendingManifestPathsAsync(_config.Current.WorkDir, cancellationToken)).ToList();
+        if (_config.Current.RushProcessingRequest is { } rushRequest)
+        {
+            var rushIndex = pending.FindIndex(path => string.Equals(path, rushRequest.ManifestPath, StringComparison.Ordinal));
+            if (rushIndex > 0)
+            {
+                var rushPath = pending[rushIndex];
+                pending.RemoveAt(rushIndex);
+                pending.Insert(0, rushPath);
+            }
+        }
+
         var excludedSupersededImportedCount = 0;
         foreach (var manifestPath in pending)
         {
@@ -154,26 +162,87 @@ internal sealed class ProcessingQueueService
         }
 
         var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
-        if (!_pendingManifestPaths.Writer.TryWrite(manifestPath))
-        {
-            _logger.Log($"Skipping processing enqueue for '{manifestPath}' because the queue is no longer accepting work.");
-            return;
-        }
-
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
+        var shouldSignal = false;
         lock (_processSyncRoot)
         {
-            _queuedManifestEntries.Add(queueEntry);
+            shouldSignal = UpsertQueuedEntryLocked(queueEntry, preferFront: false, markPreempted: false);
             snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+        }
+
+        if (shouldSignal)
+        {
+            _pendingManifestSignal.Release();
         }
 
         PublishStatusSnapshot(snapshotToPublish);
     }
 
+    public async Task RequestRushProcessingAsync(
+        string manifestPath,
+        RushProcessingBehavior behavior,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        if (!IsRushEligible(manifest))
+        {
+            throw new InvalidOperationException("Only queued or in-progress meetings can be marked for ASAP processing.");
+        }
+
+        var queueEntry = CreateQueueEntry(manifest, manifestPath);
+        var request = new RushProcessingRequest(manifestPath, behavior, DateTimeOffset.UtcNow);
+        await _config.SaveAsync(_config.Current with { RushProcessingRequest = request }, cancellationToken);
+
+        ProcessingQueueStatusSnapshot? snapshotToPublish = null;
+        IWorkerProcess? workerToKill = null;
+        var shouldSignal = false;
+        lock (_processSyncRoot)
+        {
+            shouldSignal = UpsertQueuedEntryLocked(queueEntry, preferFront: true, markPreempted: false);
+            if (_currentWorker is { HasExited: false } currentWorker &&
+                !string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
+            {
+                _preemptedManifestPath = _currentManifestPath;
+                workerToKill = currentWorker;
+            }
+
+            snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+        }
+
+        if (shouldSignal)
+        {
+            _pendingManifestSignal.Release();
+        }
+
+        PublishStatusSnapshot(snapshotToPublish);
+
+        if (workerToKill is not null)
+        {
+            _logger.Log($"Preempting '{_preemptedManifestPath}' so ASAP processing can start for '{manifestPath}'.");
+            workerToKill.Kill(entireProcessTree: true);
+        }
+    }
+
+    public async Task ClearRushProcessingAsync(string manifestPath, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var currentRequest = _config.Current.RushProcessingRequest;
+        if (currentRequest is null ||
+            !string.Equals(currentRequest.ManifestPath, manifestPath, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
+        PublishStatusSnapshot(UpdateStatusSnapshot());
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _shutdownCts.Cancel();
-        _pendingManifestPaths.Writer.TryComplete();
+        _pendingManifestSignal.Release();
 
         IWorkerProcess? worker;
         string? manifestPath;
@@ -218,9 +287,10 @@ internal sealed class ProcessingQueueService
     {
         try
         {
-            while (await _pendingManifestPaths.Reader.WaitToReadAsync(cancellationToken))
+            while (!cancellationToken.IsCancellationRequested)
             {
-                while (_pendingManifestPaths.Reader.TryRead(out var manifestPath))
+                await _pendingManifestSignal.WaitAsync(cancellationToken);
+                while (TryDequeueNextManifestPath(out var manifestPath))
                 {
                     await ProcessManifestAsync(manifestPath, cancellationToken);
                 }
@@ -233,21 +303,35 @@ internal sealed class ProcessingQueueService
 
     private async Task ProcessManifestAsync(string manifestPath, CancellationToken cancellationToken)
     {
-        await WaitForBackgroundProcessingPermitAsync(cancellationToken);
+        var selectedManifestPath = await WaitForBackgroundProcessingPermitAsync(manifestPath, cancellationToken);
+        if (string.IsNullOrWhiteSpace(selectedManifestPath))
+        {
+            return;
+        }
+
+        manifestPath = selectedManifestPath;
         await ApplyDeferredSpeakerLabelingIfConfiguredAsync(manifestPath, cancellationToken);
         await TryEnrichManifestAsync(manifestPath, cancellationToken);
         var workerResult = await RunWorkerAsync(manifestPath, AppDataPaths.GetConfigPath(), cancellationToken);
+        if (await TryHandlePreemptedManifestAsync(manifestPath, cancellationToken))
+        {
+            return;
+        }
+
         if (workerResult.ExitCode == 0)
         {
+            await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
             return;
         }
 
         if (await TryRecoverFromDiarizationWorkerCrashAsync(manifestPath, workerResult, cancellationToken))
         {
+            await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
             return;
         }
 
         LogWorkerFailure(manifestPath, workerResult);
+        await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
     }
 
     private async Task TryEnrichManifestAsync(string manifestPath, CancellationToken cancellationToken)
@@ -711,6 +795,147 @@ internal sealed class ProcessingQueueService
         return Path.Combine(archiveRoot, $"{sessionName}-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}");
     }
 
+    private async Task NormalizeRushProcessingRequestAsync(CancellationToken cancellationToken)
+    {
+        var rushRequest = _config.Current.RushProcessingRequest;
+        if (rushRequest is null)
+        {
+            return;
+        }
+
+        if (!File.Exists(rushRequest.ManifestPath))
+        {
+            await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
+            return;
+        }
+
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(rushRequest.ManifestPath, cancellationToken);
+            if (!IsRushEligible(manifest))
+            {
+                await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
+            }
+        }
+        catch
+        {
+            await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
+        }
+    }
+
+    private async Task ClearRushProcessingRequestIfCompletedAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        var rushRequest = _config.Current.RushProcessingRequest;
+        if (rushRequest is null ||
+            !string.Equals(rushRequest.ManifestPath, manifestPath, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await NormalizeRushProcessingRequestAsync(cancellationToken);
+        PublishStatusSnapshot(UpdateStatusSnapshot());
+    }
+
+    private async Task<bool> TryHandlePreemptedManifestAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(_preemptedManifestPath, manifestPath, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        _preemptedManifestPath = null;
+        if (!IsRushEligible(manifest))
+        {
+            return false;
+        }
+
+        var updatedManifest = await ResetManifestForRushPreemptionAsync(manifestPath, manifest, cancellationToken);
+        var queueEntry = CreateQueueEntry(updatedManifest, manifestPath);
+        ProcessingQueueStatusSnapshot? snapshotToPublish;
+        lock (_processSyncRoot)
+        {
+            UpsertQueuedEntryLocked(queueEntry, preferFront: false, markPreempted: true);
+            snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+        }
+
+        PublishStatusSnapshot(snapshotToPublish);
+        return true;
+    }
+
+    private async Task<MeetingSessionManifest> ResetManifestForRushPreemptionAsync(
+        string manifestPath,
+        MeetingSessionManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var speakerLabelingSkipped = manifest.ProcessingOverrides?.SkipSpeakerLabeling == true;
+        var transcriptionStatus = ResetRunningStage(manifest.TranscriptionStatus, now);
+        var diarizationStatus = ResetRunningStage(manifest.DiarizationStatus, now);
+        var publishStatus = ResetRunningStage(manifest.PublishStatus, now);
+        if (transcriptionStatus.State == StageExecutionState.NotStarted)
+        {
+            transcriptionStatus = QueueInterruptedStage(transcriptionStatus, now);
+        }
+        else if (transcriptionStatus.State == StageExecutionState.Succeeded &&
+                 diarizationStatus.State == StageExecutionState.NotStarted &&
+                 publishStatus.State != StageExecutionState.Succeeded)
+        {
+            diarizationStatus = QueueInterruptedStage(diarizationStatus, now);
+        }
+        else if (transcriptionStatus.State == StageExecutionState.Succeeded &&
+                 (speakerLabelingSkipped || diarizationStatus.State == StageExecutionState.Succeeded) &&
+                 publishStatus.State == StageExecutionState.NotStarted)
+        {
+            publishStatus = QueueInterruptedStage(publishStatus, now);
+        }
+
+        var updatedManifest = manifest with
+        {
+            State = SessionState.Queued,
+            ErrorSummary = null,
+            TranscriptionStatus = transcriptionStatus,
+            DiarizationStatus = diarizationStatus,
+            PublishStatus = publishStatus,
+        };
+
+        await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+        return updatedManifest;
+    }
+
+    private async Task<MeetingSessionManifest> ResetManifestForRushPreemptionAsync(
+        string manifestPath,
+        CancellationToken cancellationToken)
+    {
+        var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        return await ResetManifestForRushPreemptionAsync(manifestPath, manifest, cancellationToken);
+    }
+
+    private static ProcessingStageStatus ResetRunningStage(ProcessingStageStatus stageStatus, DateTimeOffset now)
+    {
+        return stageStatus.State == StageExecutionState.Running
+            ? new ProcessingStageStatus(
+                stageStatus.StageName,
+                StageExecutionState.Queued,
+                now,
+                "Interrupted so an ASAP meeting could run first.")
+            : stageStatus;
+    }
+
+    private static ProcessingStageStatus QueueInterruptedStage(ProcessingStageStatus stageStatus, DateTimeOffset now)
+    {
+        return new ProcessingStageStatus(
+            stageStatus.StageName,
+            StageExecutionState.Queued,
+            now,
+            "Interrupted so an ASAP meeting could run first.");
+    }
+
+    private static bool IsRushEligible(MeetingSessionManifest manifest)
+    {
+        return manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing;
+    }
+
     private string GetMaintenanceArchiveRoot()
     {
         var configDirectory = Path.GetDirectoryName(_config.ConfigPath)
@@ -802,6 +1027,74 @@ internal sealed class ProcessingQueueService
         if (index >= 0)
         {
             _queuedManifestEntries.RemoveAt(index);
+        }
+    }
+
+    private bool UpsertQueuedEntryLocked(
+        QueuedManifestStatusEntry queueEntry,
+        bool preferFront,
+        bool markPreempted)
+    {
+        if (_currentItemState is not null &&
+            string.Equals(_currentItemState.Summary.ManifestPath, queueEntry.ManifestPath, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var existingIndex = _queuedManifestEntries.FindIndex(entry =>
+            string.Equals(entry.ManifestPath, queueEntry.ManifestPath, StringComparison.Ordinal));
+        if (existingIndex >= 0)
+        {
+            var existing = _queuedManifestEntries[existingIndex];
+            _queuedManifestEntries.RemoveAt(existingIndex);
+            queueEntry = queueEntry with { WasPreempted = existing.WasPreempted || markPreempted };
+        }
+        else if (markPreempted)
+        {
+            queueEntry = queueEntry with { WasPreempted = true };
+        }
+
+        if (preferFront)
+        {
+            _queuedManifestEntries.Insert(0, queueEntry);
+        }
+        else if (markPreempted && _config.Current.RushProcessingRequest is { } rushRequest)
+        {
+            var rushIndex = _queuedManifestEntries.FindIndex(entry =>
+                string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal));
+            var insertIndex = rushIndex >= 0 ? rushIndex + 1 : 0;
+            _queuedManifestEntries.Insert(insertIndex, queueEntry);
+        }
+        else
+        {
+            _queuedManifestEntries.Add(queueEntry);
+        }
+
+        return true;
+    }
+
+    private bool TryDequeueNextManifestPath(out string manifestPath)
+    {
+        lock (_processSyncRoot)
+        {
+            if (_queuedManifestEntries.Count == 0)
+            {
+                manifestPath = string.Empty;
+                return false;
+            }
+
+            var rushRequest = _config.Current.RushProcessingRequest;
+            var dequeueIndex = rushRequest is null
+                ? 0
+                : _queuedManifestEntries.FindIndex(entry =>
+                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal));
+            if (dequeueIndex < 0)
+            {
+                dequeueIndex = 0;
+            }
+
+            manifestPath = _queuedManifestEntries[dequeueIndex].ManifestPath;
+            return true;
         }
     }
 
@@ -968,6 +1261,7 @@ internal sealed class ProcessingQueueService
     {
         var queuedCount = _queuedManifestEntries.Count;
         var totalRemainingCount = queuedCount + (_currentItemState is null ? 0 : 1);
+        var rushRequest = BuildRushedProcessingStateLocked();
         var runState = _currentItemState is not null
             ? ProcessingQueueRunState.Processing
             : _isBackgroundWorkPausedForRecording && queuedCount > 0
@@ -1005,7 +1299,10 @@ internal sealed class ProcessingQueueService
             _currentItemState?.ProcessingStartedAtUtc,
             currentItemEstimatedRemaining,
             overallEstimatedRemaining,
-            nowUtc);
+            nowUtc,
+            rushRequest,
+            IsRushPauseBypassActiveLocked(rushRequest),
+            _queuedManifestEntries.Any(entry => entry.WasPreempted));
     }
 
     private TimeSpan? EstimateQueuedRemainingLocked(DateTimeOffset nowUtc)
@@ -1148,10 +1445,17 @@ internal sealed class ProcessingQueueService
         }
     }
 
-    private async Task WaitForBackgroundProcessingPermitAsync(CancellationToken cancellationToken)
+    private async Task<string?> WaitForBackgroundProcessingPermitAsync(string manifestPath, CancellationToken cancellationToken)
     {
-        while (BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(_config.Current, _isRecordingProvider()))
+        while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            manifestPath = GetNextManifestPathCandidate() ?? manifestPath;
+            if (!ShouldPauseBackgroundProcessing(manifestPath))
+            {
+                break;
+            }
+
             if (!_isBackgroundWorkPausedForRecording)
             {
                 _isBackgroundWorkPausedForRecording = true;
@@ -1167,6 +1471,83 @@ internal sealed class ProcessingQueueService
             _isBackgroundWorkPausedForRecording = false;
             _logger.Log("Resuming background processing because the live recording pause condition cleared.");
             PublishStatusSnapshot(UpdateStatusSnapshot());
+        }
+
+        return GetNextManifestPathCandidate() ?? manifestPath;
+    }
+
+    private bool ShouldPauseBackgroundProcessing(string manifestPath)
+    {
+        var shouldPause = BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(_config.Current, _isRecordingProvider());
+        if (!shouldPause)
+        {
+            return false;
+        }
+
+        var rushRequest = _config.Current.RushProcessingRequest;
+        return rushRequest is null ||
+               rushRequest.Behavior != RushProcessingBehavior.RunNextIgnoreRecordingPause ||
+               !string.Equals(rushRequest.ManifestPath, manifestPath, StringComparison.Ordinal);
+    }
+
+    private RushedProcessingQueueState? BuildRushedProcessingStateLocked()
+    {
+        var rushRequest = _config.Current.RushProcessingRequest;
+        if (rushRequest is null)
+        {
+            return null;
+        }
+
+        var title = _currentItemState is not null &&
+                    string.Equals(_currentItemState.Summary.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal)
+            ? _currentItemState.Summary.Title
+            : _queuedManifestEntries.FirstOrDefault(entry =>
+                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal))?.Title;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = Path.GetFileNameWithoutExtension(Path.GetDirectoryName(rushRequest.ManifestPath) ?? rushRequest.ManifestPath);
+        }
+
+        return new RushedProcessingQueueState(
+            rushRequest.ManifestPath,
+            title ?? "Queued meeting",
+            rushRequest.Behavior,
+            rushRequest.RequestedAtUtc);
+    }
+
+    private bool IsRushPauseBypassActiveLocked(RushedProcessingQueueState? rushRequest)
+    {
+        if (rushRequest is null ||
+            rushRequest.Behavior != RushProcessingBehavior.RunNextIgnoreRecordingPause ||
+            !_isRecordingProvider())
+        {
+            return false;
+        }
+
+        return string.Equals(_currentItemState?.Summary.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal);
+    }
+
+    private string? GetNextManifestPathCandidate()
+    {
+        lock (_processSyncRoot)
+        {
+            if (_queuedManifestEntries.Count == 0)
+            {
+                return null;
+            }
+
+            var rushRequest = _config.Current.RushProcessingRequest;
+            if (rushRequest is not null)
+            {
+                var rushEntry = _queuedManifestEntries.FirstOrDefault(entry =>
+                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal));
+                if (rushEntry is not null)
+                {
+                    return rushEntry.ManifestPath;
+                }
+            }
+
+            return _queuedManifestEntries[0].ManifestPath;
         }
     }
 
@@ -1246,7 +1627,8 @@ internal sealed record QueuedManifestStatusEntry(
     bool ExpectsSpeakerLabeling,
     ProcessingStageStatus TranscriptionStatus,
     ProcessingStageStatus DiarizationStatus,
-    ProcessingStageStatus PublishStatus)
+    ProcessingStageStatus PublishStatus,
+    bool WasPreempted = false)
 {
     public IEnumerable<ProcessingStageStatus> GetStageStatuses()
     {

@@ -44,6 +44,12 @@ public enum BackgroundSpeakerLabelingMode
     Inline = 2,
 }
 
+public enum RushProcessingBehavior
+{
+    RunNextOnly = 0,
+    RunNextIgnoreRecordingPause = 1,
+}
+
 public enum PreferredTeamsIntegrationMode
 {
     Auto = 0,
@@ -208,6 +214,8 @@ public sealed record AppConfig
     public BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode { get; init; } =
         BackgroundSpeakerLabelingMode.Deferred;
 
+    public RushProcessingRequest? RushProcessingRequest { get; init; }
+
     public DateTimeOffset? LastUpdateCheckUtc { get; init; }
 
     public string InstalledReleaseVersion { get; init; } = string.Empty;
@@ -250,5 +258,10 @@ public sealed record AppConfig
     public IReadOnlyList<DismissedMeetingRecommendation> DismissedMeetingRecommendations { get; init; } =
         Array.Empty<DismissedMeetingRecommendation>();
 }
+
+public sealed record RushProcessingRequest(
+    string ManifestPath,
+    RushProcessingBehavior Behavior,
+    DateTimeOffset RequestedAtUtc);
 
 public sealed record DismissedMeetingRecommendation(string Fingerprint, DateTimeOffset DismissedAtUtc);

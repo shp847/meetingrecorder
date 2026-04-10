@@ -475,6 +475,7 @@
                             <Border x:Name="HomeRecordingConsoleBorder"
                                     MinWidth="1040"
                                     HorizontalAlignment="Stretch"
+                                    Padding="16"
                                     Style="{StaticResource ShellSurfaceCardStyle}">
                                 <Grid>
                                     <Grid.RowDefinitions>
@@ -487,15 +488,15 @@
                                         <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                    Text="SESSION TITLE (REQUIRED)" />
                                         <TextBox x:Name="CurrentMeetingTitleTextBox"
-                                                 Margin="0,10,0,0"
-                                                 Height="52"
+                                                 Margin="0,8,0,0"
+                                                 Height="48"
                                                  AcceptsReturn="False"
                                                  FontSize="22"
                                                  FontWeight="SemiBold"
                                                  TextWrapping="NoWrap"
                                                  VerticalContentAlignment="Center"
                                                  TextChanged="CurrentMeetingTitleTextBox_OnTextChanged" />
-                                        <Grid Margin="0,14,0,0">
+                                        <Grid Margin="0,12,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="16" />
@@ -506,8 +507,8 @@
                                                 <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                            Text="CLIENT / PROJECT (OPTIONAL)" />
                                                 <TextBox x:Name="CurrentMeetingProjectTextBox"
-                                                         Margin="0,8,0,0"
-                                                         Height="40"
+                                                         Margin="0,6,0,0"
+                                                         Height="38"
                                                          VerticalContentAlignment="Center"
                                                          TextChanged="CurrentMeetingProjectTextBox_OnTextChanged" />
                                             </StackPanel>
@@ -516,18 +517,18 @@
                                                 <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                            Text="KEY ATTENDEES (OPTIONAL)" />
                                                 <TextBox x:Name="CurrentMeetingKeyAttendeesTextBox"
-                                                         Margin="0,8,0,0"
-                                                         Height="40"
+                                                         Margin="0,6,0,0"
+                                                         Height="38"
                                                          ToolTip="Use commas or semicolons to separate attendees."
                                                          VerticalContentAlignment="Center"
                                                          TextChanged="CurrentMeetingKeyAttendeesTextBox_OnTextChanged" />
                                             </StackPanel>
                                         </Grid>
                                         <TextBlock x:Name="CurrentMeetingTitleStatusTextBlock"
-                                                   Margin="0,10,0,0"
+                                                   Margin="0,8,0,0"
                                                    Style="{StaticResource TechnicalMetaLabelStyle}" />
                                         <Grid x:Name="CurrentRecordingElapsedGrid"
-                                              Margin="0,8,0,0"
+                                              Margin="0,6,0,0"
                                               Visibility="Collapsed">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
@@ -542,11 +543,11 @@
                                                        Style="{StaticResource TechnicalMetaLabelStyle}" />
                                         </Grid>
                                         <TextBlock x:Name="CurrentDetectedAudioSourceTextBlock"
-                                                   Margin="0,8,0,0"
+                                                   Margin="0,6,0,0"
                                                    Foreground="#45504D"
                                                    TextWrapping="Wrap" />
-                                        <Border Margin="0,12,0,0"
-                                                Padding="12"
+                                        <Border Margin="0,10,0,0"
+                                                Padding="10"
                                                 CornerRadius="4"
                                                 Background="{StaticResource AppMutedCardBrush}"
                                                 BorderBrush="{StaticResource AppOutlineBrush}"
@@ -568,10 +569,11 @@
                                         </Border>
                                     </StackPanel>
 
-                                    <Border Grid.Row="1"
-                                            Margin="0,18,0,0"
-                                            Padding="16"
-                                            Height="220"
+                                    <Border x:Name="HomeAudioGraphBorder"
+                                            Grid.Row="1"
+                                            Margin="0,14,0,0"
+                                            Padding="12"
+                                            Height="184"
                                             CornerRadius="4"
                                             Background="{StaticResource AppMutedCardBrush}"
                                             BorderBrush="{StaticResource AppOutlineBrush}"
@@ -588,7 +590,7 @@
 
                                             <Canvas x:Name="AudioCaptureGraphCanvas"
                                                     Grid.Row="1"
-                                                    Margin="0,16,0,0"
+                                                    Margin="0,12,0,0"
                                                     SizeChanged="AudioCaptureGraphCanvas_OnSizeChanged">
                                                 <Polyline x:Name="AudioCaptureGraphPolyline"
                                                           Stroke="{StaticResource AppSignalBrush}"
@@ -601,7 +603,7 @@
                                     </Border>
 
                                     <Grid Grid.Row="2"
-                                          Margin="0,18,0,0">
+                                          Margin="0,14,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="16" />
@@ -610,13 +612,13 @@
                                             <Button x:Name="HomePrimaryActionButton"
                                                     Style="{StaticResource DashboardStartButtonStyle}"
                                                     Grid.Column="0"
-                                                    Height="52"
+                                                    Height="48"
                                                     Click="StartButton_OnClick"
                                                     Content="START" />
                                             <Button x:Name="StopButton"
                                                     Style="{StaticResource DashboardStopButtonStyle}"
                                                     Grid.Column="2"
-                                                    Height="52"
+                                                    Height="48"
                                                     Click="StopButton_OnClick"
                                                     Content="STOP" />
                                     </Grid>
@@ -625,35 +627,37 @@
 
                             <Grid x:Name="HomeQuickSettingsGrid"
                                   Grid.Row="1"
-                                  Margin="0,12,0,0"
+                                  Margin="0,10,0,0"
                                   HorizontalAlignment="Stretch"
                                   VerticalAlignment="Top">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="12" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
                                 <Border x:Name="HomeMicCaptureQuickSettingBorder"
+                                        Padding="14,12"
                                         Style="{StaticResource ShellSurfaceCardStyle}">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
+                                    <Grid x:Name="HomeMicCaptureQuickSettingContentGrid">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
 
-                                        <StackPanel>
+                                        <StackPanel VerticalAlignment="Center">
                                             <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                        Text="MICROPHONE CAPTURE" />
                                             <TextBlock x:Name="HomeMicCaptureQuickSettingSummaryTextBlock"
-                                                       Margin="0,8,0,0"
+                                                       Margin="0,6,0,0"
                                                        Style="{StaticResource MutedHelperTextStyle}" />
                                         </StackPanel>
 
                                         <Grid x:Name="HomeMicCaptureToggleGrid"
-                                              Grid.Row="1"
-                                              Margin="0,14,0,0"
-                                              HorizontalAlignment="Left">
+                                              Grid.Column="2"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Center">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="12" />
@@ -675,25 +679,27 @@
 
                                 <Border x:Name="HomeAutoDetectQuickSettingBorder"
                                         Grid.Column="2"
+                                        Padding="14,12"
                                         Style="{StaticResource ShellSurfaceCardStyle}">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
+                                    <Grid x:Name="HomeAutoDetectQuickSettingContentGrid">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
 
-                                        <StackPanel>
+                                        <StackPanel VerticalAlignment="Center">
                                             <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                        Text="AUTOMATIC DETECTION" />
                                             <TextBlock x:Name="HomeAutoDetectQuickSettingSummaryTextBlock"
-                                                       Margin="0,8,0,0"
+                                                       Margin="0,6,0,0"
                                                        Style="{StaticResource MutedHelperTextStyle}" />
                                         </StackPanel>
 
                                         <Grid x:Name="HomeAutoDetectToggleGrid"
-                                              Grid.Row="1"
-                                              Margin="0,14,0,0"
-                                              HorizontalAlignment="Left">
+                                              Grid.Column="2"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Center">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="12" />
@@ -1007,6 +1013,9 @@
                                         <MenuItem x:Name="AddSpeakerLabelsContextMenuItem"
                                                   Header="Add Speaker Labels"
                                                   Click="AddSpeakerLabelsContextMenuItem_OnClick" />
+                                        <MenuItem x:Name="ProcessAsapContextMenuItem"
+                                                  Header="Process ASAP..."
+                                                  Click="ProcessAsapContextMenuItem_OnClick" />
                                         <MenuItem x:Name="SplitMeetingContextMenuItem"
                                                   Header="Split"
                                                   Click="SplitMeetingContextMenuItem_OnClick" />
@@ -1312,6 +1321,12 @@
                                                     Margin="0,0,12,12"
                                                     Click="RetryTranscriptActionButton_OnClick"
                                                     Content="Retry Transcript" />
+                                            <Button x:Name="ProcessAsapActionButton"
+                                                    Width="170"
+                                                    Height="34"
+                                                    Margin="0,0,12,12"
+                                                    Click="ProcessAsapActionButton_OnClick"
+                                                    Content="Process ASAP..." />
                                             <Button x:Name="SplitMeetingActionButton"
                                                     Width="120"
                                                     Height="34"

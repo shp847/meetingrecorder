@@ -270,6 +270,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             MeetingsSortKey = NormalizeEnum(config.MeetingsSortKey, defaults.MeetingsSortKey),
             MeetingsSortDescending = config.MeetingsSortDescending,
             MeetingsGroupKey = NormalizeEnum(config.MeetingsGroupKey, defaults.MeetingsGroupKey),
+            RushProcessingRequest = NormalizeRushProcessingRequest(config.RushProcessingRequest),
             DismissedMeetingRecommendations = NormalizeDismissedMeetingRecommendations(config.DismissedMeetingRecommendations),
         };
     }
@@ -302,6 +303,19 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             .OrderBy(item => item.DismissedAtUtc)
             .TakeLast(256)
             .ToArray();
+    }
+
+    private static RushProcessingRequest? NormalizeRushProcessingRequest(RushProcessingRequest? rushProcessingRequest)
+    {
+        if (rushProcessingRequest is null || string.IsNullOrWhiteSpace(rushProcessingRequest.ManifestPath))
+        {
+            return null;
+        }
+
+        return new RushProcessingRequest(
+            rushProcessingRequest.ManifestPath.Trim(),
+            NormalizeEnum(rushProcessingRequest.Behavior, RushProcessingBehavior.RunNextOnly),
+            rushProcessingRequest.RequestedAtUtc);
     }
 
     private static TranscriptionModelProfilePreference InferTranscriptionModelProfilePreference(

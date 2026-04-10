@@ -193,6 +193,229 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task RequestRushProcessingAsync_Moves_The_Selected_Queued_Item_To_The_Front_Of_Backlog()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var isRecording = true;
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory,
+            () => isRecording);
+
+        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(15));
+        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(20));
+
+        await service.EnqueueAsync(firstManifestPath);
+        await service.EnqueueAsync(secondManifestPath);
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().RunState == ProcessingQueueRunState.Paused);
+
+        await service.RequestRushProcessingAsync(secondManifestPath, RushProcessingBehavior.RunNextOnly);
+
+        isRecording = false;
+        var process = await processFactory.WaitForStartAsync();
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, secondManifestPath, StringComparison.Ordinal));
+
+        var snapshot = service.GetStatusSnapshot();
+
+        Assert.Equal(secondManifestPath, snapshot.CurrentManifestPath);
+        Assert.NotNull(snapshot.RushRequest);
+        Assert.Equal(secondManifestPath, snapshot.RushRequest!.ManifestPath);
+
+        process.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task RequestRushProcessingAsync_Preempts_The_Current_Worker_And_Requeues_The_Interrupted_Item_Behind_The_Rushed_Meeting()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new SequencedWorkerProcessFactory(
+            new FakeWorkerProcess { AutoCompleteOnKill = true },
+            new FakeWorkerProcess(),
+            new FakeWorkerProcess());
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(30));
+        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+
+        await service.EnqueueAsync(firstManifestPath);
+        await service.EnqueueAsync(secondManifestPath);
+
+        var firstProcess = await processFactory.WaitForStartAsync(0);
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, firstManifestPath, StringComparison.Ordinal));
+
+        await service.RequestRushProcessingAsync(secondManifestPath, RushProcessingBehavior.RunNextOnly);
+        await WaitForConditionAsync(() => firstProcess.KillCalled);
+
+        var secondProcess = await processFactory.WaitForStartAsync(1);
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, secondManifestPath, StringComparison.Ordinal));
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().HasPreemptedItem);
+
+        var interruptedManifest = await manifestStore.LoadAsync(firstManifestPath);
+
+        Assert.Equal(SessionState.Queued, interruptedManifest.State);
+        Assert.True(interruptedManifest.TranscriptionStatus.State is StageExecutionState.Queued or StageExecutionState.Succeeded);
+
+        secondProcess.CompleteExit();
+        var resumedProcess = await processFactory.WaitForStartAsync(2);
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, firstManifestPath, StringComparison.Ordinal));
+
+        resumedProcess.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task RequestRushProcessingAsync_RunNextIgnoreRecordingPause_Starts_Despite_A_Live_Recording()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory,
+            () => true);
+
+        var manifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(12));
+
+        await service.EnqueueAsync(manifestPath);
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().RunState == ProcessingQueueRunState.Paused);
+
+        await service.RequestRushProcessingAsync(manifestPath, RushProcessingBehavior.RunNextIgnoreRecordingPause);
+
+        var process = await processFactory.WaitForStartAsync();
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().IsRushPauseBypassActive);
+
+        Assert.Equal(manifestPath, service.GetStatusSnapshot().CurrentManifestPath);
+
+        process.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task ResumePendingSessionsAsync_Honors_A_Persisted_Rush_Request_After_Restart()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var documentsPath = Path.Combine(root, "documents");
+        var configStore = new AppConfigStore(configPath, documentsPath);
+        var initialConfig = await configStore.LoadOrCreateAsync();
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, initialConfig.WorkDir, TimeSpan.FromMinutes(8));
+        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, initialConfig.WorkDir, TimeSpan.FromMinutes(22));
+        await configStore.SaveAsync(initialConfig with
+        {
+            RushProcessingRequest = new RushProcessingRequest(
+                secondManifestPath,
+                RushProcessingBehavior.RunNextOnly,
+                DateTimeOffset.UtcNow),
+        });
+
+        var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        await service.ResumePendingSessionsAsync();
+
+        var process = await processFactory.WaitForStartAsync();
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, secondManifestPath, StringComparison.Ordinal));
+
+        Assert.Equal(secondManifestPath, service.GetStatusSnapshot().CurrentManifestPath);
+
+        process.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task ResumePendingSessionsAsync_Clears_A_Stale_Persisted_Rush_Request()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var initialConfig = await configStore.LoadOrCreateAsync();
+        await configStore.SaveAsync(initialConfig with
+        {
+            RushProcessingRequest = new RushProcessingRequest(
+                Path.Combine(root, "missing", "manifest.json"),
+                RushProcessingBehavior.RunNextOnly,
+                DateTimeOffset.UtcNow),
+        });
+
+        var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            new FakeWorkerProcessFactory());
+
+        await service.ResumePendingSessionsAsync();
+
+        Assert.Null(liveConfig.Current.RushProcessingRequest);
+
+        await service.StopAsync();
+    }
+
+    [Fact]
     public async Task GetStatusSnapshot_Reports_Paused_State_And_Pause_Reason_While_A_Live_Recording_Blocks_Background_Work()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -966,6 +1189,8 @@ public sealed class ProcessingQueueServiceTests
 
         public bool KillCalled { get; private set; }
 
+        public bool AutoCompleteOnKill { get; set; }
+
         public ProcessPriorityClass? PriorityClass { get; private set; }
 
         public string StandardOutputText { get; set; } = string.Empty;
@@ -990,6 +1215,10 @@ public sealed class ProcessingQueueServiceTests
         public void Kill(bool entireProcessTree)
         {
             KillCalled = true;
+            if (AutoCompleteOnKill)
+            {
+                CompleteExit();
+            }
         }
 
         public void SetPriority(ProcessPriorityClass priorityClass)
