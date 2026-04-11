@@ -2439,7 +2439,7 @@
                                         <TextBlock Grid.Row="3"
                                                    Margin="0,0,12,8"
                                                    VerticalAlignment="Center"
-                                                   Text="Installed publish date" />
+                                                   Text="Installed on (UTC)" />
                                         <TextBlock x:Name="InstalledReleasePublishedAtTextBlock"
                                                    Grid.Row="3"
                                                    Grid.Column="1"
@@ -2448,7 +2448,7 @@
                                         <TextBlock Grid.Row="4"
                                                    Margin="0,0,12,0"
                                                    VerticalAlignment="Center"
-                                                   Text="Installed asset size" />
+                                                   Text="Install footprint" />
                                         <TextBlock x:Name="InstalledReleaseAssetSizeTextBlock"
                                                    Grid.Row="4"
                                                    Grid.Column="1"

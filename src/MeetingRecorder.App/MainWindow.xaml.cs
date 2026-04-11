@@ -6079,12 +6079,16 @@ public partial class MainWindow : Window
 
     private void RefreshUpdateMetadataDisplay(AppConfig config, AppUpdateCheckResult? result)
     {
+        var installedDiagnostics = InstalledApplicationDiagnosticsService.Inspect(
+            Environment.ProcessPath,
+            AppContext.BaseDirectory);
+
         InstalledAppVersionTextBlock.Text = FormatVersionLabel(AppBranding.Version);
         InstalledReleaseVersionTextBlock.Text = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion)
             ? FormatVersionLabel(AppBranding.Version)
             : FormatVersionLabel(config.InstalledReleaseVersion);
-        InstalledReleasePublishedAtTextBlock.Text = FormatUpdateTimestamp(config.InstalledReleasePublishedAtUtc);
-        InstalledReleaseAssetSizeTextBlock.Text = FormatUpdateSize(config.InstalledReleaseAssetSizeBytes);
+        InstalledReleasePublishedAtTextBlock.Text = FormatUpdateTimestamp(installedDiagnostics.InstalledAtUtc);
+        InstalledReleaseAssetSizeTextBlock.Text = FormatUpdateSize(installedDiagnostics.InstallFootprintBytes);
         LastUpdateCheckTextBlock.Text = config.LastUpdateCheckUtc.HasValue
             ? $"Last checked: {FormatUpdateTimestamp(config.LastUpdateCheckUtc)}"
             : "Last checked: the app has not queried GitHub yet.";

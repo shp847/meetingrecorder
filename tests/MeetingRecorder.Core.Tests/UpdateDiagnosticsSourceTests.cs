@@ -1,0 +1,49 @@
+using System.IO;
+
+namespace MeetingRecorder.Core.Tests;
+
+public sealed class UpdateDiagnosticsSourceTests
+{
+    [Fact]
+    public void Updates_Tab_Labels_Current_Installation_As_Local_Install_Facts()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("Text=\"Installed on (UTC)\"", xaml);
+        Assert.Contains("Text=\"Install footprint\"", xaml);
+        Assert.DoesNotContain("Text=\"Installed publish date\"", xaml);
+        Assert.DoesNotContain("Text=\"Installed asset size\"", xaml);
+    }
+
+    [Fact]
+    public void RefreshUpdateMetadataDisplay_Uses_Installed_Application_Diagnostics_Rather_Than_Release_Metadata_Config()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private void RefreshUpdateMetadataDisplay", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private string BuildUpdateAutomationSummary", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("InstalledApplicationDiagnosticsService.Inspect(", methodBlock);
+        Assert.Contains("installedDiagnostics.InstalledAtUtc", methodBlock);
+        Assert.Contains("installedDiagnostics.InstallFootprintBytes", methodBlock);
+        Assert.DoesNotContain("config.InstalledReleasePublishedAtUtc", methodBlock);
+        Assert.DoesNotContain("config.InstalledReleaseAssetSizeBytes", methodBlock);
+    }
+
+    private static string GetPath(params string[] segments)
+    {
+        var pathSegments = new[]
+        {
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+        }.Concat(segments).ToArray();
+
+        return Path.GetFullPath(Path.Combine(pathSegments));
+    }
+}
