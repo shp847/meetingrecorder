@@ -11,9 +11,9 @@ public sealed class UpdateDiagnosticsSourceTests
         var xaml = File.ReadAllText(xamlPath);
 
         Assert.Contains("Text=\"Installed on (UTC)\"", xaml);
-        Assert.Contains("Text=\"Install footprint\"", xaml);
-        Assert.DoesNotContain("Text=\"Installed publish date\"", xaml);
-        Assert.DoesNotContain("Text=\"Installed asset size\"", xaml);
+        Assert.Contains("Text=\"Installed package published (UTC)\"", xaml);
+        Assert.Contains("Text=\"Installed package size\"", xaml);
+        Assert.DoesNotContain("Text=\"Install footprint\"", xaml);
     }
 
     [Fact]
@@ -27,9 +27,22 @@ public sealed class UpdateDiagnosticsSourceTests
 
         Assert.Contains("InstalledApplicationDiagnosticsService.Inspect(", methodBlock);
         Assert.Contains("installedDiagnostics.InstalledAtUtc", methodBlock);
-        Assert.Contains("installedDiagnostics.InstallFootprintBytes", methodBlock);
-        Assert.DoesNotContain("config.InstalledReleasePublishedAtUtc", methodBlock);
-        Assert.DoesNotContain("config.InstalledReleaseAssetSizeBytes", methodBlock);
+        Assert.Contains("installedDiagnostics.InstalledReleasePublishedAtUtc", methodBlock);
+        Assert.Contains("installedDiagnostics.InstalledReleaseAssetSizeBytes", methodBlock);
+    }
+
+    [Fact]
+    public void BuildLocalUpdateState_Uses_Resolved_Installed_Diagnostics_Metadata_Before_Config_Fallback()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private AppUpdateLocalState BuildLocalUpdateState", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool TryGetUpdateInstallBlockReason", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("InstalledApplicationDiagnosticsService.Inspect(", methodBlock);
+        Assert.Contains("installedDiagnostics.InstalledReleasePublishedAtUtc ?? config.InstalledReleasePublishedAtUtc", methodBlock);
+        Assert.Contains("installedDiagnostics.InstalledReleaseAssetSizeBytes ?? config.InstalledReleaseAssetSizeBytes", methodBlock);
     }
 
     private static string GetPath(params string[] segments)

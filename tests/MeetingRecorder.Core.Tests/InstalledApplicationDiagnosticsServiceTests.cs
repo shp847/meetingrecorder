@@ -13,23 +13,35 @@ public sealed class InstalledApplicationDiagnosticsServiceTests : IDisposable
     }
 
     [Fact]
-    public void Inspect_Uses_Install_Provenance_Write_Time_And_Installed_Root_Footprint()
+    public void Inspect_Uses_Explicit_Install_Provenance_Metadata_When_Available()
     {
         var installRoot = CreateDirectory("install-root");
         var appRoot = CreateDirectory("app-root");
         var executablePath = CreateFile(installRoot, "MeetingRecorder.App.exe", 12);
+        File.SetLastWriteTimeUtc(executablePath, new DateTime(2026, 4, 20, 12, 0, 0, DateTimeKind.Utc));
         CreateFile(installRoot, Path.Combine("runtimes", "runtime.dll"), 7);
-        var provenancePath = CreateFile(appRoot, "install-provenance.json", 5);
-        var provenanceTimestampUtc = new DateTime(2026, 4, 10, 12, 34, 56, DateTimeKind.Utc);
-        File.SetLastWriteTimeUtc(provenancePath, provenanceTimestampUtc);
+        File.WriteAllText(
+            Path.Combine(appRoot, "install-provenance.json"),
+            """
+            {
+              "initialChannel": "CommandBootstrap",
+              "lastUpdateChannel": "AutoUpdate",
+              "initialVersion": "0.3",
+              "lastInstalledVersion": "0.3",
+              "lastInstalledAtUtc": "2026-04-20T13:54:17Z",
+              "lastReleasePublishedAtUtc": "2026-04-20T13:26:09Z",
+              "lastReleaseAssetSizeBytes": 158519569
+            }
+            """);
 
         var result = InstalledApplicationDiagnosticsService.InspectFromPaths(
             installRoot,
             executablePath,
             appRoot);
 
-        Assert.Equal(new DateTimeOffset(provenanceTimestampUtc), result.InstalledAtUtc);
-        Assert.Equal(19, result.InstallFootprintBytes);
+        Assert.Equal(DateTimeOffset.Parse("2026-04-20T13:54:17Z"), result.InstalledAtUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-04-20T13:26:09Z"), result.InstalledReleasePublishedAtUtc);
+        Assert.Equal(158519569, result.InstalledReleaseAssetSizeBytes);
     }
 
     [Fact]
@@ -47,7 +59,8 @@ public sealed class InstalledApplicationDiagnosticsServiceTests : IDisposable
             appRoot);
 
         Assert.Equal(new DateTimeOffset(executableTimestampUtc), result.InstalledAtUtc);
-        Assert.Equal(12, result.InstallFootprintBytes);
+        Assert.Null(result.InstalledReleasePublishedAtUtc);
+        Assert.Null(result.InstalledReleaseAssetSizeBytes);
     }
 
     public void Dispose()

@@ -615,6 +615,7 @@ public sealed class PortableBundleInstaller
         bool isUpdate)
     {
         var existingProvenance = _provenanceStore.TryLoad(manifest.ManagedInstallLayout.DataRoot);
+        var installedAtUtc = DateTimeOffset.UtcNow;
         var resolvedChannel = request.Channel is InstallChannel.Unknown
             ? InstallChannel.DirectCli
             : request.Channel;
@@ -623,13 +624,24 @@ public sealed class PortableBundleInstaller
             : request.ReleaseVersion;
 
         var updatedProvenance = existingProvenance is null
-            ? CreateInitialInstallProvenance(isUpdate, resolvedChannel, resolvedVersion)
+            ? CreateInitialInstallProvenance(
+                isUpdate,
+                resolvedChannel,
+                resolvedVersion,
+                installedAtUtc,
+                request.ReleasePublishedAtUtc,
+                request.ReleaseAssetSizeBytes)
             : existingProvenance with
             {
                 LastUpdateChannel = resolvedChannel,
                 LastInstalledVersion = string.IsNullOrWhiteSpace(resolvedVersion)
                     ? existingProvenance.LastInstalledVersion
                     : resolvedVersion,
+                LastInstalledAtUtc = installedAtUtc,
+                LastReleasePublishedAtUtc = request.ReleasePublishedAtUtc ?? existingProvenance.LastReleasePublishedAtUtc,
+                LastReleaseAssetSizeBytes = request.ReleaseAssetSizeBytes is > 0
+                    ? request.ReleaseAssetSizeBytes
+                    : existingProvenance.LastReleaseAssetSizeBytes,
             };
 
         _provenanceStore.Save(manifest.ManagedInstallLayout.DataRoot, updatedProvenance);
@@ -638,7 +650,10 @@ public sealed class PortableBundleInstaller
     private static InstallProvenance CreateInitialInstallProvenance(
         bool isUpdate,
         InstallChannel channel,
-        string releaseVersion)
+        string releaseVersion,
+        DateTimeOffset installedAtUtc,
+        DateTimeOffset? releasePublishedAtUtc,
+        long? releaseAssetSizeBytes)
     {
         if (isUpdate)
         {
@@ -646,13 +661,19 @@ public sealed class PortableBundleInstaller
                 InitialChannel: InstallChannel.Unknown,
                 LastUpdateChannel: channel,
                 InitialVersion: string.Empty,
-                LastInstalledVersion: releaseVersion);
+                LastInstalledVersion: releaseVersion,
+                LastInstalledAtUtc: installedAtUtc,
+                LastReleasePublishedAtUtc: releasePublishedAtUtc,
+                LastReleaseAssetSizeBytes: releaseAssetSizeBytes);
         }
 
         return new InstallProvenance(
             InitialChannel: channel,
             LastUpdateChannel: channel,
             InitialVersion: releaseVersion,
-            LastInstalledVersion: releaseVersion);
+            LastInstalledVersion: releaseVersion,
+            LastInstalledAtUtc: installedAtUtc,
+            LastReleasePublishedAtUtc: releasePublishedAtUtc,
+            LastReleaseAssetSizeBytes: releaseAssetSizeBytes);
     }
 }

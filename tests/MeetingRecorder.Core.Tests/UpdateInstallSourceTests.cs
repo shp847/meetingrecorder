@@ -39,7 +39,8 @@ public sealed class UpdateInstallSourceTests
         var methodEnd = source.IndexOf("private async Task InstallAvailableUpdateAsync", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        Assert.Contains("MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, AppBranding.Version)", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("var localUpdateState = BuildLocalUpdateState(config);", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, localUpdateState)", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("string.Equals(config.PendingUpdateVersion, AppBranding.Version", methodBlock, StringComparison.Ordinal);
     }
 

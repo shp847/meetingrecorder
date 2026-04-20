@@ -5670,6 +5670,7 @@ public partial class MainWindow : Window
     private async Task<bool> TryInstallPendingDownloadedUpdateIfIdleAsync(string source, CancellationToken cancellationToken)
     {
         var config = _liveConfig.Current;
+        var localUpdateState = BuildLocalUpdateState(config);
         if (!_appUpdateInstallPolicy.ShouldRetryPendingInstall(
                 config.PendingUpdateZipPath,
                 config.PendingUpdateVersion,
@@ -5681,7 +5682,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, AppBranding.Version))
+        if (MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, localUpdateState))
         {
             AppendActivity($"Clearing pending update {FormatVersionLabel(config.PendingUpdateVersion)} because this app version is already installed.");
             var promotedConfig = MainWindowInteractionLogic.PromotePendingUpdateToInstalledReleaseMetadata(config, AppBranding.Version);
@@ -6018,13 +6019,17 @@ public partial class MainWindow : Window
 
     private AppUpdateLocalState BuildLocalUpdateState(AppConfig config)
     {
+        var installedDiagnostics = InstalledApplicationDiagnosticsService.Inspect(
+            Environment.ProcessPath,
+            AppContext.BaseDirectory);
+
         return new AppUpdateLocalState(
             AppBranding.Version,
             string.IsNullOrWhiteSpace(config.InstalledReleaseVersion)
                 ? AppBranding.Version
                 : config.InstalledReleaseVersion,
-            config.InstalledReleasePublishedAtUtc,
-            config.InstalledReleaseAssetSizeBytes);
+            installedDiagnostics.InstalledReleasePublishedAtUtc ?? config.InstalledReleasePublishedAtUtc,
+            installedDiagnostics.InstalledReleaseAssetSizeBytes ?? config.InstalledReleaseAssetSizeBytes);
     }
 
     private bool TryGetUpdateInstallBlockReason(out string reason, bool allowCurrentInstallInProgress = false)
@@ -6087,8 +6092,11 @@ public partial class MainWindow : Window
         InstalledReleaseVersionTextBlock.Text = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion)
             ? FormatVersionLabel(AppBranding.Version)
             : FormatVersionLabel(config.InstalledReleaseVersion);
-        InstalledReleasePublishedAtTextBlock.Text = FormatUpdateTimestamp(installedDiagnostics.InstalledAtUtc);
-        InstalledReleaseAssetSizeTextBlock.Text = FormatUpdateSize(installedDiagnostics.InstallFootprintBytes);
+        InstalledOnTextBlock.Text = FormatUpdateTimestamp(installedDiagnostics.InstalledAtUtc);
+        InstalledReleasePublishedAtTextBlock.Text = FormatUpdateTimestamp(
+            installedDiagnostics.InstalledReleasePublishedAtUtc ?? config.InstalledReleasePublishedAtUtc);
+        InstalledReleaseAssetSizeTextBlock.Text = FormatUpdateSize(
+            installedDiagnostics.InstalledReleaseAssetSizeBytes ?? config.InstalledReleaseAssetSizeBytes);
         LastUpdateCheckTextBlock.Text = config.LastUpdateCheckUtc.HasValue
             ? $"Last checked: {FormatUpdateTimestamp(config.LastUpdateCheckUtc)}"
             : "Last checked: the app has not queried GitHub yet.";

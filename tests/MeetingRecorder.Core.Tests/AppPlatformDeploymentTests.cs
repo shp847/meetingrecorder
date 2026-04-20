@@ -578,6 +578,9 @@ public sealed class AppPlatformDeploymentTests
             Assert.Contains("CommandBootstrap", provenanceContents, StringComparison.Ordinal);
             Assert.Contains("\"initialVersion\": \"0.3\"", provenanceContents, StringComparison.Ordinal);
             Assert.Contains("\"lastInstalledVersion\": \"0.3\"", provenanceContents, StringComparison.Ordinal);
+            Assert.Contains("\"lastInstalledAtUtc\":", provenanceContents, StringComparison.Ordinal);
+            Assert.Contains("\"lastReleasePublishedAtUtc\": \"2026-03-22T14:22:00+00:00\"", provenanceContents, StringComparison.Ordinal);
+            Assert.Contains("\"lastReleaseAssetSizeBytes\": 72000000", provenanceContents, StringComparison.Ordinal);
         }
         finally
         {

@@ -46,7 +46,7 @@ If you already have a downloaded release ZIP, you can still use the manual path:
 
 By default, the installers preserve existing user data on update so recordings, transcripts, logs, models, and config are not wiped. The thin script/bootstrap wrappers now delegate install and update execution to the bundled `AppPlatform.Deployment.Cli` helper instead of mutating app config themselves.
 The portable bundle now ships with `bundle-integrity.json`, and the shared deployment CLI validates that manifest before it touches the managed install root.
-The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`.
+The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-on timestamp plus the installed package published-at and asset size used by the in-app updater.
 The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%USERPROFILE%\Documents\MeetingRecorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
 
 User-facing installer and updater rule:

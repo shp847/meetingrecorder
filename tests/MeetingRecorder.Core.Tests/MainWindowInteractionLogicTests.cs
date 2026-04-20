@@ -1928,4 +1928,29 @@ public sealed class MainWindowInteractionLogicTests
 
         Assert.True(result);
     }
+
+    [Fact]
+    public void IsPendingUpdateAlreadyInstalled_Uses_Resolved_Installed_Metadata_When_Config_Is_Stale()
+    {
+        var pendingPublishedAtUtc = DateTimeOffset.Parse("2026-04-20T13:26:09Z");
+        var config = new AppConfig
+        {
+            InstalledReleaseVersion = "0.3",
+            InstalledReleasePublishedAtUtc = DateTimeOffset.Parse("2026-03-23T23:01:49Z"),
+            InstalledReleaseAssetSizeBytes = 104_047_356,
+            PendingUpdateVersion = "0.3",
+            PendingUpdatePublishedAtUtc = pendingPublishedAtUtc,
+            PendingUpdateAssetSizeBytes = 158_519_569,
+        };
+
+        var localState = new AppUpdateLocalState(
+            "0.3",
+            "0.3",
+            pendingPublishedAtUtc,
+            158_519_569);
+
+        var result = MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, localState);
+
+        Assert.True(result);
+    }
 }

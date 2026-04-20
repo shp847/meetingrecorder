@@ -4,4 +4,7 @@ public sealed record InstallProvenance(
     InstallChannel InitialChannel,
     InstallChannel LastUpdateChannel,
     string InitialVersion,
-    string LastInstalledVersion);
+    string LastInstalledVersion,
+    DateTimeOffset? LastInstalledAtUtc = null,
+    DateTimeOffset? LastReleasePublishedAtUtc = null,
+    long? LastReleaseAssetSizeBytes = null);

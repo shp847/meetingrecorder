@@ -1,12 +1,26 @@
+using AppPlatform.Abstractions;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace MeetingRecorder.Core.Services;
 
 public sealed record InstalledApplicationDiagnostics(
     DateTimeOffset? InstalledAtUtc,
-    long? InstallFootprintBytes);
+    DateTimeOffset? InstalledReleasePublishedAtUtc,
+    long? InstalledReleaseAssetSizeBytes);
 
 public static class InstalledApplicationDiagnosticsService
 {
     private const string InstallProvenanceFileName = "install-provenance.json";
+
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters =
+        {
+            new JsonStringEnumConverter(),
+        },
+    };
 
     public static InstalledApplicationDiagnostics Inspect(
         string? processPath,
@@ -23,9 +37,12 @@ public static class InstalledApplicationDiagnosticsService
         string? executablePath,
         string? appRoot)
     {
+        var provenance = TryLoadInstallProvenance(appRoot);
+
         return new InstalledApplicationDiagnostics(
-            ResolveInstalledAtUtc(installRoot, executablePath, appRoot),
-            ResolveInstallFootprintBytes(installRoot));
+            ResolveInstalledAtUtc(installRoot, executablePath, provenance),
+            NormalizeTimestamp(provenance?.LastReleasePublishedAtUtc),
+            NormalizeSize(provenance?.LastReleaseAssetSizeBytes));
     }
 
     private static string ResolveInstallRoot(string? processPath, string appContextBaseDirectory)
@@ -42,15 +59,23 @@ public static class InstalledApplicationDiagnosticsService
         return appContextBaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
-    private static DateTimeOffset? ResolveInstalledAtUtc(string? installRoot, string? executablePath, string? appRoot)
+    private static DateTimeOffset? ResolveInstalledAtUtc(
+        string? installRoot,
+        string? executablePath,
+        InstallProvenance? provenance)
     {
-        var provenanceTimestampUtc = TryGetInstallProvenanceTimestampUtc(appRoot);
-        if (provenanceTimestampUtc.HasValue)
+        var provenanceInstalledAtUtc = NormalizeTimestamp(provenance?.LastInstalledAtUtc);
+        var executableTimestampUtc = TryGetFileTimestampUtc(executablePath);
+        if (provenanceInstalledAtUtc.HasValue)
         {
-            return provenanceTimestampUtc;
+            if (executableTimestampUtc.HasValue && executableTimestampUtc.Value > provenanceInstalledAtUtc.Value)
+            {
+                return executableTimestampUtc;
+            }
+
+            return provenanceInstalledAtUtc;
         }
 
-        var executableTimestampUtc = TryGetFileTimestampUtc(executablePath);
         if (executableTimestampUtc.HasValue)
         {
             return executableTimestampUtc;
@@ -59,7 +84,7 @@ public static class InstalledApplicationDiagnosticsService
         return TryGetDirectoryTimestampUtc(installRoot);
     }
 
-    private static DateTimeOffset? TryGetInstallProvenanceTimestampUtc(string? appRoot)
+    private static InstallProvenance? TryLoadInstallProvenance(string? appRoot)
     {
         if (string.IsNullOrWhiteSpace(appRoot))
         {
@@ -67,7 +92,20 @@ public static class InstalledApplicationDiagnosticsService
         }
 
         var provenancePath = Path.Combine(appRoot, InstallProvenanceFileName);
-        return TryGetFileTimestampUtc(provenancePath);
+        if (!File.Exists(provenancePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var contents = File.ReadAllText(provenancePath);
+            return JsonSerializer.Deserialize<InstallProvenance>(contents, SerializerOptions);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static DateTimeOffset? TryGetFileTimestampUtc(string? path)
@@ -110,28 +148,17 @@ public static class InstalledApplicationDiagnosticsService
         }
     }
 
-    private static long? ResolveInstallFootprintBytes(string? installRoot)
+    private static DateTimeOffset? NormalizeTimestamp(DateTimeOffset? value)
     {
-        if (string.IsNullOrWhiteSpace(installRoot) || !Directory.Exists(installRoot))
-        {
-            return null;
-        }
+        return value.HasValue && value.Value != DateTimeOffset.MinValue
+            ? value.Value
+            : null;
+    }
 
-        try
-        {
-            long totalBytes = 0;
-            foreach (var filePath in Directory.EnumerateFiles(installRoot, "*", SearchOption.AllDirectories))
-            {
-                totalBytes += new FileInfo(filePath).Length;
-            }
-
-            return totalBytes > 0
-                ? totalBytes
-                : null;
-        }
-        catch
-        {
-            return null;
-        }
+    private static long? NormalizeSize(long? value)
+    {
+        return value is > 0
+            ? value
+            : null;
     }
 }
