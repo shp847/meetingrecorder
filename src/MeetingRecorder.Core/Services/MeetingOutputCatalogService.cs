@@ -644,7 +644,7 @@ public sealed class MeetingOutputCatalogService
             {
                 var manifest = manifestStore.LoadAsync(manifestPath).GetAwaiter().GetResult();
                 var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
-                var stem = _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title);
+                var stem = ResolveManifestStem(manifest, title);
                 var candidate = new ManifestInfo(
                     title,
                     manifestPath,
@@ -671,6 +671,20 @@ public sealed class MeetingOutputCatalogService
         }
 
         return infoByStem;
+    }
+
+    private string ResolveManifestStem(MeetingSessionManifest manifest, string title)
+    {
+        if (manifest.ImportedSourceAudio is { OriginalPath: { Length: > 0 } originalPath })
+        {
+            var sourceStem = Path.GetFileNameWithoutExtension(originalPath);
+            if (!string.IsNullOrWhiteSpace(sourceStem))
+            {
+                return sourceStem;
+            }
+        }
+
+        return _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title);
     }
 
     private static bool ShouldReplaceManifestInfo(ManifestInfo existing, ManifestInfo candidate)

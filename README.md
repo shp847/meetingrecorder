@@ -150,6 +150,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Meetings workspace now publishes the current list first, then loads cleanup suggestions and recent attendee backfill in the background so the tab stays responsive on larger histories
 - Recent ended sessions that are still queued, processing, finalizing, or failed in the work queue now remain visible in `Meetings` even before publish artifacts land
 - Published audio/transcript artifacts now win over stale queued imported-source reprocessing manifests, so already-published meetings stay openable instead of regressing to false `Queued` / `Missing` rows
+- Imported-source reprocessing manifests now also collapse back onto the original published-audio stem when they point at the same meeting, so `Meetings` does not show a second near-duplicate row just because a retry manifest used a slightly different title string
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges
 - Grouped browsing now opens the first visible group by default, keeps other groups collapsed initially, and exposes quick `Expand All` and `Collapse All` controls
 - Selected-meeting inspector showing attendees, project, recommendation badges, transcript model metadata, speaker-label state, the persisted detected audio source summary, and a capture-diagnostics timeline for the finished meeting

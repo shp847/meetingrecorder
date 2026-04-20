@@ -280,6 +280,66 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.NotEqual(importedManifestPath, meeting.ManifestPath);
     }
 
+    [Fact]
+    public async Task ListMeetings_Uses_Imported_Source_Original_Stem_To_Avoid_Duplicate_Reprocess_Rows()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(workDir);
+
+        var startedAtUtc = new DateTimeOffset(2026, 04, 20, 13, 55, 10, TimeSpan.Zero);
+        const string primaryTitle = "Tyler, Colin";
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var service = new MeetingOutputCatalogService(pathBuilder);
+        var primaryStem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, primaryTitle);
+        var audioPath = Path.Combine(audioDir, $"{primaryStem}.wav");
+        await File.WriteAllTextAsync(audioPath, "audio");
+
+        var primaryManifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            primaryTitle,
+            Array.Empty<DetectionSignal>());
+        var primaryManifestPath = Path.Combine(workDir, primaryManifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(
+            primaryManifest with
+            {
+                StartedAtUtc = startedAtUtc,
+                State = SessionState.Processing,
+                ProjectName = "IonQ",
+            },
+            primaryManifestPath);
+
+        var importedManifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Tyler Colin.wav",
+            Array.Empty<DetectionSignal>());
+        var importedManifestPath = Path.Combine(workDir, importedManifest.SessionId, "manifest.json");
+        await manifestStore.SaveAsync(
+            importedManifest with
+            {
+                StartedAtUtc = startedAtUtc,
+                State = SessionState.Queued,
+                ImportedSourceAudio = new ImportedSourceAudioInfo(audioPath, new FileInfo(audioPath).Length, DateTimeOffset.UtcNow),
+                MergedAudioPath = Path.Combine(workDir, importedManifest.SessionId, "processing", "imported-source.wav"),
+            },
+            importedManifestPath);
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir));
+
+        Assert.Equal(primaryStem, meeting.Stem);
+        Assert.Equal(primaryManifestPath, meeting.ManifestPath);
+        Assert.Equal(SessionState.Processing, meeting.ManifestState);
+        Assert.Equal("IonQ", meeting.ProjectName);
+        Assert.NotEqual(importedManifestPath, meeting.ManifestPath);
+    }
+
     [Theory]
     [InlineData(SessionState.Finalizing)]
     [InlineData(SessionState.Queued)]
