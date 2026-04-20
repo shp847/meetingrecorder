@@ -130,6 +130,7 @@ Before submitting, list:
 
 - Treat installer assets as part of the shipped product, not an optional follow-up.
 - For every app, installer, script, or runtime behavior change, rebuild the installer assets before considering the task complete.
+- After every build-backed change set that is intended to ship, commit and push the work, then upload the release assets including installers.
 - For every app, installer, script, or runtime behavior change, update the relevant documentation in the same task so the written guidance stays in sync with the shipped behavior.
 - Relevant documentation may include `README.md`, `SETUP.md`, `RELEASING.md`, `ARCHITECTURE.md`, installer guidance, or other task-specific docs.
 - If a task is docs-only, state that no installer rebuild was required.
