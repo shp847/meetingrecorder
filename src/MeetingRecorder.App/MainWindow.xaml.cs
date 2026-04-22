@@ -91,6 +91,7 @@ public partial class MainWindow : Window
     private readonly PointCollection _audioGraphPoints = new(AudioGraphPointCount);
     private DateTimeOffset? _lastPositiveDetectionUtc;
     private RecentAutoStopContext? _recentAutoStopContext;
+    private ManualStopSuppressionContext? _manualStopSuppressionContext;
     private bool _allowClose;
     private bool _shutdownInProgress;
     private bool _isRecordingTransitionInProgress;
@@ -728,6 +729,7 @@ public partial class MainWindow : Window
         try
         {
             _recentAutoStopContext = null;
+            _manualStopSuppressionContext = null;
             ClearAutoStopVisualState();
             await _recordingCoordinator.StartAsync(
                 MeetingPlatform.Manual,
@@ -768,6 +770,13 @@ public partial class MainWindow : Window
         PauseDetectionDuringStopTransition();
         UpdateUi("Stopping recording...", DetectionTextBlock.Text);
 
+        var activeSession = _recordingCoordinator.ActiveSession;
+        _manualStopSuppressionContext = activeSession is null
+            ? null
+            : new ManualStopSuppressionContext(
+                activeSession.Manifest.Platform,
+                activeSession.Manifest.DetectedTitle,
+                DateTimeOffset.UtcNow);
         _recentAutoStopContext = null;
         try
         {
@@ -1407,7 +1416,17 @@ public partial class MainWindow : Window
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
-                if (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop)
+                var manualStopSuppressionDisposition = _autoRecordingContinuityPolicy.GetManualStopSuppressionDisposition(
+                    decision,
+                    _manualStopSuppressionContext);
+                if (manualStopSuppressionDisposition == ManualStopSuppressionDisposition.ReleaseSuppression)
+                {
+                    _manualStopSuppressionContext = null;
+                }
+
+                var shouldSuppressManualRestart = manualStopSuppressionDisposition == ManualStopSuppressionDisposition.SuppressAutoStart;
+                if (!shouldSuppressManualRestart &&
+                    (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop))
                 {
                     ClearAutoStopVisualState();
                     await _recordingCoordinator.StartAsync(
@@ -1418,6 +1437,7 @@ public partial class MainWindow : Window
                         decision.DetectedAudioSource);
                     _lastPositiveDetectionUtc = nowUtc;
                     _recentAutoStopContext = null;
+                    _manualStopSuppressionContext = null;
                     _lastAutoStopFingerprint = null;
                     UpdateCurrentMeetingEditor();
                     UpdateUi("Recording in progress.", DetectionTextBlock.Text);
@@ -1624,6 +1644,62 @@ public partial class MainWindow : Window
         _quietTeamsAutoStartFirstObservedUtc = null;
     }
 
+    private async Task<bool> TryRollOverManagedSessionAsync(
+        ActiveRecordingSession activeSession,
+        DetectionDecision decision,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var previousPlatform = activeSession.Manifest.Platform;
+        var previousTitle = activeSession.Manifest.DetectedTitle;
+        _isRecordingTransitionInProgress = true;
+        _isAutoStopTransitionInProgress = false;
+        ClearAutoStopVisualState();
+        PauseDetectionDuringStopTransition();
+        UpdateUi("Switching meetings...", DetectionTextBlock.Text);
+
+        try
+        {
+            await ApplyPendingCurrentMetadataAsync(cancellationToken);
+            var manifestPath = await StopRecordingSessionAsync(
+                $"Detected a new meeting '{decision.SessionTitle}' while '{previousTitle}' was still active.",
+                cancellationToken);
+            if (!string.IsNullOrWhiteSpace(manifestPath))
+            {
+                await _processingQueue.EnqueueAsync(manifestPath, cancellationToken);
+                AppendActivity($"Queued session for processing: {manifestPath}");
+            }
+
+            await _recordingCoordinator.StartAsync(
+                decision.Platform,
+                decision.SessionTitle,
+                decision.Signals,
+                autoStarted: true,
+                decision.DetectedAudioSource,
+                cancellationToken);
+
+            _lastPositiveDetectionUtc = nowUtc;
+            _recentAutoStopContext = null;
+            _manualStopSuppressionContext = null;
+            _lastAutoStopFingerprint = null;
+            UpdateCurrentMeetingEditor();
+            UpdateDetectedAudioSourceSurface(decision);
+            UpdateUi("Recording in progress.", DetectionTextBlock.Text);
+            UpdateAudioCaptureGraph();
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "meeting rollover");
+            AppendActivity(
+                $"Started a new recording for '{decision.SessionTitle}' after closing the previous {previousPlatform} session '{previousTitle}'.");
+            return true;
+        }
+        finally
+        {
+            _isRecordingTransitionInProgress = false;
+            _isAutoStopTransitionInProgress = false;
+            ResumeDetectionAfterStopTransitionIfNeeded();
+            UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+        }
+    }
+
     private async Task<bool> TryReclassifyActiveSessionAsync(
         ActiveRecordingSession activeSession,
         DetectionDecision? decision,
@@ -1633,6 +1709,22 @@ public partial class MainWindow : Window
         if (IsShutdownRequested || decision is null)
         {
             return false;
+        }
+
+        var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
+            decision,
+            activeSession.Manifest.Platform,
+            activeSession.Manifest.DetectedTitle,
+            activeSession.MeetingLifecycleManaged,
+            _autoRecordingContinuityPolicy);
+        if (transition == ActiveSessionTransitionKind.None)
+        {
+            return false;
+        }
+
+        if (transition == ActiveSessionTransitionKind.RollOver)
+        {
+            return await TryRollOverManagedSessionAsync(activeSession, decision, nowUtc, cancellationToken);
         }
 
         if (!_autoRecordingContinuityPolicy.ShouldReclassifyActiveSession(
@@ -1657,6 +1749,7 @@ public partial class MainWindow : Window
 
         _lastPositiveDetectionUtc = nowUtc;
         _recentAutoStopContext = null;
+        _manualStopSuppressionContext = null;
         _lastAutoStopFingerprint = null;
         var wasMeetingLifecycleManaged = activeSession.MeetingLifecycleManaged;
         activeSession.MeetingLifecycleManaged = true;

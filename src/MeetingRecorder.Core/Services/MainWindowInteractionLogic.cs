@@ -47,6 +47,13 @@ internal enum DashboardPrimaryActionTarget
     SettingsGeneral = 3,
 }
 
+internal enum ActiveSessionTransitionKind
+{
+    None = 0,
+    Reclassify = 1,
+    RollOver = 2,
+}
+
 internal enum AppShutdownMode
 {
     Deferred = 0,
@@ -171,6 +178,32 @@ internal sealed record MeetingsProcessingStripState(
 
 internal static class MainWindowInteractionLogic
 {
+    public static ActiveSessionTransitionKind GetEligibleActiveSessionTransition(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
+        bool meetingLifecycleManaged,
+        AutoRecordingContinuityPolicy continuityPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(continuityPolicy);
+
+        if (continuityPolicy.ShouldRollOverManagedSession(
+                decision,
+                activePlatform,
+                activeSessionTitle,
+                meetingLifecycleManaged))
+        {
+            return ActiveSessionTransitionKind.RollOver;
+        }
+
+        return continuityPolicy.ShouldReclassifyActiveSession(
+                decision,
+                activePlatform,
+                activeSessionTitle)
+            ? ActiveSessionTransitionKind.Reclassify
+            : ActiveSessionTransitionKind.None;
+    }
+
     public static DetectionDecision? GetEligibleActiveSessionReclassification(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
@@ -179,10 +212,13 @@ internal static class MainWindowInteractionLogic
     {
         ArgumentNullException.ThrowIfNull(continuityPolicy);
 
-        return continuityPolicy.ShouldReclassifyActiveSession(
+        return GetEligibleActiveSessionTransition(
                 decision,
                 activePlatform,
-                activeSessionTitle)
+                activeSessionTitle,
+                meetingLifecycleManaged: false,
+                continuityPolicy)
+            == ActiveSessionTransitionKind.Reclassify
             ? decision
             : null;
     }

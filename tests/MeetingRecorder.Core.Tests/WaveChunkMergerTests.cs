@@ -81,6 +81,40 @@ public sealed class WaveChunkMergerTests
     }
 
     [Fact]
+    public async Task MergeAsync_Suppresses_Delayed_Microphone_Bleed_When_The_Microphone_Is_A_Lagged_Copy_Of_Loopback()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var loopbackChunk = Path.Combine(root, "loopback.wav");
+        var microphoneChunk = Path.Combine(root, "microphone.wav");
+        var outputPath = Path.Combine(root, "merged.wav");
+        var format = new WaveFormat(16_000, 16, 1);
+
+        CreateBurstWave(
+            loopbackChunk,
+            format,
+            amplitude: 6_000,
+            burstStartSeconds: 0.050,
+            burstDurationSeconds: 0.080,
+            totalDurationSeconds: 0.300);
+        CreateBurstWave(
+            microphoneChunk,
+            format,
+            amplitude: 4_800,
+            burstStartSeconds: 0.090,
+            burstDurationSeconds: 0.080,
+            totalDurationSeconds: 0.300);
+
+        var merger = new WaveChunkMerger();
+        await merger.MergeAsync([loopbackChunk], [microphoneChunk], outputPath);
+
+        var mergedTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(outputPath, startSeconds: 0.145, durationSeconds: 0.020);
+        var microphoneTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(microphoneChunk, startSeconds: 0.145, durationSeconds: 0.020);
+
+        Assert.True(mergedTailAmplitude < microphoneTailAmplitude * 0.20d);
+    }
+
+    [Fact]
     public async Task MergeAsync_Preserves_Microphone_When_It_Dominates_The_Loopback()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -112,6 +146,33 @@ public sealed class WaveChunkMergerTests
         for (var sampleIndex = 0; sampleIndex < frameCount * format.Channels; sampleIndex++)
         {
             BitConverter.TryWriteBytes(buffer.AsSpan(sampleIndex * bytesPerSample, bytesPerSample), amplitude);
+        }
+
+        writer.Write(buffer, 0, buffer.Length);
+    }
+
+    private static void CreateBurstWave(
+        string path,
+        WaveFormat format,
+        short amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double totalDurationSeconds)
+    {
+        using var writer = new WaveFileWriter(path, format);
+        var frameCount = (int)(format.SampleRate * totalDurationSeconds);
+        var burstStartFrame = (int)(format.SampleRate * burstStartSeconds);
+        var burstEndFrame = (int)(format.SampleRate * (burstStartSeconds + burstDurationSeconds));
+        var bytesPerSample = format.BitsPerSample / 8;
+        var buffer = new byte[frameCount * format.Channels * bytesPerSample];
+
+        for (var frameIndex = burstStartFrame; frameIndex < Math.Min(frameCount, burstEndFrame); frameIndex++)
+        {
+            for (var channelIndex = 0; channelIndex < format.Channels; channelIndex++)
+            {
+                var sampleIndex = (frameIndex * format.Channels) + channelIndex;
+                BitConverter.TryWriteBytes(buffer.AsSpan(sampleIndex * bytesPerSample, bytesPerSample), amplitude);
+            }
         }
 
         writer.Write(buffer, 0, buffer.Length);

@@ -8,6 +8,11 @@ public sealed class WaveChunkMerger
 {
     private const float LoopbackBleedDetectionThreshold = 0.015f;
     private const float LoopbackBleedMaximumMicRatio = 1.15f;
+    private const float CorrelatedBleedMinimumCorrelation = 0.72f;
+    private const float CorrelatedBleedMaximumMicRatio = 1.40f;
+    private const float CorrelatedBleedReducedMicrophoneGain = 0.02f;
+    private const double CorrelatedBleedMaximumLagSeconds = 0.060d;
+    private const double CorrelatedBleedLagStepSeconds = 0.002d;
     private const float ReducedMicrophoneGain = 0.18f;
     private const double MicGainAttackSeconds = 0.010d;
     private const double MicGainReleaseSeconds = 0.180d;
@@ -380,6 +385,12 @@ public sealed class WaveChunkMerger
                 continue;
             }
 
+            var correlatedBleedGain = DetectCorrelatedBleedMicrophoneGain(
+                loopbackBuffer,
+                microphoneBuffer,
+                samplesToWrite,
+                channelCount,
+                format.SampleRate);
             for (var sampleIndex = 0; sampleIndex < samplesToWrite; sampleIndex += channelCount)
             {
                 var loopbackMagnitude = 0f;
@@ -393,7 +404,9 @@ public sealed class WaveChunkMerger
                 var likelyLoopbackBleed = loopbackMagnitude >= LoopbackBleedDetectionThreshold &&
                     microphoneMagnitude > 0f &&
                     microphoneMagnitude <= loopbackMagnitude * LoopbackBleedMaximumMicRatio;
-                var targetMicrophoneGain = likelyLoopbackBleed ? ReducedMicrophoneGain : 1f;
+                var targetMicrophoneGain = likelyLoopbackBleed
+                    ? Math.Min(ReducedMicrophoneGain, correlatedBleedGain)
+                    : correlatedBleedGain;
                 var smoothingFactor = targetMicrophoneGain < currentMicrophoneGain
                     ? attackFactor
                     : releaseFactor;
@@ -409,6 +422,126 @@ public sealed class WaveChunkMerger
 
             writer.WriteSamples(mixedBuffer, 0, samplesToWrite);
         }
+    }
+
+    private static float DetectCorrelatedBleedMicrophoneGain(
+        IReadOnlyList<float> loopbackBuffer,
+        IReadOnlyList<float> microphoneBuffer,
+        int sampleCount,
+        int channelCount,
+        int sampleRate)
+    {
+        if (sampleCount <= 0 || channelCount <= 0 || sampleRate <= 0)
+        {
+            return 1f;
+        }
+
+        var frameCount = sampleCount / channelCount;
+        if (frameCount <= 1)
+        {
+            return 1f;
+        }
+
+        var maxLagFrames = Math.Min(
+            frameCount - 1,
+            Math.Max(1, (int)Math.Round(sampleRate * CorrelatedBleedMaximumLagSeconds)));
+        var lagStepFrames = Math.Max(1, (int)Math.Round(sampleRate * CorrelatedBleedLagStepSeconds));
+        var minimumOverlapFrames = Math.Max(1, frameCount / 4);
+        var loopbackFrames = new float[frameCount];
+        var microphoneFrames = new float[frameCount];
+        double loopbackEnergy = 0d;
+        double microphoneEnergy = 0d;
+        var loopbackPeak = 0f;
+        var microphonePeak = 0f;
+
+        for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
+        {
+            var sampleIndex = frameIndex * channelCount;
+            var loopbackFrame = 0f;
+            var microphoneFrame = 0f;
+            for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+            {
+                loopbackFrame += loopbackBuffer[sampleIndex + channelIndex];
+                microphoneFrame += microphoneBuffer[sampleIndex + channelIndex];
+            }
+
+            loopbackFrame /= channelCount;
+            microphoneFrame /= channelCount;
+            loopbackFrames[frameIndex] = loopbackFrame;
+            microphoneFrames[frameIndex] = microphoneFrame;
+
+            loopbackPeak = Math.Max(loopbackPeak, Math.Abs(loopbackFrame));
+            microphonePeak = Math.Max(microphonePeak, Math.Abs(microphoneFrame));
+            loopbackEnergy += loopbackFrame * loopbackFrame;
+            microphoneEnergy += microphoneFrame * microphoneFrame;
+        }
+
+        if (loopbackPeak < LoopbackBleedDetectionThreshold || microphonePeak <= 0f)
+        {
+            return 1f;
+        }
+
+        var loopbackRms = Math.Sqrt(loopbackEnergy / frameCount);
+        var microphoneRms = Math.Sqrt(microphoneEnergy / frameCount);
+        if (loopbackRms <= 0d ||
+            microphoneRms <= 0d ||
+            microphoneRms > loopbackRms * CorrelatedBleedMaximumMicRatio)
+        {
+            return 1f;
+        }
+
+        var bestCorrelation = 0d;
+        for (var lag = -maxLagFrames; lag <= maxLagFrames; lag += lagStepFrames)
+        {
+            var correlation = CalculateNormalizedCorrelation(
+                loopbackFrames,
+                microphoneFrames,
+                lag,
+                minimumOverlapFrames);
+            if (correlation > bestCorrelation)
+            {
+                bestCorrelation = correlation;
+            }
+        }
+
+        return bestCorrelation >= CorrelatedBleedMinimumCorrelation
+            ? CorrelatedBleedReducedMicrophoneGain
+            : 1f;
+    }
+
+    private static double CalculateNormalizedCorrelation(
+        IReadOnlyList<float> left,
+        IReadOnlyList<float> right,
+        int lag,
+        int minimumOverlapFrames)
+    {
+        double sumProduct = 0d;
+        double leftEnergy = 0d;
+        double rightEnergy = 0d;
+        var overlapFrames = 0;
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            var shiftedIndex = index + lag;
+            if (shiftedIndex < 0 || shiftedIndex >= right.Count)
+            {
+                continue;
+            }
+
+            var leftValue = left[index];
+            var rightValue = right[shiftedIndex];
+            sumProduct += leftValue * rightValue;
+            leftEnergy += leftValue * leftValue;
+            rightEnergy += rightValue * rightValue;
+            overlapFrames++;
+        }
+
+        if (overlapFrames < minimumOverlapFrames || leftEnergy <= 0d || rightEnergy <= 0d)
+        {
+            return 0d;
+        }
+
+        return Math.Abs(sumProduct / Math.Sqrt(leftEnergy * rightEnergy));
     }
 
     private static float CalculateMicGainSmoothingFactor(int sampleRate, double timeSeconds)

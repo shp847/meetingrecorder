@@ -308,6 +308,80 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void GetEligibleActiveSessionTransition_Returns_RollOver_For_A_Different_Specific_Meeting_When_The_Current_Session_Is_LifecycleManaged()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "[Int] Global Foundries Connect",
+            Signals:
+            [
+                new DetectionSignal("window-title", "[Int] Global Foundries Connect | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-process", "Microsoft Teams; window=[Int] Global Foundries Connect | Microsoft Teams; process=ms-teams; peak=0.420; confidence=Medium", 0.15d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "[Int] Global Foundries Connect | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Jain, Himanshu, Kurtz, John",
+            meetingLifecycleManaged: true,
+            policy);
+
+        Assert.Equal(ActiveSessionTransitionKind.RollOver, transition);
+    }
+
+    [Fact]
+    public void GetEligibleActiveSessionTransition_Returns_Reclassify_For_A_Different_Specific_Meeting_When_The_Current_Session_Is_Not_LifecycleManaged()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "[Int] Global Foundries Connect",
+            Signals:
+            [
+                new DetectionSignal("window-title", "[Int] Global Foundries Connect | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-process", "Microsoft Teams; window=[Int] Global Foundries Connect | Microsoft Teams; process=ms-teams; peak=0.420; confidence=Medium", 0.15d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "[Int] Global Foundries Connect | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Henry call",
+            meetingLifecycleManaged: false,
+            policy);
+
+        Assert.Equal(ActiveSessionTransitionKind.Reclassify, transition);
+    }
+
+    [Fact]
     public void ShouldRefreshMeetingCatalogForConfigChange_Returns_False_For_Runtime_Only_Config_Changes()
     {
         var previous = new AppConfig

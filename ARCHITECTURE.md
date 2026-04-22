@@ -53,11 +53,12 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - continued background detection during manual recordings so a user-started session can still reclassify in place when a stronger live Teams or Google Meet signal appears later, while auto-stop remains limited to auto-started sessions
 - quiet specific Teams detections with matched Teams audio-session evidence can now also reclassify an active manual session even while they remain below the stronger auto-start threshold, so a live Teams call can take over from a generic manual title during low-audio stretches
 - when a qualifying manual-to-meeting takeover signal has been observed but the active manifest has not switched yet, the Home pending stem uses that deferred reclassification context immediately and the stop/live-metadata paths retry the same reclassification before publish so artifacts do not remain labeled as `manual`
-- same-platform live meeting takeovers for manual or already-managed sessions when a clearly different specific Teams or Google Meet call becomes the stronger detected identity later, so stale old titles do not remain pinned to the active recording
+- same-platform live meeting takeovers now split into two paths: manual sessions can still reclassify in place when a stronger supported call identity appears, but already lifecycle-managed sessions now roll over by stopping the earlier meeting and starting a fresh session for the newly detected one
+- manual stop suppression for supported meetings, so once a user explicitly stops an active Teams or Google Meet session, auto-detection will not immediately restart that same meeting just because its tab or window is still visible or the microphone is noisy
 - continuity protection for active auto-started Teams sessions when a weak unrelated Google Meet browser candidate is also visible, so quiet patches do not falsely age the Teams session into auto-stop
 - sustained specific Teams meeting-window evidence can now auto-start a quiet desktop call even before render audio rises above the normal auto-start threshold, including when the matched Teams render session is still present but currently reports `peak=0.000`, so the detector does not rely on title evidence alone
 - Teams detection now also treats newer in-call window titles that are just the attendee or meeting name as meeting surfaces when they come from a Teams host window, then relies on Teams render-session evidence plus the existing playback/chat demotion path to distinguish live calls from ordinary Teams content
-- once an auto-started Teams session is already live, a stale same-title quiet Teams window now extends the stop timeout only for a bounded grace period instead of resetting the positive-signal clock forever, and weaker matching Teams shell/chat/share surfaces only refresh continuity when recent capture activity still exists
+- once an auto-started Teams session is already live, a stale same-title quiet Teams window now extends the stop timeout only for a bounded grace period instead of resetting the positive-signal clock forever; weaker matching Teams shell/chat surfaces still need recent capture activity, but the pinned Teams sharing-control-bar surface is treated as a continuation of the active specific meeting so an in-progress presentation does not fragment the session
 - Google Meet fallback no longer inspects Chromium tab UI directly; it now relies on explicit browser titles plus Windows render-session metadata from matching browser processes so Edge or Chrome are not probed through cross-process UI Automation during detection
 - Windows render-session audio probing now also runs behind a short timeout and cooldown so a hung Core Audio query cannot starve later detection cycles before Teams auto-start has a chance to react
 - Windows render-session audio probing now merges the multimedia and communications default render endpoints so Teams session attribution survives speaker crashes, Bluetooth headset handoffs, and other output-device switches that move meeting audio off the original default speaker path
@@ -73,7 +74,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - path and filename rules
   - work-manifest persistence
   - output catalog logic
-  - WAV merge and mix logic, including loopback-aware microphone bleed reduction during published-audio preparation
+- WAV merge and mix logic, including loopback-aware microphone bleed reduction and short-lag correlation checks for delayed speaker echo during published-audio preparation
   - transcript rendering
   - publish helpers
   - Whisper model inspection, download, and import logic

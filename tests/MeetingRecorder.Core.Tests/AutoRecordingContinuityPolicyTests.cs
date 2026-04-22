@@ -595,7 +595,36 @@ public sealed class AutoRecordingContinuityPolicyTests
             hasRecentLoopbackActivity: false,
             hasRecentMicrophoneActivity: false);
 
-        Assert.False(shouldRefresh);
+        Assert.True(shouldRefresh);
+    }
+
+    [Fact]
+    public void ShouldClearAutoStopCountdown_Returns_True_For_Teams_Sharing_Control_Bar_When_Active_Title_Is_Specific()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Sharing control bar  | Pinned window",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Sharing control bar | Microsoft Teams | Pinned window", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Device; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldClearCountdown = policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Jain, Himanshu",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: false);
+
+        Assert.True(shouldClearCountdown);
     }
 
     [Fact]
@@ -1265,5 +1294,132 @@ public sealed class AutoRecordingContinuityPolicyTests
             hasRecentMicrophoneActivity: false);
 
         Assert.True(shouldRefresh);
+    }
+
+    [Fact]
+    public void GetManualStopSuppressionDisposition_Returns_SuppressAutoStart_For_The_Same_Google_Meet_Code_After_A_Manual_Stop()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var context = new ManualStopSuppressionContext(
+            MeetingPlatform.GoogleMeet,
+            "Meet - cag-wpef-dmk and 4 more pages - Work - Microsoft Edge",
+            now.AddSeconds(-15));
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - cag-wpef-dmk - Camera and microphone recording - Memory usage - 437 MB",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - cag-wpef-dmk - Camera and microphone recording - Memory usage - 437 MB", 0.70d, now),
+                new DetectionSignal("browser-tab", "Meet - cag-wpef-dmk - Camera and microphone recording - Memory usage - 437 MB", 0.05d, now),
+                new DetectionSignal("audio-activity", "Device; peak=0.280; status=active", 0.2d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var disposition = policy.GetManualStopSuppressionDisposition(decision, context);
+
+        Assert.Equal(ManualStopSuppressionDisposition.SuppressAutoStart, disposition);
+    }
+
+    [Fact]
+    public void GetManualStopSuppressionDisposition_Returns_ReleaseSuppression_For_A_Different_Specific_Meeting()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var context = new ManualStopSuppressionContext(
+            MeetingPlatform.GoogleMeet,
+            "Meet - cag-wpef-dmk and 4 more pages - Work - Microsoft Edge",
+            now.AddSeconds(-15));
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "[Int] Global Foundries Connect",
+            Signals:
+            [
+                new DetectionSignal("window-title", "[Int] Global Foundries Connect | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-window", "Microsoft Teams; process=ms-teams; peak=0.337; confidence=High", 0.35d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "[Int] Global Foundries Connect | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.High,
+                now));
+
+        var disposition = policy.GetManualStopSuppressionDisposition(decision, context);
+
+        Assert.Equal(ManualStopSuppressionDisposition.ReleaseSuppression, disposition);
+    }
+
+    [Fact]
+    public void ShouldRollOverManagedSession_Returns_True_For_A_Different_Specific_Teams_Call()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "[Int] Global Foundries Connect",
+            Signals:
+            [
+                new DetectionSignal("window-title", "[Int] Global Foundries Connect | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-process", "Microsoft Teams; window=[Int] Global Foundries Connect | Microsoft Teams; process=ms-teams; peak=0.420; confidence=Medium", 0.15d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "[Int] Global Foundries Connect | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldRollOver = policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Jain, Himanshu, Kurtz, John",
+            meetingLifecycleManaged: true);
+
+        Assert.True(shouldRollOver);
+    }
+
+    [Fact]
+    public void ShouldRollOverManagedSession_Returns_False_For_Google_Meet_Title_Variants_Sharing_The_Same_Meet_Code()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - dbh-eecx-utm - Camera and microphone recording - Memory usage - 437 MB",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - dbh-eecx-utm - Camera and microphone recording - Memory usage - 437 MB", 0.70d, now),
+                new DetectionSignal("browser-tab", "Meet - dbh-eecx-utm - Camera and microphone recording - Memory usage - 437 MB", 0.05d, now),
+                new DetectionSignal("audio-activity", "Device; peak=0.280; status=active", 0.2d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var shouldRollOver = policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - dbh-eecx-utm and 1 more page - Work - Microsoft Edge",
+            meetingLifecycleManaged: true);
+
+        Assert.False(shouldRollOver);
     }
 }

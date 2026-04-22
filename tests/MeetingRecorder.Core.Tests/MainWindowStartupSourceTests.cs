@@ -216,8 +216,37 @@ public sealed class MainWindowStartupSourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         Assert.Contains("var shouldAutoStartQuietTeamsMeeting = ShouldAutoStartQuietTeamsMeeting(decision, nowUtc);", methodBlock);
-        Assert.Contains("if (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop)", methodBlock);
+        Assert.Contains("decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop", methodBlock);
         Assert.Contains("private bool ShouldAutoStartQuietTeamsMeeting(", source);
+    }
+
+    [Fact]
+    public void Detection_Timer_Uses_Manual_Stop_Suppression_Before_Auto_Starting_A_Detected_Meeting()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("GetManualStopSuppressionDisposition(", methodBlock);
+        Assert.Contains("var shouldSuppressManualRestart = manualStopSuppressionDisposition == ManualStopSuppressionDisposition.SuppressAutoStart;", methodBlock);
+        Assert.Contains("if (!shouldSuppressManualRestart &&", methodBlock);
+    }
+
+    [Fact]
+    public void Active_Session_Transition_Uses_The_Transition_Helper_And_Has_A_Managed_Rollover_Path()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void UpdateCaptureStatusSurface()", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("MainWindowInteractionLogic.GetEligibleActiveSessionTransition(", methodBlock);
+        Assert.Contains("ActiveSessionTransitionKind.RollOver", methodBlock);
+        Assert.Contains("TryRollOverManagedSessionAsync(", methodBlock);
+        Assert.Contains("private async Task<bool> TryRollOverManagedSessionAsync(", source);
     }
 
     [Fact]

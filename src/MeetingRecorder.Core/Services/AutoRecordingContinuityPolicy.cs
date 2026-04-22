@@ -2,6 +2,13 @@ using MeetingRecorder.Core.Domain;
 
 namespace MeetingRecorder.Core.Services;
 
+public enum ManualStopSuppressionDisposition
+{
+    None = 0,
+    SuppressAutoStart = 1,
+    ReleaseSuppression = 2,
+}
+
 public sealed class AutoRecordingContinuityPolicy
 {
     private static readonly TimeSpan MinimumWeakSignalTimeout = TimeSpan.FromSeconds(60);
@@ -61,6 +68,38 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return configuredTimeout;
+    }
+
+    public ManualStopSuppressionDisposition GetManualStopSuppressionDisposition(
+        DetectionDecision? decision,
+        ManualStopSuppressionContext? manualStopSuppression)
+    {
+        if (manualStopSuppression is null)
+        {
+            return ManualStopSuppressionDisposition.None;
+        }
+
+        if (decision is null || decision.Platform == MeetingPlatform.Unknown)
+        {
+            return ManualStopSuppressionDisposition.SuppressAutoStart;
+        }
+
+        if (MatchesMeetingIdentity(
+                decision,
+                manualStopSuppression.Platform,
+                manualStopSuppression.SessionTitle))
+        {
+            return ManualStopSuppressionDisposition.SuppressAutoStart;
+        }
+
+        var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        if (IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform) ||
+            !HasMeetingIdentityEvidence(decision))
+        {
+            return ManualStopSuppressionDisposition.SuppressAutoStart;
+        }
+
+        return ManualStopSuppressionDisposition.ReleaseSuppression;
     }
 
     public bool ShouldRecoverFromRecentAutoStop(
@@ -138,6 +177,11 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
+        if (MatchesMeetingIdentity(decision, activePlatform, activeSessionTitle))
+        {
+            return false;
+        }
+
         if (decision.Platform != activePlatform)
         {
             return true;
@@ -151,6 +195,37 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return !string.Equals(normalizedDetectedTitle, normalizedActiveTitle, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public bool ShouldRollOverManagedSession(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle,
+        bool meetingLifecycleManaged)
+    {
+        var isQuietSpecificTeamsCandidate = IsQuietSpecificTeamsMeetingCandidateCore(decision);
+        if (!meetingLifecycleManaged ||
+            decision is null ||
+            (!decision.ShouldStart && !isQuietSpecificTeamsCandidate) ||
+            activePlatform == MeetingPlatform.Unknown ||
+            decision.Platform == MeetingPlatform.Unknown)
+        {
+            return false;
+        }
+
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
+        var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedActiveTitle) ||
+            IsGenericMeetingTitle(normalizedActiveTitle, activePlatform) ||
+            string.IsNullOrWhiteSpace(normalizedDetectedTitle) ||
+            IsGenericMeetingTitle(normalizedDetectedTitle, decision.Platform) ||
+            !HasMeetingIdentityEvidence(decision) ||
+            MatchesMeetingIdentity(decision, activePlatform, activeSessionTitle))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public bool ShouldRefreshLastPositiveSignal(
@@ -183,6 +258,12 @@ public sealed class AutoRecordingContinuityPolicy
             HasOfficialTeamsNoCurrentMatchSignal(decision))
         {
             return false;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
+        {
+            return true;
         }
 
         var hasRecentCaptureActivity = hasRecentLoopbackActivity || hasRecentMicrophoneActivity;
@@ -243,6 +324,18 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         if (decision.Platform == MeetingPlatform.Teams &&
+            HasOfficialTeamsNoCurrentMatchSignal(decision))
+        {
+            return false;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
             hasRecentLoopbackActivity &&
             HasOfficialTeamsMatchSignal(decision) &&
             !HasOfficialTeamsNoCurrentMatchSignal(decision))
@@ -270,6 +363,21 @@ public sealed class AutoRecordingContinuityPolicy
             decision is not null &&
             decision.Platform == MeetingPlatform.Teams &&
             HasSpecificMeetingTitleMatch(decision, activeSessionTitle);
+    }
+
+    private static bool MatchesMeetingIdentity(
+        DetectionDecision decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        if (decision.Platform != activePlatform)
+        {
+            return false;
+        }
+
+        return HasSpecificMeetingTitleMatch(decision, activeSessionTitle) ||
+            HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle) ||
+            HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle);
     }
 
     private static bool HasCrossPlatformBrowserContinuation(
@@ -636,4 +744,9 @@ public sealed class AutoRecordingContinuityPolicy
 
 public sealed record RecentAutoStopContext(
     MeetingPlatform Platform,
+    DateTimeOffset StoppedAtUtc);
+
+public sealed record ManualStopSuppressionContext(
+    MeetingPlatform Platform,
+    string SessionTitle,
     DateTimeOffset StoppedAtUtc);
