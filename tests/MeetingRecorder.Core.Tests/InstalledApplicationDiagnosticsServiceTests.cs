@@ -40,6 +40,7 @@ public sealed class InstalledApplicationDiagnosticsServiceTests : IDisposable
             appRoot);
 
         Assert.Equal(DateTimeOffset.Parse("2026-04-20T13:54:17Z"), result.InstalledAtUtc);
+        Assert.Equal(19, result.InstallFootprintBytes);
         Assert.Equal(DateTimeOffset.Parse("2026-04-20T13:26:09Z"), result.InstalledReleasePublishedAtUtc);
         Assert.Equal(158519569, result.InstalledReleaseAssetSizeBytes);
     }
@@ -59,6 +60,7 @@ public sealed class InstalledApplicationDiagnosticsServiceTests : IDisposable
             appRoot);
 
         Assert.Equal(new DateTimeOffset(executableTimestampUtc), result.InstalledAtUtc);
+        Assert.Equal(12, result.InstallFootprintBytes);
         Assert.Null(result.InstalledReleasePublishedAtUtc);
         Assert.Null(result.InstalledReleaseAssetSizeBytes);
     }

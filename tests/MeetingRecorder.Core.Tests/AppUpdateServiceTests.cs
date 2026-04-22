@@ -160,6 +160,38 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
+    public async Task CheckForUpdateAsync_Returns_UpToDate_For_The_Same_Version_When_Local_Package_Metadata_Is_Unavailable()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "v0.3",
+              "published_at": "2026-04-22T14:37:03Z",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.3",
+              "assets": [
+                {
+                  "name": "MeetingRecorder-v0.3-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip",
+                  "size": 166259851
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                "0.3",
+                "0.3",
+                null,
+                null),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal(AppUpdateStatusKind.UpToDate, result.Status);
+        Assert.False(result.IsNewerByPublishedAt);
+        Assert.False(result.IsNewerByAssetSize);
+    }
+
+    [Fact]
     public async Task CheckForUpdateAsync_Returns_UpdateAvailable_When_AssetSize_Changed_For_The_Same_Version()
     {
         var service = new AppUpdateService(new FakeUpdateFeedClient("""

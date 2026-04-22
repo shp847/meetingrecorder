@@ -6,6 +6,7 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed record InstalledApplicationDiagnostics(
     DateTimeOffset? InstalledAtUtc,
+    long? InstallFootprintBytes,
     DateTimeOffset? InstalledReleasePublishedAtUtc,
     long? InstalledReleaseAssetSizeBytes);
 
@@ -41,6 +42,7 @@ public static class InstalledApplicationDiagnosticsService
 
         return new InstalledApplicationDiagnostics(
             ResolveInstalledAtUtc(installRoot, executablePath, provenance),
+            TryGetDirectoryFootprintBytes(installRoot),
             NormalizeTimestamp(provenance?.LastReleasePublishedAtUtc),
             NormalizeSize(provenance?.LastReleaseAssetSizeBytes));
     }
@@ -141,6 +143,32 @@ public static class InstalledApplicationDiagnosticsService
             return lastWriteTimeUtc == DateTime.MinValue
                 ? null
                 : new DateTimeOffset(lastWriteTimeUtc);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static long? TryGetDirectoryFootprintBytes(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            long totalBytes = 0;
+            foreach (var filePath in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                var fileInfo = new FileInfo(filePath);
+                totalBytes += fileInfo.Length;
+            }
+
+            return totalBytes > 0
+                ? totalBytes
+                : null;
         }
         catch
         {
