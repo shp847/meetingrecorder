@@ -115,6 +115,114 @@ public sealed class WaveChunkMergerTests
     }
 
     [Fact]
+    public async Task MergeAsync_Suppresses_Long_Lag_Speaker_Bleed_With_Production_Shaped_Formats()
+    {
+        var root = CreateTempRoot();
+        var loopbackChunk = Path.Combine(root, "loopback.wav");
+        var microphoneChunk = Path.Combine(root, "microphone.wav");
+        var outputPath = Path.Combine(root, "merged.wav");
+
+        CreatePatternWave(
+            loopbackChunk,
+            WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2),
+            amplitude: 0.40f,
+            burstStartSeconds: 0.050,
+            burstDurationSeconds: 0.060,
+            burstSpacingSeconds: 0.120,
+            burstCount: 6,
+            totalDurationSeconds: 1.200);
+        CreatePatternWave(
+            microphoneChunk,
+            new WaveFormat(16_000, 16, 1),
+            amplitude: 6_000,
+            burstStartSeconds: 0.310,
+            burstDurationSeconds: 0.060,
+            burstSpacingSeconds: 0.120,
+            burstCount: 6,
+            totalDurationSeconds: 1.200);
+
+        var merger = new WaveChunkMerger();
+        await merger.MergeAsync([loopbackChunk], [microphoneChunk], outputPath);
+
+        var mergedTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(outputPath, startSeconds: 0.790, durationSeconds: 0.040);
+        var microphoneTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(microphoneChunk, startSeconds: 0.790, durationSeconds: 0.040);
+
+        Assert.True(mergedTailAmplitude < microphoneTailAmplitude * 0.35d);
+    }
+
+    [Fact]
+    public async Task MergeAsync_Suppresses_Very_Long_Lag_Speaker_Bleed_With_Production_Shaped_Formats()
+    {
+        var root = CreateTempRoot();
+        var loopbackChunk = Path.Combine(root, "loopback.wav");
+        var microphoneChunk = Path.Combine(root, "microphone.wav");
+        var outputPath = Path.Combine(root, "merged.wav");
+
+        CreatePatternWave(
+            loopbackChunk,
+            WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2),
+            amplitude: 0.42f,
+            burstStartSeconds: 0.050,
+            burstDurationSeconds: 0.080,
+            burstSpacingSeconds: 0.140,
+            burstCount: 6,
+            totalDurationSeconds: 1.500);
+        CreatePatternWave(
+            microphoneChunk,
+            new WaveFormat(16_000, 16, 1),
+            amplitude: 5_800,
+            burstStartSeconds: 0.410,
+            burstDurationSeconds: 0.080,
+            burstSpacingSeconds: 0.140,
+            burstCount: 6,
+            totalDurationSeconds: 1.500);
+
+        var merger = new WaveChunkMerger();
+        await merger.MergeAsync([loopbackChunk], [microphoneChunk], outputPath);
+
+        var mergedTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(outputPath, startSeconds: 1.030, durationSeconds: 0.050);
+        var microphoneTailAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(microphoneChunk, startSeconds: 1.030, durationSeconds: 0.050);
+
+        Assert.True(mergedTailAmplitude < microphoneTailAmplitude * 0.35d);
+    }
+
+    [Fact]
+    public async Task MergeAsync_Preserves_Production_Shaped_Microphone_Speech_When_It_Clearly_Dominates_The_Loopback()
+    {
+        var root = CreateTempRoot();
+        var loopbackChunk = Path.Combine(root, "loopback.wav");
+        var microphoneChunk = Path.Combine(root, "microphone.wav");
+        var outputPath = Path.Combine(root, "merged.wav");
+
+        CreatePatternWave(
+            loopbackChunk,
+            WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2),
+            amplitude: 0.10f,
+            burstStartSeconds: 0.120,
+            burstDurationSeconds: 0.180,
+            burstSpacingSeconds: 0.260,
+            burstCount: 3,
+            totalDurationSeconds: 1.000);
+        CreatePatternWave(
+            microphoneChunk,
+            new WaveFormat(16_000, 16, 1),
+            amplitude: 14_000,
+            burstStartSeconds: 0.420,
+            burstDurationSeconds: 0.240,
+            burstSpacingSeconds: 0.300,
+            burstCount: 1,
+            totalDurationSeconds: 1.000);
+
+        var merger = new WaveChunkMerger();
+        await merger.MergeAsync([loopbackChunk], [microphoneChunk], outputPath);
+
+        var mergedSpeechAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(outputPath, startSeconds: 0.460, durationSeconds: 0.100);
+        var microphoneSpeechAmplitude = MeasureAverageAbsoluteAmplitudeWithAudioReader(microphoneChunk, startSeconds: 0.460, durationSeconds: 0.100);
+
+        Assert.True(mergedSpeechAmplitude > microphoneSpeechAmplitude * 0.80d);
+    }
+
+    [Fact]
     public async Task MergeAsync_Preserves_Microphone_When_It_Dominates_The_Loopback()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -136,6 +244,13 @@ public sealed class WaveChunkMergerTests
         Assert.True(mergedAmplitude > loopbackAmplitude * 3d);
     }
 
+    private static string CreateTempRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
     private static void CreateWave(string path, WaveFormat format, short amplitude, double durationSeconds = 0.2)
     {
         using var writer = new WaveFileWriter(path, format);
@@ -149,6 +264,63 @@ public sealed class WaveChunkMergerTests
         }
 
         writer.Write(buffer, 0, buffer.Length);
+    }
+
+    private static void CreatePatternWave(
+        string path,
+        WaveFormat format,
+        float amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount,
+        double totalDurationSeconds)
+    {
+        using var writer = new WaveFileWriter(path, format);
+        WritePattern(writer, format, amplitude, burstStartSeconds, burstDurationSeconds, burstSpacingSeconds, burstCount, totalDurationSeconds);
+    }
+
+    private static void CreatePatternWave(
+        string path,
+        WaveFormat format,
+        short amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount,
+        double totalDurationSeconds)
+    {
+        using var writer = new WaveFileWriter(path, format);
+        WritePattern(writer, format, amplitude, burstStartSeconds, burstDurationSeconds, burstSpacingSeconds, burstCount, totalDurationSeconds);
+    }
+
+    private static void AddPatternToWave(
+        string path,
+        WaveFormat format,
+        short amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount,
+        double totalDurationSeconds)
+    {
+        float[] existingSamples;
+        using (var existingReader = new AudioFileReader(path))
+        {
+            existingSamples = ReadAllSamples(existingReader);
+        }
+
+        using var writer = new WaveFileWriter(path, format);
+        WritePattern(
+            writer,
+            format,
+            amplitude,
+            burstStartSeconds,
+            burstDurationSeconds,
+            burstSpacingSeconds,
+            burstCount,
+            totalDurationSeconds,
+            existingSamples);
     }
 
     private static void CreateBurstWave(
@@ -176,6 +348,93 @@ public sealed class WaveChunkMergerTests
         }
 
         writer.Write(buffer, 0, buffer.Length);
+    }
+
+    private static void WritePattern(
+        WaveFileWriter writer,
+        WaveFormat format,
+        short amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount,
+        double totalDurationSeconds,
+        float[]? existingSamples = null)
+    {
+        var frameCount = (int)Math.Round(format.SampleRate * totalDurationSeconds);
+        var samples = InitializeSamples(frameCount, format.Channels, existingSamples);
+        ApplyPattern(samples, format.Channels, format.SampleRate, amplitude / 32768f, burstStartSeconds, burstDurationSeconds, burstSpacingSeconds, burstCount);
+        writer.WriteSamples(samples, 0, samples.Length);
+    }
+
+    private static void WritePattern(
+        WaveFileWriter writer,
+        WaveFormat format,
+        float amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount,
+        double totalDurationSeconds,
+        float[]? existingSamples = null)
+    {
+        var frameCount = (int)Math.Round(format.SampleRate * totalDurationSeconds);
+        var samples = InitializeSamples(frameCount, format.Channels, existingSamples);
+        ApplyPattern(samples, format.Channels, format.SampleRate, amplitude, burstStartSeconds, burstDurationSeconds, burstSpacingSeconds, burstCount);
+        writer.WriteSamples(samples, 0, samples.Length);
+    }
+
+    private static float[] InitializeSamples(int frameCount, int channelCount, float[]? existingSamples)
+    {
+        var sampleCount = frameCount * channelCount;
+        if (existingSamples is null)
+        {
+            return new float[sampleCount];
+        }
+
+        var samples = new float[sampleCount];
+        Array.Copy(existingSamples, samples, Math.Min(existingSamples.Length, samples.Length));
+        return samples;
+    }
+
+    private static void ApplyPattern(
+        float[] samples,
+        int channelCount,
+        int sampleRate,
+        float amplitude,
+        double burstStartSeconds,
+        double burstDurationSeconds,
+        double burstSpacingSeconds,
+        int burstCount)
+    {
+        for (var burstIndex = 0; burstIndex < burstCount; burstIndex++)
+        {
+            var startFrame = (int)Math.Round(sampleRate * (burstStartSeconds + (burstIndex * burstSpacingSeconds)));
+            var endFrame = (int)Math.Round(sampleRate * (burstStartSeconds + burstDurationSeconds + (burstIndex * burstSpacingSeconds)));
+            for (var frameIndex = Math.Max(0, startFrame); frameIndex < Math.Min(samples.Length / channelCount, endFrame); frameIndex++)
+            {
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+                {
+                    samples[(frameIndex * channelCount) + channelIndex] += amplitude;
+                }
+            }
+        }
+    }
+
+    private static float[] ReadAllSamples(AudioFileReader reader)
+    {
+        var samples = new List<float>();
+        var buffer = new float[4096];
+        while (true)
+        {
+            var read = reader.Read(buffer, 0, buffer.Length);
+            if (read == 0)
+            {
+                return samples.ToArray();
+            }
+
+            samples.AddRange(buffer.AsSpan(0, read).ToArray());
+        }
     }
 
     private static double MeasureAverageAbsoluteAmplitude(string path, WaveFormat format, double startSeconds, double durationSeconds)

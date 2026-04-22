@@ -332,6 +332,202 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
         Assert.DoesNotContain("ArchivedRepairs", result.ArchiveDirectory, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RepairKnownIssuesAsync_Reruns_Echo_Repair_For_Previously_Repaired_Published_Microphone_Sessions()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var appRoot = CreateDirectory("app");
+        var workDir = Path.Combine(appRoot, "work");
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var startedAtUtc = DateTimeOffset.Parse("2026-03-16T08:10:31Z");
+        var sessionRoot = Path.Combine(workDir, "20260316081031-echo");
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        var processingDir = Path.Combine(sessionRoot, "processing");
+        Directory.CreateDirectory(rawDir);
+        Directory.CreateDirectory(processingDir);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, "Echo");
+        var loopbackChunkPath = Path.Combine(rawDir, "loopback-chunk-0001.wav");
+        var microphoneChunkPath = Path.Combine(rawDir, "microphone-chunk-0001.wav");
+        var publishedAudioPath = Path.Combine(audioDir, $"{stem}.wav");
+        var processingAudioPath = Path.Combine(processingDir, $"{stem}.wav");
+        var markdownPath = Path.Combine(transcriptDir, $"{stem}.md");
+
+        await WriteWaveFileAsync(loopbackChunkPath, amplitude: 5_000, duration: TimeSpan.FromMilliseconds(600));
+        await WriteWaveFileAsync(microphoneChunkPath, amplitude: 3_000, duration: TimeSpan.FromMilliseconds(600));
+        await WriteSilentWaveFileAsync(publishedAudioPath, TimeSpan.FromMilliseconds(600));
+        await WriteSilentWaveFileAsync(processingAudioPath, TimeSpan.FromMilliseconds(600));
+        await File.WriteAllTextAsync(
+            markdownPath,
+            string.Join(
+                Environment.NewLine,
+                "# Echo",
+                string.Empty,
+                "- Session ID: 20260316081031-echo",
+                "- Platform: Teams",
+                "- Started (UTC): 2026-03-16T08:10:31.0000000+00:00",
+                string.Empty,
+                "## Transcript",
+                string.Empty,
+                "[00:00:00 - 00:00:01] **Speaker:** echo"));
+
+        var manifest = new MeetingSessionManifest
+        {
+            SessionId = "20260316081031-echo",
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = "Echo",
+            StartedAtUtc = startedAtUtc,
+            EndedAtUtc = startedAtUtc.AddMilliseconds(600),
+            State = SessionState.Published,
+            RawChunkPaths = [loopbackChunkPath],
+            LoopbackCaptureSegments =
+            [
+                new LoopbackCaptureSegment(
+                    startedAtUtc,
+                    startedAtUtc.AddMilliseconds(600),
+                    [loopbackChunkPath],
+                    string.Empty,
+                    "Test speakers",
+                    "Multimedia"),
+            ],
+            MicrophoneChunkPaths = [microphoneChunkPath],
+            MicrophoneCaptureSegments =
+            [
+                new MicrophoneCaptureSegment(
+                    startedAtUtc,
+                    startedAtUtc.AddMilliseconds(600),
+                    [microphoneChunkPath]),
+            ],
+            MergedAudioPath = processingAudioPath,
+            PublishStatus = new ProcessingStageStatus(
+                "publish",
+                StageExecutionState.Succeeded,
+                startedAtUtc.AddDays(1),
+                "Published audio was republished after March 23, 2026 echo repair."),
+        };
+
+        await SaveManifestAsync(manifestStore, workDir, manifest);
+
+        var originalPublishedBytes = await File.ReadAllBytesAsync(publishedAudioPath);
+        var originalProcessingBytes = await File.ReadAllBytesAsync(processingAudioPath);
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
+
+        Assert.False(result.AlreadyApplied);
+        Assert.True(File.Exists(result.MarkerPath));
+        Assert.Equal("published-meeting-repair-v6.done", Path.GetFileName(result.MarkerPath));
+        Assert.True(Directory.Exists(result.ArchiveDirectory));
+
+        var updatedManifest = await manifestStore.LoadAsync(Path.Combine(sessionRoot, "manifest.json"));
+        Assert.Equal(processingAudioPath, updatedManifest.MergedAudioPath);
+        Assert.Contains("echo repair v6", updatedManifest.PublishStatus.Message, StringComparison.OrdinalIgnoreCase);
+
+        var reportPath = Path.Combine(result.ArchiveDirectory, "echo-repair-report.txt");
+        Assert.True(File.Exists(reportPath));
+        var report = await File.ReadAllTextAsync(reportPath);
+        Assert.Contains("Repaired: 1", report, StringComparison.Ordinal);
+        Assert.Contains(stem, report, StringComparison.Ordinal);
+
+        var meetingArchiveDirectory = Path.Combine(result.ArchiveDirectory, stem);
+        Assert.True(File.Exists(Path.Combine(meetingArchiveDirectory, $"{stem}.wav")));
+        Assert.True(File.Exists(Path.Combine(meetingArchiveDirectory, $"processing-{stem}.wav")));
+        Assert.Equal(originalPublishedBytes, await File.ReadAllBytesAsync(Path.Combine(meetingArchiveDirectory, $"{stem}.wav")));
+        Assert.Equal(originalProcessingBytes, await File.ReadAllBytesAsync(Path.Combine(meetingArchiveDirectory, $"processing-{stem}.wav")));
+        Assert.NotEqual(originalPublishedBytes, await File.ReadAllBytesAsync(publishedAudioPath));
+    }
+
+    [Fact]
+    public async Task RepairKnownIssuesAsync_Skips_Unrepairable_Echo_Sessions_And_Writes_The_Reason_To_The_Report()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var appRoot = CreateDirectory("app");
+        var workDir = Path.Combine(appRoot, "work");
+        Directory.CreateDirectory(workDir);
+
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var startedAtUtc = DateTimeOffset.Parse("2026-03-23T16:11:43Z");
+        var sessionRoot = Path.Combine(workDir, "20260323161143-missing-published");
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        var processingDir = Path.Combine(sessionRoot, "processing");
+        Directory.CreateDirectory(rawDir);
+        Directory.CreateDirectory(processingDir);
+
+        var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, "Missing Publish");
+        var loopbackChunkPath = Path.Combine(rawDir, "loopback-chunk-0001.wav");
+        var microphoneChunkPath = Path.Combine(rawDir, "microphone-chunk-0001.wav");
+        var processingAudioPath = Path.Combine(processingDir, $"{stem}.wav");
+
+        await WriteWaveFileAsync(loopbackChunkPath, amplitude: 4_000, duration: TimeSpan.FromMilliseconds(400));
+        await WriteWaveFileAsync(microphoneChunkPath, amplitude: 2_000, duration: TimeSpan.FromMilliseconds(400));
+        await WriteSilentWaveFileAsync(processingAudioPath, TimeSpan.FromMilliseconds(400));
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptDir, $"{stem}.md"),
+            string.Join(
+                Environment.NewLine,
+                "# Missing Publish",
+                string.Empty,
+                "- Session ID: 20260323161143-missing-published",
+                "- Platform: Teams",
+                "- Started (UTC): 2026-03-23T16:11:43.0000000+00:00",
+                string.Empty,
+                "## Transcript",
+                string.Empty,
+                "[00:00:00 - 00:00:01] **Speaker:** missing"));
+
+        await SaveManifestAsync(
+            manifestStore,
+            workDir,
+            new MeetingSessionManifest
+            {
+                SessionId = "20260323161143-missing-published",
+                Platform = MeetingPlatform.Teams,
+                DetectedTitle = "Missing Publish",
+                StartedAtUtc = startedAtUtc,
+                EndedAtUtc = startedAtUtc.AddMilliseconds(400),
+                State = SessionState.Published,
+                RawChunkPaths = [loopbackChunkPath],
+                LoopbackCaptureSegments =
+                [
+                    new LoopbackCaptureSegment(
+                        startedAtUtc,
+                        startedAtUtc.AddMilliseconds(400),
+                        [loopbackChunkPath],
+                        string.Empty,
+                        "Test speakers",
+                        "Multimedia"),
+                ],
+                MicrophoneChunkPaths = [microphoneChunkPath],
+                MicrophoneCaptureSegments =
+                [
+                    new MicrophoneCaptureSegment(
+                        startedAtUtc,
+                        startedAtUtc.AddMilliseconds(400),
+                        [microphoneChunkPath]),
+                ],
+                MergedAudioPath = processingAudioPath,
+                PublishStatus = new ProcessingStageStatus(
+                    "publish",
+                    StageExecutionState.Succeeded,
+                    startedAtUtc.AddDays(1),
+                    "Published audio was republished after March 23, 2026 echo repair."),
+            });
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
+
+        Assert.False(result.AlreadyApplied);
+        var reportPath = Path.Combine(result.ArchiveDirectory, "echo-repair-report.txt");
+        Assert.True(File.Exists(reportPath));
+        var report = await File.ReadAllTextAsync(reportPath);
+        Assert.Contains("Skipped: 1", report, StringComparison.Ordinal);
+        Assert.Contains($"{stem}: missing published audio", report, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         try
@@ -365,6 +561,29 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
             var bytesToWrite = Math.Min(buffer.Length, remainingBytes);
             writer.Write(buffer, 0, bytesToWrite);
             remainingBytes -= bytesToWrite;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static Task WriteWaveFileAsync(string path, short amplitude, TimeSpan duration)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var format = new WaveFormat(16_000, 16, 1);
+        using var writer = new WaveFileWriter(path, format);
+        var remainingFrames = (int)Math.Round(duration.TotalSeconds * format.SampleRate);
+        var buffer = new byte[format.AverageBytesPerSecond];
+        var frameOffset = 0;
+        while (frameOffset < remainingFrames)
+        {
+            var framesToWrite = Math.Min((buffer.Length / format.BlockAlign), remainingFrames - frameOffset);
+            for (var frameIndex = 0; frameIndex < framesToWrite; frameIndex++)
+            {
+                BitConverter.TryWriteBytes(buffer.AsSpan(frameIndex * format.BlockAlign, sizeof(short)), amplitude);
+            }
+
+            writer.Write(buffer, 0, framesToWrite * format.BlockAlign);
+            frameOffset += framesToWrite;
         }
 
         return Task.CompletedTask;

@@ -74,7 +74,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - path and filename rules
   - work-manifest persistence
   - output catalog logic
-- WAV merge and mix logic, including loopback-aware microphone bleed reduction and short-lag correlation checks for delayed speaker echo during published-audio preparation
+- WAV merge and mix logic, including loopback-aware microphone bleed reduction, short-lag raw correlation checks, and a rolling `20 ms` envelope-history detector that can suppress delayed `80-400 ms` speaker pickup during published-audio preparation
   - transcript rendering
   - publish helpers
   - Whisper model inspection, download, and import logic
@@ -299,7 +299,7 @@ Core pieces:
 - `MeetingCleanupExecutionService`
   - executes archive, merge, rename, and other recommended cleanup actions
 - `PublishedMeetingRepairService`
-- runs a versioned one-time repair pass on startup, loads preserved work manifests for stronger continuity evidence, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, can also auto-merge a short-gap exact-title split when those manifests still agree on the same specific meeting identity, and relies on repaired artifact duration instead of stale reused-stem manifest timing when cataloging those repaired publishes
+- runs a versioned one-time repair pass on startup against the durable app-data root under `%LOCALAPPDATA%\MeetingRecorder`, loads preserved work manifests for stronger continuity evidence, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, can also auto-merge a short-gap exact-title split when those manifests still agree on the same specific meeting identity, republish repairable historical microphone sessions from preserved raw chunks under `work`, and writes an `echo-repair-report.txt` summary alongside archived backup WAVs under the versioned archive directory
 - persistent dismissed recommendation state in `AppConfig`
   - keeps the system unobtrusive until the underlying meeting changes enough to produce a new fingerprint
 

@@ -34,13 +34,13 @@ public sealed class AppLifecycleSourceTests
     }
 
     [Fact]
-    public void App_Startup_Runs_The_Versioned_Published_Meeting_Repair_Against_The_Installed_App_Root()
+    public void App_Startup_Runs_The_Versioned_Published_Meeting_Repair_Against_The_App_Data_Root()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains("PublishedMeetingRepairService.RepairKnownIssuesAsync(", source);
-        Assert.Contains("UpdateInstallerLaunchBuilder.ResolveInstalledAppRoot(Environment.ProcessPath, AppContext.BaseDirectory)", source);
+        Assert.Contains("AppDataPaths.GetAppRoot()", source);
         Assert.Contains("Published meeting repair completed:", source);
         Assert.Contains("Published meeting repair failed:", source);
     }

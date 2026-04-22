@@ -13,6 +13,14 @@ public sealed class WaveChunkMerger
     private const float CorrelatedBleedReducedMicrophoneGain = 0.02f;
     private const double CorrelatedBleedMaximumLagSeconds = 0.060d;
     private const double CorrelatedBleedLagStepSeconds = 0.002d;
+    private const float EnvelopeBleedMinimumCorrelation = 0.72f;
+    private const float EnvelopeBleedMinimumCorrelationLead = 0.08f;
+    private const float EnvelopeBleedMaximumMicRatio = 2.0f;
+    private const double EnvelopeBleedWindowSeconds = 0.020d;
+    private const double EnvelopeBleedHistorySeconds = 0.600d;
+    private const double EnvelopeBleedMinimumLagSeconds = 0.080d;
+    private const double EnvelopeBleedMaximumLagSeconds = 0.400d;
+    private const double EnvelopeBleedLagStepSeconds = 0.020d;
     private const float ReducedMicrophoneGain = 0.18f;
     private const double MicGainAttackSeconds = 0.010d;
     private const double MicGainReleaseSeconds = 0.180d;
@@ -352,6 +360,7 @@ public sealed class WaveChunkMerger
         var attackFactor = CalculateMicGainSmoothingFactor(format.SampleRate, MicGainAttackSeconds);
         var releaseFactor = CalculateMicGainSmoothingFactor(format.SampleRate, MicGainReleaseSeconds);
         var currentMicrophoneGain = 1f;
+        var envelopeBleedDetector = new RollingEnvelopeBleedDetector(format.SampleRate);
 
         using var writer = new WaveFileWriter(
             outputPath,
@@ -391,6 +400,12 @@ public sealed class WaveChunkMerger
                 samplesToWrite,
                 channelCount,
                 format.SampleRate);
+            var envelopeBleedGain = envelopeBleedDetector.DetectMicrophoneGain(
+                loopbackBuffer,
+                microphoneBuffer,
+                samplesToWrite,
+                channelCount);
+            var delayedBleedGain = Math.Min(correlatedBleedGain, envelopeBleedGain);
             for (var sampleIndex = 0; sampleIndex < samplesToWrite; sampleIndex += channelCount)
             {
                 var loopbackMagnitude = 0f;
@@ -405,8 +420,8 @@ public sealed class WaveChunkMerger
                     microphoneMagnitude > 0f &&
                     microphoneMagnitude <= loopbackMagnitude * LoopbackBleedMaximumMicRatio;
                 var targetMicrophoneGain = likelyLoopbackBleed
-                    ? Math.Min(ReducedMicrophoneGain, correlatedBleedGain)
-                    : correlatedBleedGain;
+                    ? Math.Min(ReducedMicrophoneGain, delayedBleedGain)
+                    : delayedBleedGain;
                 var smoothingFactor = targetMicrophoneGain < currentMicrophoneGain
                     ? attackFactor
                     : releaseFactor;
@@ -552,6 +567,181 @@ public sealed class WaveChunkMerger
         }
 
         return 1f - (float)Math.Exp(-1d / (sampleRate * timeSeconds));
+    }
+
+    private sealed class RollingEnvelopeBleedDetector
+    {
+        private readonly int _framesPerWindow;
+        private readonly int _historyWindowCount;
+        private readonly int _minimumLagWindows;
+        private readonly int _maximumLagWindows;
+        private readonly int _minimumOverlapWindows;
+        private readonly List<float> _loopbackRmsHistory;
+        private readonly List<float> _microphoneRmsHistory;
+        private readonly List<float> _loopbackPeakHistory;
+        private double _loopbackWindowEnergy;
+        private double _microphoneWindowEnergy;
+        private float _loopbackWindowPeak;
+        private int _windowFrameCount;
+
+        public RollingEnvelopeBleedDetector(int sampleRate)
+        {
+            _framesPerWindow = Math.Max(1, (int)Math.Round(sampleRate * EnvelopeBleedWindowSeconds));
+            _historyWindowCount = Math.Max(1, (int)Math.Round(EnvelopeBleedHistorySeconds / EnvelopeBleedWindowSeconds));
+            _minimumLagWindows = Math.Max(1, (int)Math.Round(EnvelopeBleedMinimumLagSeconds / EnvelopeBleedWindowSeconds));
+            _maximumLagWindows = Math.Max(_minimumLagWindows, (int)Math.Round(EnvelopeBleedMaximumLagSeconds / EnvelopeBleedWindowSeconds));
+            _minimumOverlapWindows = Math.Max(1, _historyWindowCount / 3);
+            _loopbackRmsHistory = new List<float>(_historyWindowCount);
+            _microphoneRmsHistory = new List<float>(_historyWindowCount);
+            _loopbackPeakHistory = new List<float>(_historyWindowCount);
+        }
+
+        public float DetectMicrophoneGain(
+            IReadOnlyList<float> loopbackBuffer,
+            IReadOnlyList<float> microphoneBuffer,
+            int sampleCount,
+            int channelCount)
+        {
+            if (sampleCount <= 0 || channelCount <= 0)
+            {
+                return 1f;
+            }
+
+            var frameCount = sampleCount / channelCount;
+            for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
+            {
+                var sampleIndex = frameIndex * channelCount;
+                var loopbackFrame = 0f;
+                var microphoneFrame = 0f;
+                for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+                {
+                    loopbackFrame += loopbackBuffer[sampleIndex + channelIndex];
+                    microphoneFrame += microphoneBuffer[sampleIndex + channelIndex];
+                }
+
+                loopbackFrame /= channelCount;
+                microphoneFrame /= channelCount;
+                _loopbackWindowEnergy += loopbackFrame * loopbackFrame;
+                _microphoneWindowEnergy += microphoneFrame * microphoneFrame;
+                _loopbackWindowPeak = Math.Max(_loopbackWindowPeak, Math.Abs(loopbackFrame));
+                _windowFrameCount++;
+
+                if (_windowFrameCount < _framesPerWindow)
+                {
+                    continue;
+                }
+
+                AppendWindow(
+                    (float)Math.Sqrt(_loopbackWindowEnergy / _windowFrameCount),
+                    (float)Math.Sqrt(_microphoneWindowEnergy / _windowFrameCount),
+                    _loopbackWindowPeak);
+                ResetCurrentWindow();
+            }
+
+            return EvaluateMicrophoneGain();
+        }
+
+        private void AppendWindow(float loopbackRms, float microphoneRms, float loopbackPeak)
+        {
+            _loopbackRmsHistory.Add(loopbackRms);
+            _microphoneRmsHistory.Add(microphoneRms);
+            _loopbackPeakHistory.Add(loopbackPeak);
+
+            if (_loopbackRmsHistory.Count <= _historyWindowCount)
+            {
+                return;
+            }
+
+            _loopbackRmsHistory.RemoveAt(0);
+            _microphoneRmsHistory.RemoveAt(0);
+            _loopbackPeakHistory.RemoveAt(0);
+        }
+
+        private float EvaluateMicrophoneGain()
+        {
+            if (_loopbackRmsHistory.Count < _historyWindowCount)
+            {
+                return 1f;
+            }
+
+            if (_loopbackPeakHistory.Max() < LoopbackBleedDetectionThreshold)
+            {
+                return 1f;
+            }
+
+            var loopbackRms = CalculateOverallRms(_loopbackRmsHistory);
+            var microphoneRms = CalculateOverallRms(_microphoneRmsHistory);
+            if (loopbackRms <= 0d ||
+                microphoneRms <= 0d ||
+                microphoneRms > loopbackRms * EnvelopeBleedMaximumMicRatio)
+            {
+                return 1f;
+            }
+
+            var zeroLagCorrelation = CalculateNormalizedCorrelation(
+                _loopbackRmsHistory,
+                _microphoneRmsHistory,
+                0,
+                _minimumOverlapWindows);
+            var bestDelayedCorrelation = 0d;
+            var bestLagWindows = 0;
+            for (var lag = _minimumLagWindows; lag <= _maximumLagWindows; lag++)
+            {
+                var delayedCorrelation = CalculateNormalizedCorrelation(
+                    _loopbackRmsHistory,
+                    _microphoneRmsHistory,
+                    lag,
+                    _minimumOverlapWindows);
+                if (delayedCorrelation > bestDelayedCorrelation)
+                {
+                    bestDelayedCorrelation = delayedCorrelation;
+                    bestLagWindows = lag;
+                }
+            }
+
+            if (bestLagWindows <= 0)
+            {
+                return 1f;
+            }
+
+            var matchedLoopbackIndex = _loopbackRmsHistory.Count - 1 - bestLagWindows;
+            if (matchedLoopbackIndex < 0)
+            {
+                return 1f;
+            }
+
+            var latestMicrophoneRms = _microphoneRmsHistory[^1];
+            var matchedLoopbackRms = _loopbackRmsHistory[matchedLoopbackIndex];
+            if (matchedLoopbackRms <= 0f ||
+                latestMicrophoneRms > matchedLoopbackRms * EnvelopeBleedMaximumMicRatio)
+            {
+                return 1f;
+            }
+
+            return bestDelayedCorrelation >= EnvelopeBleedMinimumCorrelation &&
+                bestDelayedCorrelation >= zeroLagCorrelation + EnvelopeBleedMinimumCorrelationLead
+                ? CorrelatedBleedReducedMicrophoneGain
+                : 1f;
+        }
+
+        private void ResetCurrentWindow()
+        {
+            _loopbackWindowEnergy = 0d;
+            _microphoneWindowEnergy = 0d;
+            _loopbackWindowPeak = 0f;
+            _windowFrameCount = 0;
+        }
+
+        private static double CalculateOverallRms(IReadOnlyList<float> rmsWindows)
+        {
+            double summedEnergy = 0d;
+            foreach (var rmsWindow in rmsWindows)
+            {
+                summedEnergy += rmsWindow * rmsWindow;
+            }
+
+            return rmsWindows.Count == 0 ? 0d : Math.Sqrt(summedEnergy / rmsWindows.Count);
+        }
     }
 
     private static ISampleProvider MatchWaveFormat(ISampleProvider provider, int sampleRate, int channels)

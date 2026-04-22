@@ -189,12 +189,11 @@ public partial class App : Application
 
         try
         {
-            var installRoot = UpdateInstallerLaunchBuilder.ResolveInstalledAppRoot(Environment.ProcessPath, AppContext.BaseDirectory);
             publishedMeetingRepairResult = await Task.Run(
                 () => PublishedMeetingRepairService.RepairKnownIssuesAsync(
                     config.AudioOutputDir,
                     config.TranscriptOutputDir,
-                    installRoot));
+                    AppDataPaths.GetAppRoot()));
         }
         catch (Exception exception)
         {
