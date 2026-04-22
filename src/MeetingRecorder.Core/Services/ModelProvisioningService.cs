@@ -110,6 +110,7 @@ public sealed class ModelProvisioningService
     {
         var configuredStatus = _whisperModelService.Inspect(config.TranscriptionModelPath);
         var standardTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.Standard);
+        var highAccuracyTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.HighAccuracy);
 
         if (requestedProfile == TranscriptionModelProfilePreference.Custom &&
             configuredStatus.Kind == WhisperModelStatusKind.Valid)
@@ -125,7 +126,11 @@ public sealed class ModelProvisioningService
         }
 
         if (requestedProfile == TranscriptionModelProfilePreference.HighAccuracyDownloaded &&
-            configuredStatus.Kind == WhisperModelStatusKind.Valid)
+            configuredStatus.Kind == WhisperModelStatusKind.Valid &&
+            string.Equals(
+                Path.GetFullPath(config.TranscriptionModelPath),
+                Path.GetFullPath(highAccuracyTargetPath),
+                StringComparison.OrdinalIgnoreCase))
         {
             return BuildTranscriptionStatus(
                 requestedProfile,
@@ -269,6 +274,7 @@ public sealed class ModelProvisioningService
 
         var configuredStatus = _diarizationAssetCatalogService.InspectInstalledAssets(config.DiarizationAssetPath);
         var standardTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.SpeakerLabeling.Standard);
+        var highAccuracyTargetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.SpeakerLabeling.HighAccuracy);
 
         if (requestedProfile == SpeakerLabelingModelProfilePreference.Custom &&
             configuredStatus.IsReady)
@@ -284,7 +290,11 @@ public sealed class ModelProvisioningService
         }
 
         if (requestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded &&
-            configuredStatus.IsReady)
+            configuredStatus.IsReady &&
+            string.Equals(
+                Path.GetFullPath(config.DiarizationAssetPath),
+                Path.GetFullPath(highAccuracyTargetPath),
+                StringComparison.OrdinalIgnoreCase))
         {
             return BuildSpeakerLabelingStatus(
                 requestedProfile,

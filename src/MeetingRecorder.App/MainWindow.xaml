@@ -2000,6 +2000,19 @@
                                                 Click="SpeakerLabelingSetupGuideLink_OnClick"
                                                 Content="Open setup guide" />
                                     </WrapPanel>
+                                    <StackPanel Margin="0,4,0,0">
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="When to run speaker labeling" />
+                                        <ComboBox x:Name="SetupSpeakerLabelingRunModeComboBox"
+                                                  Margin="0,6,0,0"
+                                                  Height="32"
+                                                  VerticalContentAlignment="Center"
+                                                  SelectionChanged="SetupSpeakerLabelingRunModeComboBox_OnSelectionChanged" />
+                                        <TextBlock x:Name="SetupSpeakerLabelingRunModeHelpTextBlock"
+                                                   Margin="0,8,0,0"
+                                                   Foreground="#45504D"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
                                     <TextBlock x:Name="SpeakerLabelingRetryStatusTextBlock"
                                                Foreground="#8A5A00"
                                                TextWrapping="Wrap"

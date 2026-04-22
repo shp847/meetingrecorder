@@ -62,6 +62,28 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
+    public void PlatformPortableBundleInstaller_Silent_Update_Path_Skips_Shortcut_Repair_And_Revalidates_The_Promoted_Install()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var installerPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment", "PortableBundleInstaller.cs");
+
+        Assert.True(File.Exists(installerPath), $"Expected deployment installer source at '{installerPath}'.");
+
+        var source = File.ReadAllText(installerPath);
+
+        Assert.Contains(
+            "if (isUpdate && (request.CreateDesktopShortcut || request.CreateStartMenuShortcut))",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot)",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlatformInstallPathController_Avoids_Process_Inspection_And_Control_APIs()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

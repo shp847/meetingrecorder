@@ -140,10 +140,11 @@ The portable bundle also includes:
 4. Confirm `Transcription` shows either `Standard ready` or `Higher Accuracy ready`.
 5. If the installer reported that a download did not finish, open `Settings > Setup` after launch. Recording stays blocked until transcription is ready, while speaker labeling can stay optional.
 6. If you plan to rely on Teams auto-detection, open `Settings > Setup > Teams integration`, choose the preferred mode, and run the Teams probe so the app can capture the current local detector baseline, test whether the Teams third-party API candidate exposes readable meeting state on this machine, and fall back cleanly when it does not. The Setup card now also saves and shows `Last probe`, `Promotable path`, and `Block reason`.
-7. Confirm `Speaker labeling` shows either `Standard ready`, `Higher Accuracy ready`, or your preferred custom import state if you plan to use diarization.
-8. If the output folders are not acceptable, review `Settings > Files`.
-9. If you need a custom approved model or bundle instead of the curated profiles, use `Import approved file` from `Settings > Setup`.
-10. Record a short manual test.
+7. Confirm `Speaker labeling` shows either `Standard ready`, `Higher Accuracy ready`, `Deferred`, or your preferred custom import state if you plan to use diarization.
+8. If you want new transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. Choosing or importing a speaker-labeling bundle from `Settings > Setup` now auto-promotes the run mode from `Deferred` to `Throttled` unless you change it back later.
+9. If the output folders are not acceptable, review `Settings > Files`.
+10. If you need a custom approved model or bundle instead of the curated profiles, use `Import approved file` from `Settings > Setup`.
+11. Record a short manual test.
 
 If no Whisper model is installed yet, the app can still launch normally. The packaged launcher now keeps that as an in-app setup reminder instead of printing a startup console warning on every launch.
 
@@ -160,7 +161,7 @@ The app now keeps the main workflow in two primary destinations inside one visib
 
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, the detected audio source summary, live audio graph, start/stop controls, and quick settings for microphone capture and auto-detection
 - `Meetings` for the recent-and-published meetings workspace, grouped browsing, cleanup review, quick actions, and compact meeting drafts
-Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. Recording and auto-detect stay blocked until transcription is ready.
+Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. `Speaker labeling` now also includes a direct `When to run speaker labeling` selector so you can move between `Deferred`, `Throttled`, and `Inline` without leaving Setup. Recording and auto-detect stay blocked until transcription is ready.
 When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
 When the backlog includes repaired sessions that already finished transcription, startup now resumes those publish-ready items before fresh untouched queue work so the visible queue can shrink faster after a crash backlog.
@@ -376,7 +377,8 @@ Recommended path:
 3. Open `Speaker labeling`.
 4. In `Recommended model bundle`, click `Download Recommended Bundle`.
 5. Wait for the status update.
-6. Confirm the `Speaker labeling` section now shows speaker labeling as `Ready`.
+6. Confirm the `Speaker labeling` section now shows speaker labeling as `Ready` or `Deferred`.
+7. If you want newly published transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. When you choose or import a speaker-labeling bundle from Setup, the app now auto-promotes `Deferred` to `Throttled` so diarization can run without an extra trip to `Advanced`.
 
 If GitHub is blocked or no recommended bundle is loaded:
 

@@ -30,6 +30,84 @@ public sealed class DeploymentCliTests
         Assert.Equal(0, exitCode);
     }
 
+    [Fact]
+    public void DeploymentCli_Prefers_Direct_Executable_Relaunch_Over_Shell_Launching_The_Cmd_Wrapper()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "DeploymentCliTests", Guid.NewGuid().ToString("N"));
+        var installRoot = Path.Combine(root, "MeetingRecorder");
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe"), "apphost");
+            File.WriteAllText(Path.Combine(installRoot, "Run-MeetingRecorder.cmd"), "@echo off");
+
+            var cliAssembly = Assembly.Load("AppPlatform.Deployment.Cli");
+            var abstractionsAssembly = Assembly.Load("AppPlatform.Abstractions");
+            var programType = cliAssembly.GetType("AppPlatform.Deployment.Cli.Program", throwOnError: true)!;
+            var helperMethod = programType.GetMethod(
+                "BuildInstalledAppLaunchStartInfo",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.NotNull(helperMethod);
+
+            var manifestType = abstractionsAssembly.GetType("AppPlatform.Abstractions.AppProductManifest", throwOnError: true)!;
+            var layoutType = abstractionsAssembly.GetType("AppPlatform.Abstractions.ManagedInstallLayout", throwOnError: true)!;
+            var releasePolicyType = abstractionsAssembly.GetType("AppPlatform.Abstractions.AppReleaseChannelPolicy", throwOnError: true)!;
+            var shortcutPolicyType = abstractionsAssembly.GetType("AppPlatform.Abstractions.ShellShortcutPolicy", throwOnError: true)!;
+
+            var layout = Activator.CreateInstance(
+                layoutType,
+                installRoot,
+                Path.Combine(root, "data"),
+                Path.Combine(root, "data", "config", "appsettings.json"),
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                Array.Empty<string>());
+            var releasePolicy = Activator.CreateInstance(releasePolicyType, true, true, true, false, true);
+            var shortcutPolicy = Activator.CreateInstance(
+                shortcutPolicyType,
+                "Meeting Recorder",
+                "Meeting Recorder.lnk",
+                "Meeting Recorder.lnk",
+                "MeetingRecorder");
+            var manifest = Activator.CreateInstance(
+                manifestType,
+                "meeting-recorder",
+                "Meeting Recorder",
+                "Meeting Recorder",
+                "MeetingRecorder.App.exe",
+                "Run-MeetingRecorder.cmd",
+                string.Empty,
+                "MeetingRecorderInstaller.msi",
+                "MeetingRecorder",
+                "https://example.com/releases/latest",
+                "https://example.com/releases",
+                "example",
+                "meeting-recorder",
+                layout,
+                releasePolicy,
+                shortcutPolicy);
+
+            var startInfo = (System.Diagnostics.ProcessStartInfo)helperMethod!.Invoke(null, [manifest!, installRoot])!;
+
+            Assert.Equal(Path.Combine(installRoot, "MeetingRecorder.App.exe"), startInfo.FileName);
+            Assert.Equal(installRoot, startInfo.WorkingDirectory);
+            Assert.False(startInfo.UseShellExecute);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static string GetRepoRoot()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

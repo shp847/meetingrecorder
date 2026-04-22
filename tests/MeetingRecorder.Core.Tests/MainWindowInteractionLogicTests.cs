@@ -727,7 +727,8 @@ public sealed class MainWindowInteractionLogicTests
             requestedProfile: SpeakerLabelingModelProfilePreference.Standard,
             activeProfile: SpeakerLabelingModelProfilePreference.Standard,
             isReady: false,
-            retryRecommended: false);
+            retryRecommended: false,
+            backgroundMode: BackgroundSpeakerLabelingMode.Throttled);
 
         Assert.Equal("Optional", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
@@ -743,7 +744,8 @@ public sealed class MainWindowInteractionLogicTests
             requestedProfile: SpeakerLabelingModelProfilePreference.Disabled,
             activeProfile: SpeakerLabelingModelProfilePreference.Disabled,
             isReady: false,
-            retryRecommended: false);
+            retryRecommended: false,
+            backgroundMode: BackgroundSpeakerLabelingMode.Deferred);
 
         Assert.Equal("Optional", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
@@ -797,7 +799,8 @@ public sealed class MainWindowInteractionLogicTests
             requestedProfile: SpeakerLabelingModelProfilePreference.Standard,
             activeProfile: SpeakerLabelingModelProfilePreference.Standard,
             isReady: false,
-            retryRecommended: true);
+            retryRecommended: true,
+            backgroundMode: BackgroundSpeakerLabelingMode.Throttled);
 
         Assert.Equal("Optional", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
@@ -807,19 +810,56 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildModelsTabSpeakerLabelingSetupState_Points_To_Run_Mode_When_Bundle_Is_Ready_But_Deferred()
+    {
+        var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
+            requestedProfile: SpeakerLabelingModelProfilePreference.Standard,
+            activeProfile: SpeakerLabelingModelProfilePreference.Standard,
+            isReady: true,
+            retryRecommended: false,
+            backgroundMode: BackgroundSpeakerLabelingMode.Deferred);
+
+        Assert.Equal("Deferred", result.Status);
+        Assert.Equal("Enable now", result.PrimaryActionLabel);
+        Assert.Equal(
+            "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Switch the run mode below to Throttled or Inline when you want labels applied automatically.",
+            result.Body);
+        Assert.Equal("SetupSpeakerLabelingRunModeComboBox", result.PrimaryAction.FocusTargetName);
+    }
+
+    [Fact]
     public void BuildModelsTabSpeakerLabelingSetupState_Points_To_Management_When_HigherAccuracy_Is_Ready()
     {
         var result = MainWindowInteractionLogic.BuildModelsTabSpeakerLabelingSetupState(
             requestedProfile: SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
             activeProfile: SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
             isReady: true,
-            retryRecommended: false);
+            retryRecommended: false,
+            backgroundMode: BackgroundSpeakerLabelingMode.Throttled);
 
         Assert.Equal("Higher Accuracy ready", result.Status);
         Assert.Equal("Open Setup", result.PrimaryActionLabel);
         Assert.Equal(
             "Higher Accuracy speaker labeling is active.",
             result.Body);
+    }
+
+    [Theory]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Standard, BackgroundSpeakerLabelingMode.Throttled)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, BackgroundSpeakerLabelingMode.Throttled)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Custom, BackgroundSpeakerLabelingMode.Throttled)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Disabled, BackgroundSpeakerLabelingMode.Deferred)]
+    [InlineData(BackgroundSpeakerLabelingMode.Inline, SpeakerLabelingModelProfilePreference.Standard, BackgroundSpeakerLabelingMode.Inline)]
+    public void ResolveBackgroundSpeakerLabelingModeAfterProfileSelection_Returns_Expected_Mode(
+        BackgroundSpeakerLabelingMode currentMode,
+        SpeakerLabelingModelProfilePreference requestedProfile,
+        BackgroundSpeakerLabelingMode expectedMode)
+    {
+        var result = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
+            currentMode,
+            requestedProfile);
+
+        Assert.Equal(expectedMode, result);
     }
 
     [Fact]

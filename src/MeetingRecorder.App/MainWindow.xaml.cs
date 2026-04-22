@@ -166,6 +166,7 @@ public partial class MainWindow : Window
     private UIElement? _detachedSettingsBody;
     private ShellStatusState? _shellStatusOverride;
     private ConfigEditorSnapshot? _pendingConfigEditorSnapshotRestore;
+    private bool _isSynchronizingSpeakerLabelingModeSelectors;
     private MeetingCleanupRecommendation[] _meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();
     private MeetingListRow[] _allMeetingRows = Array.Empty<MeetingListRow>();
     private Dictionary<string, bool> _meetingGroupExpansionStates = new(StringComparer.Ordinal);
@@ -3327,6 +3328,18 @@ public partial class MainWindow : Window
             isSpeakerLabelingHighAccuracyDownload: true);
     }
 
+    private async void SetupSpeakerLabelingRunModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSynchronizingSpeakerLabelingModeSelectors ||
+            !_isUiReady ||
+            SetupSpeakerLabelingRunModeComboBox.SelectedValue is not BackgroundSpeakerLabelingMode selectedMode)
+        {
+            return;
+        }
+
+        await SaveSpeakerLabelingRunModeQuickSettingAsync(selectedMode, "Setup");
+    }
+
     private void ImportApprovedSpeakerLabelingButton_OnClick(object sender, RoutedEventArgs e)
     {
         ImportDiarizationAssetButton_OnClick(sender, e);
@@ -3424,10 +3437,26 @@ public partial class MainWindow : Window
                     SpeakerLabelingProfile: speakerLabelingProfile,
                     RespectExistingConfigPreferences: false),
                 _lifetimeCts.Token);
-            await _liveConfig.SaveAsync(provisioningResult.Config, _lifetimeCts.Token);
+            var nextConfig = provisioningResult.Config with
+            {
+                BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
+                    provisioningResult.Config.BackgroundSpeakerLabelingMode,
+                    speakerLabelingProfile),
+            };
+            var speakerLabelingModeAutoEnabled =
+                speakerLabelingProfile != SpeakerLabelingModelProfilePreference.Disabled &&
+                provisioningResult.Config.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred &&
+                nextConfig.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Throttled;
+
+            await _liveConfig.SaveAsync(nextConfig, _lifetimeCts.Token);
             RefreshWhisperModelStatus();
             RefreshDiarizationAssetStatus();
             ApplyProvisioningResultToSetupStatus(provisioningResult.Result, successPrefix);
+            if (speakerLabelingModeAutoEnabled)
+            {
+                DiarizationActionStatusTextBlock.Text =
+                    $"{DiarizationActionStatusTextBlock.Text} Automatic speaker labeling will now run in Throttled mode.".Trim();
+            }
             AppendActivity(
                 $"Updated curated model profiles. Transcription requested={provisioningResult.Result.Transcription.RequestedProfile}; speaker labeling requested={provisioningResult.Result.SpeakerLabeling.RequestedProfile}.");
         }
@@ -3675,15 +3704,27 @@ public partial class MainWindow : Window
                 _bundledModelCatalog,
                 _liveConfig.Current.ModelCacheDir,
                 installed.AssetRootPath);
-            await _liveConfig.SaveAsync(_liveConfig.Current with
+            var nextConfig = _liveConfig.Current with
             {
                 DiarizationAssetPath = installed.AssetRootPath,
                 SpeakerLabelingModelProfilePreference = profilePreference,
-            }, _lifetimeCts.Token);
+                BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
+                    _liveConfig.Current.BackgroundSpeakerLabelingMode,
+                    profilePreference),
+            };
+            var speakerLabelingModeAutoEnabled =
+                _liveConfig.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred &&
+                nextConfig.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Throttled;
+            await _liveConfig.SaveAsync(nextConfig, _lifetimeCts.Token);
             RefreshDiarizationAssetStatus();
             await RefreshRemoteDiarizationAssetCatalogAsync(manual: false, _lifetimeCts.Token);
             DiarizationActionStatusTextBlock.Text =
                 $"Installed '{selectedAsset.Source.FileName}' into '{installed.AssetRootPath}'. Speaker labeling is now {GetDiarizationAvailabilityText(installed)}.";
+            if (speakerLabelingModeAutoEnabled)
+            {
+                DiarizationActionStatusTextBlock.Text =
+                    $"{DiarizationActionStatusTextBlock.Text} Automatic speaker labeling will now run in Throttled mode.".Trim();
+            }
             AppendActivity($"Installed diarization asset '{selectedAsset.Source.FileName}' into '{installed.AssetRootPath}'.");
         }
         catch (Exception exception)
@@ -3723,14 +3764,26 @@ public partial class MainWindow : Window
                 dialog.FileName,
                 _liveConfig.Current.ModelCacheDir,
                 _lifetimeCts.Token);
-            await _liveConfig.SaveAsync(_liveConfig.Current with
+            var nextConfig = _liveConfig.Current with
             {
                 DiarizationAssetPath = installed.AssetRootPath,
                 SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Custom,
-            }, _lifetimeCts.Token);
+                BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
+                    _liveConfig.Current.BackgroundSpeakerLabelingMode,
+                    SpeakerLabelingModelProfilePreference.Custom),
+            };
+            var speakerLabelingModeAutoEnabled =
+                _liveConfig.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred &&
+                nextConfig.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Throttled;
+            await _liveConfig.SaveAsync(nextConfig, _lifetimeCts.Token);
             RefreshDiarizationAssetStatus();
             DiarizationActionStatusTextBlock.Text =
                 $"Imported '{Path.GetFileName(dialog.FileName)}' into '{installed.AssetRootPath}'. Speaker labeling is now {GetDiarizationAvailabilityText(installed)}.";
+            if (speakerLabelingModeAutoEnabled)
+            {
+                DiarizationActionStatusTextBlock.Text =
+                    $"{DiarizationActionStatusTextBlock.Text} Automatic speaker labeling will now run in Throttled mode.".Trim();
+            }
             AppendActivity($"Imported diarization asset from '{dialog.FileName}' into '{installed.AssetRootPath}'.");
         }
         catch (Exception exception)
@@ -5214,7 +5267,7 @@ public partial class MainWindow : Window
         ConfigUpdateFeedUrlTextBox.Text = config.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
-        ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue = config.BackgroundSpeakerLabelingMode;
+        SetSpeakerLabelingModeSelectors(config.BackgroundSpeakerLabelingMode);
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
         UpdateTeamsIntegrationProbePresentation(config);
     }
@@ -5241,12 +5294,16 @@ public partial class MainWindow : Window
 
         ConfigBackgroundSpeakerLabelingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
         ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Value);
-        ConfigBackgroundSpeakerLabelingModeComboBox.ItemsSource = new[]
+        var speakerLabelingModeOptions = new[]
         {
             new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Deferred, "Deferred"),
             new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Throttled, "Throttled"),
             new SelectionOption<BackgroundSpeakerLabelingMode>(BackgroundSpeakerLabelingMode.Inline, "Inline"),
         };
+        ConfigBackgroundSpeakerLabelingModeComboBox.ItemsSource = speakerLabelingModeOptions;
+        SetupSpeakerLabelingRunModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
+        SetupSpeakerLabelingRunModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Value);
+        SetupSpeakerLabelingRunModeComboBox.ItemsSource = speakerLabelingModeOptions;
     }
 
     private void RegisterConfigEditorChangeHandlers()
@@ -5365,7 +5422,93 @@ public partial class MainWindow : Window
         ConfigUpdateFeedUrlTextBox.Text = snapshot.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = snapshot.PreferredTeamsIntegrationMode;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = snapshot.BackgroundProcessingMode;
-        ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue = snapshot.BackgroundSpeakerLabelingMode;
+        SetSpeakerLabelingModeSelectors(snapshot.BackgroundSpeakerLabelingMode);
+    }
+
+    private void SetSpeakerLabelingModeSelectors(BackgroundSpeakerLabelingMode mode)
+    {
+        _isSynchronizingSpeakerLabelingModeSelectors = true;
+        try
+        {
+            ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue = mode;
+            SetupSpeakerLabelingRunModeComboBox.SelectedValue = mode;
+        }
+        finally
+        {
+            _isSynchronizingSpeakerLabelingModeSelectors = false;
+        }
+
+        SetupSpeakerLabelingRunModeHelpTextBlock.Text = BuildSpeakerLabelingRunModeHelpText(mode);
+    }
+
+    private static string BuildSpeakerLabelingRunModeHelpText(BackgroundSpeakerLabelingMode mode)
+    {
+        return mode switch
+        {
+            BackgroundSpeakerLabelingMode.Deferred =>
+                "Deferred publishes audio and transcripts first, so speaker labels are skipped in the main pass until you rerun speaker labeling later.",
+            BackgroundSpeakerLabelingMode.Inline =>
+                "Inline runs speaker labeling in the main processing pass for the fastest labeled output, but it can delay transcript publishing on longer meetings.",
+            _ =>
+                "Throttled is recommended. Speaker labeling still runs automatically after transcription, while leaving the queue more responsive for the rest of the app.",
+        };
+    }
+
+    private async Task SaveSpeakerLabelingRunModeQuickSettingAsync(BackgroundSpeakerLabelingMode selectedMode, string source)
+    {
+        if (_isSavingConfig)
+        {
+            SetSpeakerLabelingModeSelectors(_liveConfig.Current.BackgroundSpeakerLabelingMode);
+            return;
+        }
+
+        var currentConfig = _liveConfig.Current;
+        if (currentConfig.BackgroundSpeakerLabelingMode == selectedMode)
+        {
+            SetSpeakerLabelingModeSelectors(selectedMode);
+            return;
+        }
+
+        var editorSnapshot = ReadConfigEditorSnapshot();
+        var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(currentConfig, editorSnapshot);
+        _pendingConfigEditorSnapshotRestore = hasPendingChanges
+            ? editorSnapshot with { BackgroundSpeakerLabelingMode = selectedMode }
+            : null;
+
+        try
+        {
+            await _liveConfig.SaveAsync(currentConfig with
+            {
+                BackgroundSpeakerLabelingMode = selectedMode,
+            }, _lifetimeCts.Token);
+
+            DiarizationActionStatusTextBlock.Text = selectedMode switch
+            {
+                BackgroundSpeakerLabelingMode.Deferred =>
+                    "Speaker labeling will stay deferred. New transcripts publish first, and you can run labels later when needed.",
+                BackgroundSpeakerLabelingMode.Inline =>
+                    "Speaker labeling will now run inline during normal processing.",
+                _ =>
+                    "Speaker labeling will now run automatically in Throttled mode.",
+            };
+            SetConfigSaveStatus($"Speaker labeling mode updated from {source}.");
+            AppendActivity($"Speaker labeling mode set to {selectedMode} from {source}.");
+            UpdateDashboardReadiness();
+        }
+        catch (Exception exception)
+        {
+            _pendingConfigEditorSnapshotRestore = null;
+            _shellStatusOverride = new ShellStatusState(
+                "SAVE FAILED",
+                "Open Settings",
+                ShellStatusTarget.SettingsGeneral,
+                "Settings");
+            SetSpeakerLabelingModeSelectors(currentConfig.BackgroundSpeakerLabelingMode);
+            SetConfigSaveStatus($"Speaker labeling mode update failed: {exception.Message}");
+            DiarizationActionStatusTextBlock.Text = $"Speaker-labeling mode update failed: {exception.Message}";
+            AppendActivity($"Speaker labeling mode update failed from {source}: {exception.Message}");
+            UpdateDashboardReadiness();
+        }
     }
 
     private AppConfig BuildTeamsProbeConfigFromEditor(AppConfig currentConfig)
@@ -7743,15 +7886,19 @@ public partial class MainWindow : Window
             speakerLabelingRequestedProfile,
             speakerLabelingActiveProfile,
             _currentDiarizationAssetStatus?.IsReady == true,
-            speakerLabelingRetryRecommended);
+            speakerLabelingRetryRecommended,
+            _liveConfig.Current.BackgroundSpeakerLabelingMode);
         _currentSpeakerLabelingSetupState = speakerLabelingState;
+        var speakerLabelingRunsAutomatically =
+            _currentDiarizationAssetStatus?.IsReady == true &&
+            _liveConfig.Current.BackgroundSpeakerLabelingMode != BackgroundSpeakerLabelingMode.Deferred;
 
         ApplySetupOverviewStatusChip(
             SpeakerLabelingOverviewStatusChipBorder,
             SpeakerLabelingOverviewStatusTextBlock,
             speakerLabelingState.Status,
-            _currentDiarizationAssetStatus?.IsReady == true);
-            SpeakerLabelingOverviewSummaryTextBlock.Text = speakerLabelingState.Body;
+            speakerLabelingRunsAutomatically);
+        SpeakerLabelingOverviewSummaryTextBlock.Text = speakerLabelingState.Body;
         SpeakerLabelingOverviewPrimaryButton.Content = speakerLabelingState.PrimaryActionLabel;
 
         TranscriptionRetryStatusTextBlock.Text = transcriptionRetryRecommended

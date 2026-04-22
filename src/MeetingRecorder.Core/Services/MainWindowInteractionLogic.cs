@@ -609,7 +609,8 @@ internal static class MainWindowInteractionLogic
         SpeakerLabelingModelProfilePreference requestedProfile,
         SpeakerLabelingModelProfilePreference activeProfile,
         bool isReady,
-        bool retryRecommended)
+        bool retryRecommended,
+        BackgroundSpeakerLabelingMode backgroundMode)
     {
         if (requestedProfile == SpeakerLabelingModelProfilePreference.Disabled)
         {
@@ -633,6 +634,18 @@ internal static class MainWindowInteractionLogic
                     "Open Setup",
                     "Review the speaker-labeling setup section below to download Standard, try Higher Accuracy, or import an approved local bundle.",
                     "UseStandardSpeakerLabelingProfileButton"));
+        }
+
+        if (backgroundMode == BackgroundSpeakerLabelingMode.Deferred)
+        {
+            return new ModelsTabSetupState(
+                "Deferred",
+                "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Switch the run mode below to Throttled or Inline when you want labels applied automatically.",
+                new ModelsTabSetupAction(
+                    ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
+                    "Enable now",
+                    "Choose Throttled or Inline below to run speaker labeling during normal processing.",
+                    "SetupSpeakerLabelingRunModeComboBox"));
         }
 
         if (retryRecommended && requestedProfile == SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded)
@@ -669,6 +682,16 @@ internal static class MainWindowInteractionLogic
                 "Open Setup",
                 "Review the speaker-labeling setup section below to switch between Standard, Higher Accuracy, or a custom imported bundle.",
                 "UseStandardSpeakerLabelingProfileButton"));
+    }
+
+    public static BackgroundSpeakerLabelingMode ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
+        BackgroundSpeakerLabelingMode currentMode,
+        SpeakerLabelingModelProfilePreference requestedProfile)
+    {
+        return requestedProfile != SpeakerLabelingModelProfilePreference.Disabled &&
+            currentMode == BackgroundSpeakerLabelingMode.Deferred
+            ? BackgroundSpeakerLabelingMode.Throttled
+            : currentMode;
     }
 
     public static AppConfig PromotePendingUpdateToInstalledReleaseMetadata(AppConfig config, string currentVersion)

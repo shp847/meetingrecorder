@@ -199,6 +199,125 @@ public sealed class ModelProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisionAsync_Replaces_Existing_Standard_Transcription_Model_When_Higher_Accuracy_Is_Requested()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.StandardTranscriptionTargetPath)!);
+        await File.WriteAllBytesAsync(fixture.StandardTranscriptionTargetPath, fixture.CreateWhisperModelBytes());
+
+        var seedConfigStore = fixture.CreateConfigStore();
+        await seedConfigStore.SaveAsync(new AppConfig
+        {
+            AudioOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Recordings"),
+            TranscriptOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Transcripts"),
+            WorkDir = Path.Combine(fixture.AppRoot, "work"),
+            ModelCacheDir = fixture.ModelCacheRoot,
+            TranscriptionModelPath = fixture.StandardTranscriptionTargetPath,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
+            DiarizationAssetPath = fixture.StandardSpeakerLabelingTargetPath,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Standard,
+            DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+            MicCaptureEnabled = true,
+            LaunchOnLoginEnabled = true,
+            AutoDetectEnabled = false,
+            AutoDetectSecurityPromptMigrationApplied = true,
+            CalendarTitleFallbackEnabled = false,
+            MeetingAttendeeEnrichmentEnabled = true,
+            UpdateCheckEnabled = true,
+            AutoInstallUpdatesEnabled = true,
+            UpdateFeedUrl = "https://example.com/releases/latest",
+        });
+
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: true),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: true));
+        var service = fixture.CreateService(feedClient);
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.HighAccuracyDownloaded,
+                SpeakerLabelingModelProfilePreference.Standard,
+                RespectExistingConfigPreferences: false));
+
+        Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, result.Config.TranscriptionModelProfilePreference);
+        Assert.Equal(fixture.HighAccuracyTranscriptionTargetPath, result.Config.TranscriptionModelPath);
+        Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, result.Result.Transcription.ActiveProfile);
+        Assert.True(result.Result.Transcription.IsReady);
+        Assert.False(result.Result.Transcription.RetryRecommended);
+        Assert.True(File.Exists(fixture.HighAccuracyTranscriptionTargetPath));
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_Replaces_Existing_Standard_SpeakerLabeling_Bundle_When_Higher_Accuracy_Is_Requested()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        await fixture.CreateDiarizationBundleDirectoryAsync(fixture.StandardSpeakerLabelingTargetPath, "standard-existing");
+
+        var seedConfigStore = fixture.CreateConfigStore();
+        await seedConfigStore.SaveAsync(new AppConfig
+        {
+            AudioOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Recordings"),
+            TranscriptOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Transcripts"),
+            WorkDir = Path.Combine(fixture.AppRoot, "work"),
+            ModelCacheDir = fixture.ModelCacheRoot,
+            TranscriptionModelPath = fixture.StandardTranscriptionTargetPath,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
+            DiarizationAssetPath = fixture.StandardSpeakerLabelingTargetPath,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Standard,
+            DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+            MicCaptureEnabled = true,
+            LaunchOnLoginEnabled = true,
+            AutoDetectEnabled = false,
+            AutoDetectSecurityPromptMigrationApplied = true,
+            CalendarTitleFallbackEnabled = false,
+            MeetingAttendeeEnrichmentEnabled = true,
+            UpdateCheckEnabled = true,
+            AutoInstallUpdatesEnabled = true,
+            UpdateFeedUrl = "https://example.com/releases/latest",
+        });
+
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: true),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: true,
+                includeStandardSpeakerLabeling: true,
+                includeHighAccuracySpeakerLabeling: true));
+        var service = fixture.CreateService(feedClient);
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+                RespectExistingConfigPreferences: false));
+
+        Assert.Equal(SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, result.Config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(fixture.HighAccuracySpeakerLabelingTargetPath, result.Config.DiarizationAssetPath);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, result.Result.SpeakerLabeling.ActiveProfile);
+        Assert.True(result.Result.SpeakerLabeling.IsReady);
+        Assert.False(result.Result.SpeakerLabeling.RetryRecommended);
+        Assert.True(Directory.Exists(fixture.HighAccuracySpeakerLabelingTargetPath));
+    }
+
+    [Fact]
     public async Task ProvisionAsync_Allows_SpeakerLabeling_To_Stay_Off_For_Now()
     {
         var fixture = await ProvisioningFixture.CreateAsync();

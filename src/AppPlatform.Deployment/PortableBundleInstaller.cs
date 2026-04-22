@@ -116,14 +116,11 @@ public sealed class PortableBundleInstaller
                 finalInstallMoved = true;
             }
 
-            PersistInstallProvenance(manifest, request, isUpdate);
-            _logger.Info($"Persisted install provenance at '{_provenanceStore.GetPath(manifest.ManagedInstallLayout.DataRoot)}'.");
-
             var executablePath = Path.Combine(resolvedInstallRoot, manifest.ExecutableName);
             var launcherPath = ResolveShortcutTargetPath(manifest, resolvedInstallRoot);
             var iconPath = Path.Combine(resolvedInstallRoot, "MeetingRecorder.ico");
 
-            if (isUpdate)
+            if (isUpdate && (request.CreateDesktopShortcut || request.CreateStartMenuShortcut))
             {
                 var shortcutRepairResult = _shortcutService.RepairExistingShortcuts(
                     manifest.ShortcutPolicy,
@@ -139,6 +136,10 @@ public sealed class PortableBundleInstaller
                 {
                     _logger.Info($"Repaired existing shortcut '{repairedShortcutPath}'.");
                 }
+            }
+            else if (isUpdate)
+            {
+                _logger.Info("Skipping shortcut repair because this update did not request shell shortcut changes.");
             }
 
             if (request.CreateDesktopShortcut || request.CreateStartMenuShortcut)
@@ -188,6 +189,21 @@ public sealed class PortableBundleInstaller
             {
                 _logger.Info($"Quarantined legacy install root to '{quarantinedLegacyInstallRoot}'.");
             }
+
+            _logger.Info($"Validating installed bundle integrity under '{resolvedInstallRoot}'.");
+            try
+            {
+                BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot);
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new InvalidOperationException(
+                    $"The installed bundle under '{resolvedInstallRoot}' is incomplete after promotion. A security tool may have quarantined one or more executable files. Underlying error: {exception.Message}",
+                    exception);
+            }
+
+            PersistInstallProvenance(manifest, request, isUpdate);
+            _logger.Info($"Persisted install provenance at '{_provenanceStore.GetPath(manifest.ManagedInstallLayout.DataRoot)}'.");
 
             if (request.LaunchAfterInstall)
             {

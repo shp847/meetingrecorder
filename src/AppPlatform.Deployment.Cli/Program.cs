@@ -329,19 +329,52 @@ internal static class Program
         string installRoot,
         IDeploymentLogger logger)
     {
+        var executablePath = Path.Combine(installRoot, manifest.ExecutableName);
+        var launcherPath = Path.Combine(installRoot, manifest.PortableLauncherFileName);
+        var startInfo = BuildInstalledAppLaunchStartInfo(manifest, installRoot);
+        logger.Info(File.Exists(executablePath)
+            ? $"Launching installed app executable directly from '{executablePath}'."
+            : $"Primary executable is unavailable; falling back to launcher '{launcherPath}'.");
+        Process.Start(startInfo);
+    }
+
+    private static ProcessStartInfo BuildInstalledAppLaunchStartInfo(
+        AppProductManifest manifest,
+        string installRoot)
+    {
+        var executablePath = Path.Combine(installRoot, manifest.ExecutableName);
+        if (File.Exists(executablePath))
+        {
+            return new ProcessStartInfo
+            {
+                FileName = executablePath,
+                WorkingDirectory = installRoot,
+                UseShellExecute = false,
+            };
+        }
+
         var launcherPath = Path.Combine(installRoot, manifest.PortableLauncherFileName);
         if (!File.Exists(launcherPath))
         {
-            launcherPath = Path.Combine(installRoot, manifest.ExecutableName);
+            throw new InvalidOperationException(
+                $"Neither '{manifest.ExecutableName}' nor '{manifest.PortableLauncherFileName}' was found under '{installRoot}'.");
         }
 
-        logger.Info($"Launching installed app from '{launcherPath}'.");
-        Process.Start(new ProcessStartInfo
+        var commandProcessorPath = Environment.GetEnvironmentVariable("ComSpec");
+        if (string.IsNullOrWhiteSpace(commandProcessorPath))
         {
-            FileName = launcherPath,
+            commandProcessorPath = "cmd.exe";
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = commandProcessorPath,
             WorkingDirectory = installRoot,
-            UseShellExecute = true,
-        });
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("/c");
+        startInfo.ArgumentList.Add(launcherPath);
+        return startInfo;
     }
 
     private static AppProductManifest LoadManifest(

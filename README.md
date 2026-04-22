@@ -78,6 +78,8 @@ Current installer/update authority:
 - `AppPlatform.Deployment.Cli` is the only engine that writes or updates the managed install tree
 - `Install-LatestFromGitHub.cmd/.ps1` are the canonical interactive bootstrap/update path
 - in-app updates stay CLI-only even when the app was first installed through the MSI
+- in-app updates now skip shell-shortcut repair during the silent apply path and relaunch the installed `MeetingRecorder.App.exe` directly instead of shell-launching `Run-MeetingRecorder.cmd`, which reduces Explorer-coupled security prompts on managed Windows laptops
+- after the CLI promotes an updated bundle into `%USERPROFILE%\Documents\MeetingRecorder`, it revalidates the installed `bundle-integrity.json` contract and rolls back if required executables disappear before launch
 - current releases no longer ship the deprecated EXE launcher; MSI, ZIP, and the command/bootstrap scripts are the supported install assets
 - the default self-contained release now ships the WPF shell as a single-file `MeetingRecorder.App.exe`; the deployment CLI, worker, scripts, and product manifest remain external sidecars in the bundle
 - the portable/installer bundle now copies the full processing-worker publish output, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so queued sessions can still publish after restart instead of crashing on a missing sidecar dependency
@@ -299,6 +301,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - `Higher Accuracy` transcription (`ggml-small.en-q8_0.bin`) and `Higher Accuracy` speaker labeling (`meeting-recorder-diarization-bundle-accurate-win-x64.zip`) remain separate GitHub release downloads
 - The MSI can offer Higher Accuracy downloads during first install, but install still completes if downloads are blocked and `Settings > Setup` resumes transcription setup at first launch when needed
 - `Settings > Setup` separates `Transcription` and `Speaker labeling` into dedicated sections with curated `Use Standard`, `Use Higher Accuracy`, `Skip for now` for optional speaker labeling, `Import approved file`, and open-folder diagnostics actions for lay users
+- `Settings > Setup` now also exposes `When to run speaker labeling`, so an existing install can switch directly between `Deferred`, `Throttled`, and `Inline` without leaving Setup; choosing or importing a speaker-labeling bundle from Setup auto-promotes `Deferred` to `Throttled` unless you later switch it back
 - `Settings > Setup` now also includes `Teams integration`, where you can choose `Auto`, `Fallback only`, or `Third-party API`, then run a probe that saves the last probe time, strongest promotable path, and any block reason alongside the current Teams capability snapshot
 - Built-in automatic model and speaker-labeling downloads use GitHub release assets only
 - Alternate public speaker-labeling download locations are curated links and may currently be unavailable
