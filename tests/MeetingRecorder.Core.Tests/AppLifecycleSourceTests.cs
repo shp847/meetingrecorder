@@ -79,6 +79,16 @@ public sealed class AppLifecycleSourceTests
         Assert.DoesNotContain("publishedMeetingRepairResult = await PublishedMeetingRepairService.RepairKnownIssuesAsync(", methodBlock);
     }
 
+    [Fact]
+    public void App_Startup_Repairs_Missing_Install_Provenance_Before_Creating_The_Live_Config()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(", source);
+        Assert.Contains("Repaired missing install provenance", source);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

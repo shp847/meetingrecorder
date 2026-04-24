@@ -132,6 +132,15 @@ public partial class App : Application
                 _logger.Log("Refreshed installed release metadata from the legacy installer config so the Updates tab reflects the current package.");
             }
 
+            if (InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(
+                    configStore.ConfigPath,
+                    AppBranding.Version,
+                    Environment.ProcessPath,
+                    AppContext.BaseDirectory))
+            {
+                _logger.Log("Repaired missing install provenance so the Updates tab can recover local installation metadata.");
+            }
+
             var liveConfig = new LiveAppConfig(configStore, config);
             var mainWindow = new MainWindow(liveConfig, _logger);
             MainWindow = mainWindow;

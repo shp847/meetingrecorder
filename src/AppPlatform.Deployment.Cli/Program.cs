@@ -1,5 +1,6 @@
 using AppPlatform.Abstractions;
 using AppPlatform.Deployment;
+using MeetingRecorder.Core.Branding;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Services;
 using System.Globalization;
@@ -192,6 +193,17 @@ internal static class Program
         logger.Info($"Loading curated model catalog from '{modelCatalogPath}'.");
 
         var configStore = new AppConfigStore(manifest.ManagedInstallLayout.ConfigPath);
+        await configStore.LoadOrCreateAsync();
+        if (InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(
+                configStore.ConfigPath,
+                AppBranding.Version,
+                Path.Combine(installRoot, manifest.ExecutableName),
+                installRoot,
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)))
+        {
+            logger.Info("Repaired missing install provenance during MSI post-install provisioning.");
+        }
+
         var resultStore = new ModelProvisioningResultStore(configStore.ConfigPath);
         var catalogService = new MeetingRecorderModelCatalogService();
         var whisperModelService = new WhisperModelService(new WhisperNetModelDownloader());

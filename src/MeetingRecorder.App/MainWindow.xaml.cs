@@ -6328,6 +6328,13 @@ public partial class MainWindow : Window
         var installedDiagnostics = InstalledApplicationDiagnosticsService.Inspect(
             Environment.ProcessPath,
             AppContext.BaseDirectory);
+        var installedReleasePublishedAtUtc = installedDiagnostics.InstalledReleasePublishedAtUtc;
+        var installedReleaseAssetSizeBytes = installedDiagnostics.InstalledReleaseAssetSizeBytes;
+        if (result is { Status: AppUpdateStatusKind.UpToDate })
+        {
+            installedReleasePublishedAtUtc ??= result?.LatestPublishedAtUtc;
+            installedReleaseAssetSizeBytes ??= result?.LatestAssetSizeBytes;
+        }
 
         InstalledAppVersionTextBlock.Text = FormatVersionLabel(AppBranding.Version);
         InstalledReleaseVersionTextBlock.Text = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion)
@@ -6336,9 +6343,9 @@ public partial class MainWindow : Window
         InstalledOnTextBlock.Text = FormatUpdateTimestamp(installedDiagnostics.InstalledAtUtc);
         InstalledFootprintTextBlock.Text = FormatUpdateSize(installedDiagnostics.InstallFootprintBytes);
         InstalledReleasePublishedAtTextBlock.Text = FormatUpdateTimestamp(
-            installedDiagnostics.InstalledReleasePublishedAtUtc);
+            installedReleasePublishedAtUtc);
         InstalledReleaseAssetSizeTextBlock.Text = FormatUpdateSize(
-            installedDiagnostics.InstalledReleaseAssetSizeBytes);
+            installedReleaseAssetSizeBytes);
         LastUpdateCheckTextBlock.Text = config.LastUpdateCheckUtc.HasValue
             ? $"Last checked: {FormatUpdateTimestamp(config.LastUpdateCheckUtc)}"
             : "Last checked: the app has not queried GitHub yet.";

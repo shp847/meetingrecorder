@@ -32,6 +32,10 @@ public sealed class UpdateDiagnosticsSourceTests
         Assert.Contains("installedDiagnostics.InstalledReleaseAssetSizeBytes", methodBlock);
         Assert.DoesNotContain("config.InstalledReleasePublishedAtUtc", methodBlock);
         Assert.DoesNotContain("config.InstalledReleaseAssetSizeBytes", methodBlock);
+        Assert.Contains("result?.LatestPublishedAtUtc", methodBlock);
+        Assert.Contains("result?.LatestAssetSizeBytes", methodBlock);
+        Assert.Contains("result is { Status: AppUpdateStatusKind.UpToDate }", methodBlock);
+        Assert.DoesNotContain("string.Equals(result.LatestVersion, AppBranding.Version", methodBlock);
     }
 
     [Fact]

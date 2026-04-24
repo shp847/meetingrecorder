@@ -31,6 +31,23 @@ public sealed class DeploymentCliTests
     }
 
     [Fact]
+    public void DeploymentCli_ProvisionModels_Repairs_Missing_Install_Provenance_For_Fresh_Msi_Installs()
+    {
+        var repoRoot = GetRepoRoot();
+        var programPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment.Cli", "Program.cs");
+
+        Assert.True(File.Exists(programPath), $"Expected deployment CLI source at '{programPath}'.");
+
+        var source = File.ReadAllText(programPath);
+        var methodStart = source.IndexOf("private static async Task<int> ProvisionModelsAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private static int RepairShortcuts", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(", methodBlock);
+        Assert.Contains("Repaired missing install provenance during MSI post-install provisioning.", methodBlock);
+    }
+
+    [Fact]
     public void DeploymentCli_Prefers_Direct_Executable_Relaunch_Over_Shell_Launching_The_Cmd_Wrapper()
     {
         var root = Path.Combine(Path.GetTempPath(), "DeploymentCliTests", Guid.NewGuid().ToString("N"));
