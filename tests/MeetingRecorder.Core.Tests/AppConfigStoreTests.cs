@@ -41,7 +41,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(InferenceAccelerationPreference.Auto, config.DiarizationAccelerationPreference);
         Assert.True(config.MicCaptureEnabled);
         Assert.True(config.LaunchOnLoginEnabled);
-        Assert.False(config.AutoDetectEnabled);
+        Assert.True(config.AutoDetectEnabled);
         Assert.True(config.AutoDetectSecurityPromptMigrationApplied);
         Assert.False(config.CalendarTitleFallbackEnabled);
         Assert.True(config.MeetingAttendeeEnrichmentEnabled);
@@ -208,6 +208,8 @@ public sealed class AppConfigStoreTests
         var rewritten = await File.ReadAllTextAsync(configPath);
 
         Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Recordings"), config.AudioOutputDir);
+        Assert.True(config.MicCaptureEnabled);
+        Assert.True(config.AutoDetectEnabled);
         Assert.Contains("\"audioOutputDir\"", rewritten);
         Assert.DoesNotContain('\0', rewritten);
         Assert.Contains("Recovered config", store.LastLoadDiagnosticMessage, StringComparison.OrdinalIgnoreCase);

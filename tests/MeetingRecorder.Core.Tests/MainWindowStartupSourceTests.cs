@@ -384,6 +384,22 @@ public sealed class MainWindowStartupSourceTests
         Assert.DoesNotContain("Visibility.Collapsed", updateBlock);
     }
 
+    [Fact]
+    public void Whisper_Model_Status_Changes_Recompute_Recording_Control_State()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var updateUiStart = source.IndexOf("private void UpdateUi(string status, string detection)", StringComparison.Ordinal);
+        var updateUiEnd = source.IndexOf("private void UpdateDetectedAudioSourceSurface", updateUiStart, StringComparison.Ordinal);
+        var updateUiBlock = source[updateUiStart..updateUiEnd];
+        var applyStart = source.IndexOf("private void ApplyWhisperModelStatusDisplayState", StringComparison.Ordinal);
+        var applyEnd = source.IndexOf("private void ApplyDiarizationAssetStatus", applyStart, StringComparison.Ordinal);
+        var applyBlock = source[applyStart..applyEnd];
+
+        Assert.Contains("UpdateRecordingControlState();", updateUiBlock);
+        Assert.Contains("UpdateRecordingControlState();", applyBlock);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

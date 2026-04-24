@@ -161,7 +161,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
             MicCaptureEnabled = true,
             LaunchOnLoginEnabled = true,
-            AutoDetectEnabled = false,
+            AutoDetectEnabled = true,
             AutoDetectSecurityPromptMigrationApplied = true,
             CalendarTitleFallbackEnabled = false,
             MeetingAttendeeEnrichmentEnabled = true,

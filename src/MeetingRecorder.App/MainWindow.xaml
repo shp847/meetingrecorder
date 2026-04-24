@@ -2279,7 +2279,7 @@
                                             <CheckBox x:Name="ConfigAutoDetectCheckBox"
                                                       Content="Enable auto-detection" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Watch for supported meetings automatically instead of relying only on manual start and stop. New installs keep this off by default so the app stays quiet until you opt in." />
+                                                      Text="Watch for supported meetings automatically instead of relying only on manual start and stop. New installs keep this on by default, while older configs that predate the prompt-migration safety pass are still reset once so you can opt back in deliberately." />
                                             <Expander Margin="20,12,0,0"
                                                       Header="Detection Tuning">
                                                 <StackPanel Margin="0,12,0,0">

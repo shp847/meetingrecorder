@@ -3813,6 +3813,11 @@ public partial class MainWindow : Window
         StatusTextBlock.Text = status;
         DetectionTextBlock.Text = detection;
         UpdateDetectedAudioSourceSurface(null);
+        UpdateRecordingControlState();
+    }
+
+    private void UpdateRecordingControlState()
+    {
         HomePrimaryActionButton.Content = _isRecordingTransitionInProgress && !_recordingCoordinator.IsRecording
             ? "STARTING"
             : "START";
@@ -7765,7 +7770,7 @@ public partial class MainWindow : Window
             ? Visibility.Collapsed
             : Visibility.Visible;
         UpdateModelsTabGuidance();
-        UpdateDashboardReadiness();
+        UpdateRecordingControlState();
     }
 
     private void ApplyDiarizationAssetStatus(DiarizationAssetInstallStatus status)
