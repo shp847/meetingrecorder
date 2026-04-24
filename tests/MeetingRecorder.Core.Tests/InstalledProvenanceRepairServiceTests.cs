@@ -119,6 +119,44 @@ public sealed class InstalledProvenanceRepairServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TryBackfillInstalledReleaseMetadata_Creates_And_Populates_Provenance_When_It_Is_Missing()
+    {
+        var documentsRoot = CreateDirectory("documents");
+        var localAppDataRoot = CreateDirectory("localappdata");
+        var installRoot = CreateDirectory("install");
+        var executablePath = CreateFile(installRoot, "MeetingRecorder.App.exe", 12);
+        File.SetLastWriteTimeUtc(executablePath, new DateTime(2026, 4, 24, 13, 22, 06, DateTimeKind.Utc));
+
+        var configPath = AppDataPaths.GetManagedConfigPath(localAppDataRoot);
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var config = await store.LoadOrCreateAsync();
+        await store.SaveAsync(config with
+        {
+            InstalledReleaseVersion = AppBranding.Version,
+        });
+
+        var backfilled = InstalledProvenanceRepairService.TryBackfillInstalledReleaseMetadata(
+            configPath,
+            AppBranding.Version,
+            DateTimeOffset.Parse("2026-04-24T13:24:08Z"),
+            158_556_023,
+            executablePath,
+            installRoot,
+            localAppDataRoot);
+
+        Assert.True(backfilled);
+
+        var diagnostics = InstalledApplicationDiagnosticsService.InspectFromPaths(
+            installRoot,
+            executablePath,
+            AppDataPaths.GetManagedAppRoot(localAppDataRoot));
+
+        Assert.Equal(DateTimeOffset.Parse("2026-04-24T13:22:06Z"), diagnostics.InstalledAtUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-04-24T13:24:08Z"), diagnostics.InstalledReleasePublishedAtUtc);
+        Assert.Equal(158_556_023, diagnostics.InstalledReleaseAssetSizeBytes);
+    }
+
+    [Fact]
     public async Task TryRepairMissingInstallProvenance_Does_Nothing_When_Provenance_Already_Exists()
     {
         var documentsRoot = CreateDirectory("documents");

@@ -20,6 +20,15 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public void LooksLikeTeamsWindowTitle_Returns_False_For_Browser_Documentation_Page_That_Mentions_Microsoft_Teams()
+    {
+        var result = WindowMeetingDetector.LooksLikeTeamsWindowTitle(
+            "Connect to third-party devices in Microsoft Teams - Microsoft Support and 8 more pages - Work - Microsoft Edge");
+
+        Assert.False(result);
+    }
+
+    [Fact]
     public void IsBetterCandidate_Prefers_GoogleMeet_Browser_Candidate_Over_Generic_Teams_Tie()
     {
         var timestamp = DateTimeOffset.UtcNow;
@@ -221,6 +230,20 @@ public sealed class WindowMeetingDetectorTests
         var result = WindowMeetingDetector.ApplyTeamsPlaybackHeuristic(plainCandidate, new[] { plainCandidate });
 
         Assert.True(result.ShouldKeepRecording);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Ignores_Browser_Documentation_Page_That_Mentions_Microsoft_Teams()
+    {
+        var detector = await CreateDetectorAsync(
+            new MeetingWindowCandidate(
+                "msedge",
+                "Connect to third-party devices in Microsoft Teams - Microsoft Support and 8 more pages - Work - Microsoft Edge",
+                "Chrome_WidgetWin_1"));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.Null(result);
     }
 
     [Fact]
@@ -446,6 +469,40 @@ public sealed class WindowMeetingDetectorTests
         Assert.True(result.ShouldKeepRecording);
         Assert.NotNull(result.DetectedAudioSource);
         Assert.Equal("Microsoft Teams", result.DetectedAudioSource!.AppName);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Prefers_Specific_Teams_Call_Title_Over_Sharing_Control_Bar_When_Audio_Attribution_Is_Temporarily_Unavailable()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Sharing control bar | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)100,
+                    1000),
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Sharma, Pranav | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)200,
+                    2000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                null,
+                0d,
+                false,
+                "audio probe temporarily skipped after a previous timeout",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.Equal("Sharma, Pranav", result.SessionTitle);
+        Assert.True(result.ShouldKeepRecording);
     }
 
     [Fact]

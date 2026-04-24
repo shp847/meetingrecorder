@@ -20,6 +20,8 @@ internal readonly record struct CandidateDetectionTitle(
 
 internal sealed class WindowMeetingDetector
 {
+    private static readonly TimeSpan DefaultAudioProbeTimeout = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan DefaultAudioProbeBackoff = TimeSpan.FromSeconds(15);
     private static readonly string[] SupportedMeetingWindowClasses =
     [
         "Chrome_WidgetWin_0",
@@ -50,8 +52,8 @@ internal sealed class WindowMeetingDetector
             audioActivityProbe,
             meetingTitleEnricher,
             EnumerateCandidateWindows,
-            TimeSpan.FromMilliseconds(750),
-            TimeSpan.FromMinutes(2),
+            DefaultAudioProbeTimeout,
+            DefaultAudioProbeBackoff,
             null)
     {
     }
@@ -863,7 +865,9 @@ internal sealed class WindowMeetingDetector
         }
 
         var normalized = title.Trim().ToLowerInvariant();
-        return normalized.Contains("microsoft teams", StringComparison.Ordinal) ||
+        return normalized is "microsoft teams" or "ms-teams" ||
+            normalized.EndsWith("| microsoft teams", StringComparison.Ordinal) ||
+            normalized.EndsWith("- microsoft teams", StringComparison.Ordinal) ||
             normalized.StartsWith("chat |", StringComparison.Ordinal) ||
             normalized.StartsWith("activity |", StringComparison.Ordinal) ||
             normalized.StartsWith("calendar |", StringComparison.Ordinal) ||
@@ -1162,7 +1166,8 @@ internal sealed class WindowMeetingDetector
         return decision.Platform switch
         {
             MeetingPlatform.Teams => !normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) &&
-                !normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase),
+                !normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase) &&
+                !normalized.StartsWith("Sharing control bar", StringComparison.OrdinalIgnoreCase),
             MeetingPlatform.GoogleMeet => !normalized.Equals("Google Meet", StringComparison.OrdinalIgnoreCase),
             _ => !normalized.Equals("Detected meeting", StringComparison.OrdinalIgnoreCase),
         };
@@ -1200,7 +1205,8 @@ internal sealed class WindowMeetingDetector
         return decision.Platform switch
         {
             MeetingPlatform.Teams => normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) ||
-                normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase),
+                normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith("Sharing control bar", StringComparison.OrdinalIgnoreCase),
             MeetingPlatform.GoogleMeet => normalized.Equals("Google Meet", StringComparison.OrdinalIgnoreCase),
             _ => false,
         };

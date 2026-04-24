@@ -5852,6 +5852,18 @@ public partial class MainWindow : Window
             currentConfig.UpdateFeedUrl,
             manual || currentConfig.UpdateCheckEnabled,
             cancellationToken);
+        if (result.Status == AppUpdateStatusKind.UpToDate &&
+            InstalledProvenanceRepairService.TryBackfillInstalledReleaseMetadata(
+                _liveConfig.ConfigPath,
+                AppBranding.Version,
+                result.LatestPublishedAtUtc,
+                result.LatestAssetSizeBytes,
+                Environment.ProcessPath,
+                AppContext.BaseDirectory))
+        {
+            AppendActivity("Recovered installed package metadata from a successful GitHub update check.");
+        }
+
         await PersistLastUpdateCheckUtcAsync(checkedAtUtc, cancellationToken);
         _lastUpdateCheckResult = result;
         ApplyUpdateCheckResult(result, manual);

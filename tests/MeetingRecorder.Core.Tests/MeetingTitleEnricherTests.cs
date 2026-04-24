@@ -87,7 +87,7 @@ public sealed class MeetingTitleEnricherTests
     }
 
     [Fact]
-    public void Enrich_Uses_Calendar_Title_When_Generic_Teams_Search_Title_Is_Detected()
+    public void Enrich_Does_Not_Use_Calendar_Title_When_Generic_Teams_Search_Title_Would_Not_Record()
     {
         var now = DateTimeOffset.Parse("2026-03-17T14:30:00Z");
         var provider = new StubCalendarMeetingTitleProvider(new CalendarMeetingDetailsCandidate(
@@ -109,9 +109,38 @@ public sealed class MeetingTitleEnricherTests
 
         var enriched = enricher.Enrich(decision, calendarTitleFallbackEnabled: true, now);
 
-        Assert.Equal("Intel CIO Discussion", enriched.SessionTitle);
-        Assert.Equal(1, provider.CallCount);
-        Assert.Contains(enriched.Signals, signal => signal.Source == "calendar-title-fallback");
+        Assert.Equal("Search", enriched.SessionTitle);
+        Assert.Equal(0, provider.CallCount);
+        Assert.DoesNotContain(enriched.Signals, signal => signal.Source == "calendar-title-fallback");
+    }
+
+    [Fact]
+    public void Enrich_Does_Not_Use_Calendar_Title_When_Teams_Sharing_Control_Bar_Is_Detected()
+    {
+        var now = DateTimeOffset.Parse("2026-03-17T14:30:00Z");
+        var provider = new StubCalendarMeetingTitleProvider(new CalendarMeetingDetailsCandidate(
+            "Intel CIO Discussion",
+            [new MeetingAttendee("John Doe", [MeetingAttendeeSource.OutlookCalendar])],
+            "Outlook calendar"));
+        var enricher = new MeetingTitleEnricher(provider);
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Sharing control bar",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Sharing control bar | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var enriched = enricher.Enrich(decision, calendarTitleFallbackEnabled: true, now);
+
+        Assert.Equal("Sharing control bar", enriched.SessionTitle);
+        Assert.Equal(0, provider.CallCount);
+        Assert.DoesNotContain(enriched.Signals, signal => signal.Source == "calendar-title-fallback");
     }
 
     private sealed class StubCalendarMeetingTitleProvider : ICalendarMeetingTitleProvider

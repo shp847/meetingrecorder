@@ -54,6 +54,21 @@ public sealed class UpdateDiagnosticsSourceTests
         Assert.DoesNotContain("config.InstalledReleaseAssetSizeBytes", methodBlock);
     }
 
+    [Fact]
+    public void CheckForUpdatesCoreAsync_Backfills_Installed_Package_Metadata_When_GitHub_Confirms_The_Current_Release()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task<AppUpdateCheckResult> CheckForUpdatesCoreAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task PersistLastUpdateCheckUtcAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("InstalledProvenanceRepairService.TryBackfillInstalledReleaseMetadata(", methodBlock);
+        Assert.Contains("result.Status == AppUpdateStatusKind.UpToDate", methodBlock);
+        Assert.Contains("result.LatestPublishedAtUtc", methodBlock);
+        Assert.Contains("result.LatestAssetSizeBytes", methodBlock);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

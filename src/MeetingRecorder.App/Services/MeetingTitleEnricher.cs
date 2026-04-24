@@ -26,6 +26,13 @@ internal sealed class MeetingTitleEnricher
         bool calendarTitleFallbackEnabled,
         DateTimeOffset nowUtc)
     {
+        if (decision.Platform == MeetingPlatform.Teams &&
+            !decision.ShouldStart &&
+            !decision.ShouldKeepRecording)
+        {
+            return decision;
+        }
+
         if (!calendarTitleFallbackEnabled || !RequiresCalendarFallback(decision))
         {
             return decision;
@@ -83,7 +90,7 @@ internal sealed class MeetingTitleEnricher
 
         return decision.Platform switch
         {
-            MeetingPlatform.Teams => normalizedTitle is "microsoft teams" or "teams" or "ms-teams" or "sharing control bar" or "search",
+            MeetingPlatform.Teams => normalizedTitle is "microsoft teams" or "teams" or "ms-teams" or "search",
             MeetingPlatform.GoogleMeet => normalizedTitle is "google meet" or "meet",
             _ => false,
         };
