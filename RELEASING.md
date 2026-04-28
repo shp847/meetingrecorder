@@ -247,6 +247,7 @@ The release assets are written under:
 - `.\.artifacts\installer\win-x64`
 
 That output folder is cleaned on every build so only the current uploadable assets remain.
+.artifacts is generated local build output only: keep it untracked in Git and distribute the packaged assets through GitHub Releases instead of committing publish artifacts to the repo.
 Root-level `ggml-*.bin` model assets are preserved between builds and only recopied locally when their size or timestamp changes.
 
 Expected outputs:
