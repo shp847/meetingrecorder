@@ -303,45 +303,78 @@ public sealed class AppUpdateService
     }
 }
 
+public enum AppUpdateInstallBlockKind
+{
+    None = 0,
+    Recording = 1,
+    Processing = 2,
+    InstallInProgress = 3,
+}
+
 public sealed class AppUpdateInstallPolicy
 {
-    public string? GetInstallBlockReason(
+    public AppUpdateInstallBlockKind GetInstallBlockKind(
         bool hasActiveRecording,
         bool isProcessingInProgress,
         bool isUpdateAlreadyInProgress,
-        bool allowCurrentInstallInProgress = false)
+        bool allowCurrentInstallInProgress = false,
+        bool allowProcessingOverride = false)
     {
         if (hasActiveRecording)
         {
-            return "Stop the active recording before installing an update.";
+            return AppUpdateInstallBlockKind.Recording;
         }
 
-        if (isProcessingInProgress)
+        if (isProcessingInProgress && !allowProcessingOverride)
         {
-            return "Wait for background processing to finish before installing an update.";
+            return AppUpdateInstallBlockKind.Processing;
         }
 
         if (isUpdateAlreadyInProgress && !allowCurrentInstallInProgress)
         {
-            return "An update install is already in progress.";
+            return AppUpdateInstallBlockKind.InstallInProgress;
         }
 
-        return null;
+        return AppUpdateInstallBlockKind.None;
+    }
+
+    public string? GetInstallBlockReason(
+        bool hasActiveRecording,
+        bool isProcessingInProgress,
+        bool isUpdateAlreadyInProgress,
+        bool allowCurrentInstallInProgress = false,
+        bool allowProcessingOverride = false)
+    {
+        return GetInstallBlockKind(
+            hasActiveRecording,
+            isProcessingInProgress,
+            isUpdateAlreadyInProgress,
+            allowCurrentInstallInProgress,
+            allowProcessingOverride) switch
+        {
+            AppUpdateInstallBlockKind.Recording => "Stop the active recording before installing an update.",
+            AppUpdateInstallBlockKind.Processing => "Wait for background processing to finish before installing an update.",
+            AppUpdateInstallBlockKind.InstallInProgress => "An update install is already in progress.",
+            _ => null,
+        };
     }
 
     public bool ShouldRetryPendingInstall(
         string? pendingUpdateZipPath,
         string? pendingUpdateVersion,
         string currentVersion,
+        bool queuedInstallWhenIdleRequested,
         bool hasActiveRecording,
         bool isProcessingInProgress,
         bool isUpdateAlreadyInProgress)
     {
         return !string.IsNullOrWhiteSpace(pendingUpdateZipPath) &&
-            !string.Equals(
-                pendingUpdateVersion?.Trim(),
-                currentVersion.Trim(),
-                StringComparison.OrdinalIgnoreCase) &&
+            (
+                queuedInstallWhenIdleRequested ||
+                !string.Equals(
+                    pendingUpdateVersion?.Trim(),
+                    currentVersion.Trim(),
+                    StringComparison.OrdinalIgnoreCase)) &&
             GetInstallBlockReason(
                 hasActiveRecording,
                 isProcessingInProgress,

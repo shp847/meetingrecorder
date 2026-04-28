@@ -50,7 +50,7 @@ Maintenance and support actions live in the header instead of the main navigatio
 - Can ingest dropped audio files such as phone voice memos and queue them for automatic transcription
 - Can download or import Whisper models from inside the app
 - Guides model setup with a recommended Whisper download path and an optional speaker-labeling checklist
-- Checks GitHub releases for updates and can retry a deferred downloaded update after restart when the app becomes idle
+- Checks GitHub releases for updates, can queue a manual install while background processing is active, and can retry a deferred downloaded update after restart when the app becomes idle
 
 ## Current Release
 
@@ -185,6 +185,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Idle auto-install support
 - Automatic GitHub update checks on app startup and app shutdown when update checks are enabled
 - Pending downloaded update retry after restart when the app could not install immediately
+- `Settings > Updates` can now download and queue a manual install while background processing is active, then surface `Install Now Anyway` as an explicit override; live recording remains a hard install block
 - CLI-only update apply flow for MSI, EXE, script, and ZIP-origin installs
 - In-app update asset selection now ignores bundled model and diarization ZIP assets on the GitHub release and only downloads the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle for apply-update handoff
 - `Settings > Updates` now separates local install facts from release-package metadata: `Current Installation` shows the actual installed-on timestamp and install footprint from the local install, while installed package published-at and package size are shown when managed install provenance has trusted package metadata or after the first successful `UpToDate` GitHub check backfills those fields for an older or MSI-origin install that arrived without provenance
@@ -195,7 +196,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - CLI-driven updates now repair existing Desktop and Start Menu launch surfaces and quarantine both legacy `%LOCALAPPDATA%\Programs\Meeting Recorder` installs and the older `%USERPROFILE%\Documents\Meeting Recorder` root, so stale launchers do not keep pointing at a missing apphost after update
 - Same-version pending updates are only cleared when their published-at and asset-size identity matches the installed build, so rebuilt releases can still replace older binaries that report the same semantic version when you install them manually
 - In-app update comparison now resolves the installed package published-at and asset-size identity only from trusted managed install provenance, so stale `%LOCALAPPDATA%` config cannot keep advertising a freshly reinstalled same-version build as newer
-- Background auto-install and pending-update retry are limited to true semantic-version upgrades, so a republished same-version build does not immediately try to update a freshly relaunched app against itself
+- Background auto-install and passive pending-update retry are limited to true semantic-version upgrades, while an explicitly queued manual same-version install can still apply once background processing becomes idle
 - If the processing worker crashes inside optional speaker labeling, the queue now stamps that manifest with an internal skip-label override, retries it once without diarization, persists a durable per-session transcript snapshot before speaker labeling begins, repairs older stale post-transcription sessions on startup, and prioritizes those already-transcribed repaired sessions ahead of untouched queue items so audio and transcript publishing can still complete instead of leaving meetings stranded in the backlog
 - `Settings > Advanced` now exposes `Background processing mode` (`Responsive`, `Balanced`, `FastestDrain`) and `Speaker labeling mode` (`Deferred`, `Throttled`, `Inline`) so you can trade backlog drain speed against overall machine responsiveness
 - The default performance profile is `Responsive` plus `Deferred`, which pauses new background queue work while a live recording is active, launches the worker at reduced OS priority, caps worker thread usage, and lets audio/transcript publish finish before optional speaker labeling
@@ -299,6 +300,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
 - GPU acceleration for diarization is user-controlled and defaults to `Auto`, which tries DirectML on compatible Windows GPUs and falls back to CPU automatically
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
+- If the packaged `model-catalog.json` file is missing at runtime, curated Setup falls back to the built-in default catalog so `Use Standard` and `Use Higher Accuracy` still work
 - `Standard` transcription (`ggml-base.en-q8_0.bin`) and `Standard` speaker labeling (`meeting-recorder-diarization-bundle-standard-win-x64.zip`) are bundled into the main app payload for offline-first installs
 - `Higher Accuracy` transcription (`ggml-small.en-q8_0.bin`) and `Higher Accuracy` speaker labeling (`meeting-recorder-diarization-bundle-accurate-win-x64.zip`) remain separate GitHub release downloads
 - The MSI can offer Higher Accuracy downloads during first install, but install still completes if downloads are blocked and `Settings > Setup` resumes transcription setup at first launch when needed

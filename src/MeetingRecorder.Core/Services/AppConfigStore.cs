@@ -178,6 +178,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             PendingUpdateVersion = string.Empty,
             PendingUpdatePublishedAtUtc = null,
             PendingUpdateAssetSizeBytes = null,
+            PendingUpdateInstallWhenIdleRequested = false,
             AutoDetectAudioPeakThreshold = 0.02d,
             MeetingStopTimeoutSeconds = 30,
             PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.Auto,
@@ -212,6 +213,12 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
                 ? string.Empty
                 : defaults.DiarizationAssetPath
             : config.DiarizationAssetPath;
+        var normalizedPendingUpdateZipPath = string.IsNullOrWhiteSpace(config.PendingUpdateZipPath)
+            ? string.Empty
+            : config.PendingUpdateZipPath;
+        var normalizedPendingUpdateVersion = string.IsNullOrWhiteSpace(config.PendingUpdateVersion)
+            ? string.Empty
+            : config.PendingUpdateVersion;
         var isLegacyMeetingsWorkspaceConfig = !config.MeetingsGroupedViewMigrationApplied;
         var groupedViewMigrationApplied = config.MeetingsGroupedViewMigrationApplied;
         var meetingsViewMode = NormalizeEnum(config.MeetingsViewMode, defaults.MeetingsViewMode);
@@ -256,8 +263,11 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = NormalizeEnum(config.BackgroundSpeakerLabelingMode, defaults.BackgroundSpeakerLabelingMode),
             InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
-            PendingUpdateZipPath = string.IsNullOrWhiteSpace(config.PendingUpdateZipPath) ? string.Empty : config.PendingUpdateZipPath,
-            PendingUpdateVersion = string.IsNullOrWhiteSpace(config.PendingUpdateVersion) ? string.Empty : config.PendingUpdateVersion,
+            PendingUpdateZipPath = normalizedPendingUpdateZipPath,
+            PendingUpdateVersion = normalizedPendingUpdateVersion,
+            PendingUpdateInstallWhenIdleRequested =
+                !string.IsNullOrWhiteSpace(normalizedPendingUpdateZipPath) &&
+                config.PendingUpdateInstallWhenIdleRequested,
             AutoDetectAudioPeakThreshold = config.AutoDetectAudioPeakThreshold <= 0d ? defaults.AutoDetectAudioPeakThreshold : config.AutoDetectAudioPeakThreshold,
             MeetingStopTimeoutSeconds = config.MeetingStopTimeoutSeconds <= 0 ? defaults.MeetingStopTimeoutSeconds : config.MeetingStopTimeoutSeconds,
             PreferredTeamsIntegrationMode = NormalizeEnum(config.PreferredTeamsIntegrationMode, defaults.PreferredTeamsIntegrationMode),

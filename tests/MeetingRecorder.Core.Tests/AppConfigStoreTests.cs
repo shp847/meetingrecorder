@@ -53,6 +53,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(AppBranding.Version, config.InstalledReleaseVersion);
         Assert.Equal(string.Empty, config.PendingUpdateZipPath);
         Assert.Equal(string.Empty, config.PendingUpdateVersion);
+        Assert.False(config.PendingUpdateInstallWhenIdleRequested);
         Assert.Equal(PreferredTeamsIntegrationMode.Auto, config.PreferredTeamsIntegrationMode);
         Assert.Equal("organizations", config.TeamsGraphTenantId);
         Assert.Equal(string.Empty, config.TeamsGraphClientId);
@@ -103,6 +104,7 @@ public sealed class AppConfigStoreTests
             PendingUpdateVersion = "0.3",
             PendingUpdatePublishedAtUtc = DateTimeOffset.Parse("2026-03-16T12:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
             PendingUpdateAssetSizeBytes = 123456789,
+            PendingUpdateInstallWhenIdleRequested = true,
             DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
             PreferredTeamsIntegrationMode = PreferredTeamsIntegrationMode.GraphCalendarAndOnlineMeeting,
             TeamsGraphTenantId = "contoso.com",
@@ -169,6 +171,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(Path.Combine(root, "downloads", "MeetingRecorder-v0.3-win-x64.zip"), reloaded.PendingUpdateZipPath);
         Assert.Equal("0.3", reloaded.PendingUpdateVersion);
         Assert.Equal(123456789, reloaded.PendingUpdateAssetSizeBytes);
+        Assert.True(reloaded.PendingUpdateInstallWhenIdleRequested);
         Assert.Equal(InferenceAccelerationPreference.CpuOnly, reloaded.DiarizationAccelerationPreference);
         Assert.Equal(PreferredTeamsIntegrationMode.GraphCalendarAndOnlineMeeting, reloaded.PreferredTeamsIntegrationMode);
         Assert.Equal("contoso.com", reloaded.TeamsGraphTenantId);

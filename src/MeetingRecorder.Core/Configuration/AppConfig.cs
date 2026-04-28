@@ -232,6 +232,8 @@ public sealed record AppConfig
 
     public long? PendingUpdateAssetSizeBytes { get; init; }
 
+    public bool PendingUpdateInstallWhenIdleRequested { get; init; }
+
     public double AutoDetectAudioPeakThreshold { get; init; } = 0.02d;
 
     public int MeetingStopTimeoutSeconds { get; init; } = 30;

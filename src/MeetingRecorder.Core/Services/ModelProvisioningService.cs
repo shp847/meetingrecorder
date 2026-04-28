@@ -39,7 +39,7 @@ public sealed class ModelProvisioningService
         cancellationToken.ThrowIfCancellationRequested();
         var existingConfigDetected = File.Exists(_configStore.ConfigPath);
         var config = await _configStore.LoadOrCreateAsync(cancellationToken);
-        var catalog = _catalogService.Load(request.ModelCatalogPath);
+        var catalog = LoadCatalog(request);
 
         var requestedTranscriptionProfile = existingConfigDetected && request.RespectExistingConfigPreferences
             ? config.TranscriptionModelProfilePreference
@@ -98,6 +98,26 @@ public sealed class ModelProvisioningService
         await _resultStore.SaveAsync(result, cancellationToken);
 
         return new ModelProvisioningExecutionResult(updatedConfig, result, existingConfigDetected);
+    }
+
+    private MeetingRecorderModelCatalog LoadCatalog(ModelProvisioningRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModelCatalogPath))
+        {
+            return _catalogService.LoadBundledCatalog(request.InstallRoot);
+        }
+
+        var bundledCatalogPath = _catalogService.GetBundledCatalogPath(request.InstallRoot);
+        if (!File.Exists(request.ModelCatalogPath) &&
+            string.Equals(
+                Path.GetFullPath(request.ModelCatalogPath),
+                Path.GetFullPath(bundledCatalogPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return _catalogService.LoadBundledCatalog(request.InstallRoot);
+        }
+
+        return _catalogService.Load(request.ModelCatalogPath);
     }
 
     private async Task<TranscriptionModelProvisioningStatus> ProvisionTranscriptionAsync(

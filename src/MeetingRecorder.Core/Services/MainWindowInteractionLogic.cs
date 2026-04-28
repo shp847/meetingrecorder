@@ -74,6 +74,14 @@ internal sealed record ConfigDependencyState(
     string MicCaptureWarning,
     string MicCapturePendingBadgeText);
 
+internal sealed record UpdateInstallActionState(
+    string PrimaryButtonText,
+    bool PrimaryButtonEnabled,
+    string AvailabilityText,
+    bool ShowOverrideButton,
+    string OverrideButtonText,
+    bool OverrideButtonEnabled);
+
 internal enum ModelsTabSetupActionKind
 {
     OpenTranscriptionManagement = 0,
@@ -707,6 +715,7 @@ internal static class MainWindowInteractionLogic
             PendingUpdateVersion = string.Empty,
             PendingUpdatePublishedAtUtc = null,
             PendingUpdateAssetSizeBytes = null,
+            PendingUpdateInstallWhenIdleRequested = false,
         };
     }
 
@@ -752,6 +761,79 @@ internal static class MainWindowInteractionLogic
         return updateChecksEnabled
             ? "If enabled, the app will install newer releases automatically once recording and background processing are idle."
             : "Turn on daily GitHub checks first. Automatic install only works after update checks are enabled.";
+    }
+
+    public static UpdateInstallActionState BuildUpdateInstallActionState(
+        bool hasDownloadableUpdate,
+        bool isAnyUpdateActionBusy,
+        bool isRecording,
+        bool isProcessingInProgress,
+        bool queuedInstallWhenIdleRequested)
+    {
+        const string installButtonText = "Install Available Update";
+        const string queueButtonText = "Queue Install When Idle";
+        const string queuedButtonText = "Install Queued";
+        const string overrideButtonText = "Install Now Anyway";
+
+        if (isAnyUpdateActionBusy)
+        {
+            return new UpdateInstallActionState(
+                installButtonText,
+                false,
+                "Working on the current update task. The install controls will unlock again when it finishes.",
+                false,
+                overrideButtonText,
+                false);
+        }
+
+        if (!hasDownloadableUpdate)
+        {
+            return new UpdateInstallActionState(
+                installButtonText,
+                false,
+                "Run Check Now to compare this installation with the latest GitHub release.",
+                false,
+                overrideButtonText,
+                false);
+        }
+
+        if (isRecording)
+        {
+            return new UpdateInstallActionState(
+                installButtonText,
+                false,
+                "Stop the active recording before installing an update.",
+                false,
+                overrideButtonText,
+                false);
+        }
+
+        if (isProcessingInProgress)
+        {
+            return queuedInstallWhenIdleRequested
+                ? new UpdateInstallActionState(
+                    queuedButtonText,
+                    false,
+                    "The update ZIP is already downloaded and queued. It will install automatically once background processing is idle. Choose Install Now Anyway to stop background processing now; it will resume on next launch.",
+                    true,
+                    overrideButtonText,
+                    true)
+                : new UpdateInstallActionState(
+                    queueButtonText,
+                    true,
+                    "Background processing is active. Queue Install When Idle to download the update now and install it automatically once background processing is idle.",
+                    false,
+                    overrideButtonText,
+                    false);
+        }
+
+        return new UpdateInstallActionState(
+            installButtonText,
+            true,
+            "The app is idle and can install this update now.",
+            false,
+            overrideButtonText,
+            false);
     }
 
     public static ConfigDependencyState BuildConfigDependencyState(
@@ -871,6 +953,20 @@ internal static class MainWindowInteractionLogic
             $"{safeBlockReason} The update ZIP is already downloaded to {safeDownloadedPath}. " +
             "Finish the current recording or background work and try Install Update again. " +
             "If you want the update to apply right away, restarting the app is a safe next step.";
+    }
+
+    public static string BuildQueuedUpdateInstallMessage(string versionLabel, string downloadedPath)
+    {
+        var safeVersionLabel = string.IsNullOrWhiteSpace(versionLabel)
+            ? "this update"
+            : versionLabel.Trim();
+        var safeDownloadedPath = string.IsNullOrWhiteSpace(downloadedPath)
+            ? "the downloaded update ZIP"
+            : $"'{downloadedPath}'";
+
+        return
+            $"Queued update {safeVersionLabel}. The ZIP is already downloaded to {safeDownloadedPath} and will install automatically once background processing is idle. " +
+            "If you need it right away, choose Install Now Anyway to stop background processing; it will resume on next launch.";
     }
 
     public static string BuildRecordingStoppedMessage(bool processingQueued)

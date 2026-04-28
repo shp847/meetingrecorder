@@ -44,6 +44,29 @@ public sealed class UpdateInstallSourceTests
         Assert.DoesNotContain("string.Equals(config.PendingUpdateVersion, AppBranding.Version", methodBlock, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Manual_Update_Handlers_Distinguish_Queueing_From_Processing_Override()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("private async void InstallQueuedUpdateNowButton_OnClick", source, StringComparison.Ordinal);
+        Assert.Contains("await InstallAvailableUpdateAsync(\"manual install\", manual: true, allowProcessingOverride: false, queueWhenProcessingBlocked: true, _lifetimeCts.Token);", source, StringComparison.Ordinal);
+        Assert.Contains("await InstallAvailableUpdateAsync(\"manual install override\", manual: true, allowProcessingOverride: true, queueWhenProcessingBlocked: false, _lifetimeCts.Token);", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Processing_Queue_Status_Updates_Can_Immediately_Retry_A_Queued_Install_When_Background_Work_Drains()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private void ApplyProcessingQueueStatusSnapshot", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void ProcessingQueueStatusTimer_OnTick", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("TryInstallAvailableUpdateIfIdleAsync(\"processing idle\", _lifetimeCts.Token)", methodBlock, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

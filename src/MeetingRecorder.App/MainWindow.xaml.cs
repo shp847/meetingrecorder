@@ -633,9 +633,16 @@ public partial class MainWindow : Window
 
     private void ApplyProcessingQueueStatusSnapshot(ProcessingQueueStatusSnapshot snapshot)
     {
+        var previousSnapshot = _latestProcessingQueueStatusSnapshot;
         _latestProcessingQueueStatusSnapshot = snapshot;
         UpdateProcessingQueueStatusUi();
         UpdateProcessingQueueStatusTimerState();
+        UpdateUpdateActionButtons();
+        if (previousSnapshot.RunState != ProcessingQueueRunState.Idle &&
+            snapshot.RunState == ProcessingQueueRunState.Idle)
+        {
+            _ = TryInstallAvailableUpdateIfIdleAsync("processing idle", _lifetimeCts.Token);
+        }
     }
 
     private void ProcessingQueueStatusTimer_OnTick(object? sender, EventArgs e)
@@ -3135,7 +3142,12 @@ public partial class MainWindow : Window
 
     private async void InstallLatestUpdateButton_OnClick(object sender, RoutedEventArgs e)
     {
-        await InstallAvailableUpdateAsync("manual install", manual: true, _lifetimeCts.Token);
+        await InstallAvailableUpdateAsync("manual install", manual: true, allowProcessingOverride: false, queueWhenProcessingBlocked: true, _lifetimeCts.Token);
+    }
+
+    private async void InstallQueuedUpdateNowButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await InstallAvailableUpdateAsync("manual install override", manual: true, allowProcessingOverride: true, queueWhenProcessingBlocked: false, _lifetimeCts.Token);
     }
 
     private async void DownloadLatestUpdateButton_OnClick(object sender, RoutedEventArgs e)
@@ -5917,7 +5929,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        await InstallAvailableUpdateAsync(source, manual: false, cancellationToken);
+        await InstallAvailableUpdateAsync(
+            source,
+            manual: false,
+            allowProcessingOverride: false,
+            queueWhenProcessingBlocked: false,
+            cancellationToken);
     }
 
     private async Task<bool> TryInstallPendingDownloadedUpdateIfIdleAsync(string source, CancellationToken cancellationToken)
@@ -5928,6 +5945,7 @@ public partial class MainWindow : Window
                 config.PendingUpdateZipPath,
                 config.PendingUpdateVersion,
                 AppBranding.Version,
+                config.PendingUpdateInstallWhenIdleRequested,
                 _recordingCoordinator.IsRecording,
                 _processingQueue.IsProcessingInProgress,
                 _isUpdateInstallInProgress))
@@ -5965,11 +5983,30 @@ public partial class MainWindow : Window
         }
 
         var pendingResult = BuildPendingDownloadedUpdateResult(config);
-        await InstallDownloadedUpdateAsync($"{source} restart retry", config.PendingUpdateZipPath, pendingResult, cancellationToken);
+        if (config.PendingUpdateInstallWhenIdleRequested)
+        {
+            await PersistPendingDownloadedUpdateAsync(
+                config.PendingUpdateZipPath,
+                pendingResult,
+                queueInstallWhenIdleRequested: false,
+                cancellationToken);
+        }
+
+        await InstallDownloadedUpdateAsync(
+            $"{source} restart retry",
+            config.PendingUpdateZipPath,
+            pendingResult,
+            allowProcessingOverride: false,
+            cancellationToken);
         return true;
     }
 
-    private async Task InstallAvailableUpdateAsync(string source, bool manual, CancellationToken cancellationToken)
+    private async Task InstallAvailableUpdateAsync(
+        string source,
+        bool manual,
+        bool allowProcessingOverride,
+        bool queueWhenProcessingBlocked,
+        CancellationToken cancellationToken)
     {
         if (manual)
         {
@@ -5984,11 +6021,35 @@ public partial class MainWindow : Window
         UpdateUpdateActionButtons();
         if (manual)
         {
-            UpdateCheckStatusTextBlock.Text = "Preparing the latest update...";
+            UpdateCheckStatusTextBlock.Text = allowProcessingOverride
+                ? "Preparing the queued update..."
+                : "Preparing the latest update...";
         }
 
         try
         {
+            var currentConfig = _liveConfig.Current;
+            if (allowProcessingOverride &&
+                currentConfig.PendingUpdateInstallWhenIdleRequested &&
+                HasPendingDownloadedUpdate(currentConfig))
+            {
+                var pendingResult = BuildPendingDownloadedUpdateResult(currentConfig);
+                await PersistPendingDownloadedUpdateAsync(
+                    currentConfig.PendingUpdateZipPath,
+                    pendingResult,
+                    queueInstallWhenIdleRequested: false,
+                    cancellationToken);
+                await InstallDownloadedUpdateWithGateHeldAsync(
+                    source,
+                    currentConfig.PendingUpdateZipPath,
+                    pendingResult,
+                    allowProcessingOverride: true,
+                    $"Installing queued update {FormatVersionLabel(pendingResult.LatestVersion)} and interrupting background processing for the installer handoff...",
+                    $"Installing queued update {FormatVersionLabel(pendingResult.LatestVersion)} immediately from {source} by stopping background processing.",
+                    cancellationToken);
+                return;
+            }
+
             var result = _lastUpdateCheckResult;
             if (manual && result is not { Status: AppUpdateStatusKind.UpdateAvailable, DownloadUrl: not null and not "" })
             {
@@ -6005,8 +6066,35 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!TryGetUpdateInstallBlockReason(out var blockReason))
+            var blockKind = _appUpdateInstallPolicy.GetInstallBlockKind(
+                _recordingCoordinator.IsRecording,
+                _processingQueue.IsProcessingInProgress,
+                _isUpdateInstallInProgress,
+                allowCurrentInstallInProgress: false,
+                allowProcessingOverride: allowProcessingOverride);
+            if (blockKind != AppUpdateInstallBlockKind.None)
             {
+                var blockReason = _appUpdateInstallPolicy.GetInstallBlockReason(
+                    _recordingCoordinator.IsRecording,
+                    _processingQueue.IsProcessingInProgress,
+                    _isUpdateInstallInProgress,
+                    allowCurrentInstallInProgress: false,
+                    allowProcessingOverride: allowProcessingOverride) ?? "The app is currently busy.";
+                if (queueWhenProcessingBlocked && blockKind == AppUpdateInstallBlockKind.Processing)
+                {
+                    UpdateCheckStatusTextBlock.Text = $"Downloading update {FormatVersionLabel(available.LatestVersion)} so it can install automatically once background processing is idle...";
+                    var queuedDownloadedPath = await EnsurePendingDownloadedUpdateAsync(
+                        available,
+                        queueInstallWhenIdleRequested: true,
+                        cancellationToken);
+                    UpdateCheckStatusTextBlock.Text = MainWindowInteractionLogic.BuildQueuedUpdateInstallMessage(
+                        FormatVersionLabel(available.LatestVersion),
+                        queuedDownloadedPath);
+                    AppendActivity($"Queued update {FormatVersionLabel(available.LatestVersion)} from {source} for automatic install once background processing is idle.");
+                    OpenContainingFolder(queuedDownloadedPath);
+                    return;
+                }
+
                 if (manual)
                 {
                     UpdateCheckStatusTextBlock.Text = blockReason;
@@ -6015,20 +6103,24 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _isUpdateInstallInProgress = true;
-            UpdateUpdateActionButtons();
-            _detectionTimer.Stop();
-            _updateTimer.Stop();
-            UpdateUi($"Installing update {FormatVersionLabel(available.LatestVersion)}...", DetectionTextBlock.Text);
-            UpdateCheckStatusTextBlock.Text = $"Downloading update {FormatVersionLabel(available.LatestVersion)} and preparing the installer handoff...";
-            AppendActivity($"Starting {(manual ? "manual" : "automatic")} update install for {FormatVersionLabel(available.LatestVersion)} from {source}.");
-
-            var downloadedPath = await _appUpdateService.DownloadUpdateAsync(
-                available.DownloadUrl,
-                available.LatestVersion,
+            var statusText = allowProcessingOverride
+                ? $"Downloading update {FormatVersionLabel(available.LatestVersion)} and interrupting background processing for the installer handoff..."
+                : $"Downloading update {FormatVersionLabel(available.LatestVersion)} and preparing the installer handoff...";
+            UpdateCheckStatusTextBlock.Text = statusText;
+            var downloadedPath = await EnsurePendingDownloadedUpdateAsync(
+                available,
+                queueInstallWhenIdleRequested: false,
                 cancellationToken);
-
-            await InstallDownloadedUpdateCoreAsync(source, downloadedPath, available, cancellationToken);
+            await InstallDownloadedUpdateWithGateHeldAsync(
+                source,
+                downloadedPath,
+                available,
+                allowProcessingOverride,
+                statusText,
+                allowProcessingOverride
+                    ? $"Starting override update install for {FormatVersionLabel(available.LatestVersion)} from {source} by stopping background processing."
+                    : $"Starting {(manual ? "manual" : "automatic")} update install for {FormatVersionLabel(available.LatestVersion)} from {source}.",
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -6070,6 +6162,7 @@ public partial class MainWindow : Window
         string source,
         string downloadedPath,
         AppUpdateCheckResult updateResult,
+        bool allowProcessingOverride,
         CancellationToken cancellationToken)
     {
         if (!await _updateOperationGate.WaitAsync(0, cancellationToken))
@@ -6078,17 +6171,21 @@ public partial class MainWindow : Window
         }
 
         _isPreparingUpdateInstall = true;
-        _isUpdateInstallInProgress = true;
-        UpdateUpdateActionButtons();
-        _detectionTimer.Stop();
-        _updateTimer.Stop();
-        UpdateUi($"Installing update {FormatVersionLabel(updateResult.LatestVersion)}...", DetectionTextBlock.Text);
-        UpdateCheckStatusTextBlock.Text = $"Retrying previously downloaded update {FormatVersionLabel(updateResult.LatestVersion)} after restart...";
-        AppendActivity($"Retrying pending downloaded update {FormatVersionLabel(updateResult.LatestVersion)} from {source}.");
 
         try
         {
-            await InstallDownloadedUpdateCoreAsync(source, downloadedPath, updateResult, cancellationToken);
+            await InstallDownloadedUpdateWithGateHeldAsync(
+                source,
+                downloadedPath,
+                updateResult,
+                allowProcessingOverride,
+                allowProcessingOverride
+                    ? $"Installing queued update {FormatVersionLabel(updateResult.LatestVersion)} and interrupting background processing for the installer handoff..."
+                    : $"Retrying previously downloaded update {FormatVersionLabel(updateResult.LatestVersion)} after restart...",
+                allowProcessingOverride
+                    ? $"Installing queued update {FormatVersionLabel(updateResult.LatestVersion)} immediately from {source} by stopping background processing."
+                    : $"Retrying pending downloaded update {FormatVersionLabel(updateResult.LatestVersion)} from {source}.",
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -6126,24 +6223,76 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task InstallDownloadedUpdateWithGateHeldAsync(
+        string source,
+        string downloadedPath,
+        AppUpdateCheckResult updateResult,
+        bool allowProcessingOverride,
+        string statusText,
+        string activityText,
+        CancellationToken cancellationToken)
+    {
+        _isUpdateInstallInProgress = true;
+        UpdateUpdateActionButtons();
+        _detectionTimer.Stop();
+        _updateTimer.Stop();
+        UpdateUi($"Installing update {FormatVersionLabel(updateResult.LatestVersion)}...", DetectionTextBlock.Text);
+        UpdateCheckStatusTextBlock.Text = statusText;
+        AppendActivity(activityText);
+        await InstallDownloadedUpdateCoreAsync(
+            source,
+            downloadedPath,
+            updateResult,
+            allowProcessingOverride,
+            cancellationToken);
+    }
+
     private async Task InstallDownloadedUpdateCoreAsync(
         string source,
         string downloadedPath,
         AppUpdateCheckResult updateResult,
+        bool allowProcessingOverride,
         CancellationToken cancellationToken)
     {
-        if (!TryGetUpdateInstallBlockReason(out var blockReason, allowCurrentInstallInProgress: true))
+        var blockKind = _appUpdateInstallPolicy.GetInstallBlockKind(
+            _recordingCoordinator.IsRecording,
+            _processingQueue.IsProcessingInProgress,
+            _isUpdateInstallInProgress,
+            allowCurrentInstallInProgress: true,
+            allowProcessingOverride: allowProcessingOverride);
+        if (blockKind != AppUpdateInstallBlockKind.None)
         {
-            await PersistPendingDownloadedUpdateAsync(downloadedPath, updateResult, cancellationToken);
-            UpdateCheckStatusTextBlock.Text = MainWindowInteractionLogic.BuildDeferredUpdateInstallMessage(
-                blockReason,
-                downloadedPath);
-            AppendActivity($"Deferred update install for {FormatVersionLabel(updateResult.LatestVersion)} because the app became busy after download.");
+            var blockReason = _appUpdateInstallPolicy.GetInstallBlockReason(
+                _recordingCoordinator.IsRecording,
+                _processingQueue.IsProcessingInProgress,
+                _isUpdateInstallInProgress,
+                allowCurrentInstallInProgress: true,
+                allowProcessingOverride: allowProcessingOverride) ?? "The app became busy before the installer handoff could finish.";
+            var queueInstallWhenIdleRequested = blockKind == AppUpdateInstallBlockKind.Processing;
+            await PersistPendingDownloadedUpdateAsync(
+                downloadedPath,
+                updateResult,
+                queueInstallWhenIdleRequested,
+                cancellationToken);
+            UpdateCheckStatusTextBlock.Text = queueInstallWhenIdleRequested
+                ? MainWindowInteractionLogic.BuildQueuedUpdateInstallMessage(
+                    FormatVersionLabel(updateResult.LatestVersion),
+                    downloadedPath)
+                : MainWindowInteractionLogic.BuildDeferredUpdateInstallMessage(
+                    blockReason,
+                    downloadedPath);
+            AppendActivity(queueInstallWhenIdleRequested
+                ? $"Queued update install for {FormatVersionLabel(updateResult.LatestVersion)} because background processing resumed before the installer handoff finished."
+                : $"Deferred update install for {FormatVersionLabel(updateResult.LatestVersion)} because the app became busy after download.");
             OpenContainingFolder(downloadedPath);
             return;
         }
 
-        await PersistPendingDownloadedUpdateAsync(downloadedPath, updateResult, cancellationToken);
+        await PersistPendingDownloadedUpdateAsync(
+            downloadedPath,
+            updateResult,
+            queueInstallWhenIdleRequested: false,
+            cancellationToken);
         LaunchDownloadedUpdateInstaller(downloadedPath, updateResult);
         UpdateCheckStatusTextBlock.Text = $"Installing update {FormatVersionLabel(updateResult.LatestVersion)}. The app will close and relaunch automatically.";
         AppendActivity($"Handed off update {FormatVersionLabel(updateResult.LatestVersion)} to the external installer from {source}.");
@@ -6212,11 +6361,15 @@ public partial class MainWindow : Window
     private async Task PersistPendingDownloadedUpdateAsync(
         string downloadedPath,
         AppUpdateCheckResult updateResult,
+        bool queueInstallWhenIdleRequested,
         CancellationToken cancellationToken)
     {
         var currentConfig = _liveConfig.Current;
         if (string.Equals(currentConfig.PendingUpdateZipPath, downloadedPath, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(currentConfig.PendingUpdateVersion, updateResult.LatestVersion, StringComparison.Ordinal))
+            string.Equals(currentConfig.PendingUpdateVersion, updateResult.LatestVersion, StringComparison.Ordinal) &&
+            currentConfig.PendingUpdatePublishedAtUtc == updateResult.LatestPublishedAtUtc &&
+            currentConfig.PendingUpdateAssetSizeBytes == updateResult.LatestAssetSizeBytes &&
+            currentConfig.PendingUpdateInstallWhenIdleRequested == queueInstallWhenIdleRequested)
         {
             return;
         }
@@ -6227,6 +6380,7 @@ public partial class MainWindow : Window
             PendingUpdateVersion = updateResult.LatestVersion,
             PendingUpdatePublishedAtUtc = updateResult.LatestPublishedAtUtc,
             PendingUpdateAssetSizeBytes = updateResult.LatestAssetSizeBytes,
+            PendingUpdateInstallWhenIdleRequested = queueInstallWhenIdleRequested,
         }, cancellationToken);
     }
 
@@ -6236,7 +6390,8 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(currentConfig.PendingUpdateZipPath) &&
             string.IsNullOrWhiteSpace(currentConfig.PendingUpdateVersion) &&
             !currentConfig.PendingUpdatePublishedAtUtc.HasValue &&
-            !currentConfig.PendingUpdateAssetSizeBytes.HasValue)
+            !currentConfig.PendingUpdateAssetSizeBytes.HasValue &&
+            !currentConfig.PendingUpdateInstallWhenIdleRequested)
         {
             return;
         }
@@ -6247,7 +6402,68 @@ public partial class MainWindow : Window
             PendingUpdateVersion = string.Empty,
             PendingUpdatePublishedAtUtc = null,
             PendingUpdateAssetSizeBytes = null,
+            PendingUpdateInstallWhenIdleRequested = false,
         }, cancellationToken);
+    }
+
+    private async Task<string> EnsurePendingDownloadedUpdateAsync(
+        AppUpdateCheckResult updateResult,
+        bool queueInstallWhenIdleRequested,
+        CancellationToken cancellationToken)
+    {
+        var currentConfig = _liveConfig.Current;
+        if (DoesPendingDownloadedUpdateMatch(currentConfig, updateResult))
+        {
+            await PersistPendingDownloadedUpdateAsync(
+                currentConfig.PendingUpdateZipPath,
+                updateResult,
+                queueInstallWhenIdleRequested,
+                cancellationToken);
+            return currentConfig.PendingUpdateZipPath;
+        }
+
+        var downloadedPath = await _appUpdateService.DownloadUpdateAsync(
+            updateResult.DownloadUrl!,
+            updateResult.LatestVersion,
+            cancellationToken);
+        await PersistPendingDownloadedUpdateAsync(
+            downloadedPath,
+            updateResult,
+            queueInstallWhenIdleRequested,
+            cancellationToken);
+        return downloadedPath;
+    }
+
+    private static bool DoesPendingDownloadedUpdateMatch(AppConfig config, AppUpdateCheckResult updateResult)
+    {
+        if (!HasPendingDownloadedUpdate(config) ||
+            string.IsNullOrWhiteSpace(config.PendingUpdateZipPath) ||
+            !string.Equals(config.PendingUpdateVersion, updateResult.LatestVersion, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (config.PendingUpdatePublishedAtUtc.HasValue &&
+            updateResult.LatestPublishedAtUtc.HasValue &&
+            config.PendingUpdatePublishedAtUtc.Value != updateResult.LatestPublishedAtUtc.Value)
+        {
+            return false;
+        }
+
+        if (config.PendingUpdateAssetSizeBytes.HasValue &&
+            updateResult.LatestAssetSizeBytes.HasValue &&
+            config.PendingUpdateAssetSizeBytes.Value != updateResult.LatestAssetSizeBytes.Value)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool HasPendingDownloadedUpdate(AppConfig config)
+    {
+        return !string.IsNullOrWhiteSpace(config.PendingUpdateZipPath) &&
+               File.Exists(config.PendingUpdateZipPath);
     }
 
     private AppUpdateCheckResult BuildPendingDownloadedUpdateResult(AppConfig config)
@@ -6255,6 +6471,9 @@ public partial class MainWindow : Window
         var version = string.IsNullOrWhiteSpace(config.PendingUpdateVersion)
             ? AppBranding.Version
             : config.PendingUpdateVersion;
+        var message = config.PendingUpdateInstallWhenIdleRequested
+            ? $"A previously downloaded update {FormatVersionLabel(version)} is queued and will install automatically once background processing is idle."
+            : $"A previously downloaded update {FormatVersionLabel(version)} is ready to install.";
 
         return new AppUpdateCheckResult(
             AppUpdateStatusKind.UpdateAvailable,
@@ -6267,7 +6486,7 @@ public partial class MainWindow : Window
             false,
             false,
             false,
-            $"A previously downloaded update {FormatVersionLabel(version)} is ready to install.");
+            message);
     }
 
     private AppUpdateLocalState BuildLocalUpdateState(AppConfig config)
@@ -6285,34 +6504,53 @@ public partial class MainWindow : Window
             installedDiagnostics.InstalledReleaseAssetSizeBytes);
     }
 
-    private bool TryGetUpdateInstallBlockReason(out string reason, bool allowCurrentInstallInProgress = false)
+    private bool TryGetUpdateInstallBlockReason(
+        out string reason,
+        bool allowCurrentInstallInProgress = false,
+        bool allowProcessingOverride = false)
     {
         reason = _appUpdateInstallPolicy.GetInstallBlockReason(
             _recordingCoordinator.IsRecording,
             _processingQueue.IsProcessingInProgress,
             _isUpdateInstallInProgress,
-            allowCurrentInstallInProgress) ?? string.Empty;
+            allowCurrentInstallInProgress,
+            allowProcessingOverride) ?? string.Empty;
         return string.IsNullOrEmpty(reason);
     }
 
     private void ApplyUpdateCheckResult(AppUpdateCheckResult? result, bool manual)
     {
-        RefreshUpdateMetadataDisplay(_liveConfig.Current, result);
+        var currentConfig = _liveConfig.Current;
+        RefreshUpdateMetadataDisplay(currentConfig, result);
 
         if (result is null)
         {
             UpdateBanner.Visibility = Visibility.Collapsed;
             UpdateBannerTextBlock.Text = string.Empty;
-            UpdateCheckStatusTextBlock.Text = $"Current version: {FormatVersionLabel(AppBranding.Version)}. No update check has run yet.";
+            UpdateCheckStatusTextBlock.Text = HasPendingDownloadedUpdate(currentConfig)
+                ? BuildPendingDownloadedUpdateResult(currentConfig).Message
+                : $"Current version: {FormatVersionLabel(AppBranding.Version)}. No update check has run yet.";
             UpdateUpdateActionButtons();
             return;
         }
 
-        UpdateCheckStatusTextBlock.Text = result.Message;
+        var hasMatchingPendingDownloadedUpdate =
+            result.Status == AppUpdateStatusKind.UpdateAvailable &&
+            HasPendingDownloadedUpdate(currentConfig) &&
+            !string.IsNullOrWhiteSpace(currentConfig.PendingUpdateVersion) &&
+            string.Equals(currentConfig.PendingUpdateVersion, result.LatestVersion, StringComparison.Ordinal);
+        UpdateCheckStatusTextBlock.Text = hasMatchingPendingDownloadedUpdate
+            ? BuildPendingDownloadedUpdateResult(currentConfig).Message
+            : result.Message;
 
         if (result.Status == AppUpdateStatusKind.UpdateAvailable)
         {
-            var installMessage = _liveConfig.Current.AutoInstallUpdatesEnabled
+            var installMessage =
+                hasMatchingPendingDownloadedUpdate && currentConfig.PendingUpdateInstallWhenIdleRequested
+                ? "The ZIP is already downloaded and queued to install automatically once background processing is idle. Use Install Now Anyway if you want to interrupt processing and install immediately."
+                : hasMatchingPendingDownloadedUpdate
+                ? "The ZIP is already downloaded. Install it from this tab when the app is idle."
+                : currentConfig.AutoInstallUpdatesEnabled
                 ? "If auto-install is enabled, the app will install it automatically the next time no recording or background processing is active."
                 : "Use the Updates tab to install it manually when the app is idle.";
             UpdateBanner.Visibility = Visibility.Visible;
@@ -6373,6 +6611,16 @@ public partial class MainWindow : Window
 
     private string BuildUpdateAutomationSummary(AppConfig config)
     {
+        if (config.PendingUpdateInstallWhenIdleRequested && HasPendingDownloadedUpdate(config))
+        {
+            return "A downloaded update is queued and will install automatically once background processing is idle. Use Install Now Anyway in Updates if you want to interrupt processing and install immediately.";
+        }
+
+        if (HasPendingDownloadedUpdate(config))
+        {
+            return "A downloaded update is ready to install from the Updates tab the next time the app is idle.";
+        }
+
         if (!config.UpdateCheckEnabled)
         {
             return "Automatic GitHub checks are disabled. Use Check Now to query the release feed manually.";
@@ -6449,12 +6697,19 @@ public partial class MainWindow : Window
 
     private void UpdateUpdateActionButtons()
     {
+        var currentConfig = _liveConfig.Current;
         var isCheckingForUpdates = Volatile.Read(ref _updateCheckOperations) > 0;
         var isAnyUpdateActionBusy = isCheckingForUpdates || _isDownloadingUpdate || _isPreparingUpdateInstall || _isUpdateInstallInProgress;
         var hasDownloadableUpdate =
             _lastUpdateCheckResult is { Status: AppUpdateStatusKind.UpdateAvailable } available &&
             !string.IsNullOrWhiteSpace(available.DownloadUrl);
-        var canInstallUpdate = hasDownloadableUpdate && !isAnyUpdateActionBusy && TryGetUpdateInstallBlockReason(out _);
+        var hasPendingDownloadedUpdate = HasPendingDownloadedUpdate(currentConfig);
+        var installActionState = MainWindowInteractionLogic.BuildUpdateInstallActionState(
+            hasDownloadableUpdate || hasPendingDownloadedUpdate,
+            isAnyUpdateActionBusy,
+            _recordingCoordinator.IsRecording,
+            _processingQueue.IsProcessingInProgress,
+            currentConfig.PendingUpdateInstallWhenIdleRequested && hasPendingDownloadedUpdate);
         var canDownloadUpdate = hasDownloadableUpdate && !isAnyUpdateActionBusy;
 
         CheckForUpdatesButton.Content = isCheckingForUpdates ? "Checking..." : "Check for Updates";
@@ -6462,33 +6717,23 @@ public partial class MainWindow : Window
             ? "Installing..."
             : _isPreparingUpdateInstall
                 ? "Preparing..."
-                : "Install Available Update";
+                : installActionState.PrimaryButtonText;
         DownloadLatestUpdateButton.Content = _isDownloadingUpdate ? "Downloading..." : "Download Latest ZIP";
+        InstallQueuedUpdateNowButton.Content = installActionState.OverrideButtonText;
 
         CheckForUpdatesButton.IsEnabled = !isAnyUpdateActionBusy;
-        InstallLatestUpdateButton.IsEnabled = canInstallUpdate;
+        InstallLatestUpdateButton.IsEnabled = installActionState.PrimaryButtonEnabled;
         DownloadLatestUpdateButton.IsEnabled = canDownloadUpdate;
         OpenLatestReleasePageButton.IsEnabled = !_isUpdateInstallInProgress;
+        InstallQueuedUpdateNowButton.IsEnabled = installActionState.OverrideButtonEnabled;
+        InstallQueuedUpdateNowButton.Visibility = installActionState.ShowOverrideButton
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         UpdateOperationProgressBar.Visibility = isAnyUpdateActionBusy ? Visibility.Visible : Visibility.Collapsed;
-
-        if (isAnyUpdateActionBusy)
-        {
-            UpdateInstallAvailabilityTextBlock.Text = "Working on the current update task. The install controls will unlock again when it finishes.";
-        }
-        else if (_lastUpdateCheckResult is { Status: AppUpdateStatusKind.UpdateAvailable, DownloadUrl: not null and not "" })
-        {
-            UpdateInstallAvailabilityTextBlock.Text = TryGetUpdateInstallBlockReason(out var reason)
-                ? "The app is idle and can install this update now."
-                : reason;
-        }
-        else if (_lastUpdateCheckResult is { Status: AppUpdateStatusKind.UpToDate })
-        {
-            UpdateInstallAvailabilityTextBlock.Text = "No newer GitHub release is currently available.";
-        }
-        else
-        {
-            UpdateInstallAvailabilityTextBlock.Text = "Run Check Now to compare this installation with the latest GitHub release.";
-        }
+        UpdateInstallAvailabilityTextBlock.Text =
+            _lastUpdateCheckResult is { Status: AppUpdateStatusKind.UpToDate } && !hasPendingDownloadedUpdate
+                ? "No newer GitHub release is currently available."
+                : installActionState.AvailabilityText;
     }
 
     private void UpdateConfigDependencyState()

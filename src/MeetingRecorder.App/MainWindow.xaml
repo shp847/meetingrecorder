@@ -2605,6 +2605,12 @@
                                                     Click="OpenLatestReleasePageButton_OnClick"
                                                     Content="Open Release Page" />
                                         </WrapPanel>
+                                        <Button x:Name="InstallQueuedUpdateNowButton"
+                                                Margin="0,4,0,0"
+                                                Visibility="Collapsed"
+                                                Click="InstallQueuedUpdateNowButton_OnClick"
+                                                Style="{StaticResource TertiaryLinkButtonStyle}"
+                                                Content="Install Now Anyway" />
                                         <ProgressBar x:Name="UpdateOperationProgressBar"
                                                      Margin="0,16,0,0"
                                                      Height="6"

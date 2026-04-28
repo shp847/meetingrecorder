@@ -999,6 +999,42 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildUpdateInstallActionState_Queues_When_Background_Processing_Is_The_Only_Blocker()
+    {
+        var result = MainWindowInteractionLogic.BuildUpdateInstallActionState(
+            hasDownloadableUpdate: true,
+            isAnyUpdateActionBusy: false,
+            isRecording: false,
+            isProcessingInProgress: true,
+            queuedInstallWhenIdleRequested: false);
+
+        Assert.Equal("Queue Install When Idle", result.PrimaryButtonText);
+        Assert.True(result.PrimaryButtonEnabled);
+        Assert.False(result.ShowOverrideButton);
+        Assert.Contains("download", result.AvailabilityText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("idle", result.AvailabilityText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildUpdateInstallActionState_Shows_Override_After_An_Update_Is_Queued()
+    {
+        var result = MainWindowInteractionLogic.BuildUpdateInstallActionState(
+            hasDownloadableUpdate: true,
+            isAnyUpdateActionBusy: false,
+            isRecording: false,
+            isProcessingInProgress: true,
+            queuedInstallWhenIdleRequested: true);
+
+        Assert.Equal("Install Queued", result.PrimaryButtonText);
+        Assert.False(result.PrimaryButtonEnabled);
+        Assert.True(result.ShowOverrideButton);
+        Assert.Equal("Install Now Anyway", result.OverrideButtonText);
+        Assert.True(result.OverrideButtonEnabled);
+        Assert.Contains("queued", result.AvailabilityText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("resume on next launch", result.AvailabilityText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void GetAppShutdownMode_Returns_Immediate_When_Installer_Requested_Shutdown()
     {
         var result = MainWindowInteractionLogic.GetAppShutdownMode(
@@ -2004,6 +2040,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal(string.Empty, result.PendingUpdateVersion);
         Assert.Null(result.PendingUpdatePublishedAtUtc);
         Assert.Null(result.PendingUpdateAssetSizeBytes);
+        Assert.False(result.PendingUpdateInstallWhenIdleRequested);
     }
 
     [Fact]

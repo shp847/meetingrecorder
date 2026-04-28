@@ -33,6 +33,21 @@ public sealed class AppUpdateInstallPolicyTests
     }
 
     [Fact]
+    public void GetInstallBlockReason_Returns_Null_When_Background_Processing_Is_Explicitly_Overridden()
+    {
+        var policy = new AppUpdateInstallPolicy();
+
+        var blockReason = policy.GetInstallBlockReason(
+            hasActiveRecording: false,
+            isProcessingInProgress: true,
+            isUpdateAlreadyInProgress: false,
+            allowCurrentInstallInProgress: false,
+            allowProcessingOverride: true);
+
+        Assert.Null(blockReason);
+    }
+
+    [Fact]
     public void ShouldRetryPendingInstall_Returns_True_When_A_Pending_Zip_Is_Present_And_App_Is_Idle()
     {
         var policy = new AppUpdateInstallPolicy();
@@ -41,6 +56,7 @@ public sealed class AppUpdateInstallPolicyTests
             pendingUpdateZipPath: @"C:\Users\test\Downloads\MeetingRecorder-v0.2-win-x64.zip",
             pendingUpdateVersion: "0.2",
             currentVersion: "0.1",
+            queuedInstallWhenIdleRequested: false,
             hasActiveRecording: false,
             isProcessingInProgress: false,
             isUpdateAlreadyInProgress: false);
@@ -57,6 +73,7 @@ public sealed class AppUpdateInstallPolicyTests
             pendingUpdateZipPath: @"C:\Users\test\Downloads\MeetingRecorder-v0.2-win-x64.zip",
             pendingUpdateVersion: "0.2",
             currentVersion: "0.1",
+            queuedInstallWhenIdleRequested: false,
             hasActiveRecording: true,
             isProcessingInProgress: false,
             isUpdateAlreadyInProgress: false);
@@ -154,11 +171,29 @@ public sealed class AppUpdateInstallPolicyTests
             pendingUpdateZipPath: @"C:\Users\test\Downloads\MeetingRecorder-v0.3-win-x64.zip",
             pendingUpdateVersion: "0.3",
             currentVersion: "0.3",
+            queuedInstallWhenIdleRequested: false,
             hasActiveRecording: false,
             isProcessingInProgress: false,
             isUpdateAlreadyInProgress: false);
 
         Assert.False(shouldRetry);
+    }
+
+    [Fact]
+    public void ShouldRetryPendingInstall_Returns_True_When_A_Same_Version_Update_Was_Explicitly_Queued()
+    {
+        var policy = new AppUpdateInstallPolicy();
+
+        var shouldRetry = policy.ShouldRetryPendingInstall(
+            pendingUpdateZipPath: @"C:\Users\test\Downloads\MeetingRecorder-v0.3-win-x64.zip",
+            pendingUpdateVersion: "0.3",
+            currentVersion: "0.3",
+            queuedInstallWhenIdleRequested: true,
+            hasActiveRecording: false,
+            isProcessingInProgress: false,
+            isUpdateAlreadyInProgress: false);
+
+        Assert.True(shouldRetry);
     }
 
     [Fact]

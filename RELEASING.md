@@ -75,14 +75,14 @@ Packaging validation notes:
 - `ICE91` is intentionally suppressed for harvested release builds because the MSI is authored as per-user-only and installs into user-profile directories by design
 - the MSI now enables Windows Installer logging by default, so direct MSI troubleshooting should leave a verbose log under `%TEMP%`
 - the MSI now allows refreshed same-version release assets to replace already-installed binaries, so a rebuilt `0.x` package can still overwrite an older apphost on reinstall
-- background auto-install and pending-update retry should only run for true semantic-version upgrades; a republished same-version build must remain a manual reinstall path so the app does not immediately update itself again after an MSI relaunch
+- background auto-install and passive pending-update retry should only run for true semantic-version upgrades; a republished same-version build must not immediately update itself again after an MSI relaunch, but an explicitly queued manual install may still apply once background processing becomes idle
 - the Home screen should keep its lower quick-setting cards reachable at the default window size by hosting the recording dashboard in a dedicated scroll viewer
 - the release build should stamp the MSI summary `Word Count` to `10` so the shipped per-user MSI advertises that normal installs do not require UAC elevation
 - the MSI now skips the stock license-agreement page and goes straight from welcome to ready-to-install
 - the MSI now uses the WiX finish dialog so users see an explicit completion screen instead of a silent exit
 - the finish dialog includes a `Launch Meeting Recorder` checkbox for fresh installs, checked by default
 - if the finish dialog launches the app during an install or update, it should launch `Launch-MeetingRecorder-AfterInstall.vbs` instead of the app exe directly so the app can consume a relaunch marker from `%LOCALAPPDATA%\MeetingRecorder`, request cooperative shutdown of the existing idle instance, and then start a fresh instance on the updated bits
-- automatic updates should never force an installer shutdown while recording or transcript processing is active; that handoff must defer until the app is truly idle
+- automatic updates should never force an installer shutdown while recording or transcript processing is active; manual updates may queue during background processing and offer an explicit override, but live recording remains a hard block
 - manual stop for a long-running recording should offload recorder shutdown off the UI thread so the window stays responsive while audio capture drains and finalizes
 - app shutdown should tolerate queued processing-worker resolution failures during close instead of surfacing a shutdown error and leaving a headless background process behind
 - the final app close path should explicitly close header surfaces and call WPF application shutdown, not rely solely on the main-window close event
@@ -343,12 +343,17 @@ Important:
 14. Confirm the `Setup` page offers `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics for both transcription and speaker labeling
 15. Confirm only the Higher Accuracy assets are shown as GitHub-backed downloads
 16. Confirm a later CLI/in-app update preserves the current transcription and speaker-labeling profile choice while restoring missing bundled Standard assets if needed
-17. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
-18. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
-19. Confirm `%USERPROFILE%\Documents\MeetingRecorder` and the user-scope shortcuts are removed
-20. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
-21. Run `MeetingRecorderInstaller.msi` again as a fresh install
-22. Confirm the app comes back with the preserved user data still available
+17. With background processing active, open `Settings > Updates`, confirm the primary action changes to `Queue Install When Idle`, and confirm clicking it downloads the ZIP immediately instead of waiting for the queue to drain first
+18. Let background processing finish and confirm the queued in-app install starts automatically without requiring another manual click
+19. Repeat the same scenario and confirm the queued state exposes `Install Now Anyway`, then confirm that override interrupts background processing and proceeds with the installer handoff
+20. Start a live recording and confirm the in-app installer path still refuses to proceed even if an update ZIP is already downloaded
+21. Confirm a republished same-version build still does not auto-install on its own without an explicit user queue request
+22. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
+23. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
+24. Confirm `%USERPROFILE%\Documents\MeetingRecorder` and the user-scope shortcuts are removed
+25. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
+26. Run `MeetingRecorderInstaller.msi` again as a fresh install
+27. Confirm the app comes back with the preserved user data still available
 
 ## User-Facing Install Story
 

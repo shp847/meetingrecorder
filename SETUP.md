@@ -276,8 +276,9 @@ The in-app updater now filters GitHub release assets down to the versioned `Meet
 The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory instead of the temporary single-file extraction folder, so the updater can still launch correctly from the packaged managed install.
 Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches when you install it manually.
 The MSI now also allows a refreshed same-version release asset to overwrite the already-installed app binaries on reinstall, so reinstalling an updated `0.x` package does not leave the previous apphost in place.
-Automatic updates are still allowed, but the app now refuses installer shutdown handoff while a recording or background transcript-processing job is active, so an update cannot forcibly close the app in the middle of active work.
-Background auto-install and pending-update retry are now limited to true version upgrades, so a freshly MSI-relaunched app does not immediately kick off a same-version self-update loop just because the release was republished with a newer timestamp or asset size.
+Automatic updates are still allowed, but the app refuses installer shutdown handoff while a live recording is active and also avoids automatically interrupting background transcript-processing work.
+When only background processing is busy, `Settings > Updates` now softens the manual path: the primary action downloads the ZIP immediately as `Queue Install When Idle`, then applies it automatically once the processing queue drains. After that queue is in place, the page exposes `Install Now Anyway` as an explicit override that interrupts background processing and lets it resume on next launch.
+Background auto-install and passive pending-update retry are still limited to true version upgrades, so a freshly MSI-relaunched app does not immediately kick off a same-version self-update loop just because the release was republished with a newer timestamp or asset size. An explicitly queued manual same-version install is still allowed to retry once background processing becomes idle.
 The `Run-MeetingRecorder.cmd` launcher now waits briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, which helps during short install or update handoff windows.
 The EXE shell keeps the `Try backup CMD installer` action available after a handoff so you can still trigger the fallback path if the command window fails later.
 The `Install-LatestFromGitHub.cmd` wrapper now preserves the real PowerShell/bootstrap exit code in its local-script path, so a successful install no longer prints a stale generic failure message afterward.
@@ -299,6 +300,7 @@ App releases now keep Whisper models separate from the main installer bundle so 
 Inside `Transcription`, the app presents guided readiness content first, then keeps alternate/manual paths available when you need a different model source or an existing local file.
 
 Built-in automatic downloads in `Setup` use GitHub release assets only. If GitHub is blocked, use an approved local file instead.
+If the packaged `model-catalog.json` file is missing on a given machine, curated `Use Standard` and `Use Higher Accuracy` still fall back to the app's built-in default catalog instead of failing Setup outright.
 
 ### Option A: Download from the current GitHub release
 
@@ -640,13 +642,14 @@ What the current app does:
 - if the existing instance owns the single-instance lock but does not answer the newer activation handshake yet, a new launch now also tries to find that already-running Meeting Recorder window and bring it to the foreground before it warns
 - if the prior instance is still shutting down after an install or update handoff, a new launch now gives that shutdown a longer final grace window before it shows the warning
 - if a recording or background transcript-processing job is active, the app now defers installer shutdown instead of letting an update forcibly close the current session
+- if only background processing is active, `Settings > Updates` can now queue the download for automatic idle install or let you explicitly override and install immediately; a live recording is still a hard stop
 - if queued transcript processing faults while the app is closing, shutdown now logs and ignores that queued-worker failure instead of leaving a headless background process behind
 - if older queue items were stranded in `Processing` after transcription had already finished, the next startup now repairs those stale manifests automatically, keeps the saved transcript snapshot, and requeues them once without speaker labels so the backlog can drain without manual manifest editing or repeated full retranscription
 - when shutdown cleanup finishes, the app now explicitly tears down any header surfaces and requests full WPF application shutdown instead of relying only on the main window close path
 - automatic update handoff now requests a full application shutdown instead of only closing the main window, so modeless header surfaces cannot keep the process alive after the window disappears
 - app exit no longer blocks the UI thread waiting on the activation and installer-shutdown monitor tasks, which prevents a closed window from turning into a stuck headless background process
 - same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt when you launch them manually
-- background auto-install and pending-update retry only run for true version upgrades, so republished same-version builds do not immediately relaunch the updater against a still-running app
+- background auto-install and passive pending-update retry only run for true version upgrades, while an explicitly queued manual same-version update can still install once background processing becomes idle
 - launch-on-login registration now resolves the installed `MeetingRecorder.App.exe` path from the running process instead of persisting a temporary `%TEMP%\\.net\\...` extraction path
 - update repair now rewrites existing Desktop and Start Menu launchers to the canonical `Documents\\MeetingRecorder` bundle and quarantines older `Documents\\Meeting Recorder` or `%LOCALAPPDATA%\\Programs\\Meeting Recorder` roots if they are still present
 

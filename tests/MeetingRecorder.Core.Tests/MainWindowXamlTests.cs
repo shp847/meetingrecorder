@@ -248,6 +248,17 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Updates_Tab_Exposes_A_Secondary_Override_Button_For_Queued_Installs()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("x:Name=\"InstallQueuedUpdateNowButton\"", xaml);
+        Assert.Contains("Click=\"InstallQueuedUpdateNowButton_OnClick\"", xaml);
+    }
+
+    [Fact]
     public void Meetings_Tab_Uses_A_Technical_Processing_Strip_For_Queue_Status_And_Approximate_Etas()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
