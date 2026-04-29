@@ -527,7 +527,7 @@ Important behavior:
 - repaired merged publishes now show duration from the repaired artifact itself when the preserved original stem would otherwise point back to stale manifest timing
 - dismissed recommendations stay hidden until the underlying meeting data changes enough to produce a new recommendation fingerprint
 
-Archive output is user-recoverable. The app moves artifacts into timestamped folders under `Documents\Meetings\Archive` instead of permanently deleting them. Current builds also treat older top-level folders such as `ArchivedRepairs`, `ArchivedFalseStarts`, and `ArchivedGenericCleanup` as legacy inputs that can be consolidated under the single `Archive` root.
+Archive output is user-recoverable. The app moves artifacts into timestamped folders under `Documents\Meetings\Archive` instead of permanently deleting them. Current builds also treat older top-level folders such as `ArchivedRepairs`, `ArchivedFalseStarts`, and `ArchivedGenericCleanup` as legacy inputs that can be consolidated under the single `Archive` root. On Windows, archived artifacts are marked unpinned after they are written so OneDrive Files On-Demand can keep the recovery copy online without forcing the WAV backup to remain allocated on the local disk. Generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are automatically removed after 14 days; manual meeting archive folders remain user-managed.
 
 ## 8.2 Selected Meeting Inspector and Context Menu
 

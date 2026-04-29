@@ -9,6 +9,8 @@ namespace MeetingRecorder.App;
 
 public partial class App : Application
 {
+    private static readonly TimeSpan GeneratedArchiveBackupRetention = TimeSpan.FromDays(14);
+
     private FileLogWriter? _logger;
     private bool _hasShownUnhandledExceptionMessage;
     private AppInstanceCoordinator? _instanceCoordinator;
@@ -168,6 +170,8 @@ public partial class App : Application
         Exception? transcriptSidecarMigrationFailure = null;
         PublishedMeetingRepairResult? publishedMeetingRepairResult = null;
         Exception? publishedMeetingRepairFailure = null;
+        GeneratedArchiveBackupRetentionCleanupResult? generatedArchiveBackupCleanupResult = null;
+        Exception? generatedArchiveBackupCleanupFailure = null;
 
         try
         {
@@ -218,6 +222,31 @@ public partial class App : Application
         if (publishedMeetingRepairFailure is not null)
         {
             _logger?.Log($"Published meeting repair failed: {publishedMeetingRepairFailure}");
+        }
+
+        try
+        {
+            generatedArchiveBackupCleanupResult = await Task.Run(
+                () => GeneratedArchiveBackupRetentionService.DeleteExpiredBackups(
+                    MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir),
+                    GeneratedArchiveBackupRetention,
+                    DateTimeOffset.UtcNow,
+                    CancellationToken.None));
+        }
+        catch (Exception exception)
+        {
+            generatedArchiveBackupCleanupFailure = exception;
+        }
+
+        if (generatedArchiveBackupCleanupResult is { DeletedDirectoryCount: > 0 } cleanupResult)
+        {
+            _logger?.Log(
+                $"Deleted {cleanupResult.DeletedDirectoryCount} expired generated archive backup folder(s), reclaiming {cleanupResult.BytesReclaimed} bytes across {cleanupResult.DeletedFileCount} file(s).");
+        }
+
+        if (generatedArchiveBackupCleanupFailure is not null)
+        {
+            _logger?.Log($"Generated archive backup retention cleanup failed: {generatedArchiveBackupCleanupFailure}");
         }
     }
 

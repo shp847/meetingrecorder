@@ -73,6 +73,7 @@ internal sealed partial class MeetingCleanupExecutionService
 
             var destinationRoot = Path.Combine(archiveRoot, "legacy", Path.GetFileName(legacyRoot));
             MoveDirectoryContents(legacyRoot, destinationRoot);
+            CloudFileStorageOptimizer.MarkUnpinnedRecursive(destinationRoot);
 
             if (!Directory.EnumerateFileSystemEntries(legacyRoot).Any())
             {
@@ -94,6 +95,7 @@ internal sealed partial class MeetingCleanupExecutionService
         MoveIfPresent(meeting.MarkdownPath, destinationDirectory);
         MoveIfPresent(meeting.JsonPath, destinationDirectory);
         MoveIfPresent(meeting.ReadyMarkerPath, destinationDirectory);
+        CloudFileStorageOptimizer.MarkUnpinnedRecursive(destinationDirectory);
         return Task.CompletedTask;
     }
 

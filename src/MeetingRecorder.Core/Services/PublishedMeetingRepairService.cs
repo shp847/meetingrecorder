@@ -33,6 +33,7 @@ public static partial class PublishedMeetingRepairService
             MeetingCleanupExecutionService.GetArchiveRoot(audioOutputDir),
             RepairArchiveDirectoryName);
         Directory.CreateDirectory(archiveDirectory);
+        CloudFileStorageOptimizer.MarkUnpinnedRecursive(archiveDirectory);
 
         var pathBuilder = new ArtifactPathBuilder();
         var catalog = new MeetingOutputCatalogService(pathBuilder);
@@ -412,6 +413,7 @@ public static partial class PublishedMeetingRepairService
             reportPath,
             BuildEchoRepairReport(workDir, archiveDirectory, repaired, skipped),
             cancellationToken);
+        CloudFileStorageOptimizer.MarkUnpinnedRecursive(archiveDirectory);
         return new EchoRepairPassResult(repaired.Count, skipped.Count, reportPath);
     }
 

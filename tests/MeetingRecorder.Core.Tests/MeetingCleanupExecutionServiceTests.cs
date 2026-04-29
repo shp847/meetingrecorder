@@ -6,6 +6,9 @@ namespace MeetingRecorder.Core.Tests;
 
 public sealed class MeetingCleanupExecutionServiceTests : IDisposable
 {
+    private const FileAttributes WindowsFileAttributePinned = (FileAttributes)0x00080000;
+    private const FileAttributes WindowsFileAttributeUnpinned = (FileAttributes)0x00100000;
+
     private readonly string _root;
     private readonly ArtifactPathBuilder _pathBuilder = new();
     private readonly MeetingOutputCatalogService _catalog;
@@ -62,6 +65,44 @@ public sealed class MeetingCleanupExecutionServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(meetingArchiveDirectory, Path.GetFileName(readyPath))));
         Assert.False(File.Exists(audioPath));
         Assert.False(File.Exists(markdownPath));
+    }
+
+    [Fact]
+    public async Task ArchiveMeetingAsync_Marks_Archived_Artifacts_Unpinned_For_Cloud_Storage()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var archiveRoot = CreateDirectory("archive");
+        var stem = "2026-04-22_140050_teams_skywater-finance";
+        var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+        var markdownPath = Path.Combine(transcriptDir, $"{stem}.md");
+
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(1));
+        await File.WriteAllTextAsync(markdownPath, "# Skywater Finance");
+
+        var record = new MeetingOutputRecord(
+            stem,
+            "Skywater Finance",
+            DateTimeOffset.Parse("2026-04-22T14:00:50Z"),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(30),
+            audioPath,
+            markdownPath,
+            null,
+            null,
+            null,
+            null,
+            Array.Empty<MeetingAttendee>(),
+            false,
+            null);
+
+        var service = new MeetingCleanupExecutionService(_pathBuilder, _catalog);
+
+        await service.ArchiveMeetingAsync(record, archiveRoot, "archive-repair-backup", CancellationToken.None);
+
+        var archivedAudioAttributes = File.GetAttributes(Path.Combine(archiveRoot, "archive-repair-backup", stem, Path.GetFileName(audioPath)));
+        Assert.True(archivedAudioAttributes.HasFlag(WindowsFileAttributeUnpinned));
+        Assert.False(archivedAudioAttributes.HasFlag(WindowsFileAttributePinned));
     }
 
     [Fact]

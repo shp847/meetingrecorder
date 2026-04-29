@@ -324,6 +324,8 @@ Historical behavior:
 - users can review suggestions first or apply only the high-confidence safe fixes
 - safe fixes are never permanent deletes; archive-style cleanup moves artifacts into the Meetings archive
 - current archive-style flows use a single `Documents\Meetings\Archive` root, and any older parallel legacy archive roots are treated as migration inputs rather than ongoing destinations
+- archive-style flows mark archived artifacts with the Windows unpinned file attribute after writing them, allowing OneDrive Files On-Demand to dehydrate large recovery WAVs while preserving cloud recovery
+- startup maintenance prunes generated repair backup folders after 14 days for `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives, while leaving manual archive folders user-managed
 - permanent delete is a separate manual Meetings-tab context-menu action guarded by typed `DELETE` confirmation and implemented outside the cleanup recommendation pipeline
 
 ## 7. Audio Pipeline

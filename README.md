@@ -294,7 +294,7 @@ When available, the published transcript JSON now also carries durable meeting m
 
 The ready-marker is the completion signal intended for downstream tools such as Power Automate.
 
-Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem.
+Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup.
 
 The Meetings tab also exposes a separate manual `Delete Permanently` action from the meeting context menu. That path is irreversible, requires typing `DELETE` to confirm, removes the published audio and transcript artifacts, and also removes the linked session work folder when one still exists.
 
