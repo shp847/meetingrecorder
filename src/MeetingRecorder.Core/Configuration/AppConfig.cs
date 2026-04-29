@@ -35,6 +35,7 @@ public enum BackgroundProcessingMode
     Responsive = 0,
     Balanced = 1,
     FastestDrain = 2,
+    MaximumThroughput = 3,
 }
 
 public enum BackgroundSpeakerLabelingMode
@@ -188,7 +189,9 @@ public sealed record AppConfig
         SpeakerLabelingModelProfilePreference.Standard;
 
     public InferenceAccelerationPreference DiarizationAccelerationPreference { get; init; } =
-        InferenceAccelerationPreference.Auto;
+        InferenceAccelerationPreference.CpuOnly;
+
+    public bool DiarizationAccelerationSecurityPromptMigrationApplied { get; init; }
 
     public bool MicCaptureEnabled { get; init; } = true;
 

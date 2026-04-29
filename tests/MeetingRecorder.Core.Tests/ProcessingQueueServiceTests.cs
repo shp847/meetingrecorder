@@ -338,6 +338,199 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task RushBacklogAsync_Defers_Current_Backlog_Without_Changing_Future_Mode()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory,
+            () => true);
+
+        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(15));
+        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(20));
+
+        await service.EnqueueAsync(firstManifestPath);
+        await service.EnqueueAsync(secondManifestPath);
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().RunState == ProcessingQueueRunState.Paused);
+
+        var result = await service.RushBacklogAsync(deferFutureMeetings: false);
+
+        var firstManifest = await manifestStore.LoadAsync(firstManifestPath);
+        var secondManifest = await manifestStore.LoadAsync(secondManifestPath);
+
+        Assert.Equal(2, result.DeferredMeetingCount);
+        Assert.False(result.FutureMeetingsDeferred);
+        Assert.False(result.InterruptedCurrentDiarization);
+        Assert.Equal(BackgroundSpeakerLabelingMode.Inline, liveConfig.Current.BackgroundSpeakerLabelingMode);
+        Assert.True(firstManifest.ProcessingOverrides?.SkipSpeakerLabeling);
+        Assert.True(secondManifest.ProcessingOverrides?.SkipSpeakerLabeling);
+
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task RushBacklogAsync_Can_Defer_Current_Backlog_And_Future_Meetings()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            new FakeWorkerProcessFactory(),
+            () => true);
+
+        var manifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(15));
+
+        await service.EnqueueAsync(manifestPath);
+        await WaitForConditionAsync(() => service.GetStatusSnapshot().RunState == ProcessingQueueRunState.Paused);
+
+        var result = await service.RushBacklogAsync(deferFutureMeetings: true);
+
+        var manifest = await manifestStore.LoadAsync(manifestPath);
+
+        Assert.Equal(1, result.DeferredMeetingCount);
+        Assert.True(result.FutureMeetingsDeferred);
+        Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, liveConfig.Current.BackgroundSpeakerLabelingMode);
+        Assert.True(manifest.ProcessingOverrides?.SkipSpeakerLabeling);
+
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task RushBacklogAsync_Interrupts_Current_Diarization_And_Requeues_Without_Labels()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new SequencedWorkerProcessFactory(
+            new FakeWorkerProcess { AutoCompleteOnKill = true },
+            new FakeWorkerProcess());
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        var manifestPath = await CreateProcessingManifestAsync(
+            manifestStore,
+            liveConfig.Current.WorkDir,
+            new ProcessingStageStatus("transcription", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Transcript ready."),
+            new ProcessingStageStatus("diarization", StageExecutionState.Running, DateTimeOffset.UtcNow, "Speaker labeling running."));
+
+        await service.EnqueueAsync(manifestPath);
+        var firstProcess = await processFactory.WaitForStartAsync(0);
+        await WaitForConditionAsync(() =>
+            service.GetStatusSnapshot().CurrentStageName == "diarization" &&
+            service.GetStatusSnapshot().CurrentStageState == StageExecutionState.Running);
+
+        var result = await service.RushBacklogAsync(deferFutureMeetings: false);
+
+        await WaitForConditionAsync(() => firstProcess.KillCalled);
+        var secondProcess = await processFactory.WaitForStartAsync(1);
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, manifestPath, StringComparison.Ordinal));
+        var manifest = await manifestStore.LoadAsync(manifestPath);
+
+        Assert.Equal(1, result.DeferredMeetingCount);
+        Assert.True(result.InterruptedCurrentDiarization);
+        Assert.True(manifest.ProcessingOverrides?.SkipSpeakerLabeling);
+        Assert.Equal(manifestPath, service.GetStatusSnapshot().CurrentManifestPath);
+
+        secondProcess.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task RushBacklogAsync_Does_Not_Interrupt_Current_Transcription()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        var manifestPath = await CreateProcessingManifestAsync(
+            manifestStore,
+            liveConfig.Current.WorkDir,
+            new ProcessingStageStatus("transcription", StageExecutionState.Running, DateTimeOffset.UtcNow, "Transcription running."),
+            new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null));
+
+        await service.EnqueueAsync(manifestPath);
+        var process = await processFactory.WaitForStartAsync();
+        await WaitForConditionAsync(() =>
+            service.GetStatusSnapshot().CurrentStageName == "transcription" &&
+            service.GetStatusSnapshot().CurrentStageState == StageExecutionState.Running);
+
+        var result = await service.RushBacklogAsync(deferFutureMeetings: false);
+        var manifest = await manifestStore.LoadAsync(manifestPath);
+
+        Assert.Equal(0, result.DeferredMeetingCount);
+        Assert.False(result.InterruptedCurrentDiarization);
+        Assert.False(process.KillCalled);
+        Assert.False(manifest.ProcessingOverrides?.SkipSpeakerLabeling == true);
+
+        process.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
     public async Task ResumePendingSessionsAsync_Honors_A_Persisted_Rush_Request_After_Restart()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -1290,6 +1483,26 @@ public sealed class ProcessingQueueServiceTests
             {
                 EndedAtUtc = manifest.StartedAtUtc.Add(duration),
                 State = SessionState.Queued,
+            },
+            manifestPath);
+        return manifestPath;
+    }
+
+    private static async Task<string> CreateProcessingManifestAsync(
+        SessionManifestStore manifestStore,
+        string workDir,
+        ProcessingStageStatus transcriptionStatus,
+        ProcessingStageStatus diarizationStatus)
+    {
+        var manifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, workDir, TimeSpan.FromMinutes(25));
+        var manifest = await manifestStore.LoadAsync(manifestPath);
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                State = SessionState.Processing,
+                TranscriptionStatus = transcriptionStatus,
+                DiarizationStatus = diarizationStatus,
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
             },
             manifestPath);
         return manifestPath;

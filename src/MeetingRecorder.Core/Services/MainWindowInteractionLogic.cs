@@ -186,6 +186,78 @@ internal sealed record MeetingsProcessingStripState(
 
 internal static class MainWindowInteractionLogic
 {
+    public static IReadOnlyList<(BackgroundProcessingMode Value, string Label)> BuildBackgroundProcessingModeOptions(
+        int processorCount)
+    {
+        return
+        [
+            (BackgroundProcessingMode.Responsive, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.Responsive, processorCount)),
+            (BackgroundProcessingMode.Balanced, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.Balanced, processorCount)),
+            (BackgroundProcessingMode.FastestDrain, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.FastestDrain, processorCount)),
+            (BackgroundProcessingMode.MaximumThroughput, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.MaximumThroughput, processorCount)),
+        ];
+    }
+
+    public static string BuildBackgroundProcessingModeHelpText(
+        BackgroundProcessingMode mode,
+        int processorCount)
+    {
+        var config = new AppConfig { BackgroundProcessingMode = mode };
+        var transcriptionThreads = BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount);
+        var diarizationThreads = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount);
+        var priority = BackgroundProcessingPolicy.GetWorkerPriority(config);
+        var threadSummary = $"{transcriptionThreads} transcription / {diarizationThreads} speaker-labeling";
+
+        return mode switch
+        {
+            BackgroundProcessingMode.Responsive =>
+                $"Responsive pauses new backlog work during live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+            BackgroundProcessingMode.Balanced =>
+                $"Balanced keeps backlog work moving during live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+            BackgroundProcessingMode.FastestDrain =>
+                $"Fastest drain does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+            BackgroundProcessingMode.MaximumThroughput =>
+                $"Maximum throughput does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+            _ =>
+                $"This mode runs workers at {priority} priority and uses {threadSummary} on this PC.",
+        };
+    }
+
+    public static string BuildSpeakerLabelingModeHelpText(BackgroundSpeakerLabelingMode mode)
+    {
+        return mode switch
+        {
+            BackgroundSpeakerLabelingMode.Deferred =>
+                "Deferred publishes audio and transcripts first, skips speaker labels in the primary pass, and leaves Add Speaker Labels for later.",
+            BackgroundSpeakerLabelingMode.Inline =>
+                "Inline runs speaker labeling in the primary pass for labeled output sooner; processing speed follows the selected background mode.",
+            _ =>
+                "Throttled runs speaker labeling automatically after transcription while keeping the selected background processing budget in control.",
+        };
+    }
+
+    private static string BuildBackgroundProcessingModeOptionLabel(
+        BackgroundProcessingMode mode,
+        int processorCount)
+    {
+        var config = new AppConfig { BackgroundProcessingMode = mode };
+        var name = mode switch
+        {
+            BackgroundProcessingMode.Responsive => "Responsive",
+            BackgroundProcessingMode.Balanced => "Balanced",
+            BackgroundProcessingMode.FastestDrain => "Fastest drain",
+            BackgroundProcessingMode.MaximumThroughput => "Maximum throughput",
+            _ => mode.ToString(),
+        };
+
+        return $"{name} ({BuildThreadBudgetSummary(BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount), BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount))})";
+    }
+
+    private static string BuildThreadBudgetSummary(int transcriptionThreads, int diarizationThreads)
+    {
+        return $"{transcriptionThreads} transcription / {diarizationThreads} labeling";
+    }
+
     public static ActiveSessionTransitionKind GetEligibleActiveSessionTransition(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,

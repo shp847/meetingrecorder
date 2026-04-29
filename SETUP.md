@@ -175,16 +175,20 @@ Secondary maintenance and support actions live in the header:
 `Settings > Advanced` now also exposes two machine-performance controls:
 
 - `Background processing mode`
-  - `Responsive` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets
-  - `Balanced`: keeps background work moving with moderate thread budgets
-  - `FastestDrain`: favors queue throughput over responsiveness
+  - Each dropdown label shows the local thread budget, for example `Fastest drain (8 transcription / 4 labeling)`.
+  - `Responsive` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets.
+  - `Balanced`: keeps background work moving with moderate thread budgets.
+  - `Fastest drain`: favors queue throughput over responsiveness and uses normal worker priority.
+  - `Maximum throughput`: skips the live-recording pause, uses `AboveNormal` worker priority, and caps local work at up to 12 transcription threads and 6 speaker-labeling threads.
 - `Speaker labeling mode`
-  - `Deferred` (default): publish audio and transcript first, then leave speaker labels for later repair or retry work
-  - `Throttled`: keep speaker labeling inline, but with conservative CPU budgets
-  - `Inline`: keep speaker labeling in the primary pass with the largest worker budgets
+  - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for manual follow-up.
+  - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
+  - `Inline`: keep speaker labeling in the primary pass for labeled output sooner, with processing speed controlled by the selected background mode.
 
 The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
+
+For one urgent meeting, use `Process This ASAP...` from the focused meeting actions or context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
 
 When auto-detection is on, the app now also tries to attribute active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata. The compact summary appears on `Home`, and `Help` includes the current app/window/tab match plus confidence when attribution is available.
 For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, but an explicit active `Meet - ...` browser window can now auto-start from active browser-family audio even when browser session metadata is too weak to name the exact tab.
@@ -381,7 +385,7 @@ Recommended path:
 4. In `Recommended model bundle`, click `Download Recommended Bundle`.
 5. Wait for the status update.
 6. Confirm the `Speaker labeling` section now shows speaker labeling as `Ready` or `Deferred`.
-7. If you want newly published transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. When you choose or import a speaker-labeling bundle from Setup, the app now auto-promotes `Deferred` to `Throttled` so diarization can run without an extra trip to `Advanced`.
+7. If you want newly published transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. `Deferred` publishes audio and transcripts first, then leaves `Add Speaker Labels` for later. When you choose or import a speaker-labeling bundle from Setup, the app now auto-promotes `Deferred` to `Throttled` so diarization can run without an extra trip to `Advanced`.
 
 If GitHub is blocked or no recommended bundle is loaded:
 
@@ -403,6 +407,7 @@ Advanced details:
 GPU acceleration:
 
 - `Settings` now includes `Use GPU acceleration for speaker labeling`
+- CPU-only speaker labeling is the default in managed installs, and existing `Auto` configs are migrated once to CPU-only to avoid endpoint-protection memory-access prompts from DirectML initialization
 - when enabled, the worker tries DirectML on compatible Windows GPUs and falls back to CPU automatically
 - when disabled, diarization always stays on CPU
 - the diarization `Advanced` panel records the last effective provider and any fallback message reported by the worker

@@ -250,6 +250,82 @@ internal sealed class ProcessingQueueService
         PublishStatusSnapshot(UpdateStatusSnapshot());
     }
 
+    public async Task<BacklogRushResult> RushBacklogAsync(
+        bool deferFutureMeetings,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (deferFutureMeetings && _config.Current.BackgroundSpeakerLabelingMode != BackgroundSpeakerLabelingMode.Deferred)
+        {
+            await _config.SaveAsync(
+                _config.Current with { BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred },
+                cancellationToken);
+        }
+
+        List<string> queuedManifestPaths;
+        string? currentDiarizationManifestPath = null;
+        IWorkerProcess? workerToKill = null;
+        lock (_processSyncRoot)
+        {
+            queuedManifestPaths = _queuedManifestEntries
+                .Select(entry => entry.ManifestPath)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (_currentWorker is { HasExited: false } currentWorker &&
+                _currentItemState is { } currentItem &&
+                currentItem.Summary.TranscriptionStatus.State == StageExecutionState.Succeeded &&
+                currentItem.Summary.DiarizationStatus.State == StageExecutionState.Running)
+            {
+                currentDiarizationManifestPath = currentItem.Summary.ManifestPath;
+                _preemptedManifestPath = currentDiarizationManifestPath;
+                workerToKill = currentWorker;
+            }
+        }
+
+        var deferredCount = 0;
+        foreach (var manifestPath in queuedManifestPaths)
+        {
+            if (await TryApplyBacklogRushSpeakerLabelingOverrideAsync(
+                    manifestPath,
+                    resetSessionStateToQueued: false,
+                    cancellationToken))
+            {
+                deferredCount++;
+                var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
+                lock (_processSyncRoot)
+                {
+                    ReplaceQueuedEntryLocked(queueEntry);
+                }
+            }
+        }
+
+        var interruptedCurrentDiarization = false;
+        if (!string.IsNullOrWhiteSpace(currentDiarizationManifestPath) &&
+            await TryApplyBacklogRushSpeakerLabelingOverrideAsync(
+                currentDiarizationManifestPath,
+                resetSessionStateToQueued: true,
+                cancellationToken))
+        {
+            deferredCount++;
+            interruptedCurrentDiarization = true;
+        }
+
+        PublishStatusSnapshot(UpdateStatusSnapshot());
+
+        if (workerToKill is not null && interruptedCurrentDiarization)
+        {
+            _logger.Log($"Interrupting diarization for '{currentDiarizationManifestPath}' so the rushed backlog can publish transcripts without speaker labels.");
+            workerToKill.Kill(entireProcessTree: true);
+        }
+
+        return new BacklogRushResult(
+            deferredCount,
+            _config.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred && deferFutureMeetings,
+            interruptedCurrentDiarization);
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _shutdownCts.Cancel();
@@ -628,6 +704,40 @@ internal sealed class ProcessingQueueService
         }
 
         await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+    }
+
+    private async Task<bool> TryApplyBacklogRushSpeakerLabelingOverrideAsync(
+        string manifestPath,
+        bool resetSessionStateToQueued,
+        CancellationToken cancellationToken)
+    {
+        MeetingSessionManifest manifest;
+        try
+        {
+            manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
+        {
+            _logger.Log($"Unable to rush backlog item '{manifestPath}': {exception.Message}");
+            return false;
+        }
+
+        if (!resetSessionStateToQueued && IsCurrentManifestPath(manifestPath))
+        {
+            return false;
+        }
+
+        if (!ShouldApplyDeferredSpeakerLabelingOverride(manifest))
+        {
+            return false;
+        }
+
+        await ApplySkipSpeakerLabelingOverrideAsync(
+            manifestPath,
+            "Speaker labeling deferred by Rush Backlog so transcripts can publish sooner.",
+            resetSessionStateToQueued,
+            cancellationToken);
+        return true;
     }
 
     private async Task ApplyDeferredSpeakerLabelingIfConfiguredAsync(string manifestPath, CancellationToken cancellationToken)
@@ -1084,6 +1194,18 @@ internal sealed class ProcessingQueueService
         return true;
     }
 
+    private void ReplaceQueuedEntryLocked(QueuedManifestStatusEntry queueEntry)
+    {
+        var existingIndex = _queuedManifestEntries.FindIndex(entry =>
+            string.Equals(entry.ManifestPath, queueEntry.ManifestPath, StringComparison.Ordinal));
+        if (existingIndex < 0)
+        {
+            return;
+        }
+
+        _queuedManifestEntries[existingIndex] = queueEntry with { WasPreempted = _queuedManifestEntries[existingIndex].WasPreempted };
+    }
+
     private bool TryDequeueNextManifestPath(out string manifestPath)
     {
         lock (_processSyncRoot)
@@ -1432,6 +1554,15 @@ internal sealed class ProcessingQueueService
             : null;
     }
 
+    private bool IsCurrentManifestPath(string manifestPath)
+    {
+        lock (_processSyncRoot)
+        {
+            return string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal) ||
+                   string.Equals(_currentItemState?.Summary.ManifestPath, manifestPath, StringComparison.Ordinal);
+        }
+    }
+
     private static bool AreEquivalentIgnoringLastUpdated(
         ProcessingQueueStatusSnapshot previous,
         ProcessingQueueStatusSnapshot current)
@@ -1627,6 +1758,11 @@ internal sealed class ProcessingQueueService
         PublishStatusSnapshot(snapshotToPublish);
     }
 }
+
+internal sealed record BacklogRushResult(
+    int DeferredMeetingCount,
+    bool FutureMeetingsDeferred,
+    bool InterruptedCurrentDiarization);
 
 internal sealed record WorkerRunResult(int ExitCode, string StandardOutput, string StandardError);
 

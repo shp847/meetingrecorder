@@ -793,6 +793,14 @@
                                     <TextBlock x:Name="MeetingsRefreshStateTextBlock"
                                                Margin="0,4,0,0"
                                                Style="{StaticResource TechnicalMetaLabelStyle}" />
+                                    <WrapPanel x:Name="MeetingsProcessingActionsPanel"
+                                               Margin="0,8,0,0">
+                                        <Button x:Name="RushBacklogButton"
+                                                Width="140"
+                                                Height="30"
+                                                Click="RushBacklogButton_OnClick"
+                                                Content="Rush Backlog..." />
+                                    </WrapPanel>
                                 </StackPanel>
                             </Border>
                             <TextBlock Margin="0,8,0,0"
@@ -2269,7 +2277,7 @@
                                             <CheckBox x:Name="ConfigDiarizationGpuAccelerationCheckBox"
                                                       Content="Use GPU acceleration for speaker labeling" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Recommended. When enabled, the worker will try DirectML on compatible Windows GPUs and fall back to CPU automatically." />
+                                                       Text="Optional. CPU is the managed-environment safe default; when enabled, the worker will try DirectML on compatible Windows GPUs and fall back to CPU automatically." />
                                             <TextBlock x:Name="ConfigDiarizationAccelerationStatusTextBlock"
                                                        Margin="0,8,0,0"
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
@@ -2696,7 +2704,8 @@
                                                       Margin="0,6,0,0"
                                                       Height="32"
                                                       VerticalContentAlignment="Center" />
-                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                            <TextBlock x:Name="ConfigBackgroundProcessingModeHelpTextBlock"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Responsive pauses new backlog work during live recordings and keeps the worker below normal priority by default." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
@@ -2706,7 +2715,8 @@
                                                       Margin="0,6,0,0"
                                                       Height="32"
                                                       VerticalContentAlignment="Center" />
-                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                            <TextBlock x:Name="ConfigBackgroundSpeakerLabelingModeHelpTextBlock"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Deferred publishes audio and transcripts first, then leaves speaker labels for manual follow-up later." />
                                         </StackPanel>
                                     </StackPanel>

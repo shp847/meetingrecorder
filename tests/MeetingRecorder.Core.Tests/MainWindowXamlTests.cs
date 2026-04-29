@@ -270,6 +270,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"MeetingsProcessingStatusLine2TextBlock\"", xaml);
         Assert.Contains("x:Name=\"MeetingsProcessingStatusLine3TextBlock\"", xaml);
         Assert.Contains("x:Name=\"MeetingsRefreshStateTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"RushBacklogButton\"", xaml);
+        Assert.Contains("Click=\"RushBacklogButton_OnClick\"", xaml);
         Assert.Contains("FontFamily=\"{StaticResource AppMonoFontFamily}\"", xaml);
         Assert.Contains("Approximate processing status", xaml);
     }

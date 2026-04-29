@@ -198,6 +198,7 @@ Responsibilities:
 - make the distinction from `Setup` explicit in copy: `Setup` is for readiness, while the other Settings sections are for behavior, storage, updates, and troubleshooting
 - expose mode-based performance controls in `Advanced` instead of raw numeric worker knobs
 - default those performance controls to `Responsive` background work plus `Deferred` speaker labeling so the app biases toward machine responsiveness first
+- default diarization acceleration to CPU-only and migrate older DirectML `Auto` configs once, because managed endpoint protection can block DirectML initialization from the worker process during backlog processing or in-app update windows
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
 - expose About details, setup/help entry points, logs/data shortcuts, and release-page links from the header-level `Help` dialog

@@ -46,4 +46,20 @@ public sealed class BackgroundProcessingPolicyTests
         Assert.Equal(4, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
         Assert.False(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));
     }
+
+    [Fact]
+    public void Maximum_Throughput_Mode_Uses_Above_Normal_Priority_And_Capped_High_Budgets()
+    {
+        var config = new AppConfig
+        {
+            BackgroundProcessingMode = BackgroundProcessingMode.MaximumThroughput,
+            BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+        };
+
+        Assert.False(BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(config, isRecording: true));
+        Assert.Equal(ProcessPriorityClass.AboveNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
+        Assert.Equal(12, BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount: 16));
+        Assert.Equal(6, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
+        Assert.False(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));
+    }
 }

@@ -158,7 +158,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
             DiarizationAssetPath = defaultDiarizationAssetPath,
             SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Standard,
-            DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+            DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
+            DiarizationAccelerationSecurityPromptMigrationApplied = true,
             MicCaptureEnabled = true,
             LaunchOnLoginEnabled = true,
             AutoDetectEnabled = true,
@@ -237,6 +238,20 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             autoDetectEnabled = false;
             autoDetectSecurityPromptMigrationApplied = true;
         }
+        var diarizationAccelerationSecurityPromptMigrationApplied =
+            config.DiarizationAccelerationSecurityPromptMigrationApplied;
+        var diarizationAccelerationPreference = NormalizeEnum(
+            config.DiarizationAccelerationPreference,
+            defaults.DiarizationAccelerationPreference);
+        if (!diarizationAccelerationSecurityPromptMigrationApplied)
+        {
+            if (diarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
+            {
+                diarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly;
+            }
+
+            diarizationAccelerationSecurityPromptMigrationApplied = true;
+        }
 
         return config with
         {
@@ -256,7 +271,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
                 normalizedModelCacheDir,
                 normalizedDiarizationAssetPath,
                 defaults.DiarizationAssetPath),
-            DiarizationAccelerationPreference = NormalizeEnum(config.DiarizationAccelerationPreference, defaults.DiarizationAccelerationPreference),
+            DiarizationAccelerationPreference = diarizationAccelerationPreference,
+            DiarizationAccelerationSecurityPromptMigrationApplied = diarizationAccelerationSecurityPromptMigrationApplied,
             AutoDetectEnabled = autoDetectEnabled,
             AutoDetectSecurityPromptMigrationApplied = autoDetectSecurityPromptMigrationApplied,
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,

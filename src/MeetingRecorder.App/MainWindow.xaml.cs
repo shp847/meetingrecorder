@@ -25,6 +25,12 @@ internal enum MeetingRefreshMode
     Full = 1,
 }
 
+internal enum BacklogRushChoice
+{
+    ThisBacklogOnly = 0,
+    ThisAndFutureMeetings = 1,
+}
+
 public partial class MainWindow : Window
 {
     private const int AudioGraphPointCount = 120;
@@ -114,6 +120,7 @@ public partial class MainWindow : Window
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isUpdatingRushProcessing;
+    private bool _isRushingBacklog;
     private bool _isSavingConfig;
     private bool _isRunningTeamsIntegrationProbe;
     private int _updateCheckOperations;
@@ -699,6 +706,11 @@ public partial class MainWindow : Window
         MeetingsProcessingStatusLine3TextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.Line3) ? Visibility.Collapsed : Visibility.Visible;
         MeetingsRefreshStateTextBlock.Text = stripState.SecondaryText ?? string.Empty;
         MeetingsRefreshStateTextBlock.Visibility = string.IsNullOrWhiteSpace(stripState.SecondaryText) ? Visibility.Collapsed : Visibility.Visible;
+        var hasBacklog = _latestProcessingQueueStatusSnapshot.TotalRemainingCount > 0 ||
+                         persistedBacklog is not null;
+        MeetingsProcessingActionsPanel.Visibility = hasBacklog ? Visibility.Visible : Visibility.Collapsed;
+        RushBacklogButton.Content = _isRushingBacklog ? "Rushing..." : "Rush Backlog...";
+        RushBacklogButton.IsEnabled = hasBacklog && !_isRushingBacklog && !IsMeetingActionInProgress();
     }
 
     private PersistedProcessingBacklogState? BuildPersistedProcessingBacklogState()
@@ -2961,6 +2973,7 @@ public partial class MainWindow : Window
                 DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true
                     ? InferenceAccelerationPreference.Auto
                     : InferenceAccelerationPreference.CpuOnly,
+                DiarizationAccelerationSecurityPromptMigrationApplied = true,
                 MicCaptureEnabled = ConfigMicCaptureCheckBox.IsChecked == true,
                 LaunchOnLoginEnabled = ConfigLaunchOnLoginCheckBox.IsChecked == true,
                 AutoDetectEnabled = ConfigAutoDetectCheckBox.IsChecked == true,
@@ -5132,7 +5145,7 @@ public partial class MainWindow : Window
             ? "Clear ASAP"
             : _isUpdatingRushProcessing
                 ? "Updating..."
-                : "Process ASAP...";
+                : "Process This ASAP...";
         ProcessAsapActionButton.Visibility = singleSelectedMeeting is not null &&
             (CanChangeRushProcessing(singleSelectedMeeting) || isSelectedMeetingAsap)
             ? Visibility.Visible
@@ -5197,10 +5210,11 @@ public partial class MainWindow : Window
                _isSplittingMeeting ||
                _isArchivingMeetings ||
                _isUpdatingRushProcessing ||
-               _isDeletingMeetings ||
-               _isApplyingMeetingCleanupRecommendations ||
-               _isDismissingMeetingCleanupRecommendations ||
-               _isApplyingSafeMeetingCleanupFixes;
+                 _isDeletingMeetings ||
+                 _isApplyingMeetingCleanupRecommendations ||
+                 _isDismissingMeetingCleanupRecommendations ||
+                 _isApplyingSafeMeetingCleanupFixes ||
+                 _isRushingBacklog;
     }
 
     private bool HasPendingSpeakerLabelChanges()
@@ -5285,6 +5299,7 @@ public partial class MainWindow : Window
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
         SetSpeakerLabelingModeSelectors(config.BackgroundSpeakerLabelingMode);
+        UpdateBackgroundProcessingModeHelpText(config.BackgroundProcessingMode);
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
         UpdateTeamsIntegrationProbePresentation(config);
     }
@@ -5302,12 +5317,10 @@ public partial class MainWindow : Window
 
         ConfigBackgroundProcessingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundProcessingMode>.Label);
         ConfigBackgroundProcessingModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundProcessingMode>.Value);
-        ConfigBackgroundProcessingModeComboBox.ItemsSource = new[]
-        {
-            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.Responsive, "Responsive"),
-            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.Balanced, "Balanced"),
-            new SelectionOption<BackgroundProcessingMode>(BackgroundProcessingMode.FastestDrain, "Fastest drain"),
-        };
+        ConfigBackgroundProcessingModeComboBox.ItemsSource = MainWindowInteractionLogic
+            .BuildBackgroundProcessingModeOptions(Environment.ProcessorCount)
+            .Select(option => new SelectionOption<BackgroundProcessingMode>(option.Value, option.Label))
+            .ToArray();
 
         ConfigBackgroundSpeakerLabelingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
         ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Value);
@@ -5366,6 +5379,7 @@ public partial class MainWindow : Window
 
     private void ConfigEditorValueChanged(object sender, SelectionChangedEventArgs e)
     {
+        UpdateConfigModeHelpTextFromSelection();
         UpdateConfigActionState();
     }
 
@@ -5377,6 +5391,7 @@ public partial class MainWindow : Window
     private void UpdateConfigActionState()
     {
         UpdateConfigDependencyState();
+        UpdateConfigModeHelpTextFromSelection();
         var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(
             _liveConfig.Current,
             ReadConfigEditorSnapshot());
@@ -5456,19 +5471,32 @@ public partial class MainWindow : Window
         }
 
         SetupSpeakerLabelingRunModeHelpTextBlock.Text = BuildSpeakerLabelingRunModeHelpText(mode);
+        ConfigBackgroundSpeakerLabelingModeHelpTextBlock.Text = MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(mode);
     }
 
     private static string BuildSpeakerLabelingRunModeHelpText(BackgroundSpeakerLabelingMode mode)
     {
-        return mode switch
+        return MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(mode);
+    }
+
+    private void UpdateConfigModeHelpTextFromSelection()
+    {
+        if (ConfigBackgroundProcessingModeComboBox.SelectedValue is BackgroundProcessingMode backgroundProcessingMode)
         {
-            BackgroundSpeakerLabelingMode.Deferred =>
-                "Deferred publishes audio and transcripts first, so speaker labels are skipped in the main pass until you rerun speaker labeling later.",
-            BackgroundSpeakerLabelingMode.Inline =>
-                "Inline runs speaker labeling in the main processing pass for the fastest labeled output, but it can delay transcript publishing on longer meetings.",
-            _ =>
-                "Throttled is recommended. Speaker labeling still runs automatically after transcription, while leaving the queue more responsive for the rest of the app.",
-        };
+            UpdateBackgroundProcessingModeHelpText(backgroundProcessingMode);
+        }
+
+        if (ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode speakerLabelingMode)
+        {
+            ConfigBackgroundSpeakerLabelingModeHelpTextBlock.Text =
+                MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(speakerLabelingMode);
+        }
+    }
+
+    private void UpdateBackgroundProcessingModeHelpText(BackgroundProcessingMode mode)
+    {
+        ConfigBackgroundProcessingModeHelpTextBlock.Text =
+            MainWindowInteractionLogic.BuildBackgroundProcessingModeHelpText(mode, Environment.ProcessorCount);
     }
 
     private async Task SaveSpeakerLabelingRunModeQuickSettingAsync(BackgroundSpeakerLabelingMode selectedMode, string source)
@@ -8054,8 +8082,8 @@ public partial class MainWindow : Window
     {
         var gpuEnabled = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;
         var preferenceText = gpuEnabled
-            ? "GPU acceleration is enabled. The worker will try DirectML first and fall back to CPU automatically."
-            : "GPU acceleration is disabled. Speaker labeling will stay on CPU until you turn it back on.";
+            ? "GPU acceleration is enabled by explicit opt-in. The worker will try DirectML first and fall back to CPU automatically."
+            : "GPU acceleration is disabled by default to avoid managed endpoint protection prompts. Speaker labeling will stay on CPU until you turn it back on.";
 
         var availabilityText = status?.GpuAccelerationAvailable switch
         {
@@ -8063,7 +8091,9 @@ public partial class MainWindow : Window
             false when !string.IsNullOrWhiteSpace(status?.DiagnosticMessage)
                 => $"The last GPU probe fell back to CPU: {status.DiagnosticMessage}",
             false => "The last speaker-labeling run used CPU because no compatible GPU path was detected.",
-            _ => "GPU capability will be confirmed after speaker labeling assets are installed and a diarization run starts.",
+            _ => gpuEnabled
+                ? "GPU capability will be confirmed after speaker labeling assets are installed and a diarization run starts."
+                : "GPU capability is not probed while CPU-only speaker labeling is selected.",
         };
 
         ConfigDiarizationAccelerationStatusTextBlock.Text = $"{preferenceText} {availabilityText}";
@@ -8730,7 +8760,7 @@ public partial class MainWindow : Window
         ReTranscribeMeetingWithDifferentModelMenuItem.IsEnabled = contextState.CanReTranscribeWithDifferentModel;
         AddSpeakerLabelsContextMenuItem.IsEnabled = contextState.CanAddSpeakerLabels;
         ProcessAsapContextMenuItem.IsEnabled = contextState.CanProcessAsap || contextState.CanClearAsap;
-        ProcessAsapContextMenuItem.Header = contextState.CanClearAsap ? "Clear ASAP" : "Process ASAP...";
+        ProcessAsapContextMenuItem.Header = contextState.CanClearAsap ? "Clear ASAP" : "Process This ASAP...";
         SplitMeetingContextMenuItem.IsEnabled = contextState.CanSplit;
         ArchiveMeetingContextMenuItem.IsEnabled = contextState.CanArchive;
         DeleteMeetingPermanentlyMenuItem.IsEnabled = contextState.CanDeletePermanently;
@@ -9113,6 +9143,152 @@ public partial class MainWindow : Window
             ?? string.Empty;
     }
 
+    private async void RushBacklogButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isRushingBacklog || _latestProcessingQueueStatusSnapshot.TotalRemainingCount == 0 && BuildPersistedProcessingBacklogState() is null)
+        {
+            return;
+        }
+
+        var choice = PromptBacklogRushChoice();
+        if (choice is null)
+        {
+            MeetingWorkspaceStatusTextBlock.Text = "Rush backlog canceled.";
+            return;
+        }
+
+        _isRushingBacklog = true;
+        UpdateProcessingQueueStatusUi();
+        UpdateMeetingActionState();
+
+        try
+        {
+            var result = await _processingQueue.RushBacklogAsync(
+                choice == BacklogRushChoice.ThisAndFutureMeetings,
+                _lifetimeCts.Token);
+            var futureText = result.FutureMeetingsDeferred
+                ? " Future meetings will also publish transcripts before speaker labels."
+                : string.Empty;
+            var interruptedText = result.InterruptedCurrentDiarization
+                ? " Current speaker labeling was interrupted and requeued for transcript-first publishing."
+                : string.Empty;
+            var status = result.DeferredMeetingCount == 0
+                ? "No queued backlog items needed speaker labeling deferral."
+                : $"Rush Backlog deferred speaker labeling for {result.DeferredMeetingCount} backlog item(s).";
+
+            MeetingWorkspaceStatusTextBlock.Text = $"{status}{futureText}{interruptedText}";
+            AppendActivity(MeetingWorkspaceStatusTextBlock.Text);
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "rush backlog");
+        }
+        catch (Exception exception)
+        {
+            MeetingWorkspaceStatusTextBlock.Text = $"Rush Backlog failed: {exception.Message}";
+            AppendActivity($"Rush Backlog failed: {exception.Message}");
+        }
+        finally
+        {
+            _isRushingBacklog = false;
+            UpdateProcessingQueueStatusUi();
+            UpdateMeetingActionState();
+        }
+    }
+
+    private BacklogRushChoice? PromptBacklogRushChoice()
+    {
+        var selectionWindow = new Window
+        {
+            Title = "Rush Backlog",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 520,
+            Background = Brushes.White,
+        };
+
+        BacklogRushChoice? result = null;
+        var thisBacklogButton = new Button
+        {
+            Content = "This backlog only",
+            Width = 150,
+            Height = 34,
+            IsDefault = true,
+        };
+        thisBacklogButton.Click += (_, _) =>
+        {
+            result = BacklogRushChoice.ThisBacklogOnly;
+            selectionWindow.DialogResult = true;
+            selectionWindow.Close();
+        };
+
+        var futureButton = new Button
+        {
+            Content = "This and future meetings",
+            Width = 190,
+            Height = 34,
+            Margin = new Thickness(12, 0, 0, 0),
+        };
+        futureButton.Click += (_, _) =>
+        {
+            result = BacklogRushChoice.ThisAndFutureMeetings;
+            selectionWindow.DialogResult = true;
+            selectionWindow.Close();
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            Width = 90,
+            Height = 34,
+            Margin = new Thickness(12, 0, 0, 0),
+            IsCancel = true,
+        };
+        cancelButton.Click += (_, _) =>
+        {
+            selectionWindow.DialogResult = false;
+            selectionWindow.Close();
+        };
+
+        selectionWindow.Content = new Border
+        {
+            Padding = new Thickness(18),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Rush current backlog",
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new TextBlock
+                    {
+                        Margin = new Thickness(0, 10, 0, 0),
+                        Text = "Rush Backlog publishes audio and transcripts sooner by deferring speaker labels for queued work. If the current worker is already in speaker labeling, that stage is interrupted and the transcript is reused.",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new StackPanel
+                    {
+                        Margin = new Thickness(0, 16, 0, 0),
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children =
+                        {
+                            thisBacklogButton,
+                            futureButton,
+                            cancelButton,
+                        },
+                    },
+                },
+            },
+        };
+
+        return selectionWindow.ShowDialog() == true
+            ? result
+            : null;
+    }
+
     private MeetingListRow[] GetMeetingRowsForContextMenuAction(object sender)
     {
         var selectedRows = GetSelectedMeetingRows();
@@ -9198,8 +9374,8 @@ public partial class MainWindow : Window
         RushProcessingBehavior? result = null;
         var nextOnlyButton = new Button
         {
-            Content = "Run next only",
-            Width = 150,
+            Content = "Run this meeting next",
+            Width = 170,
             Height = 34,
             IsDefault = true,
         };
@@ -9212,8 +9388,8 @@ public partial class MainWindow : Window
 
         var ignorePauseButton = new Button
         {
-            Content = "Run next and ignore recording pause",
-            Width = 240,
+            Content = "Run next during recording",
+            Width = 210,
             Height = 34,
             Margin = new Thickness(12, 0, 0, 0),
         };
@@ -9254,7 +9430,7 @@ public partial class MainWindow : Window
                     new TextBlock
                     {
                         Margin = new Thickness(0, 10, 0, 0),
-                        Text = "Choose whether this meeting should simply run next, or run next even while a live recording is keeping responsive background work paused.",
+                        Text = "Choose whether this one meeting should move to the front of the queue, or also bypass the Responsive live-recording pause for this run only.",
                         TextWrapping = TextWrapping.Wrap,
                     },
                     new StackPanel

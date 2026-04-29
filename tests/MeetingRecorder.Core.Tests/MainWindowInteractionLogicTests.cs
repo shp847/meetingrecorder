@@ -8,6 +8,52 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class MainWindowInteractionLogicTests
 {
     [Fact]
+    public void BuildBackgroundProcessingModeOptions_Show_Thread_Budgets_For_The_Current_Machine()
+    {
+        var options = MainWindowInteractionLogic.BuildBackgroundProcessingModeOptions(processorCount: 16);
+
+        Assert.Contains(options, option =>
+            option.Value == BackgroundProcessingMode.Responsive &&
+            option.Label == "Responsive (2 transcription / 1 labeling)");
+        Assert.Contains(options, option =>
+            option.Value == BackgroundProcessingMode.FastestDrain &&
+            option.Label == "Fastest drain (8 transcription / 4 labeling)");
+        Assert.Contains(options, option =>
+            option.Value == BackgroundProcessingMode.MaximumThroughput &&
+            option.Label == "Maximum throughput (12 transcription / 6 labeling)");
+    }
+
+    [Fact]
+    public void BuildBackgroundProcessingModeHelpText_Explains_Priority_Pause_And_Local_Budgets()
+    {
+        var helpText = MainWindowInteractionLogic.BuildBackgroundProcessingModeHelpText(
+            BackgroundProcessingMode.MaximumThroughput,
+            processorCount: 16);
+
+        Assert.Contains("does not pause", helpText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AboveNormal", helpText, StringComparison.Ordinal);
+        Assert.Contains("12 transcription", helpText, StringComparison.Ordinal);
+        Assert.Contains("6 speaker-labeling", helpText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildSpeakerLabelingModeHelpText_Explains_Deferred_Throttled_And_Inline()
+    {
+        Assert.Contains(
+            "publishes audio and transcripts first",
+            MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(BackgroundSpeakerLabelingMode.Deferred),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "runs speaker labeling automatically",
+            MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(BackgroundSpeakerLabelingMode.Throttled),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "labeled output",
+            MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(BackgroundSpeakerLabelingMode.Inline),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void BuildShellStatus_Prioritizes_Model_Setup_When_No_Valid_Model_Is_Configured()
     {
         var result = MainWindowInteractionLogic.BuildShellStatus(
@@ -1291,7 +1337,7 @@ public sealed class MainWindowInteractionLogicTests
             @" C:\Audio ",
             @" C:\Transcripts ",
             @" C:\Work ",
-            true,
+            false,
             "0.125",
             "15",
             true,

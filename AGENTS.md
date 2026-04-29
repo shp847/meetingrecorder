@@ -98,6 +98,18 @@ If unanswered, proceed with explicit assumptions and label them clearly.
 
 ### C. Refactors are allowed only if required to implement the change safely, and must be isolated.
 
+## 5.1 Repo Workflows and Commands
+
+- This is a Windows/.NET 8 WPF app with xUnit tests. `MeetingRecorder.sln` is the full product solution; `AppPlatform.sln` scopes the reusable platform projects and `tests\AppPlatform.Tests`.
+- Use PowerShell commands from the repo root. `rg` may be unavailable on this Windows environment; if it fails, fall back to PowerShell search/enumeration.
+- Main verification command: `powershell -ExecutionPolicy Bypass -File .\scripts\Test-All.ps1`. Defined in `scripts\Test-All.ps1`; it shuts down dotnet build servers, builds core/app/worker/installer/test projects serially with `RestoreIgnoreFailedSources=true` and `NuGetAudit=false`, then runs `MeetingRecorder.Core.Tests` and `MeetingRecorder.IntegrationTests`.
+- TODO: `tests\AppPlatform.Tests` exists in both solutions but is not invoked by `scripts\Test-All.ps1`; confirm whether AppPlatform changes should run `dotnet test .\tests\AppPlatform.Tests\AppPlatform.Tests.csproj` separately before treating platform work as fully verified.
+- Installer asset rebuild command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1`. Defined in `scripts\Build-Installer.ps1`; it runs `Publish-Portable.ps1`, generates WiX authoring, builds `MeetingRecorderInstaller.msi`, and writes ZIP/MSI/bootstrap assets under `.artifacts\installer\win-x64`.
+- Release build command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1`. Defined in `scripts\Build-Release.ps1`; it runs `Test-All.ps1` unless `-SkipTests` is passed, then runs `Build-Installer.ps1`, copies model assets, writes release metadata, and can optionally upload to GitHub with `-UploadToGitHubLatestRelease` or dry-run with `-DryRunGitHubUpload`.
+- Packaged startup smoke test: `powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runtime win-x64`. Defined in `scripts\Smoke-Test-Release.ps1`; it requires no running `MeetingRecorder.App` process and checks built bundle/MSI-installed startup plus relevant Windows crash events.
+- Do not use `scripts\Deploy-Local.ps1` or `scripts\Deploy-Local.cmd` for validation; the script intentionally throws and directs validation through MSI, bootstrapper, or in-app update paths.
+- Release upload helper: `scripts\Upload-ReleaseAssets.cmd` is documented in `RELEASING.md`; keep real tokens only in ignored local files or environment variables and never commit or print them.
+
 ## 6. Definition of Done
 
 You are done only when you provide:

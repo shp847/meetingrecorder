@@ -38,7 +38,8 @@ public sealed class AppConfigStoreTests
         Assert.Equal(Path.Combine(root, "models", "diarization", "standard"), config.DiarizationAssetPath);
         Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, config.SpeakerLabelingModelProfilePreference);
         Assert.Equal(0.02d, config.AutoDetectAudioPeakThreshold);
-        Assert.Equal(InferenceAccelerationPreference.Auto, config.DiarizationAccelerationPreference);
+        Assert.Equal(InferenceAccelerationPreference.CpuOnly, config.DiarizationAccelerationPreference);
+        Assert.True(config.DiarizationAccelerationSecurityPromptMigrationApplied);
         Assert.True(config.MicCaptureEnabled);
         Assert.True(config.LaunchOnLoginEnabled);
         Assert.True(config.AutoDetectEnabled);
@@ -173,6 +174,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(123456789, reloaded.PendingUpdateAssetSizeBytes);
         Assert.True(reloaded.PendingUpdateInstallWhenIdleRequested);
         Assert.Equal(InferenceAccelerationPreference.CpuOnly, reloaded.DiarizationAccelerationPreference);
+        Assert.True(reloaded.DiarizationAccelerationSecurityPromptMigrationApplied);
         Assert.Equal(PreferredTeamsIntegrationMode.GraphCalendarAndOnlineMeeting, reloaded.PreferredTeamsIntegrationMode);
         Assert.Equal("contoso.com", reloaded.TeamsGraphTenantId);
         Assert.Equal("11111111-1111-1111-1111-111111111111", reloaded.TeamsGraphClientId);
@@ -266,6 +268,58 @@ public sealed class AppConfigStoreTests
         Assert.True(reenabled.AutoDetectSecurityPromptMigrationApplied);
         Assert.True(reloaded.AutoDetectEnabled);
         Assert.True(reloaded.AutoDetectSecurityPromptMigrationApplied);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Disables_Legacy_DirectMl_Once_To_Avoid_Endpoint_Prompts()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "audioOutputDir": "",
+              "transcriptOutputDir": "",
+              "workDir": "",
+              "modelCacheDir": "",
+              "transcriptionModelPath": "",
+              "diarizationAssetPath": "",
+              "diarizationAccelerationPreference": 0,
+              "micCaptureEnabled": true,
+              "launchOnLoginEnabled": true,
+              "autoDetectEnabled": false,
+              "autoDetectSecurityPromptMigrationApplied": true,
+              "calendarTitleFallbackEnabled": false,
+              "meetingAttendeeEnrichmentEnabled": true,
+              "updateCheckEnabled": true,
+              "autoInstallUpdatesEnabled": true,
+              "updateFeedUrl": ""
+            }
+            """);
+
+        var store = new AppConfigStore(configPath, documentsRoot);
+
+        var migrated = await store.LoadOrCreateAsync();
+        var persisted = await store.LoadOrCreateAsync();
+
+        Assert.Equal(InferenceAccelerationPreference.CpuOnly, migrated.DiarizationAccelerationPreference);
+        Assert.True(migrated.DiarizationAccelerationSecurityPromptMigrationApplied);
+        Assert.Equal(InferenceAccelerationPreference.CpuOnly, persisted.DiarizationAccelerationPreference);
+        Assert.True(persisted.DiarizationAccelerationSecurityPromptMigrationApplied);
+
+        var reenabled = await store.SaveAsync(migrated with
+        {
+            DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+        });
+        var reloaded = await store.LoadOrCreateAsync();
+
+        Assert.Equal(InferenceAccelerationPreference.Auto, reenabled.DiarizationAccelerationPreference);
+        Assert.True(reenabled.DiarizationAccelerationSecurityPromptMigrationApplied);
+        Assert.Equal(InferenceAccelerationPreference.Auto, reloaded.DiarizationAccelerationPreference);
+        Assert.True(reloaded.DiarizationAccelerationSecurityPromptMigrationApplied);
     }
 
     [Fact]

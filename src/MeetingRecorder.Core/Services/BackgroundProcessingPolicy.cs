@@ -16,6 +16,7 @@ public static class BackgroundProcessingPolicy
         {
             BackgroundProcessingMode.Responsive => ProcessPriorityClass.BelowNormal,
             BackgroundProcessingMode.Balanced => ProcessPriorityClass.BelowNormal,
+            BackgroundProcessingMode.MaximumThroughput => ProcessPriorityClass.AboveNormal,
             _ => ProcessPriorityClass.Normal,
         };
     }
@@ -27,6 +28,7 @@ public static class BackgroundProcessingPolicy
         {
             BackgroundProcessingMode.Responsive => Math.Min(2, normalizedProcessorCount),
             BackgroundProcessingMode.Balanced => Math.Min(4, normalizedProcessorCount),
+            BackgroundProcessingMode.MaximumThroughput => Math.Min(12, normalizedProcessorCount),
             _ => Math.Min(8, normalizedProcessorCount),
         };
     }
@@ -38,6 +40,7 @@ public static class BackgroundProcessingPolicy
         {
             BackgroundProcessingMode.Responsive => 1,
             BackgroundProcessingMode.Balanced => Math.Min(2, normalizedProcessorCount),
+            BackgroundProcessingMode.MaximumThroughput => Math.Min(6, normalizedProcessorCount),
             _ => Math.Min(4, normalizedProcessorCount),
         };
     }
