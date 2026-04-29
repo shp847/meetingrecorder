@@ -182,6 +182,109 @@ public sealed class SessionProcessorTests
         }
     }
 
+    [Fact]
+    public async Task ProcessAsync_Prunes_Raw_Capture_Files_After_Successful_Publish()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var pathBuilder = new ArtifactPathBuilder();
+            var workDir = Path.Combine(root, "work");
+            var audioDir = Path.Combine(root, "audio");
+            var transcriptDir = Path.Combine(root, "transcripts");
+            Directory.CreateDirectory(workDir);
+            Directory.CreateDirectory(audioDir);
+            Directory.CreateDirectory(transcriptDir);
+
+            var manifestStore = new SessionManifestStore(pathBuilder);
+            var manifest = await manifestStore.CreateAsync(
+                workDir,
+                MeetingPlatform.Teams,
+                "Queued Session",
+                Array.Empty<DetectionSignal>());
+            var sessionRoot = Path.Combine(workDir, manifest.SessionId);
+            var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+            var rawDir = Path.Combine(sessionRoot, "raw");
+            Directory.CreateDirectory(rawDir);
+            var loopbackChunkPath = Path.Combine(rawDir, "loopback-chunk-0001.wav");
+            var microphoneChunkPath = Path.Combine(rawDir, "microphone-chunk-0001.wav");
+            await WriteSilentWaveFileAsync(loopbackChunkPath, TimeSpan.FromSeconds(1));
+            await WriteSilentWaveFileAsync(microphoneChunkPath, TimeSpan.FromSeconds(1));
+
+            var updatedManifest = manifest with
+            {
+                State = SessionState.Queued,
+                EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1),
+                RawChunkPaths = [loopbackChunkPath],
+                LoopbackCaptureSegments =
+                [
+                    new LoopbackCaptureSegment(
+                        manifest.StartedAtUtc,
+                        manifest.StartedAtUtc.AddMinutes(1),
+                        [loopbackChunkPath],
+                        "loopback-device",
+                        "Loopback Device",
+                        "Multimedia"),
+                ],
+                MicrophoneChunkPaths = [microphoneChunkPath],
+                MicrophoneCaptureSegments =
+                [
+                    new MicrophoneCaptureSegment(
+                        manifest.StartedAtUtc,
+                        manifest.StartedAtUtc.AddMinutes(1),
+                        [microphoneChunkPath]),
+                ],
+                ProcessingOverrides = new MeetingProcessingOverrides(null, null, true),
+            };
+            await manifestStore.SaveAsync(updatedManifest, manifestPath);
+
+            var processor = new SessionProcessor(
+                manifestStore,
+                pathBuilder,
+                new WaveChunkMerger(),
+                new FakeTranscriptionProvider(),
+                new TrackingDiarizationProvider(),
+                new TranscriptRenderer(),
+                new FilePublishService());
+
+            var published = await processor.ProcessAsync(
+                manifestPath,
+                new AppConfig
+                {
+                    WorkDir = workDir,
+                    AudioOutputDir = audioDir,
+                    TranscriptOutputDir = transcriptDir,
+                    TranscriptionModelPath = Path.Combine(root, "models", "dummy.bin"),
+                });
+
+            var finalManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(SessionState.Published, finalManifest.State);
+            Assert.Empty(finalManifest.RawChunkPaths);
+            Assert.Empty(finalManifest.LoopbackCaptureSegments);
+            Assert.Empty(finalManifest.MicrophoneChunkPaths);
+            Assert.Empty(finalManifest.MicrophoneCaptureSegments);
+            Assert.False(File.Exists(loopbackChunkPath));
+            Assert.False(File.Exists(microphoneChunkPath));
+            Assert.True(File.Exists(finalManifest.MergedAudioPath));
+            Assert.True(File.Exists(published.AudioPath));
+            Assert.True(File.Exists(published.MarkdownPath));
+            Assert.True(File.Exists(published.JsonPath));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

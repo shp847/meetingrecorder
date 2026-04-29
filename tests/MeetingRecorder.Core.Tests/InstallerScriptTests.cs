@@ -825,6 +825,22 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void BuildInstallerScript_Ignores_Already_Removed_Package_Entries_During_Reset()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-Installer.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected installer build script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Test-Path -LiteralPath $_.FullName", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue", scriptContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildReleaseScript_Validates_Release_Source_Metadata_Before_GitHub_Upload()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)

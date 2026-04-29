@@ -80,6 +80,7 @@ Current installer/update authority:
 - in-app updates stay CLI-only even when the app was first installed through the MSI
 - in-app updates now skip shell-shortcut repair during the silent apply path and relaunch the installed `MeetingRecorder.App.exe` directly instead of shell-launching `Run-MeetingRecorder.cmd`, which reduces Explorer-coupled security prompts on managed Windows laptops
 - after the CLI promotes an updated bundle into `%USERPROFILE%\Documents\MeetingRecorder`, it revalidates the installed `bundle-integrity.json` contract and rolls back if required executables disappear before launch
+- before that final integrity check, the CLI now restores any missing required executable payload files from the already-validated source bundle and promotes a stable top-level entry snapshot during in-place updates, so a transiently skipped apphost move does not strand the install
 - current releases no longer ship the deprecated EXE launcher; MSI, ZIP, and the command/bootstrap scripts are the supported install assets
 - the default self-contained release now ships the WPF shell as a single-file `MeetingRecorder.App.exe`; the deployment CLI, worker, scripts, and product manifest remain external sidecars in the bundle
 - the portable/installer bundle now copies the full processing-worker publish output, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so queued sessions can still publish after restart instead of crashing on a missing sidecar dependency
@@ -95,6 +96,7 @@ Meeting Recorder supports two storage modes:
   - published outputs default to `Documents\Meetings\Recordings` and `Documents\Meetings\Transcripts`
   - config, logs, work artifacts, and models stay outside the installed app files
   - current managed runtime data lives under `%LOCALAPPDATA%\MeetingRecorder`
+  - after a meeting publishes successfully, the app now keeps the merged processing audio but prunes the no-longer-needed raw capture chunks from `%LOCALAPPDATA%\MeetingRecorder\work`, and startup also sweeps older published sessions that still retained those raw chunks
 
 For newer managed installs, the app can also migrate prior portable data forward on first launch when appropriate, so an install update does not appear to lose earlier recordings or transcripts.
 
@@ -203,6 +205,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - The shell now exposes queue-state visibility for that throttled backlog: the header chip stays visible whenever backlog exists, and the Meetings processing strip shows pause reasons such as `Paused by live recording`, the active item, current stage, elapsed processing time, and approximate per-item plus overall queue ETAs; when only persisted queued/processing rows are available, the shell still surfaces the backlog and labels the ETA as unavailable until the live worker snapshot reconnects
 - When one meeting is marked `ASAP`, that same header chip and Meetings strip now call out the rushed title, whether it is bypassing the live-recording pause rule, and whether another interrupted item was safely requeued behind it. The rushed request is persisted in app config so it survives restart until the meeting finishes or you clear it.
 - Startup and pre-worker maintenance now clean up stale unlocked temp files under `%LOCALAPPDATA%\\Temp\\MeetingRecorderDiarization` and `%LOCALAPPDATA%\\Temp\\MeetingRecorderTranscription`, including a one-time more aggressive recovery pass after upgrade so orphaned worker temp files do not keep filling the disk
+- Successful publishes now also normalize the session manifest onto the retained merged audio and prune raw capture chunks from the work-session `raw` folder, and startup reclaims the same raw artifacts from older already-published sessions so `%LOCALAPPDATA%\\MeetingRecorder\\work` does not grow without bound
 - Startup now also archives superseded imported-source reprocessing work folders under `%LOCALAPPDATA%\\MeetingRecorder\\maintenance\\archived-imported-source-work` when the original published transcript artifacts already exist, so false backlog rows do not keep reappearing in `Meetings`
 - Meeting detection now runs its heavy window/audio scan off the WPF dispatcher, skips overlapping scans instead of stacking them, and bounds both browser-tab inspection and audio-session probing so supported-call detection no longer freezes the shell or wait minutes for one stuck probe to finish
 - Non-urgent Meetings refreshes are now coalesced while `Home` is active or a recording is still live, then caught up automatically when `Meetings` becomes visible again, so config saves and stop-time publish no longer interrupt typing or start/stop transitions

@@ -95,6 +95,17 @@ internal sealed class ProcessingQueueService
     {
         await NormalizeRushProcessingRequestAsync(cancellationToken);
         await _tempCleanupService.RunStartupCleanupAsync(cancellationToken);
+        var publishedWorkCleanupResult = await PublishedSessionWorkCleanupService.PrunePublishedSessionsAsync(
+            _manifestStore,
+            _config.Current.WorkDir,
+            _config.Current.AudioOutputDir,
+            cancellationToken);
+        if (publishedWorkCleanupResult.SessionsPruned > 0)
+        {
+            _logger.Log(
+                $"Pruned raw work artifacts from {publishedWorkCleanupResult.SessionsPruned} published session(s), reclaiming {publishedWorkCleanupResult.BytesReclaimed} bytes.");
+        }
+
         var deferredRepairCount = await ApplyDeferredSpeakerLabelingBacklogOverridesAsync(_config.Current.WorkDir, cancellationToken);
         if (deferredRepairCount > 0)
         {

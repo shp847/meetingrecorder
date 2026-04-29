@@ -48,6 +48,7 @@ By default, the installers preserve existing user data on update so recordings, 
 The portable bundle now ships with `bundle-integrity.json`, and the shared deployment CLI validates that manifest before it touches the managed install root.
 The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-on timestamp plus any trusted installed package published-at and asset size used by the in-app updater. MSI post-install provisioning now recreates that file when it is missing, and the app still keeps the startup repair as a safety net for older managed installs. If a fresh install still reaches the app without package metadata, the first successful `UpToDate` GitHub check now backfills the installed package published-at and asset size into `install-provenance.json` so the Updates tab and same-version comparison logic can recover durably instead of keeping those fields unknown.
 The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%USERPROFILE%\Documents\MeetingRecorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
+After a meeting publishes successfully, current builds keep the merged processing audio but prune the raw capture chunks from `%LOCALAPPDATA%\MeetingRecorder\work`, and startup also reclaims those raw artifacts from older already-published sessions.
 
 User-facing installer and updater rule:
 
@@ -517,6 +518,7 @@ Important behavior:
 - safe automatic fixes only apply high-confidence archive, merge, and retry-transcript actions
 - split and lower-confidence actions stay manual
 - on first launch after the updated build, the versioned `published-meeting-repair-v6` pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence, and republish repairable historical microphone sessions from `%LOCALAPPDATA%\MeetingRecorder\work` while archiving the replaced published and processing WAVs plus an `echo-repair-report.txt` summary
+- successful publishes now also normalize the work manifest onto the retained merged audio and prune raw capture chunks from the session `raw` folder, and startup reclaims the same raw artifacts from older already-published sessions so `%LOCALAPPDATA%\MeetingRecorder\work` does not keep growing without bound
 - repaired merged publishes now show duration from the repaired artifact itself when the preserved original stem would otherwise point back to stale manifest timing
 - dismissed recommendations stay hidden until the underlying meeting data changes enough to produce a new recommendation fingerprint
 

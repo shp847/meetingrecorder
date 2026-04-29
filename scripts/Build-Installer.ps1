@@ -198,7 +198,11 @@ function Reset-PackageOutputDirectory {
             return
         }
 
-        Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction Stop
+        if (-not (Test-Path -LiteralPath $_.FullName)) {
+            return
+        }
+
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

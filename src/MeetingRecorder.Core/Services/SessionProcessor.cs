@@ -241,6 +241,12 @@ public sealed class SessionProcessor
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Artifacts published."),
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            await PublishedSessionWorkCleanupService.PrunePublishedSessionAsync(
+                ManifestStore,
+                manifestPath,
+                manifest,
+                config.AudioOutputDir,
+                cancellationToken);
 
             return published;
         }

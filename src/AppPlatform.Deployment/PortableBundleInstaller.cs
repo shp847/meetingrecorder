@@ -7,6 +7,16 @@ namespace AppPlatform.Deployment;
 public sealed class PortableBundleInstaller
 {
     private const string ManagedDataDirectoryName = "data";
+    private static readonly string[] RequiredExecutablePayloadFiles =
+    [
+        "MeetingRecorder.App.exe",
+        "AppPlatform.Deployment.Cli.exe",
+        "MeetingRecorder.ProcessingWorker.exe",
+        "MeetingRecorder.ProcessingWorker.dll",
+        "MeetingRecorder.ProcessingWorker.deps.json",
+        "MeetingRecorder.ProcessingWorker.runtimeconfig.json",
+        "MeetingRecorder.Core.dll",
+    ];
     private static readonly string[] PortableBundleMarkerFiles =
     [
         "portable.mode",
@@ -190,6 +200,7 @@ public sealed class PortableBundleInstaller
                 _logger.Info($"Quarantined legacy install root to '{quarantinedLegacyInstallRoot}'.");
             }
 
+            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot);
             _logger.Info($"Validating installed bundle integrity under '{resolvedInstallRoot}'.");
             try
             {
@@ -310,6 +321,42 @@ public sealed class PortableBundleInstaller
         }
 
         return Path.Combine(installParent, prefix + "-" + Guid.NewGuid().ToString("N")[..12]);
+    }
+
+    internal static void EnsureInstalledExecutablePayload(string sourceBundleRoot, string installRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceBundleRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
+
+        Directory.CreateDirectory(installRoot);
+
+        foreach (var fileName in RequiredExecutablePayloadFiles)
+        {
+            var installedPath = Path.Combine(installRoot, fileName);
+            if (File.Exists(installedPath))
+            {
+                continue;
+            }
+
+            var sourcePath = Path.Combine(sourceBundleRoot, fileName);
+            if (!File.Exists(sourcePath))
+            {
+                continue;
+            }
+
+            File.Copy(sourcePath, installedPath, overwrite: true);
+        }
+
+        var missingRequiredFiles = RequiredExecutablePayloadFiles
+            .Where(fileName => !File.Exists(Path.Combine(installRoot, fileName)))
+            .ToArray();
+        if (missingRequiredFiles.Length == 0)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"The installed bundle is missing required executable files after deployment: {string.Join(", ", missingRequiredFiles.Select(fileName => $"'{fileName}'"))}.");
     }
 
     internal static IReadOnlyList<string> QuarantineLegacyInstallRoots(
@@ -494,7 +541,7 @@ public sealed class PortableBundleInstaller
         string backupRoot,
         CancellationToken cancellationToken)
     {
-        foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly))
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly).ToArray())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -514,7 +561,7 @@ public sealed class PortableBundleInstaller
         string installRoot,
         CancellationToken cancellationToken)
     {
-        foreach (var entryPath in Directory.EnumerateFileSystemEntries(stagingRoot, "*", SearchOption.TopDirectoryOnly))
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(stagingRoot, "*", SearchOption.TopDirectoryOnly).ToArray())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -536,7 +583,7 @@ public sealed class PortableBundleInstaller
             return;
         }
 
-        foreach (var entryPath in Directory.EnumerateFileSystemEntries(backupRoot, "*", SearchOption.TopDirectoryOnly))
+        foreach (var entryPath in Directory.EnumerateFileSystemEntries(backupRoot, "*", SearchOption.TopDirectoryOnly).ToArray())
         {
             var entryName = Path.GetFileName(entryPath);
             var destinationPath = Path.Combine(installRoot, entryName);
