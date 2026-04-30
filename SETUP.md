@@ -274,6 +274,7 @@ If an installer or updater console fails, copy the diagnostic log path shown in 
 
 The installer preserves the existing portable `data` folder during updates, so recordings, transcripts, logs, models, and config are kept.
 The shared deployment CLI now updates the managed install in place instead of renaming the whole `Documents\MeetingRecorder` root first, which makes updates more tolerant of locked files under the preserved `data` tree.
+In-place updates now stage the copied app bundle under the installer temp area when it is on the same drive as `Documents\MeetingRecorder`, validate that staged bundle, and only then move current install files aside. That keeps transient executable staging out of random sibling folders under `Documents` and fails before touching the current install if endpoint protection removes a staged payload.
 Managed install repair now also restores the required worker sidecar payload from the source bundle if any of those files are missing from an existing install, so queued sessions do not stay unpublished after restart because the worker cannot load `MeetingRecorder.Core.dll`.
 The actual apply/install work is now delegated to the shipped `AppPlatform.Deployment.Cli` helper so the script layer stays thin and reusable.
 That same CLI-first rule also applies after MSI-origin installs, so the app can update through the shared ZIP/CLI path without switching to MSI-based in-app patching.

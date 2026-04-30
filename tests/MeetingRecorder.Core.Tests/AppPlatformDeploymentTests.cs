@@ -89,9 +89,29 @@ public sealed class AppPlatformDeploymentTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
+            "BundleIntegrityValidator.ValidateBundle(stagingRoot)",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "Directory.EnumerateFileSystemEntries(stagingRoot, \"*\", SearchOption.TopDirectoryOnly).ToArray()",
             source,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlatformPortableBundleInstaller_Creates_Staging_Workspace_Outside_The_Documents_Install_Parent()
+    {
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        var installParent = Path.Combine(tempRoot, "Documents", Guid.NewGuid().ToString("N"));
+
+        var stagingRoot = PortableBundleInstaller.CreateStagingWorkspacePath(installParent);
+
+        Assert.StartsWith(tempRoot, stagingRoot, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            installParent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            stagingRoot,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MeetingRecorderUpdate-", Path.GetFileName(stagingRoot), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -87,7 +87,7 @@ public sealed class PortableBundleInstaller
 
         Directory.CreateDirectory(installParent);
 
-        var stagingRoot = CreateWorkspacePath(installParent, "API");
+        var stagingRoot = CreateStagingWorkspacePath(installParent);
         var backupRoot = CreateWorkspacePath(installParent, "APB");
         var isUpdate = Directory.Exists(resolvedInstallRoot);
         var movedBackup = false;
@@ -104,6 +104,8 @@ public sealed class PortableBundleInstaller
             CopyDirectoryContents(sourceBundleRoot, stagingRoot, overwriteExisting: true, cancellationToken);
             PrepareBundleForManagedInstall(stagingRoot);
             _logger.Info("Prepared staged bundle for managed install.");
+            _logger.Info($"Validating staged bundle integrity under '{stagingRoot}'.");
+            BundleIntegrityValidator.ValidateBundle(stagingRoot);
 
             if (isUpdate)
             {
@@ -321,6 +323,20 @@ public sealed class PortableBundleInstaller
         }
 
         return Path.Combine(installParent, prefix + "-" + Guid.NewGuid().ToString("N")[..12]);
+    }
+
+    internal static string CreateStagingWorkspacePath(string installParent)
+    {
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        var resolvedInstallParent = Path.GetFullPath(installParent);
+        var tempDrive = Path.GetPathRoot(tempRoot);
+        var installDrive = Path.GetPathRoot(resolvedInstallParent);
+        var stagingParent = string.Equals(tempDrive, installDrive, StringComparison.OrdinalIgnoreCase)
+            ? Path.Combine(tempRoot, "MeetingRecorderInstaller")
+            : resolvedInstallParent;
+
+        Directory.CreateDirectory(stagingParent);
+        return CreateWorkspacePath(stagingParent, "MeetingRecorderUpdate");
     }
 
     internal static void EnsureInstalledExecutablePayload(string sourceBundleRoot, string installRoot)
