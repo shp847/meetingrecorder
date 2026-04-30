@@ -40,6 +40,37 @@ public sealed class WaveChunkMergerTests
     }
 
     [Fact]
+    public async Task MergeAsync_Falls_Back_To_Loopback_When_Microphone_Segment_Cannot_Be_Read()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var loopbackChunk = Path.Combine(root, "loopback.wav");
+        var microphoneChunk = Path.Combine(root, "microphone.wav");
+        var outputPath = Path.Combine(root, "merged.wav");
+        var format = new WaveFormat(16_000, 16, 1);
+
+        CreateWave(loopbackChunk, format, amplitude: 2400, durationSeconds: 0.5);
+        await File.WriteAllTextAsync(microphoneChunk, "not a readable wave file");
+
+        var merger = new WaveChunkMerger();
+        var sessionStartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await merger.MergeAsync(
+            [loopbackChunk],
+            [
+                new MicrophoneCaptureSegment(
+                    sessionStartedAtUtc,
+                    sessionStartedAtUtc.AddMilliseconds(500),
+                    [microphoneChunk]),
+            ],
+            sessionStartedAtUtc,
+            sessionStartedAtUtc.AddMilliseconds(500),
+            outputPath);
+
+        Assert.True(File.Exists(outputPath));
+        Assert.True(MeasureAverageAbsoluteAmplitudeWithAudioReader(outputPath, startSeconds: 0.05, durationSeconds: 0.20) > 0d);
+    }
+
+    [Fact]
     public async Task MergeAsync_Throws_When_Sequential_Wave_Chunks_Do_Not_Share_A_Format()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

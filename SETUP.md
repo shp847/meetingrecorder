@@ -175,11 +175,11 @@ Secondary maintenance and support actions live in the header:
 `Settings > Advanced` now also exposes two machine-performance controls:
 
 - `Background processing mode`
-  - Each dropdown label shows the local thread budget, for example `Fastest drain (8 transcription / 4 labeling)`.
-  - `Responsive` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets.
+  - Each dropdown label shows the local thread budget, for example `Fast (8 transcription / 4 labeling)`.
+  - `Light` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets.
   - `Balanced`: keeps background work moving with moderate thread budgets.
-  - `Fastest drain`: favors queue throughput over responsiveness and uses normal worker priority.
-  - `Maximum throughput`: skips the live-recording pause, uses `AboveNormal` worker priority, and caps local work at up to 12 transcription threads and 6 speaker-labeling threads.
+  - `Fast`: favors queue throughput over responsiveness and uses normal worker priority.
+  - `Maximum`: skips the live-recording pause, uses `AboveNormal` worker priority, and caps local work at up to 12 transcription threads and 6 speaker-labeling threads.
 - `Speaker labeling mode`
   - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for manual follow-up.
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
@@ -398,7 +398,7 @@ If GitHub is blocked or no recommended bundle is loaded:
 
 Advanced details:
 
-- `Advanced` shows the configured asset folder path, the last GPU fallback details, and the raw readiness details
+- `Advanced` shows the configured asset folder path, CPU-only acceleration status, and the raw readiness details
 - the recommended bundle is preferred because it installs the segmentation model, embedding model, and bundle manifest together
 - the app looks for the bundled local `SETUP.md` first and only falls back to GitHub help when the local guide cannot be found
 - `Alternate public download locations` can legitimately show `No vetted public mirror configured yet.` when no curated mirror is configured
@@ -406,10 +406,9 @@ Advanced details:
 
 GPU acceleration:
 
-- `Settings` now includes `Use GPU acceleration for speaker labeling`
-- CPU-only speaker labeling is the default in managed installs, and existing `Auto` configs are migrated once to CPU-only to avoid endpoint-protection memory-access prompts from DirectML initialization
-- when enabled, the worker tries DirectML on compatible Windows GPUs and falls back to CPU automatically
-- when disabled, diarization always stays on CPU
+- `Settings` shows the speaker-labeling GPU acceleration control as unavailable in managed builds
+- CPU-only speaker labeling is enforced, and existing `Auto` configs are normalized to CPU-only to avoid endpoint-protection memory-access prompts from DirectML initialization
+- the processing worker no longer packages the DirectML ONNX Runtime; diarization stays on CPU
 - the diarization `Advanced` panel records the last effective provider and any fallback message reported by the worker
 
 ## 6. Settings
@@ -447,7 +446,7 @@ Settings available there include:
 - model cache folder
 - Whisper model path
 - diarization asset path
-- speaker-labeling GPU acceleration toggle
+- speaker-labeling CPU-only acceleration policy
 - update-check toggle
 - auto-install toggle
 - update feed URL
@@ -490,6 +489,7 @@ Expected outputs for portable installs:
 - `<stem>.ready` in the transcripts `json` subfolder
 
 If transcription fails, you should still see the final `.wav`.
+If source-audio preparation fails before a `.wav` can be built, the meeting is marked `Failed` instead of staying in the queue. Sessions with usable loopback audio can still publish by falling back to loopback-only audio when microphone merge data is unreadable.
 
 ## 8. Retrying Failed Sessions
 

@@ -955,6 +955,47 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task WorkerFailure_Marks_Manifest_Failed_When_Worker_Does_Not_Update_State()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+
+        await service.EnqueueAsync(manifestPath);
+        var process = await processFactory.WaitForStartAsync();
+
+        process.ExitCode = 2;
+        process.StandardErrorText = "No raw audio chunks were available, and no existing merged audio file could be found for this session.";
+        process.CompleteExit();
+
+        await WaitForConditionAsync(async () =>
+            (await manifestStore.LoadAsync(manifestPath)).State == SessionState.Failed);
+        var failedManifest = await manifestStore.LoadAsync(manifestPath);
+
+        Assert.Equal(SessionState.Failed, failedManifest.State);
+        Assert.Equal(StageExecutionState.Failed, failedManifest.TranscriptionStatus.State);
+        Assert.Equal(StageExecutionState.Skipped, failedManifest.DiarizationStatus.State);
+        Assert.Equal(StageExecutionState.Skipped, failedManifest.PublishStatus.State);
+        Assert.Contains("No raw audio chunks", failedManifest.ErrorSummary, StringComparison.Ordinal);
+
+        await service.StopAsync();
+    }
+
+    [Fact]
     public async Task ResumePendingSessionsAsync_Repairs_Interrupted_Diarization_Crash_Sessions_Before_Requeueing_Them()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -1537,6 +1578,21 @@ public sealed class ProcessingQueueServiceTests
         }
 
         Assert.True(condition(), "Timed out waiting for the expected condition.");
+    }
+
+    private static async Task WaitForConditionAsync(Func<Task<bool>> condition)
+    {
+        for (var index = 0; index < 20; index++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.True(await condition(), "Timed out waiting for the expected condition.");
     }
 
     private static async Task<string> CreateQueuedImportedSourceManifestAsync(

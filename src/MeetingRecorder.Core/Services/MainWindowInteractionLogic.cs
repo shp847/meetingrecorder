@@ -211,13 +211,13 @@ internal static class MainWindowInteractionLogic
         return mode switch
         {
             BackgroundProcessingMode.Responsive =>
-                $"Responsive pauses new backlog work during live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+                $"Light pauses new backlog work during live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
             BackgroundProcessingMode.Balanced =>
                 $"Balanced keeps backlog work moving during live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
             BackgroundProcessingMode.FastestDrain =>
-                $"Fastest drain does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+                $"Fast does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
             BackgroundProcessingMode.MaximumThroughput =>
-                $"Maximum throughput does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
+                $"Maximum does not pause for live recordings, runs workers at {priority} priority, and uses {threadSummary} on this PC.",
             _ =>
                 $"This mode runs workers at {priority} priority and uses {threadSummary} on this PC.",
         };
@@ -243,10 +243,10 @@ internal static class MainWindowInteractionLogic
         var config = new AppConfig { BackgroundProcessingMode = mode };
         var name = mode switch
         {
-            BackgroundProcessingMode.Responsive => "Responsive",
+            BackgroundProcessingMode.Responsive => "Light",
             BackgroundProcessingMode.Balanced => "Balanced",
-            BackgroundProcessingMode.FastestDrain => "Fastest drain",
-            BackgroundProcessingMode.MaximumThroughput => "Maximum throughput",
+            BackgroundProcessingMode.FastestDrain => "Fast",
+            BackgroundProcessingMode.MaximumThroughput => "Maximum",
             _ => mode.ToString(),
         };
 

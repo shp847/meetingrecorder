@@ -157,6 +157,23 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
+    public void ProcessingWorkerProject_Does_Not_Package_DirectMl_OnnxRuntime()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var projectPath = Path.Combine(repoRoot, "src", "MeetingRecorder.ProcessingWorker", "MeetingRecorder.ProcessingWorker.csproj");
+
+        Assert.True(File.Exists(projectPath), $"Expected processing worker project at '{projectPath}'.");
+
+        var projectXml = File.ReadAllText(projectPath);
+
+        Assert.Contains("org.k2fsa.sherpa.onnx", projectXml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.ML.OnnxRuntime.DirectML", projectXml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlatformShortcutService_Removes_Legacy_Lnk_Artifacts_And_Nested_StartMenu_Folder()
     {
         var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));

@@ -2970,9 +2970,7 @@ public partial class MainWindow : Window
                 TranscriptionModelProfilePreference = currentConfig.TranscriptionModelProfilePreference,
                 DiarizationAssetPath = currentConfig.DiarizationAssetPath,
                 SpeakerLabelingModelProfilePreference = currentConfig.SpeakerLabelingModelProfilePreference,
-                DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true
-                    ? InferenceAccelerationPreference.Auto
-                    : InferenceAccelerationPreference.CpuOnly,
+                DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
                 DiarizationAccelerationSecurityPromptMigrationApplied = true,
                 MicCaptureEnabled = ConfigMicCaptureCheckBox.IsChecked == true,
                 LaunchOnLoginEnabled = ConfigLaunchOnLoginCheckBox.IsChecked == true,
@@ -5284,8 +5282,7 @@ public partial class MainWindow : Window
         ConfigModelStorageSummaryTextBlock.Text = config.ModelCacheDir;
         ConfigTranscriptionStorageTextBlock.Text = config.TranscriptionModelPath;
         ConfigSpeakerLabelingStorageTextBlock.Text = config.DiarizationAssetPath;
-        ConfigDiarizationGpuAccelerationCheckBox.IsChecked =
-            config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;
+        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
         ConfigMeetingStopTimeoutTextBox.Text = config.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigMicCaptureCheckBox.IsChecked = config.MicCaptureEnabled;
@@ -5414,7 +5411,7 @@ public partial class MainWindow : Window
             ConfigAudioOutputDirTextBox.Text,
             ConfigTranscriptOutputDirTextBox.Text,
             ConfigWorkDirTextBox.Text,
-            ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true,
+            false,
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
             ConfigMicCaptureCheckBox.IsChecked == true,
@@ -5441,7 +5438,7 @@ public partial class MainWindow : Window
         ConfigAudioOutputDirTextBox.Text = snapshot.AudioOutputDir;
         ConfigTranscriptOutputDirTextBox.Text = snapshot.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = snapshot.WorkDir;
-        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = snapshot.UseGpuAcceleration;
+        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
         ConfigMicCaptureCheckBox.IsChecked = snapshot.MicCaptureEnabled;
@@ -8080,20 +8077,15 @@ public partial class MainWindow : Window
 
     private void UpdateDiarizationAccelerationStatusText(AppConfig config, DiarizationAssetInstallStatus? status)
     {
-        var gpuEnabled = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;
-        var preferenceText = gpuEnabled
-            ? "GPU acceleration is enabled by explicit opt-in. The worker will try DirectML first and fall back to CPU automatically."
-            : "GPU acceleration is disabled by default to avoid managed endpoint protection prompts. Speaker labeling will stay on CPU until you turn it back on.";
+        var preferenceText = "GPU acceleration is unavailable in this managed build to avoid managed endpoint protection prompts. Speaker labeling stays on CPU.";
 
         var availabilityText = status?.GpuAccelerationAvailable switch
         {
-            true => "A DirectML-compatible GPU path was detected the last time speaker labeling initialized.",
+            true => "A previous build detected a DirectML-compatible GPU path; this build still keeps speaker labeling on CPU.",
             false when !string.IsNullOrWhiteSpace(status?.DiagnosticMessage)
                 => $"The last GPU probe fell back to CPU: {status.DiagnosticMessage}",
             false => "The last speaker-labeling run used CPU because no compatible GPU path was detected.",
-            _ => gpuEnabled
-                ? "GPU capability will be confirmed after speaker labeling assets are installed and a diarization run starts."
-                : "GPU capability is not probed while CPU-only speaker labeling is selected.",
+            _ => "GPU capability is not probed while CPU-only speaker labeling is selected.",
         };
 
         ConfigDiarizationAccelerationStatusTextBlock.Text = $"{preferenceText} {availabilityText}";
@@ -8103,16 +8095,16 @@ public partial class MainWindow : Window
     {
         var providerText = status.EffectiveExecutionProvider switch
         {
-            DiarizationExecutionProvider.Directml => "Last effective diarization provider: DirectML.",
+            DiarizationExecutionProvider.Directml => "Last effective diarization provider: DirectML in a previous build.",
             DiarizationExecutionProvider.Cpu => "Last effective diarization provider: CPU.",
             _ => "No diarization run has reported an effective provider yet.",
         };
 
         var availabilityText = status.GpuAccelerationAvailable switch
         {
-            true => "DirectML probe: available.",
-            false => "DirectML probe: unavailable, so CPU fallback is expected.",
-            _ => "DirectML probe: not recorded yet.",
+            true => "Historical DirectML probe: available.",
+            false => "Historical DirectML probe: unavailable, so CPU fallback was expected.",
+            _ => "DirectML probe: not packaged in this managed build.",
         };
 
         if (string.IsNullOrWhiteSpace(status.DiagnosticMessage))

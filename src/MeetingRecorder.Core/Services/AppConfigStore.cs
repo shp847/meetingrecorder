@@ -243,13 +243,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var diarizationAccelerationPreference = NormalizeEnum(
             config.DiarizationAccelerationPreference,
             defaults.DiarizationAccelerationPreference);
+        if (diarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
+        {
+            diarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly;
+        }
+
         if (!diarizationAccelerationSecurityPromptMigrationApplied)
         {
-            if (diarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
-            {
-                diarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly;
-            }
-
             diarizationAccelerationSecurityPromptMigrationApplied = true;
         }
 

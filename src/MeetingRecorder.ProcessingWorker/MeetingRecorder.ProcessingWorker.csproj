@@ -12,7 +12,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.17.1" />
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.12.17" />
   </ItemGroup>
 

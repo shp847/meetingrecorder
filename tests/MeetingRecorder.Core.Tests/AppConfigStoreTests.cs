@@ -271,7 +271,7 @@ public sealed class AppConfigStoreTests
     }
 
     [Fact]
-    public async Task LoadOrCreateAsync_Disables_Legacy_DirectMl_Once_To_Avoid_Endpoint_Prompts()
+    public async Task LoadOrCreateAsync_Disables_DirectMl_To_Avoid_Endpoint_Prompts()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var documentsRoot = Path.Combine(root, "documents");
@@ -316,9 +316,9 @@ public sealed class AppConfigStoreTests
         });
         var reloaded = await store.LoadOrCreateAsync();
 
-        Assert.Equal(InferenceAccelerationPreference.Auto, reenabled.DiarizationAccelerationPreference);
+        Assert.Equal(InferenceAccelerationPreference.CpuOnly, reenabled.DiarizationAccelerationPreference);
         Assert.True(reenabled.DiarizationAccelerationSecurityPromptMigrationApplied);
-        Assert.Equal(InferenceAccelerationPreference.Auto, reloaded.DiarizationAccelerationPreference);
+        Assert.Equal(InferenceAccelerationPreference.CpuOnly, reloaded.DiarizationAccelerationPreference);
         Assert.True(reloaded.DiarizationAccelerationSecurityPromptMigrationApplied);
     }
 

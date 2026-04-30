@@ -198,7 +198,7 @@ Responsibilities:
 - make the distinction from `Setup` explicit in copy: `Setup` is for readiness, while the other Settings sections are for behavior, storage, updates, and troubleshooting
 - expose mode-based performance controls in `Advanced` instead of raw numeric worker knobs
 - default those performance controls to `Responsive` background work plus `Deferred` speaker labeling so the app biases toward machine responsiveness first
-- default diarization acceleration to CPU-only and migrate older DirectML `Auto` configs once, because managed endpoint protection can block DirectML initialization from the worker process during backlog processing or in-app update windows
+- enforce CPU-only diarization and keep the DirectML ONNX Runtime out of the worker package, because managed endpoint protection can block DirectML initialization from the worker process during backlog processing or in-app update windows
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
 - expose About details, setup/help entry points, logs/data shortcuts, and release-page links from the header-level `Help` dialog
@@ -229,18 +229,19 @@ The durable session lifecycle uses these states:
 7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
 8. If speaker labeling succeeds, transcript artifacts are rendered and published from the labeled segments.
 9. If optional speaker labeling crashes the worker process, the queue stamps the manifest with an internal skip-label override and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
-10. On startup, the queue also scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
-11. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
-12. In `Responsive` mode, new background queue work pauses while a live recording is active, worker launches run at reduced OS priority, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`.
-13. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound.
-14. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
-15. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
-16. Imported-source reprocessing manifests are keyed back to the original published-audio stem when that source path is known, so a retry manifest with a filename-like title such as `Tyler Colin.wav` cannot appear as a second logical meeting row beside the original published session.
-17. `ProcessingQueueService` now maintains an immutable queue-status snapshot with exact in-memory queued counts, current-item stage metadata, pause reason, approximate ETA estimates, and the optional persisted `ASAP` request. If the worker snapshot is not yet available but the meeting catalog still contains persisted `Queued`, `Processing`, or `Finalizing` rows, `MainWindowInteractionLogic` synthesizes a backlog-only shell fallback so the user still sees active queue state.
-18. When a different meeting is marked `ASAP` while work is already running, `ProcessingQueueService` preempts that worker, resets the interrupted manifest back to a queued stage-safe state, and re-inserts it directly behind the rushed meeting ahead of the normal backlog.
-19. A rushed meeting can either run next while still respecting the normal `Responsive` pause rule, or run next even while a live recording is active. That pause bypass applies only to the single rushed item and is cleared automatically once the meeting finishes or the request becomes stale.
-20. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
-20. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
+10. If microphone merging fails while loopback chunks are still readable, source-audio preparation falls back to a loopback-only WAV so transcript publishing can continue. If no usable source audio can be prepared, the processor and queue mark the manifest `Failed` instead of leaving it `Queued` for repeated startup retries.
+11. On startup, the queue also scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
+12. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
+13. In `Responsive` mode, new background queue work pauses while a live recording is active, worker launches run at reduced OS priority, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`.
+14. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound.
+15. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
+16. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
+17. Imported-source reprocessing manifests are keyed back to the original published-audio stem when that source path is known, so a retry manifest with a filename-like title such as `Tyler Colin.wav` cannot appear as a second logical meeting row beside the original published session.
+18. `ProcessingQueueService` now maintains an immutable queue-status snapshot with exact in-memory queued counts, current-item stage metadata, pause reason, approximate ETA estimates, and the optional persisted `ASAP` request. If the worker snapshot is not yet available but the meeting catalog still contains persisted `Queued`, `Processing`, or `Finalizing` rows, `MainWindowInteractionLogic` synthesizes a backlog-only shell fallback so the user still sees active queue state.
+19. When a different meeting is marked `ASAP` while work is already running, `ProcessingQueueService` preempts that worker, resets the interrupted manifest back to a queued stage-safe state, and re-inserts it directly behind the rushed meeting ahead of the normal backlog.
+20. A rushed meeting can either run next while still respecting the normal `Responsive` pause rule, or run next even while a live recording is active. That pause bypass applies only to the single rushed item and is cleared automatically once the meeting finishes or the request becomes stale.
+21. If transcription fails, the manifest becomes `Failed` and the final WAV remains available.
+22. A retry action can move a failed manifest back to `Queued` and relaunch the worker.
 
 ## 6. Work Folders and Persistence
 

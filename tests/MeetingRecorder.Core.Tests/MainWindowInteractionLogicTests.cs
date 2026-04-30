@@ -14,13 +14,13 @@ public sealed class MainWindowInteractionLogicTests
 
         Assert.Contains(options, option =>
             option.Value == BackgroundProcessingMode.Responsive &&
-            option.Label == "Responsive (2 transcription / 1 labeling)");
+            option.Label == "Light (2 transcription / 1 labeling)");
         Assert.Contains(options, option =>
             option.Value == BackgroundProcessingMode.FastestDrain &&
-            option.Label == "Fastest drain (8 transcription / 4 labeling)");
+            option.Label == "Fast (8 transcription / 4 labeling)");
         Assert.Contains(options, option =>
             option.Value == BackgroundProcessingMode.MaximumThroughput &&
-            option.Label == "Maximum throughput (12 transcription / 6 labeling)");
+            option.Label == "Maximum (12 transcription / 6 labeling)");
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class MainWindowInteractionLogicTests
             BackgroundProcessingMode.MaximumThroughput,
             processorCount: 16);
 
-        Assert.Contains("does not pause", helpText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Maximum does not pause", helpText, StringComparison.Ordinal);
         Assert.Contains("AboveNormal", helpText, StringComparison.Ordinal);
         Assert.Contains("12 transcription", helpText, StringComparison.Ordinal);
         Assert.Contains("6 speaker-labeling", helpText, StringComparison.Ordinal);

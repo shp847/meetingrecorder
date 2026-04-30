@@ -379,7 +379,20 @@ internal sealed class ProcessingQueueService
                 await _pendingManifestSignal.WaitAsync(cancellationToken);
                 while (TryDequeueNextManifestPath(out var manifestPath))
                 {
-                    await ProcessManifestAsync(manifestPath, cancellationToken);
+                    try
+                    {
+                        await ProcessManifestAsync(manifestPath, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        _logger.Log($"Queued processing failed unexpectedly for '{manifestPath}': {exception}");
+                        await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
+                        RemoveQueuedEntryAfterFailure(manifestPath);
+                    }
                 }
             }
         }
@@ -418,6 +431,7 @@ internal sealed class ProcessingQueueService
         }
 
         LogWorkerFailure(manifestPath, workerResult);
+        await MarkManifestFailedAfterWorkerFailureAsync(manifestPath, workerResult, cancellationToken);
         await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
     }
 
@@ -470,12 +484,13 @@ internal sealed class ProcessingQueueService
             $"Mode={currentConfig.BackgroundProcessingMode}. SpeakerLabelingMode={currentConfig.BackgroundSpeakerLabelingMode}. " +
             $"Priority={priority}. TranscriptionThreads={transcriptionThreads}. DiarizationThreads={diarizationThreads}.");
         var process = _workerProcessFactory.Start(startInfo);
-        await MarkManifestProcessingStartedAsync(manifestPath, cancellationToken);
-        TryApplyWorkerPriority(process, priority, manifestPath);
         SetCurrentWorker(process, manifestPath);
 
         try
         {
+            TryApplyWorkerPriority(process, priority, manifestPath);
+            await MarkManifestProcessingStartedAsync(manifestPath, cancellationToken);
+
             var standardOutputTask = process.ReadStandardOutputToEndAsync(cancellationToken);
             var standardErrorTask = process.ReadStandardErrorToEndAsync(cancellationToken);
             await process.WaitForExitAsync(cancellationToken);
@@ -761,6 +776,117 @@ internal sealed class ProcessingQueueService
             "logs",
             "processing.log");
         _logger.Log($"Worker failed for '{manifestPath}' with exit code {workerResult.ExitCode}: {workerResult.StandardError} See '{sessionLogPath}' for per-session diagnostics.");
+    }
+
+    private async Task MarkManifestFailedAfterWorkerFailureAsync(
+        string manifestPath,
+        WorkerRunResult workerResult,
+        CancellationToken cancellationToken)
+    {
+        var failureSummary = string.IsNullOrWhiteSpace(workerResult.StandardError)
+            ? $"Processing worker exited with code {workerResult.ExitCode} before it could finish the manifest."
+            : workerResult.StandardError.Trim();
+        await TryMarkManifestFailedAsync(manifestPath, failureSummary, cancellationToken);
+    }
+
+    private async Task MarkManifestFailedAfterQueueExceptionAsync(
+        string manifestPath,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        var failureSummary = string.IsNullOrWhiteSpace(exception.Message)
+            ? "Queued processing failed before the worker could finish the manifest."
+            : exception.Message;
+        await TryMarkManifestFailedAsync(manifestPath, failureSummary, cancellationToken);
+    }
+
+    private async Task TryMarkManifestFailedAsync(
+        string manifestPath,
+        string failureSummary,
+        CancellationToken cancellationToken)
+    {
+        MeetingSessionManifest manifest;
+        try
+        {
+            manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
+        {
+            _logger.Log($"Unable to mark failed manifest '{manifestPath}': {exception.Message}");
+            return;
+        }
+
+        if (manifest.State is SessionState.Published or SessionState.Failed)
+        {
+            return;
+        }
+
+        var updatedManifest = BuildWorkerFailedManifest(manifest, failureSummary, DateTimeOffset.UtcNow);
+        await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+        _logger.Log($"Marked manifest '{manifestPath}' failed after worker failure: {failureSummary}");
+    }
+
+    private static MeetingSessionManifest BuildWorkerFailedManifest(
+        MeetingSessionManifest manifest,
+        string failureSummary,
+        DateTimeOffset nowUtc)
+    {
+        var transcriptionStatus = manifest.TranscriptionStatus;
+        var diarizationStatus = manifest.DiarizationStatus;
+        var publishStatus = manifest.PublishStatus;
+
+        if (!IsSuccessfulOrSkipped(transcriptionStatus.State))
+        {
+            transcriptionStatus = new ProcessingStageStatus(
+                transcriptionStatus.StageName,
+                StageExecutionState.Failed,
+                nowUtc,
+                failureSummary);
+            diarizationStatus = SkipIncompleteStage(diarizationStatus, nowUtc, "Skipped because source audio processing failed.");
+            publishStatus = SkipIncompleteStage(publishStatus, nowUtc, "Skipped because source audio processing failed.");
+        }
+        else if (manifest.ProcessingOverrides?.SkipSpeakerLabeling != true &&
+                 !IsSuccessfulOrSkipped(diarizationStatus.State))
+        {
+            diarizationStatus = new ProcessingStageStatus(
+                diarizationStatus.StageName,
+                StageExecutionState.Failed,
+                nowUtc,
+                failureSummary);
+            publishStatus = SkipIncompleteStage(publishStatus, nowUtc, "Skipped because speaker labeling failed before publish.");
+        }
+        else if (publishStatus.State != StageExecutionState.Succeeded)
+        {
+            publishStatus = new ProcessingStageStatus(
+                publishStatus.StageName,
+                StageExecutionState.Failed,
+                nowUtc,
+                failureSummary);
+        }
+
+        return manifest with
+        {
+            State = SessionState.Failed,
+            ErrorSummary = failureSummary,
+            TranscriptionStatus = transcriptionStatus,
+            DiarizationStatus = diarizationStatus,
+            PublishStatus = publishStatus,
+        };
+    }
+
+    private static bool IsSuccessfulOrSkipped(StageExecutionState state)
+    {
+        return state is StageExecutionState.Succeeded or StageExecutionState.Skipped;
+    }
+
+    private static ProcessingStageStatus SkipIncompleteStage(
+        ProcessingStageStatus stageStatus,
+        DateTimeOffset nowUtc,
+        string message)
+    {
+        return IsSuccessfulOrSkipped(stageStatus.State)
+            ? stageStatus
+            : new ProcessingStageStatus(stageStatus.StageName, StageExecutionState.Skipped, nowUtc, message);
     }
 
     private static bool IsDiarizationCrash(string standardError)
@@ -1149,6 +1275,18 @@ internal sealed class ProcessingQueueService
         {
             _queuedManifestEntries.RemoveAt(index);
         }
+    }
+
+    private void RemoveQueuedEntryAfterFailure(string manifestPath)
+    {
+        ProcessingQueueStatusSnapshot? snapshotToPublish = null;
+        lock (_processSyncRoot)
+        {
+            RemoveQueuedEntryLocked(manifestPath);
+            snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+        }
+
+        PublishStatusSnapshot(snapshotToPublish);
     }
 
     private bool UpsertQueuedEntryLocked(

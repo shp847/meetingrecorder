@@ -85,7 +85,26 @@ public sealed class SessionProcessor
             manifest.Platform,
             manifest.StartedAtUtc,
             string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle);
-        var sourceAudioPath = await ResolveSourceAudioPathAsync(manifest, processingRoot, stem, cancellationToken);
+        string sourceAudioPath;
+        try
+        {
+            sourceAudioPath = await ResolveSourceAudioPathAsync(manifest, processingRoot, stem, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            var now = DateTimeOffset.UtcNow;
+            manifest = manifest with
+            {
+                State = SessionState.Failed,
+                TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Failed, now, exception.Message),
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Skipped, now, "Skipped because source audio processing failed."),
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Skipped, now, "Skipped because source audio processing failed."),
+                ErrorSummary = exception.Message,
+            };
+            await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            throw;
+        }
+
         var transcriptionSnapshotPath = BuildTranscriptionSnapshotPath(processingRoot, stem);
         var persistedTranscription = await TryLoadPersistedTranscriptionAsync(
             transcriptionSnapshotPath,

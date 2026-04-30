@@ -2275,9 +2275,10 @@
 
                                         <StackPanel Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigDiarizationGpuAccelerationCheckBox"
-                                                      Content="Use GPU acceleration for speaker labeling" />
+                                                      Content="GPU acceleration unavailable for speaker labeling"
+                                                      IsEnabled="False" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Optional. CPU is the managed-environment safe default; when enabled, the worker will try DirectML on compatible Windows GPUs and fall back to CPU automatically." />
+                                                       Text="Unavailable in this managed build. Speaker labeling stays on CPU to avoid managed endpoint-protection prompts during processing." />
                                             <TextBlock x:Name="ConfigDiarizationAccelerationStatusTextBlock"
                                                        Margin="0,8,0,0"
                                                        Style="{StaticResource ConfigHelpTextStyle}" />

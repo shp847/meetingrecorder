@@ -65,6 +65,11 @@ public sealed class WaveChunkMerger
             MixWaveFiles(loopbackMergedPath, microphoneMergedPath, outputPath, cancellationToken);
             return outputPath;
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            TryDelete(outputPath);
+            return await MergeWaveChunksAsync(loopbackChunkPaths, outputPath, cancellationToken);
+        }
         finally
         {
             TryDelete(loopbackMergedPath);
@@ -127,6 +132,11 @@ public sealed class WaveChunkMerger
                 outputPath,
                 cancellationToken);
             return outputPath;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            TryDelete(outputPath);
+            return await MergeWaveChunksAsync(loopbackChunkPaths, outputPath, cancellationToken);
         }
         finally
         {

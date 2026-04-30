@@ -9,6 +9,9 @@ namespace MeetingRecorder.ProcessingWorker;
 
 internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
+    private const string DirectMlUnavailableMessage =
+        "DirectML acceleration is not packaged in this managed build to avoid endpoint-protection process-memory prompts.";
+
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
     private readonly int _threadCount;
@@ -69,11 +72,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         try
         {
             await _audioPreparer.PrepareAsync(audioPath, preparedAudioPath, cancellationToken);
-            var directMlProbe = ProbeDirectMlAvailability(installedAssets);
-            var accelerationDecision = DiarizationAccelerationPolicy.Resolve(
-                _accelerationPreference,
-                directMlProbe.IsAvailable,
-                directMlProbe.DiagnosticMessage);
+            var accelerationDecision = ResolveAccelerationDecision();
 
             var diarizationOutcome = await RunDiarizationAsync(
                 preparedAudioPath,
@@ -85,7 +84,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             await _assetCatalogService.WriteRuntimeStatusAsync(
                 _diarizationAssetPath,
                 new DiarizationRuntimeStatus(
-                    directMlProbe.IsAvailable,
+                    accelerationDecision.GpuAccelerationAvailable,
                     diarizationOutcome.Metadata!.ExecutionProvider,
                     diarizationOutcome.Metadata.DiagnosticMessage,
                     DateTimeOffset.UtcNow),
@@ -109,37 +108,6 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         DiarizationAccelerationDecision accelerationDecision,
         CancellationToken cancellationToken)
     {
-        if (accelerationDecision.ExecutionProvider == DiarizationExecutionProvider.Directml)
-        {
-            try
-            {
-                return await RunWithProviderAsync(
-                    preparedAudioPath,
-                    transcriptSegments,
-                    installedAssets,
-                    DiarizationExecutionProvider.Directml,
-                    accelerationDecision.GpuAccelerationRequested,
-                    accelerationDecision.GpuAccelerationAvailable,
-                    accelerationDecision.DiagnosticMessage,
-                    cancellationToken);
-            }
-            catch (Exception exception)
-            {
-                var fallbackMessage = $"DirectML diarization failed and the worker fell back to CPU. {exception.Message}";
-                _logger.Log(fallbackMessage);
-
-                return await RunWithProviderAsync(
-                    preparedAudioPath,
-                    transcriptSegments,
-                    installedAssets,
-                    DiarizationExecutionProvider.Cpu,
-                    accelerationDecision.GpuAccelerationRequested,
-                    accelerationDecision.GpuAccelerationAvailable,
-                    fallbackMessage,
-                    cancellationToken);
-            }
-        }
-
         return await RunWithProviderAsync(
             preparedAudioPath,
             transcriptSegments,
@@ -149,6 +117,18 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             accelerationDecision.GpuAccelerationAvailable,
             accelerationDecision.DiagnosticMessage,
             cancellationToken);
+    }
+
+    private DiarizationAccelerationDecision ResolveAccelerationDecision()
+    {
+        return _accelerationPreference == InferenceAccelerationPreference.Auto
+            ? DiarizationAccelerationPolicy.Resolve(
+                _accelerationPreference,
+                directMlAvailable: false,
+                DirectMlUnavailableMessage)
+            : DiarizationAccelerationPolicy.Resolve(
+                _accelerationPreference,
+                directMlAvailable: false);
     }
 
     private Task<DiarizationResult> RunWithProviderAsync(
@@ -216,28 +196,6 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             metadata));
     }
 
-    private ProviderProbeResult ProbeDirectMlAvailability(DiarizationAssetInstallStatus installedAssets)
-    {
-        if (_accelerationPreference == InferenceAccelerationPreference.CpuOnly)
-        {
-            return new ProviderProbeResult(
-                installedAssets.GpuAccelerationAvailable == true,
-                installedAssets.DiagnosticMessage);
-        }
-
-        try
-        {
-            using var diarizer = CreateDiarizer(installedAssets, provider: "directml", _threadCount);
-            _logger.Log("DirectML diarization probe succeeded.");
-            return new ProviderProbeResult(true, null);
-        }
-        catch (Exception exception)
-        {
-            _logger.Log($"DirectML diarization probe failed: {exception.Message}");
-            return new ProviderProbeResult(false, exception.Message);
-        }
-    }
-
     private static OfflineSpeakerDiarizationSegment[] ProcessSpeakerTurns(
         string preparedAudioPath,
         DiarizationAssetInstallStatus installedAssets,
@@ -303,5 +261,4 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             $"{Path.GetFileNameWithoutExtension(audioPath)}-{Guid.NewGuid():N}.wav");
     }
 
-    private sealed record ProviderProbeResult(bool IsAvailable, string? DiagnosticMessage);
 }

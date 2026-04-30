@@ -8,6 +8,71 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class SessionProcessorTests
 {
     [Fact]
+    public async Task ProcessAsync_Marks_Source_Audio_Preparation_Failure_As_Failed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var pathBuilder = new ArtifactPathBuilder();
+            var workDir = Path.Combine(root, "work");
+            var audioDir = Path.Combine(root, "audio");
+            var transcriptDir = Path.Combine(root, "transcripts");
+            Directory.CreateDirectory(workDir);
+            Directory.CreateDirectory(audioDir);
+            Directory.CreateDirectory(transcriptDir);
+
+            var manifestStore = new SessionManifestStore(pathBuilder);
+            var manifest = await manifestStore.CreateAsync(
+                workDir,
+                MeetingPlatform.Teams,
+                "Queued Session",
+                Array.Empty<DetectionSignal>());
+            var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+            await manifestStore.SaveAsync(manifest with { State = SessionState.Queued }, manifestPath);
+
+            var processor = new SessionProcessor(
+                manifestStore,
+                pathBuilder,
+                new WaveChunkMerger(),
+                new FakeTranscriptionProvider(),
+                new TrackingDiarizationProvider(),
+                new TranscriptRenderer(),
+                new FilePublishService());
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                processor.ProcessAsync(
+                    manifestPath,
+                    new AppConfig
+                    {
+                        WorkDir = workDir,
+                        AudioOutputDir = audioDir,
+                        TranscriptOutputDir = transcriptDir,
+                        TranscriptionModelPath = Path.Combine(root, "models", "dummy.bin"),
+                    }));
+            var failedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Contains("No raw audio chunks", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(SessionState.Failed, failedManifest.State);
+            Assert.Equal(StageExecutionState.Failed, failedManifest.TranscriptionStatus.State);
+            Assert.Equal(StageExecutionState.Skipped, failedManifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.Skipped, failedManifest.PublishStatus.State);
+            Assert.Contains("No raw audio chunks", failedManifest.ErrorSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessAsync_Skips_Diarization_When_Manifest_Overrides_Disable_Speaker_Labeling()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
