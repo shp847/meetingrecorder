@@ -1,5 +1,7 @@
 using AppPlatform.Abstractions;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text.Json;
 using InstallPathProcessManager = AppPlatform.Deployment.InstallPathProcessManager;
 using NullDeploymentLogger = AppPlatform.Deployment.NullDeploymentLogger;
 using PortableBundleInstaller = AppPlatform.Deployment.PortableBundleInstaller;
@@ -112,6 +114,54 @@ public sealed class AppPlatformDeploymentTests
             stagingRoot,
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MeetingRecorderUpdate-", Path.GetFileName(stagingRoot), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlatformPortableBundleInstaller_Uses_Temp_Extracted_Bundle_As_Staging_Source()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var bundleRoot = Path.Combine(root, "extract", "MeetingRecorder");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(bundleRoot);
+
+        try
+        {
+            WriteMinimalBundle(bundleRoot, appPayload: "new-app");
+
+            var installer = new PortableBundleInstaller(
+                new InstallPathProcessManager(new FakeInstallPathProcessController(signalResult: false)),
+                new WindowsShortcutService(),
+                NullDeploymentLogger.Instance);
+
+            await installer.InstallAsync(
+                CreateManifest(installRoot, dataRoot),
+                new InstallRequest(
+                    BundleRoot: Path.Combine(root, "extract"),
+                    InstallRoot: installRoot,
+                    CreateDesktopShortcut: false,
+                    CreateStartMenuShortcut: false,
+                    LaunchAfterInstall: false,
+                    ReleaseVersion: "0.3",
+                    ReleasePublishedAtUtc: null,
+                    ReleaseAssetSizeBytes: null,
+                    Channel: InstallChannel.AutoUpdate),
+                CancellationToken.None);
+
+            Assert.Equal("new-app", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.False(Directory.Exists(bundleRoot));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]
@@ -826,6 +876,83 @@ public sealed class AppPlatformDeploymentTests
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static AppProductManifest CreateManifest(string installRoot, string dataRoot)
+    {
+        return new AppProductManifest(
+            ProductId: "meeting-recorder",
+            ProductName: "Meeting Recorder",
+            DisplayName: "Meeting Recorder",
+            ExecutableName: "MeetingRecorder.App.exe",
+            PortableLauncherFileName: "Run-MeetingRecorder.cmd",
+            InstallerExecutableName: "MeetingRecorderInstaller.exe",
+            InstallerMsiName: "MeetingRecorderInstaller.msi",
+            PortableArchivePrefix: "MeetingRecorder",
+            UpdateFeedUrl: "https://example.com/releases/latest",
+            ReleasePageUrl: "https://example.com/releases",
+            GitHubRepositoryOwner: "example",
+            GitHubRepositoryName: "meeting-recorder",
+            ManagedInstallLayout: new ManagedInstallLayout(
+                InstallRoot: installRoot,
+                DataRoot: dataRoot,
+                ConfigPath: Path.Combine(dataRoot, "config", "appsettings.json"),
+                PreservedDataDirectories: ["config", "logs"],
+                MergeWithoutOverwriteDirectories: ["models"],
+                LegacyInstallRoots: []),
+            ReleaseChannelPolicy: new AppReleaseChannelPolicy(true, true, true, true, true),
+            ShortcutPolicy: new ShellShortcutPolicy(
+                "Meeting Recorder",
+                "Meeting Recorder.lnk",
+                "Meeting Recorder.lnk",
+                "MeetingRecorder"));
+    }
+
+    private static void WriteMinimalBundle(string bundleRoot, string appPayload)
+    {
+        var files = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["MeetingRecorder.App.exe"] = appPayload,
+            ["AppPlatform.Deployment.Cli.exe"] = "cli",
+            ["MeetingRecorder.ProcessingWorker.exe"] = "worker",
+            ["MeetingRecorder.ProcessingWorker.dll"] = "worker-dll",
+            ["MeetingRecorder.ProcessingWorker.deps.json"] = "{ }",
+            ["MeetingRecorder.ProcessingWorker.runtimeconfig.json"] = "{ }",
+            ["MeetingRecorder.Core.dll"] = "core",
+            ["MeetingRecorder.product.json"] = "{ }",
+            ["Run-MeetingRecorder.cmd"] = "@echo off",
+        };
+
+        foreach (var (relativePath, contents) in files)
+        {
+            File.WriteAllText(Path.Combine(bundleRoot, relativePath), contents);
+        }
+
+        var manifest = new
+        {
+            formatVersion = 1,
+            requiredFiles = files.Keys
+                .Select(relativePath =>
+                {
+                    var path = Path.Combine(bundleRoot, relativePath);
+                    return new
+                    {
+                        relativePath,
+                        lengthBytes = new FileInfo(path).Length,
+                        sha256 = ComputeSha256(path),
+                    };
+                })
+                .ToArray(),
+        };
+        File.WriteAllText(
+            Path.Combine(bundleRoot, "bundle-integrity.json"),
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static string ComputeSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private sealed class FakeInstallPathProcessController : AppPlatform.Deployment.IInstallPathProcessController

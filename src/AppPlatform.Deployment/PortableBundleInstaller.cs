@@ -87,7 +87,8 @@ public sealed class PortableBundleInstaller
 
         Directory.CreateDirectory(installParent);
 
-        var stagingRoot = CreateStagingWorkspacePath(installParent);
+        var stagingRoot = ResolveStagingRoot(sourceBundleRoot, installParent);
+        var stagingUsesSourceBundle = string.Equals(stagingRoot, sourceBundleRoot, StringComparison.OrdinalIgnoreCase);
         var backupRoot = CreateWorkspacePath(installParent, "APB");
         var isUpdate = Directory.Exists(resolvedInstallRoot);
         var movedBackup = false;
@@ -100,8 +101,16 @@ public sealed class PortableBundleInstaller
             cancellationToken.ThrowIfCancellationRequested();
             await _processManager.EnsureInstallPathReleasedAsync(resolvedInstallRoot, cancellationToken);
 
-            _logger.Info($"Copying bundle into staging root '{stagingRoot}'.");
-            CopyDirectoryContents(sourceBundleRoot, stagingRoot, overwriteExisting: true, cancellationToken);
+            if (stagingUsesSourceBundle)
+            {
+                _logger.Info($"Using already-extracted bundle as staging root '{stagingRoot}'.");
+            }
+            else
+            {
+                _logger.Info($"Copying bundle into staging root '{stagingRoot}'.");
+                CopyDirectoryContents(sourceBundleRoot, stagingRoot, overwriteExisting: true, cancellationToken);
+            }
+
             PrepareBundleForManagedInstall(stagingRoot);
             _logger.Info("Prepared staged bundle for managed install.");
             _logger.Info($"Validating staged bundle integrity under '{stagingRoot}'.");
@@ -337,6 +346,33 @@ public sealed class PortableBundleInstaller
 
         Directory.CreateDirectory(stagingParent);
         return CreateWorkspacePath(stagingParent, "MeetingRecorderUpdate");
+    }
+
+    internal static string ResolveStagingRoot(string sourceBundleRoot, string installParent)
+    {
+        var resolvedSourceBundleRoot = Path.GetFullPath(sourceBundleRoot);
+        var resolvedInstallParent = Path.GetFullPath(installParent);
+        var sourceDrive = Path.GetPathRoot(resolvedSourceBundleRoot);
+        var installDrive = Path.GetPathRoot(resolvedInstallParent);
+        if (string.Equals(sourceDrive, installDrive, StringComparison.OrdinalIgnoreCase) &&
+            IsPathUnderDirectory(resolvedSourceBundleRoot, Path.GetFullPath(Path.GetTempPath())))
+        {
+            return resolvedSourceBundleRoot;
+        }
+
+        return CreateStagingWorkspacePath(resolvedInstallParent);
+    }
+
+    private static bool IsPathUnderDirectory(string candidatePath, string parentDirectory)
+    {
+        var normalizedCandidate = Path.GetFullPath(candidatePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var normalizedParent = Path.GetFullPath(parentDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+
+        return normalizedCandidate.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
     }
 
     internal static void EnsureInstalledExecutablePayload(string sourceBundleRoot, string installRoot)
