@@ -9,7 +9,6 @@ internal sealed record ConfigEditorSnapshot(
     string TranscriptOutputDir,
     string WorkDir,
     bool UseGpuAcceleration,
-    bool SpeakerNameLearningEnabled,
     string AutoDetectThresholdText,
     string MeetingStopTimeoutText,
     bool MicCaptureEnabled,
@@ -1910,7 +1909,6 @@ internal static class MainWindowInteractionLogic
             !string.Equals(currentConfig.TranscriptOutputDir, NormalizeText(editor.TranscriptOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.WorkDir, NormalizeText(editor.WorkDir), StringComparison.OrdinalIgnoreCase) ||
             (currentConfig.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto) != editor.UseGpuAcceleration ||
-            (currentConfig.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn) != editor.SpeakerNameLearningEnabled ||
             !string.Equals(FormatThreshold(currentConfig.AutoDetectAudioPeakThreshold), NormalizeText(editor.AutoDetectThresholdText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.MeetingStopTimeoutText), StringComparison.Ordinal) ||
             currentConfig.MicCaptureEnabled != editor.MicCaptureEnabled ||

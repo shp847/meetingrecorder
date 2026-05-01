@@ -71,8 +71,6 @@ public partial class MainWindow : Window
     private readonly MeetingRecorderModelCatalogService _meetingRecorderModelCatalogService;
     private readonly MeetingRecorderModelCatalog _bundledModelCatalog;
     private readonly ModelProvisioningService _modelProvisioningService;
-    private readonly VoiceProfileStore _voiceProfileStore;
-    private readonly SpeakerNameLearningService _speakerNameLearningService;
     private readonly ExternalAudioImportService _externalAudioImportService;
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
     private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
@@ -251,8 +249,6 @@ public partial class MainWindow : Window
             _whisperModelReleaseCatalogService,
             _diarizationAssetCatalogService,
             _diarizationAssetReleaseCatalogService);
-        _voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
-        _speakerNameLearningService = new SpeakerNameLearningService(_voiceProfileStore);
         _externalAudioImportService = new ExternalAudioImportService(_pathBuilder);
         _autoRecordingContinuityPolicy = new AutoRecordingContinuityPolicy();
         var teamsThirdPartyApiAdapter = new UnavailableTeamsThirdPartyApiAdapter();
@@ -321,7 +317,6 @@ public partial class MainWindow : Window
         UpdateProcessingQueueStatusTimerState();
         _isUiReady = true;
         UpdateMeetingActionState();
-        _ = RefreshVoiceProfileListAsync(_lifetimeCts.Token);
     }
 
     private void AttachSetupSectionsToSettingsHosts()
@@ -1134,7 +1129,6 @@ public partial class MainWindow : Window
         _settingsWindow.NavigateTo(GetSettingsSectionId(section));
         _settingsWindow.SetFooterStatus(ConfigSaveStatusTextBlock.Text);
         UpdateConfigActionState();
-        _ = RefreshVoiceProfileListAsync(_lifetimeCts.Token);
         if (!_settingsWindow.IsVisible)
         {
             _settingsWindow.Show();
@@ -2752,22 +2746,14 @@ public partial class MainWindow : Window
 
         try
         {
-            var learningResult = await TryLearnSpeakerNamesFromCorrectionsAsync(
-                selectedMeeting.Source,
-                labelMap,
-                _lifetimeCts.Token);
-
             await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(
                 selectedMeeting.Source,
                 labelMap,
                 _lifetimeCts.Token);
 
             UpdateSelectedMeetingEditor(selectedMeeting);
-            SpeakerNamesStatusTextBlock.Text =
-                $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'." +
-                FormatSpeakerNameLearningStatus(learningResult);
+            SpeakerNamesStatusTextBlock.Text = $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'.";
             AppendActivity($"Updated speaker labels for '{selectedMeeting.Title}'.");
-            await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
         }
         catch (Exception exception)
         {
@@ -3022,12 +3008,6 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
-                SpeakerNameLearningMode = ConfigSpeakerNameLearningCheckBox.IsChecked == true
-                    ? SpeakerNameLearningMode.LocalAutoLearn
-                    : SpeakerNameLearningMode.Disabled,
-                SpeakerNameAutoApplyConfidenceThreshold = currentConfig.SpeakerNameAutoApplyConfidenceThreshold,
-                SpeakerNameSuggestionConfidenceThreshold = currentConfig.SpeakerNameSuggestionConfidenceThreshold,
-                SpeakerNameMatchMarginThreshold = currentConfig.SpeakerNameMatchMarginThreshold,
                 LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
                 InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
                 InstalledReleasePublishedAtUtc = currentConfig.InstalledReleasePublishedAtUtc,
@@ -5221,13 +5201,10 @@ public partial class MainWindow : Window
         _meetingDetailWindow?.SetMaintenanceStatus("Applying speaker name changes...");
         try
         {
-            var learningResult = await TryLearnSpeakerNamesFromCorrectionsAsync(row.Source, labelMap, _lifetimeCts.Token);
             await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(row.Source, labelMap, _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
-            _meetingDetailWindow?.SetMaintenanceStatus(
-                $"Updated {labelMap.Count} speaker label(s)." + FormatSpeakerNameLearningStatus(learningResult));
+            _meetingDetailWindow?.SetMaintenanceStatus($"Updated {labelMap.Count} speaker label(s).");
             AppendActivity($"Updated speaker labels for '{row.Title}'.");
-            await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
         }
         catch (Exception exception)
         {
@@ -5546,7 +5523,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var labels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
+        var labels = _meetingOutputCatalogService.ListSpeakerLabels(row.Source);
         var labelRows = labels
             .Select(label => new SpeakerLabelEditorRow(label, UpdateMeetingActionState))
             .ToArray();
@@ -5785,7 +5762,6 @@ public partial class MainWindow : Window
         ConfigTranscriptionStorageTextBlock.Text = config.TranscriptionModelPath;
         ConfigSpeakerLabelingStorageTextBlock.Text = config.DiarizationAssetPath;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
-        ConfigSpeakerNameLearningCheckBox.IsChecked = config.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn;
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
         ConfigMeetingStopTimeoutTextBox.Text = config.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigMicCaptureCheckBox.IsChecked = config.MicCaptureEnabled;
@@ -5855,7 +5831,6 @@ public partial class MainWindow : Window
                  {
                      ConfigMicCaptureCheckBox,
                      ConfigDiarizationGpuAccelerationCheckBox,
-                     ConfigSpeakerNameLearningCheckBox,
                      ConfigLaunchOnLoginCheckBox,
                      ConfigAutoDetectCheckBox,
                      ConfigCalendarTitleFallbackCheckBox,
@@ -5909,103 +5884,6 @@ public partial class MainWindow : Window
         _settingsWindow?.SetFooterStatus(statusText);
     }
 
-    private async void RefreshVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
-    }
-
-    private async void DisableSelectedVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileListRow selectedProfile)
-        {
-            VoiceProfilesStatusTextBlock.Text = "Select a voice profile first.";
-            return;
-        }
-
-        await _voiceProfileStore.UpdateAsync(
-            document => document with
-            {
-                Profiles = document.Profiles
-                    .Select(profile => string.Equals(profile.ProfileId, selectedProfile.ProfileId, StringComparison.Ordinal)
-                        ? profile with
-                        {
-                            Status = profile.Status == VoiceProfileStatus.Active
-                                ? VoiceProfileStatus.Disabled
-                                : VoiceProfileStatus.Active,
-                        }
-                        : profile)
-                    .ToArray(),
-            },
-            _lifetimeCts.Token);
-        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
-    }
-
-    private async void DeleteSelectedVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileListRow selectedProfile)
-        {
-            VoiceProfilesStatusTextBlock.Text = "Select a voice profile first.";
-            return;
-        }
-
-        var confirmation = MessageBox.Show(
-            this,
-            $"Delete the local voice profile for '{selectedProfile.DisplayName}'?",
-            "Delete Voice Profile",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        await _voiceProfileStore.UpdateAsync(
-            document => document with
-            {
-                Profiles = document.Profiles
-                    .Where(profile => !string.Equals(profile.ProfileId, selectedProfile.ProfileId, StringComparison.Ordinal))
-                    .ToArray(),
-            },
-            _lifetimeCts.Token);
-        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
-    }
-
-    private async void DeleteAllVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        var confirmation = MessageBox.Show(
-            this,
-            "Delete all local voice profiles? Future meetings will stay anonymous until you teach names again.",
-            "Delete All Voice Profiles",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        await _voiceProfileStore.DeleteAllAsync(_lifetimeCts.Token);
-        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
-    }
-
-    private async Task RefreshVoiceProfileListAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            var document = await _voiceProfileStore.LoadOrCreateAsync(cancellationToken);
-            var rows = document.Profiles
-                .Select(profile => new VoiceProfileListRow(profile))
-                .ToArray();
-            VoiceProfilesDataGrid.ItemsSource = rows;
-            VoiceProfilesStatusTextBlock.Text = rows.Length == 0
-                ? "No local voice profiles have been learned yet."
-                : $"Loaded {rows.Length} local voice profile(s). Profiles stay on this PC.";
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            VoiceProfilesStatusTextBlock.Text = $"Could not load voice profiles: {exception.Message}";
-        }
-    }
-
     private ConfigEditorSnapshot ReadConfigEditorSnapshot()
     {
         return new ConfigEditorSnapshot(
@@ -6013,7 +5891,6 @@ public partial class MainWindow : Window
             ConfigTranscriptOutputDirTextBox.Text,
             ConfigWorkDirTextBox.Text,
             false,
-            ConfigSpeakerNameLearningCheckBox.IsChecked == true,
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
             ConfigMicCaptureCheckBox.IsChecked == true,
@@ -6041,7 +5918,6 @@ public partial class MainWindow : Window
         ConfigTranscriptOutputDirTextBox.Text = snapshot.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = snapshot.WorkDir;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
-        ConfigSpeakerNameLearningCheckBox.IsChecked = snapshot.SpeakerNameLearningEnabled;
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
         ConfigMicCaptureCheckBox.IsChecked = snapshot.MicCaptureEnabled;
@@ -6091,45 +5967,6 @@ public partial class MainWindow : Window
             ConfigBackgroundSpeakerLabelingModeHelpTextBlock.Text =
                 MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(speakerLabelingMode);
         }
-    }
-
-    private async Task<SpeakerNameLearningResult?> TryLearnSpeakerNamesFromCorrectionsAsync(
-        MeetingOutputRecord meeting,
-        IReadOnlyDictionary<string, string> labelMap,
-        CancellationToken cancellationToken)
-    {
-        if (_liveConfig.Current.SpeakerNameLearningMode == SpeakerNameLearningMode.Disabled ||
-            string.IsNullOrWhiteSpace(meeting.ManifestPath) ||
-            !File.Exists(meeting.ManifestPath))
-        {
-            return null;
-        }
-
-        try
-        {
-            var manifest = await _manifestStore.LoadAsync(meeting.ManifestPath, cancellationToken);
-            return await _speakerNameLearningService.LearnFromCorrectionsAsync(
-                manifest,
-                labelMap,
-                _liveConfig.Current.SpeakerNameLearningMode,
-                DateTimeOffset.UtcNow,
-                cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger.Log($"Speaker name learning skipped for '{meeting.ManifestPath}': {exception}");
-            return null;
-        }
-    }
-
-    private static string FormatSpeakerNameLearningStatus(SpeakerNameLearningResult? result)
-    {
-        if (result is null || result.CreatedCount + result.UpdatedCount == 0)
-        {
-            return string.Empty;
-        }
-
-        return $" Learned {result.CreatedCount} new voice profile(s) and updated {result.UpdatedCount}.";
     }
 
     private void UpdateBackgroundProcessingModeHelpText(BackgroundProcessingMode mode)
@@ -10839,17 +10676,14 @@ public partial class MainWindow : Window
         private readonly Action _onEditedLabelChanged;
         private string _editedLabel;
 
-        public SpeakerLabelEditorRow(SpeakerLabelInfo label, Action onEditedLabelChanged)
+        public SpeakerLabelEditorRow(string originalLabel, Action onEditedLabelChanged)
         {
-            OriginalLabel = label.DisplayName;
-            _editedLabel = label.DisplayName;
-            Provenance = BuildProvenanceText(label);
+            OriginalLabel = originalLabel;
+            _editedLabel = originalLabel;
             _onEditedLabelChanged = onEditedLabelChanged;
         }
 
         public string OriginalLabel { get; }
-
-        public string Provenance { get; }
 
         public string EditedLabel
         {
@@ -10865,47 +10699,5 @@ public partial class MainWindow : Window
                 _onEditedLabelChanged();
             }
         }
-
-        private static string BuildProvenanceText(SpeakerLabelInfo label)
-        {
-            var confidenceText = label.Confidence.HasValue
-                ? $"{label.Confidence.Value:P0}"
-                : null;
-
-            return label.NameSource switch
-            {
-                SpeakerNameSource.AutoAppliedVoiceProfile when !string.IsNullOrWhiteSpace(confidenceText) =>
-                    $"Auto-applied from local voice profile, {confidenceText}.",
-                SpeakerNameSource.SuggestedVoiceProfile when !string.IsNullOrWhiteSpace(label.SuggestedDisplayName) &&
-                                                            !string.IsNullOrWhiteSpace(confidenceText) =>
-                    $"Suggested: {label.SuggestedDisplayName}, {confidenceText}.",
-                SpeakerNameSource.UserEdited => "User confirmed.",
-                _ => string.Empty,
-            };
-        }
-    }
-
-    private sealed class VoiceProfileListRow
-    {
-        public VoiceProfileListRow(VoiceProfile profile)
-        {
-            ProfileId = profile.ProfileId;
-            DisplayName = profile.DisplayName;
-            SampleCount = profile.SampleCount;
-            LastMatchedText = profile.LastMatchedAtUtc.HasValue
-                ? profile.LastMatchedAtUtc.Value.LocalDateTime.ToString("g", CultureInfo.CurrentCulture)
-                : "Never";
-            Status = profile.Status.ToString();
-        }
-
-        public string ProfileId { get; }
-
-        public string DisplayName { get; }
-
-        public int SampleCount { get; }
-
-        public string LastMatchedText { get; }
-
-        public string Status { get; }
     }
 }
