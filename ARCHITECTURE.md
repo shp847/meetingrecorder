@@ -199,6 +199,7 @@ Responsibilities:
 - expose mode-based performance controls in `Advanced` instead of raw numeric worker knobs
 - default those performance controls to `Responsive` background work plus `Deferred` speaker labeling so the app biases toward machine responsiveness first
 - enforce CPU-only diarization and keep the DirectML ONNX Runtime out of the worker package, because managed endpoint protection can block DirectML initialization from the worker process during backlog processing or in-app update windows
+- keep automatic speaker labeling as an explicit opt-in: legacy `Throttled` or `Inline` configs are migrated back to `Deferred` once, setup no longer auto-promotes `Deferred`, and diarization worker crashes push future processing back to `Deferred`
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
 - expose About details, setup/help entry points, logs/data shortcuts, and release-page links from the header-level `Help` dialog
@@ -228,7 +229,7 @@ The durable session lifecycle uses these states:
 6. The worker loads the manifest, merges audio, and publishes the final WAV.
 7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
 8. If speaker labeling succeeds, transcript artifacts are rendered and published from the labeled segments.
-9. If optional speaker labeling crashes the worker process, the queue stamps the manifest with an internal skip-label override and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
+9. If optional speaker labeling crashes the worker process, the queue stamps the manifest with an internal skip-label override, switches future speaker labeling back to `Deferred`, and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
 10. If microphone merging fails while loopback chunks are still readable, source-audio preparation falls back to a loopback-only WAV so transcript publishing can continue. If no usable source audio can be prepared, the processor and queue mark the manifest `Failed` instead of leaving it `Queued` for repeated startup retries.
 11. On startup, the queue also scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
 12. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.

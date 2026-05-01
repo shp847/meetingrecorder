@@ -866,9 +866,9 @@ public sealed class MainWindowInteractionLogicTests
             backgroundMode: BackgroundSpeakerLabelingMode.Deferred);
 
         Assert.Equal("Deferred", result.Status);
-        Assert.Equal("Enable now", result.PrimaryActionLabel);
+        Assert.Equal("Review mode", result.PrimaryActionLabel);
         Assert.Equal(
-            "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Switch the run mode below to Throttled or Inline when you want labels applied automatically.",
+            "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Keep Deferred on managed machines to avoid endpoint prompts; choose Throttled or Inline only when you explicitly want automatic labels.",
             result.Body);
         Assert.Equal("SetupSpeakerLabelingRunModeComboBox", result.PrimaryAction.FocusTargetName);
     }
@@ -891,9 +891,9 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Theory]
-    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Standard, BackgroundSpeakerLabelingMode.Throttled)]
-    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, BackgroundSpeakerLabelingMode.Throttled)]
-    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Custom, BackgroundSpeakerLabelingMode.Throttled)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Standard, BackgroundSpeakerLabelingMode.Deferred)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, BackgroundSpeakerLabelingMode.Deferred)]
+    [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Custom, BackgroundSpeakerLabelingMode.Deferred)]
     [InlineData(BackgroundSpeakerLabelingMode.Deferred, SpeakerLabelingModelProfilePreference.Disabled, BackgroundSpeakerLabelingMode.Deferred)]
     [InlineData(BackgroundSpeakerLabelingMode.Inline, SpeakerLabelingModelProfilePreference.Standard, BackgroundSpeakerLabelingMode.Inline)]
     public void ResolveBackgroundSpeakerLabelingModeAfterProfileSelection_Returns_Expected_Mode(

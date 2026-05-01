@@ -171,6 +171,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = AppBranding.DefaultUpdateFeedUrl,
             BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+            SpeakerLabelingSecurityPromptMigrationApplied = true,
             LastUpdateCheckUtc = null,
             InstalledReleaseVersion = AppBranding.Version,
             InstalledReleasePublishedAtUtc = null,
@@ -253,6 +254,17 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             diarizationAccelerationSecurityPromptMigrationApplied = true;
         }
 
+        var speakerLabelingSecurityPromptMigrationApplied =
+            config.SpeakerLabelingSecurityPromptMigrationApplied;
+        var backgroundSpeakerLabelingMode = NormalizeEnum(
+            config.BackgroundSpeakerLabelingMode,
+            defaults.BackgroundSpeakerLabelingMode);
+        if (!speakerLabelingSecurityPromptMigrationApplied)
+        {
+            speakerLabelingSecurityPromptMigrationApplied = true;
+            backgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred;
+        }
+
         return config with
         {
             AudioOutputDir = NormalizePublishedOutputPath(config.AudioOutputDir, defaults.AudioOutputDir, GetLegacyAudioOutputDirectories(rootDirectory, documentsDirectory)),
@@ -277,7 +289,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             AutoDetectSecurityPromptMigrationApplied = autoDetectSecurityPromptMigrationApplied,
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
-            BackgroundSpeakerLabelingMode = NormalizeEnum(config.BackgroundSpeakerLabelingMode, defaults.BackgroundSpeakerLabelingMode),
+            BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,
+            SpeakerLabelingSecurityPromptMigrationApplied = speakerLabelingSecurityPromptMigrationApplied,
             InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
             PendingUpdateZipPath = normalizedPendingUpdateZipPath,
             PendingUpdateVersion = normalizedPendingUpdateVersion,

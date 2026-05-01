@@ -720,11 +720,11 @@ internal static class MainWindowInteractionLogic
         {
             return new ModelsTabSetupState(
                 "Deferred",
-                "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Switch the run mode below to Throttled or Inline when you want labels applied automatically.",
+                "Speaker-labeling assets are installed, but new transcripts currently publish before speaker labeling runs. Keep Deferred on managed machines to avoid endpoint prompts; choose Throttled or Inline only when you explicitly want automatic labels.",
                 new ModelsTabSetupAction(
                     ModelsTabSetupActionKind.OpenSpeakerLabelingManagement,
-                    "Enable now",
-                    "Choose Throttled or Inline below to run speaker labeling during normal processing.",
+                    "Review mode",
+                    "Review the run mode below before enabling automatic speaker labeling.",
                     "SetupSpeakerLabelingRunModeComboBox"));
         }
 
@@ -768,10 +768,8 @@ internal static class MainWindowInteractionLogic
         BackgroundSpeakerLabelingMode currentMode,
         SpeakerLabelingModelProfilePreference requestedProfile)
     {
-        return requestedProfile != SpeakerLabelingModelProfilePreference.Disabled &&
-            currentMode == BackgroundSpeakerLabelingMode.Deferred
-            ? BackgroundSpeakerLabelingMode.Throttled
-            : currentMode;
+        _ = requestedProfile;
+        return currentMode;
     }
 
     public static AppConfig PromotePendingUpdateToInstalledReleaseMetadata(AppConfig config, string currentVersion)

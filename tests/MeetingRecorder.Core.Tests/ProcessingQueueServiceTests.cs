@@ -870,7 +870,12 @@ public sealed class ProcessingQueueServiceTests
         try
         {
             var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
-            var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+            var liveConfig = new LiveAppConfig(
+                configStore,
+                await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+                {
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+                }));
             var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
             var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
             var processFactory = new SequencedWorkerProcessFactory(
@@ -904,6 +909,7 @@ public sealed class ProcessingQueueServiceTests
             Assert.NotEqual(AppDataPaths.GetConfigPath(), secondConfigPath);
             Assert.True(File.Exists(secondConfigPath));
             Assert.True(updatedManifest.ProcessingOverrides?.SkipSpeakerLabeling);
+            Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, liveConfig.Current.BackgroundSpeakerLabelingMode);
 
             var retryConfig = await new AppConfigStore(secondConfigPath!).LoadOrCreateAsync();
             Assert.NotEqual(liveConfig.Current.DiarizationAssetPath, retryConfig.DiarizationAssetPath);

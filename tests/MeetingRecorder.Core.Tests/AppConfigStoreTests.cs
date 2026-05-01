@@ -55,6 +55,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(string.Empty, config.PendingUpdateZipPath);
         Assert.Equal(string.Empty, config.PendingUpdateVersion);
         Assert.False(config.PendingUpdateInstallWhenIdleRequested);
+        Assert.True(config.SpeakerLabelingSecurityPromptMigrationApplied);
         Assert.Equal(PreferredTeamsIntegrationMode.Auto, config.PreferredTeamsIntegrationMode);
         Assert.Equal("organizations", config.TeamsGraphTenantId);
         Assert.Equal(string.Empty, config.TeamsGraphClientId);
@@ -97,6 +98,7 @@ public sealed class AppConfigStoreTests
             UpdateFeedUrl = "https://example.com/releases/latest.json",
             BackgroundProcessingMode = BackgroundProcessingMode.Balanced,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+            SpeakerLabelingSecurityPromptMigrationApplied = true,
             LastUpdateCheckUtc = DateTimeOffset.Parse("2026-03-16T12:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
             InstalledReleaseVersion = "0.2",
             InstalledReleasePublishedAtUtc = DateTimeOffset.Parse("2026-03-16T11:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
@@ -194,6 +196,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(saved.ModelCacheDir, reloaded.ModelCacheDir);
         Assert.Equal(TranscriptionModelProfilePreference.Custom, reloaded.TranscriptionModelProfilePreference);
         Assert.Equal(SpeakerLabelingModelProfilePreference.Custom, reloaded.SpeakerLabelingModelProfilePreference);
+        Assert.True(reloaded.SpeakerLabelingSecurityPromptMigrationApplied);
         Assert.Single(reloaded.DismissedMeetingRecommendations);
         Assert.Equal("archive:meeting-1", reloaded.DismissedMeetingRecommendations[0].Fingerprint);
     }
@@ -320,6 +323,58 @@ public sealed class AppConfigStoreTests
         Assert.True(reenabled.DiarizationAccelerationSecurityPromptMigrationApplied);
         Assert.Equal(InferenceAccelerationPreference.CpuOnly, reloaded.DiarizationAccelerationPreference);
         Assert.True(reloaded.DiarizationAccelerationSecurityPromptMigrationApplied);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Defers_Legacy_Automatic_SpeakerLabeling_To_Avoid_Endpoint_Prompts()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "audioOutputDir": "",
+              "transcriptOutputDir": "",
+              "workDir": "",
+              "modelCacheDir": "",
+              "transcriptionModelPath": "",
+              "diarizationAssetPath": "",
+              "backgroundSpeakerLabelingMode": 1,
+              "micCaptureEnabled": true,
+              "launchOnLoginEnabled": true,
+              "autoDetectEnabled": false,
+              "autoDetectSecurityPromptMigrationApplied": true,
+              "calendarTitleFallbackEnabled": false,
+              "meetingAttendeeEnrichmentEnabled": true,
+              "updateCheckEnabled": true,
+              "autoInstallUpdatesEnabled": true,
+              "updateFeedUrl": ""
+            }
+            """);
+
+        var store = new AppConfigStore(configPath, documentsRoot);
+
+        var migrated = await store.LoadOrCreateAsync();
+        var persisted = await store.LoadOrCreateAsync();
+
+        Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, migrated.BackgroundSpeakerLabelingMode);
+        Assert.True(migrated.SpeakerLabelingSecurityPromptMigrationApplied);
+        Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, persisted.BackgroundSpeakerLabelingMode);
+        Assert.True(persisted.SpeakerLabelingSecurityPromptMigrationApplied);
+
+        var reenabled = await store.SaveAsync(migrated with
+        {
+            BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+        });
+        var reloaded = await store.LoadOrCreateAsync();
+
+        Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, reenabled.BackgroundSpeakerLabelingMode);
+        Assert.True(reenabled.SpeakerLabelingSecurityPromptMigrationApplied);
+        Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, reloaded.BackgroundSpeakerLabelingMode);
+        Assert.True(reloaded.SpeakerLabelingSecurityPromptMigrationApplied);
     }
 
     [Fact]

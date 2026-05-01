@@ -541,6 +541,7 @@ internal sealed class ProcessingQueueService
                 "Recovered from an earlier worker crash by retrying without optional speaker labeling.",
                 resetSessionStateToQueued: false,
                 cancellationToken);
+            await DeferFutureSpeakerLabelingAfterWorkerCrashAsync(cancellationToken);
             recoveryConfigPath = await CreateDiarizationDisabledConfigAsync(manifestPath, cancellationToken);
             _logger.Log($"Retrying '{manifestPath}' once without speaker labeling because the worker crashed during optional diarization.");
             var retryResult = await RunWorkerAsync(manifestPath, recoveryConfigPath, cancellationToken);
@@ -557,6 +558,24 @@ internal sealed class ProcessingQueueService
         {
             TryDeleteRecoveryConfig(recoveryConfigPath);
         }
+    }
+
+    private async Task DeferFutureSpeakerLabelingAfterWorkerCrashAsync(CancellationToken cancellationToken)
+    {
+        if (_config.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred)
+        {
+            return;
+        }
+
+        await _config.SaveAsync(
+            _config.Current with
+            {
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
+            },
+            cancellationToken);
+        _logger.Log("Set future speaker labeling to Deferred after a worker crash in optional diarization to avoid repeated endpoint-protection prompts.");
+        PublishStatusSnapshot(UpdateStatusSnapshot());
     }
 
     private async Task<int> RepairRecoverablePendingSessionsAsync(

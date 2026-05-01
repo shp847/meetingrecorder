@@ -142,7 +142,7 @@ The portable bundle also includes:
 5. If the installer reported that a download did not finish, open `Settings > Setup` after launch. Recording stays blocked until transcription is ready, while speaker labeling can stay optional.
 6. If you plan to rely on Teams auto-detection, open `Settings > Setup > Teams integration`, choose the preferred mode, and run the Teams probe so the app can capture the current local detector baseline, test whether the Teams third-party API candidate exposes readable meeting state on this machine, and fall back cleanly when it does not. The Setup card now also saves and shows `Last probe`, `Promotable path`, and `Block reason`.
 7. Confirm `Speaker labeling` shows either `Standard ready`, `Higher Accuracy ready`, `Deferred`, or your preferred custom import state if you plan to use diarization.
-8. If you want new transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. Choosing or importing a speaker-labeling bundle from `Settings > Setup` now auto-promotes the run mode from `Deferred` to `Throttled` unless you change it back later.
+8. Keep `When to run speaker labeling` on `Deferred` for the safest managed-laptop behavior. If you explicitly want new transcripts to include labels automatically, set it to `Throttled` or `Inline`; choosing or importing a speaker-labeling bundle no longer auto-promotes `Deferred`.
 9. If the output folders are not acceptable, review `Settings > Files`.
 10. If you need a custom approved model or bundle instead of the curated profiles, use `Import approved file` from `Settings > Setup`.
 11. Record a short manual test.
@@ -386,7 +386,7 @@ Recommended path:
 4. In `Recommended model bundle`, click `Download Recommended Bundle`.
 5. Wait for the status update.
 6. Confirm the `Speaker labeling` section now shows speaker labeling as `Ready` or `Deferred`.
-7. If you want newly published transcripts to include labels automatically, set `When to run speaker labeling` to `Throttled` or `Inline`. `Deferred` publishes audio and transcripts first, then leaves `Add Speaker Labels` for later. When you choose or import a speaker-labeling bundle from Setup, the app now auto-promotes `Deferred` to `Throttled` so diarization can run without an extra trip to `Advanced`.
+7. Keep `When to run speaker labeling` on `Deferred` for the safest managed-laptop behavior. `Deferred` publishes audio and transcripts first, then leaves `Add Speaker Labels` for later. If you explicitly want newly published transcripts to include labels automatically, set the mode to `Throttled` or `Inline`; choosing or importing a speaker-labeling bundle no longer auto-promotes `Deferred`.
 
 If GitHub is blocked or no recommended bundle is loaded:
 

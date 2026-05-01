@@ -217,6 +217,8 @@ public sealed record AppConfig
     public BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode { get; init; } =
         BackgroundSpeakerLabelingMode.Deferred;
 
+    public bool SpeakerLabelingSecurityPromptMigrationApplied { get; init; }
+
     public RushProcessingRequest? RushProcessingRequest { get; init; }
 
     public DateTimeOffset? LastUpdateCheckUtc { get; init; }
