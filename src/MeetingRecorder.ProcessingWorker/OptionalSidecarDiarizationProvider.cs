@@ -11,6 +11,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
     private const string DirectMlUnavailableMessage =
         "DirectML acceleration is not packaged in this managed build to avoid endpoint-protection process-memory prompts.";
+    private static readonly float[] AdaptiveClusteringThresholds = [0.5f, 0.45f, 0.4f, 0.35f, 0.3f, 0.25f];
 
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
@@ -19,6 +20,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     private readonly DiarizationAssetCatalogService _assetCatalogService;
     private readonly TranscriptionAudioPreparer _audioPreparer;
     private readonly TranscriptSpeakerAttributionService _speakerAttributionService;
+    private readonly DiarizationClusterSelectionService _clusterSelectionService;
 
     public LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
@@ -32,7 +34,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             logger,
             new DiarizationAssetCatalogService(),
             new TranscriptionAudioPreparer(),
-            new TranscriptSpeakerAttributionService())
+            new TranscriptSpeakerAttributionService(),
+            new DiarizationClusterSelectionService())
     {
     }
 
@@ -43,7 +46,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         FileLogWriter logger,
         DiarizationAssetCatalogService assetCatalogService,
         TranscriptionAudioPreparer audioPreparer,
-        TranscriptSpeakerAttributionService speakerAttributionService)
+        TranscriptSpeakerAttributionService speakerAttributionService,
+        DiarizationClusterSelectionService clusterSelectionService)
     {
         _diarizationAssetPath = diarizationAssetPath;
         _accelerationPreference = accelerationPreference;
@@ -52,6 +56,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         _assetCatalogService = assetCatalogService;
         _audioPreparer = audioPreparer;
         _speakerAttributionService = speakerAttributionService;
+        _clusterSelectionService = clusterSelectionService;
     }
 
     public async Task<DiarizationResult> ApplySpeakerLabelsAsync(
@@ -148,20 +153,21 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             ?? throw new InvalidOperationException("The diarization segmentation model file name could not be resolved.");
         var embeddingModelFileName = Path.GetFileName(installedAssets.EmbeddingModelPath)
             ?? throw new InvalidOperationException("The diarization embedding model file name could not be resolved.");
-        var diarizationSegments = ProcessSpeakerTurns(preparedAudioPath, installedAssets, providerName, _threadCount, cancellationToken);
-        var speakerTurns = diarizationSegments
-            .Where(segment => segment.End > segment.Start)
-            .Select(segment => new SpeakerTurn(
-                $"speaker_{segment.Speaker:00}",
-                TimeSpan.FromSeconds(segment.Start),
-                TimeSpan.FromSeconds(segment.End)))
-            .ToArray();
+        var clusterSelection = ProcessSpeakerTurns(
+            preparedAudioPath,
+            installedAssets,
+            providerName,
+            _threadCount,
+            _clusterSelectionService,
+            cancellationToken);
+        var speakerTurns = clusterSelection.Candidate.SpeakerTurns;
         var speakers = _speakerAttributionService.BuildSpeakerCatalog(speakerTurns);
         var displayNamesBySpeakerId = speakers.ToDictionary(speaker => speaker.Id, speaker => speaker.DisplayName, StringComparer.Ordinal);
         var attributedSegments = _speakerAttributionService.ApplySpeakerTurns(
             transcriptSegments,
             speakerTurns,
             displayNamesBySpeakerId);
+        var combinedDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage);
 
         var metadata = new DiarizationMetadata(
             provider: "sherpa-onnx",
@@ -172,7 +178,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             executionProvider: executionProvider,
             gpuAccelerationRequested: gpuAccelerationRequested,
             gpuAccelerationAvailable: gpuAccelerationAvailable,
-            diagnosticMessage: diagnosticMessage);
+            diagnosticMessage: combinedDiagnosticMessage);
 
         var appliedSpeakerLabels = attributedSegments.Any(segment =>
             !string.IsNullOrWhiteSpace(segment.SpeakerId) ||
@@ -184,8 +190,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
                 : "Speaker labeling completed on CPU.";
 
         _logger.Log(
-            $"Speaker labeling completed. Provider={executionProvider}. Speakers={speakers.Count}. Turns={speakerTurns.Length}. " +
-            $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{diagnosticMessage ?? "<none>"}'.");
+            $"Speaker labeling completed. Provider={executionProvider}. Speakers={speakers.Count}. Turns={speakerTurns.Count}. " +
+            $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{combinedDiagnosticMessage ?? "<none>"}'.");
 
         return Task.FromResult(new DiarizationResult(
             attributedSegments,
@@ -196,23 +202,64 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             metadata));
     }
 
-    private static OfflineSpeakerDiarizationSegment[] ProcessSpeakerTurns(
+    private static DiarizationClusterSelection ProcessSpeakerTurns(
         string preparedAudioPath,
         DiarizationAssetInstallStatus installedAssets,
         string provider,
         int threadCount,
+        DiarizationClusterSelectionService clusterSelectionService,
         CancellationToken cancellationToken)
     {
-        using var diarizer = CreateDiarizer(installedAssets, provider, threadCount);
         using var reader = new AudioFileReader(preparedAudioPath);
-        if (reader.WaveFormat.SampleRate != diarizer.SampleRate)
+        var samples = ReadSamples(reader, cancellationToken);
+        var candidates = new List<DiarizationClusterCandidate>();
+
+        foreach (var threshold in AdaptiveClusteringThresholds)
         {
-            throw new InvalidOperationException(
-                $"Prepared diarization audio sample rate {reader.WaveFormat.SampleRate} did not match expected {diarizer.SampleRate}.");
+            cancellationToken.ThrowIfCancellationRequested();
+            var speakerTurns = ProcessSpeakerTurnsAtThreshold(
+                samples,
+                reader.WaveFormat.SampleRate,
+                installedAssets,
+                provider,
+                threadCount,
+                threshold);
+            var candidate = new DiarizationClusterCandidate(threshold, speakerTurns);
+            candidates.Add(candidate);
+
+            var currentSelection = clusterSelectionService.SelectBestCandidate(candidates);
+            if (ReferenceEquals(currentSelection.Candidate, candidate) &&
+                currentSelection.SupportedSpeakerCount >= 2)
+            {
+                return currentSelection;
+            }
         }
 
-        var samples = ReadSamples(reader, cancellationToken);
-        return diarizer.Process(samples);
+        return clusterSelectionService.SelectBestCandidate(candidates);
+    }
+
+    private static SpeakerTurn[] ProcessSpeakerTurnsAtThreshold(
+        float[] samples,
+        int preparedAudioSampleRate,
+        DiarizationAssetInstallStatus installedAssets,
+        string provider,
+        int threadCount,
+        float clusteringThreshold)
+    {
+        using var diarizer = CreateDiarizer(installedAssets, provider, threadCount, clusteringThreshold);
+        if (preparedAudioSampleRate != diarizer.SampleRate)
+        {
+            throw new InvalidOperationException(
+                $"Prepared diarization audio sample rate {preparedAudioSampleRate} did not match expected {diarizer.SampleRate}.");
+        }
+
+        return diarizer.Process(samples)
+            .Where(segment => segment.End > segment.Start)
+            .Select(segment => new SpeakerTurn(
+                $"speaker_{segment.Speaker:00}",
+                TimeSpan.FromSeconds(segment.Start),
+                TimeSpan.FromSeconds(segment.End)))
+            .ToArray();
     }
 
     private static float[] ReadSamples(AudioFileReader reader, CancellationToken cancellationToken)
@@ -232,7 +279,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     private static OfflineSpeakerDiarization CreateDiarizer(
         DiarizationAssetInstallStatus installedAssets,
         string provider,
-        int threadCount)
+        int threadCount,
+        float clusteringThreshold)
     {
         var config = new OfflineSpeakerDiarizationConfig();
         config.Segmentation.Pyannote.Model = installedAssets.SegmentationModelPath
@@ -245,11 +293,24 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         config.Embedding.Provider = provider;
         config.Embedding.NumThreads = Math.Max(1, threadCount);
         config.Embedding.Debug = 0;
-        config.Clustering.Threshold = 0.5f;
+        config.Clustering.Threshold = clusteringThreshold;
         config.Clustering.NumClusters = -1;
         config.MinDurationOn = 0.2f;
         config.MinDurationOff = 0.2f;
         return new OfflineSpeakerDiarization(config);
+    }
+
+    private static string? CombineDiagnosticMessages(params string?[] messages)
+    {
+        var combinedMessages = messages
+            .Where(static message => !string.IsNullOrWhiteSpace(message))
+            .Select(static message => message!.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return combinedMessages.Length == 0
+            ? null
+            : string.Join(" ", combinedMessages);
     }
 
     private static string BuildPreparedAudioPath(string audioPath)

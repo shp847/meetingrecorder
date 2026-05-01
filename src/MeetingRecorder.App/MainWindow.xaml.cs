@@ -2759,6 +2759,7 @@ public partial class MainWindow : Window
         return await QueueMeetingReprocessingAsync(
             meeting,
             "Queued to re-generate the transcript.",
+            forceSpeakerLabeling: false,
             cancellationToken);
     }
 
@@ -2769,12 +2770,14 @@ public partial class MainWindow : Window
         return await QueueMeetingReprocessingAsync(
             meeting,
             "Queued to add speaker labels.",
+            forceSpeakerLabeling: true,
             cancellationToken);
     }
 
     private async Task<string> QueueMeetingReprocessingAsync(
         MeetingOutputRecord meeting,
         string transcriptionQueuedMessage,
+        bool forceSpeakerLabeling,
         CancellationToken cancellationToken)
     {
         var manifestPath = meeting.ManifestPath;
@@ -2789,14 +2792,11 @@ public partial class MainWindow : Window
 
         var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        var queuedManifest = manifest with
-        {
-            State = SessionState.Queued,
-            ErrorSummary = null,
-            TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Queued, now, transcriptionQueuedMessage),
-            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
-            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
-        };
+        var queuedManifest = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            now,
+            transcriptionQueuedMessage,
+            forceSpeakerLabeling);
 
         await _manifestStore.SaveAsync(queuedManifest, manifestPath, cancellationToken);
         await _processingQueue.EnqueueAsync(manifestPath, cancellationToken);

@@ -1257,6 +1257,25 @@ internal static class MainWindowInteractionLogic
         return string.Equals(confirmationText, "DELETE", StringComparison.Ordinal);
     }
 
+    public static MeetingSessionManifest BuildQueuedMeetingReprocessingManifest(
+        MeetingSessionManifest manifest,
+        DateTimeOffset now,
+        string transcriptionQueuedMessage,
+        bool forceSpeakerLabeling)
+    {
+        return manifest with
+        {
+            State = SessionState.Queued,
+            ErrorSummary = null,
+            ProcessingOverrides = forceSpeakerLabeling
+                ? ClearSpeakerLabelingSkipOverride(manifest.ProcessingOverrides)
+                : manifest.ProcessingOverrides,
+            TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Queued, now, transcriptionQueuedMessage),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
+            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
+        };
+    }
+
     public static MeetingInspectorState BuildMeetingInspectorState(
         MeetingOutputRecord meeting,
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
@@ -1868,6 +1887,13 @@ internal static class MainWindowInteractionLogic
             MeetingPlatform.GoogleMeet => normalizedTitle is "google meet" or "meet",
             _ => false,
         };
+    }
+
+    private static MeetingProcessingOverrides? ClearSpeakerLabelingSkipOverride(MeetingProcessingOverrides? overrides)
+    {
+        return overrides is null
+            ? null
+            : overrides with { SkipSpeakerLabeling = false };
     }
 
     private static string NormalizeText(string? value)

@@ -1711,6 +1711,50 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildQueuedMeetingReprocessingManifest_Clears_SkipSpeakerLabeling_When_Speaker_Labels_Are_Requested()
+    {
+        var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
+        var manifest = CreatePublishedManifest() with
+        {
+            ProcessingOverrides = new MeetingProcessingOverrides(
+                @"C:\models\custom.bin",
+                "custom.bin",
+                SkipSpeakerLabeling: true),
+        };
+
+        var queued = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            now,
+            "Queued to add speaker labels.",
+            forceSpeakerLabeling: true);
+
+        Assert.Equal(SessionState.Queued, queued.State);
+        Assert.False(queued.ProcessingOverrides?.SkipSpeakerLabeling == true);
+        Assert.Equal(@"C:\models\custom.bin", queued.ProcessingOverrides?.TranscriptionModelPath);
+        Assert.Equal("custom.bin", queued.ProcessingOverrides?.TranscriptionModelFileName);
+        Assert.Equal(StageExecutionState.Queued, queued.TranscriptionStatus.State);
+        Assert.Equal(StageExecutionState.NotStarted, queued.DiarizationStatus.State);
+    }
+
+    [Fact]
+    public void BuildQueuedMeetingReprocessingManifest_Preserves_SkipSpeakerLabeling_For_Transcript_Regeneration()
+    {
+        var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
+        var manifest = CreatePublishedManifest() with
+        {
+            ProcessingOverrides = new MeetingProcessingOverrides(null, null, SkipSpeakerLabeling: true),
+        };
+
+        var queued = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            now,
+            "Queued to re-generate the transcript.",
+            forceSpeakerLabeling: false);
+
+        Assert.True(queued.ProcessingOverrides?.SkipSpeakerLabeling);
+    }
+
+    [Fact]
     public void BuildMeetingInspectorState_Uses_Persisted_Attendees_Recommendations_And_Metadata()
     {
         var meeting = new MeetingOutputRecord(
@@ -2149,5 +2193,23 @@ public sealed class MainWindowInteractionLogicTests
         var result = MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, localState);
 
         Assert.True(result);
+    }
+
+    private static MeetingSessionManifest CreatePublishedManifest()
+    {
+        return new MeetingSessionManifest
+        {
+            SessionId = "session-1",
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = "Weekly Sync",
+            StartedAtUtc = DateTimeOffset.Parse("2026-05-01T11:00:00Z", null, DateTimeStyles.RoundtripKind),
+            State = SessionState.Published,
+            DetectionEvidence = Array.Empty<DetectionSignal>(),
+            RawChunkPaths = Array.Empty<string>(),
+            MicrophoneChunkPaths = Array.Empty<string>(),
+            TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "done"),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Skipped, DateTimeOffset.UtcNow, "skipped"),
+            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "published"),
+        };
     }
 }

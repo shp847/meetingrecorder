@@ -8,7 +8,7 @@ Recommended asset naming:
 - each bundle should contain:
   - `meeting-recorder-diarization-bundle.json`
   - `model.int8.onnx`
-  - `nemo_en_titanet_small.onnx`
+  - a supported speaker embedding model such as `nemo_en_titanet_small.onnx` or `nemo_en_titanet_large.onnx`
   - any required license or supporting metadata files
 
 The bundle manifest should include:
@@ -19,3 +19,5 @@ The bundle manifest should include:
 `Publish-Portable.ps1` copies the `Standard` bundle into `MeetingRecorder\model-seed\speaker-labeling\` inside the portable/MSI payload.
 
 `Build-Installer.ps1` copies the `Higher Accuracy` bundle into `.artifacts\installer\win-x64` as a separate GitHub release asset without bundling it into the main app ZIP.
+
+At runtime the worker starts from sherpa-onnx's default unknown-speaker clustering threshold and retries stricter thresholds only when the first pass collapses voice clusters into fewer than two supported anonymous speakers.

@@ -368,6 +368,8 @@ The app treats tiny files as invalid and will not accept an HTML or proxy error 
 
 Speaker labeling is the optional diarization model-bundle path. It can group transcript text under speaker labels such as `Speaker 1` and `Speaker 2`, but normal transcription still works without it.
 
+When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries stricter clustering thresholds before publishing labels.
+
 Built-in automatic speaker-labeling downloads use GitHub release assets only. Alternate public download locations, when shown, are curated links and may currently be unavailable.
 
 `Settings > Setup` presents this as a guided checklist:
@@ -401,6 +403,7 @@ Advanced details:
 
 - `Advanced` shows the configured asset folder path, CPU-only acceleration status, and the raw readiness details
 - the recommended bundle is preferred because it installs the segmentation model, embedding model, and bundle manifest together
+- diarization labels remain anonymous voice clusters; the app does not identify real people from their voices
 - the app looks for the bundled local `SETUP.md` first and only falls back to GitHub help when the local guide cannot be found
 - `Alternate public download locations` can legitimately show `No vetted public mirror configured yet.` when no curated mirror is configured
 - the alternative asset picker is mainly for cases where you already know you need a specific supporting file instead of the bundle

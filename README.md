@@ -305,6 +305,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - A valid local Whisper model is required for transcript generation
 - Diarization is optional and remains best-effort
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
+- Speaker diarization automatically estimates anonymous speakers from voice embeddings. It starts with the default clustering threshold and, when that pass collapses voices into fewer than two supported speakers, retries stricter thresholds before assigning transcript segments by time overlap.
 - GPU acceleration for diarization is disabled in managed builds; existing `Auto` configs are normalized to CPU-only and the worker no longer packages the DirectML ONNX Runtime that can trigger endpoint-protection process-memory prompts
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
 - If the packaged `model-catalog.json` file is missing at runtime, curated Setup falls back to the built-in default catalog so `Use Standard` and `Use Higher Accuracy` still work
