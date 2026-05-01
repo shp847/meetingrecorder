@@ -9,6 +9,7 @@ internal sealed record ConfigEditorSnapshot(
     string TranscriptOutputDir,
     string WorkDir,
     bool UseGpuAcceleration,
+    bool SpeakerNameLearningEnabled,
     string AutoDetectThresholdText,
     string MeetingStopTimeoutText,
     bool MicCaptureEnabled,
@@ -158,6 +159,53 @@ internal sealed record MeetingWorkspaceToolState(
     bool ShowSplitTool,
     bool ShowMergeTool,
     bool ShowSpeakerLabelsTool);
+
+internal sealed record MeetingSelectionCommandState(
+    string SummaryText,
+    bool ShowSingleMeetingCommands,
+    bool ShowBulkMeetingCommands,
+    bool CanOpenDetails,
+    bool CanOpenAudio,
+    bool CanOpenTranscript,
+    bool CanOpenContainingFolder,
+    bool CanReviewCleanup);
+
+internal sealed record MeetingTranscriptSegmentRow(
+    string Timestamp,
+    string SpeakerLabel,
+    string Text);
+
+internal sealed record MeetingTranscriptReaderResult(
+    bool HasTranscript,
+    string StatusText,
+    IReadOnlyList<MeetingTranscriptSegmentRow> Segments);
+
+internal sealed record MeetingDetailWindowState(
+    string Title,
+    string Subtitle,
+    string StartedAtUtc,
+    string Duration,
+    string Platform,
+    string Status,
+    string ProjectName,
+    string TranscriptionModelFileName,
+    string SpeakerLabelState,
+    IReadOnlyList<string> AttendeeNames,
+    IReadOnlyList<string> RecommendationBadges,
+    string DetectedAudioSourceSummary,
+    string CaptureDiagnosticsSummary,
+    string AiSummaryPlaceholderText,
+    MeetingTranscriptReaderResult Transcript,
+    bool CanOpenAudio,
+    bool CanOpenTranscript,
+    bool CanRegenerateTranscript,
+    bool CanReTranscribeWithDifferentModel,
+    bool CanAddSpeakerLabels,
+    bool CanProcessAsap,
+    bool CanClearAsap,
+    bool CanSplit,
+    bool CanArchive,
+    bool CanDeletePermanently);
 
 internal sealed record ProcessingQueueHeaderState(
     bool IsVisible,
@@ -1320,6 +1368,56 @@ internal static class MainWindowInteractionLogic
         };
     }
 
+    public static MeetingDetailWindowState BuildMeetingDetailWindowState(
+        MeetingOutputRecord meeting,
+        IReadOnlyList<MeetingCleanupRecommendation> recommendations,
+        MeetingTranscriptReaderResult transcript,
+        bool canOpenAudio,
+        bool canOpenTranscript,
+        bool canRegenerateTranscript,
+        bool canAddSpeakerLabels,
+        bool canProcessAsap,
+        bool isSelectedMeetingAsap,
+        CultureInfo? culture = null,
+        TimeZoneInfo? localTimeZone = null)
+    {
+        var inspectorState = BuildMeetingInspectorState(meeting, recommendations, culture, localTimeZone);
+        var subtitleParts = new[]
+        {
+            inspectorState.Platform,
+            inspectorState.StartedAtUtc,
+            inspectorState.Duration,
+        }.Where(part => !string.IsNullOrWhiteSpace(part) && !string.Equals(part, "Unknown", StringComparison.Ordinal))
+            .ToArray();
+
+        return new MeetingDetailWindowState(
+            inspectorState.Title,
+            string.Join(" | ", subtitleParts),
+            inspectorState.StartedAtUtc,
+            inspectorState.Duration,
+            inspectorState.Platform,
+            inspectorState.Status,
+            string.IsNullOrWhiteSpace(inspectorState.ProjectName) ? "None" : inspectorState.ProjectName,
+            inspectorState.TranscriptionModelFileName,
+            inspectorState.SpeakerLabelState,
+            inspectorState.AttendeeNames,
+            inspectorState.RecommendationBadges,
+            inspectorState.DetectedAudioSourceSummary,
+            inspectorState.CaptureDiagnosticsSummary,
+            "AI summary is reserved for a later update. This view currently reads only local transcript artifacts.",
+            transcript,
+            CanOpenAudio: canOpenAudio,
+            CanOpenTranscript: canOpenTranscript,
+            CanRegenerateTranscript: canRegenerateTranscript,
+            CanReTranscribeWithDifferentModel: canRegenerateTranscript,
+            CanAddSpeakerLabels: canAddSpeakerLabels,
+            CanProcessAsap: canProcessAsap && !isSelectedMeetingAsap,
+            CanClearAsap: isSelectedMeetingAsap,
+            CanSplit: meeting.Duration is { } duration && duration > TimeSpan.FromSeconds(2),
+            CanArchive: true,
+            CanDeletePermanently: true);
+    }
+
     public static string BuildDetectedAudioSourceSummary(DetectedAudioSource? audioSource)
     {
         if (audioSource is null || string.IsNullOrWhiteSpace(audioSource.AppName))
@@ -1460,6 +1558,36 @@ internal static class MainWindowInteractionLogic
             ShowSplitTool: isSingleSelection,
             ShowMergeTool: isMultiSelection,
             ShowSpeakerLabelsTool: isSingleSelection && hasSpeakerLabels);
+    }
+
+    public static MeetingSelectionCommandState BuildMeetingSelectionCommandState(
+        int selectedMeetingCount,
+        bool hasFocusedMeeting,
+        bool canOpenAudio,
+        bool canOpenTranscript,
+        bool hasCleanupRecommendations,
+        bool isBusy)
+    {
+        var isSingleSelection = selectedMeetingCount == 1;
+        var isMultiSelection = selectedMeetingCount > 1;
+        var canUseSingleCommands = hasFocusedMeeting && isSingleSelection && !isBusy;
+        var canReviewCleanup = hasCleanupRecommendations && !isBusy;
+        var summaryText = selectedMeetingCount switch
+        {
+            0 => "Select a meeting to open details, artifacts, or focused actions.",
+            1 => "1 meeting selected. Open details for transcript review and focused actions.",
+            _ => $"{selectedMeetingCount} meetings selected. Use the context menu for bulk actions, or reduce the selection to open one meeting.",
+        };
+
+        return new MeetingSelectionCommandState(
+            summaryText,
+            ShowSingleMeetingCommands: isSingleSelection,
+            ShowBulkMeetingCommands: isMultiSelection,
+            CanOpenDetails: canUseSingleCommands,
+            CanOpenAudio: canUseSingleCommands && canOpenAudio,
+            CanOpenTranscript: canUseSingleCommands && canOpenTranscript,
+            CanOpenContainingFolder: canUseSingleCommands && (canOpenAudio || canOpenTranscript),
+            CanReviewCleanup: canReviewCleanup);
     }
 
     public static string FormatMeetingWorkspaceStartedAt(
@@ -1782,6 +1910,7 @@ internal static class MainWindowInteractionLogic
             !string.Equals(currentConfig.TranscriptOutputDir, NormalizeText(editor.TranscriptOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.WorkDir, NormalizeText(editor.WorkDir), StringComparison.OrdinalIgnoreCase) ||
             (currentConfig.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto) != editor.UseGpuAcceleration ||
+            (currentConfig.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn) != editor.SpeakerNameLearningEnabled ||
             !string.Equals(FormatThreshold(currentConfig.AutoDetectAudioPeakThreshold), NormalizeText(editor.AutoDetectThresholdText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.MeetingStopTimeoutText), StringComparison.Ordinal) ||
             currentConfig.MicCaptureEnabled != editor.MicCaptureEnabled ||

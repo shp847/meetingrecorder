@@ -923,19 +923,21 @@
                               Margin="0,16,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="400" />
+                                <ColumnDefinition Width="0" />
+                                <ColumnDefinition Width="0" />
                             </Grid.ColumnDefinitions>
 
                             <Border x:Name="MeetingCleanupReviewBannerBorder"
                                     Grid.Row="0"
                                     Grid.ColumnSpan="3"
                                     Padding="14"
-                                    CornerRadius="10"
+                                    CornerRadius="4"
                                     Background="#FFF6E5"
                                     Visibility="Collapsed">
                                 <Grid>
@@ -966,19 +968,79 @@
                                 </Grid>
                             </Border>
 
-                            <Border x:Name="MeetingsListBorder"
+                            <Border x:Name="MeetingSelectionCommandBarBorder"
                                     Grid.Row="1"
+                                    Grid.Column="0"
+                                    Grid.ColumnSpan="3"
+                                    Margin="0,16,0,0"
+                                    Padding="12"
+                                    CornerRadius="4"
+                                    Background="{StaticResource AppCardBrush}"
+                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                    BorderThickness="1">
+                                <DockPanel LastChildFill="True">
+                                    <WrapPanel DockPanel.Dock="Right"
+                                               Margin="12,0,0,0">
+                                        <Button x:Name="OpenMeetingDetailsButton"
+                                                Width="120"
+                                                Height="32"
+                                                Margin="0,0,10,0"
+                                                Click="OpenMeetingDetailsButton_OnClick"
+                                                Content="Open Details" />
+                                        <Button x:Name="OpenSelectedTranscriptLibraryButton"
+                                                Width="130"
+                                                Height="32"
+                                                Margin="0,0,10,0"
+                                                Click="OpenSelectedTranscriptButton_OnClick"
+                                                Content="Open Transcript" />
+                                        <Button x:Name="OpenSelectedAudioLibraryButton"
+                                                Width="110"
+                                                Height="32"
+                                                Margin="0,0,10,0"
+                                                Click="OpenSelectedAudioButton_OnClick"
+                                                Content="Open Audio" />
+                                        <Button x:Name="OpenSelectedFolderLibraryButton"
+                                                Width="110"
+                                                Height="32"
+                                                Margin="0,0,10,0"
+                                                Click="OpenSelectedFolderLibraryButton_OnClick"
+                                                Content="Open Folder" />
+                                        <Button x:Name="ReviewCleanupSuggestionsLibraryButton"
+                                                Width="150"
+                                                Height="32"
+                                                Click="ReviewCleanupSuggestionsActionButton_OnClick"
+                                                Content="Review Suggestions" />
+                                    </WrapPanel>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock x:Name="MeetingSelectionSummaryTextBlock"
+                                                   FontWeight="SemiBold"
+                                                   Text="Select a meeting to open details, artifacts, or focused actions."
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="MeetingSelectionBulkHintTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                   Text="Bulk actions are available from the meeting list context menu."
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
+                            <Border x:Name="MeetingsListBorder"
+                                    Grid.Row="2"
                                     Grid.Column="0"
                                     Margin="0,16,0,0"
                                     Padding="8"
                                     MinHeight="260"
-                                    CornerRadius="12"
-                                    Background="White">
+                                    CornerRadius="4"
+                                    Background="{StaticResource AppCardBrush}"
+                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                    BorderThickness="1">
                                 <ListView x:Name="MeetingsDataGrid"
                                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                                           SelectionMode="Extended"
-                                          SelectionChanged="MeetingsDataGrid_OnSelectionChanged">
+                                          SelectionChanged="MeetingsDataGrid_OnSelectionChanged"
+                                          MouseDoubleClick="MeetingsDataGrid_OnMouseDoubleClick">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="{x:Type ListViewItem}">
                                         <EventSetter Event="PreviewMouseRightButtonDown"
@@ -987,6 +1049,9 @@
                                 </ListView.ItemContainerStyle>
                                 <ListView.ContextMenu>
                                     <ContextMenu Opened="MeetingsContextMenu_OnOpened">
+                                        <MenuItem x:Name="OpenMeetingDetailsMenuItem"
+                                                  Header="Open Details"
+                                                  Click="OpenMeetingDetailsMenuItem_OnClick" />
                                         <MenuItem x:Name="OpenMeetingTranscriptMenuItem"
                                                   Header="Open Transcript"
                                                   Click="OpenMeetingTranscriptMenuItem_OnClick" />
@@ -1138,25 +1203,29 @@
                             </Border>
 
                             <GridSplitter x:Name="MeetingsWorkspaceGridSplitter"
-                                          Grid.Row="1"
+                                          Grid.Row="2"
                                           Grid.Column="1"
                                           Width="12"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Stretch"
                                           ResizeBehavior="PreviousAndNext"
                                           Background="Transparent"
-                                          ShowsPreview="True" />
+                                          ShowsPreview="True"
+                                          Visibility="Collapsed" />
 
                             <ScrollViewer x:Name="MeetingsInspectorScrollViewer"
-                                          Grid.Row="1"
-                                          Grid.Column="2"
-                                          Margin="16,16,0,0"
+                                          Grid.Row="3"
+                                          Grid.Column="0"
+                                          Grid.ColumnSpan="3"
+                                          Margin="0,16,0,0"
+                                          MaxHeight="320"
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
                                     <Border x:Name="MeetingsInspectorBorder"
                                             Padding="16"
-                                            CornerRadius="12"
-                                            Background="#FFF9EF">
+                                            CornerRadius="4"
+                                            Background="{StaticResource AppCardBrush}"
+                                            Visibility="Collapsed">
                                         <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
                                                    Text="Selected Meeting" />
@@ -1279,10 +1348,11 @@
 
                                     <Border Margin="0,16,0,0"
                                             Padding="16"
-                                            CornerRadius="12"
+                                            CornerRadius="4"
                                             Background="White"
                                             BorderBrush="#E7E0D4"
-                                            BorderThickness="1">
+                                            BorderThickness="1"
+                                            Visibility="Collapsed">
                                         <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
                                                    Text="Quick Actions" />
@@ -1420,7 +1490,7 @@
                                             <StackPanel Margin="0,12,0,0">
                                             <TextBlock Foreground="#45504D"
                                                        TextWrapping="Wrap"
-                                                       Text="Use the selected-meeting inspector and context menu first. The compact drafts below only appear when the current selection needs extra input." />
+                                                       Text="Use Open Details for one-meeting work. This compact drawer is reserved for bulk-safe actions that need extra input." />
 
                                             <TextBlock x:Name="SingleMeetingActionsHeadingTextBlock"
                                                        Margin="0,6,0,0"
@@ -1430,7 +1500,7 @@
                                             <Border x:Name="MeetingProjectToolCard"
                                                     Margin="0,14,0,0"
                                                     Padding="14"
-                                                    CornerRadius="10"
+                                                    CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Project" />
@@ -1469,7 +1539,7 @@
                                             <Border x:Name="MeetingTitleAndTranscriptToolCard"
                                                     Margin="0,14,0,0"
                                                     Padding="14"
-                                                    CornerRadius="10"
+                                                    CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Title &amp; Transcript" />
@@ -1499,7 +1569,7 @@
                                             <Border x:Name="SplitMeetingToolCard"
                                                     Margin="0,14,0,0"
                                                     Padding="14"
-                                                    CornerRadius="10"
+                                                    CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Split" />
@@ -1561,7 +1631,7 @@
                                             <Border x:Name="MergeMeetingsToolCard"
                                                     Margin="0,14,0,0"
                                                     Padding="14"
-                                                    CornerRadius="10"
+                                                    CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Merge" />
@@ -1591,7 +1661,7 @@
                                             <Border x:Name="SpeakerLabelsToolCard"
                                                     Margin="0,14,0,0"
                                                     Padding="14"
-                                                    CornerRadius="10"
+                                                    CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" Text="Speaker Labels" />
@@ -1621,6 +1691,10 @@
                                                                     </DataTemplate>
                                                                 </DataGridTemplateColumn.CellTemplate>
                                                             </DataGridTemplateColumn>
+                                                            <DataGridTextColumn Header="Voice Profile"
+                                                                                Binding="{Binding Provenance, Mode=OneWay}"
+                                                                                IsReadOnly="True"
+                                                                                Width="1.4*" />
                                                         </DataGrid.Columns>
                                                     </DataGrid>
                                                     <WrapPanel Margin="0,12,0,0">
@@ -2280,6 +2354,67 @@
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Unavailable in this managed build. Speaker labeling stays on CPU to avoid managed endpoint-protection prompts during processing." />
                                             <TextBlock x:Name="ConfigDiarizationAccelerationStatusTextBlock"
+                                                       Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,16,0,0">
+                                            <CheckBox x:Name="ConfigSpeakerNameLearningCheckBox"
+                                                      Content="Learn speaker names from my corrections" />
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Stores local voice-profile embeddings under this Windows user profile so future diarized speakers can be suggested or auto-named at high confidence. No raw audio or profiles are uploaded." />
+                                            <DataGrid x:Name="VoiceProfilesDataGrid"
+                                                      Margin="0,10,0,0"
+                                                      Height="132"
+                                                      AutoGenerateColumns="False"
+                                                      CanUserAddRows="False"
+                                                      HeadersVisibility="Column"
+                                                      RowHeaderWidth="0">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Name"
+                                                                        Binding="{Binding DisplayName, Mode=OneWay}"
+                                                                        IsReadOnly="True"
+                                                                        Width="*" />
+                                                    <DataGridTextColumn Header="Samples"
+                                                                        Binding="{Binding SampleCount, Mode=OneWay}"
+                                                                        IsReadOnly="True"
+                                                                        Width="90" />
+                                                    <DataGridTextColumn Header="Last Used"
+                                                                        Binding="{Binding LastMatchedText, Mode=OneWay}"
+                                                                        IsReadOnly="True"
+                                                                        Width="150" />
+                                                    <DataGridTextColumn Header="Status"
+                                                                        Binding="{Binding Status, Mode=OneWay}"
+                                                                        IsReadOnly="True"
+                                                                        Width="100" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                            <WrapPanel Margin="0,10,0,0">
+                                                <Button x:Name="RefreshVoiceProfilesButton"
+                                                        Width="120"
+                                                        Height="32"
+                                                        Click="RefreshVoiceProfilesButton_OnClick"
+                                                        Content="Refresh profiles" />
+                                                <Button x:Name="DisableSelectedVoiceProfileButton"
+                                                        Width="140"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Click="DisableSelectedVoiceProfileButton_OnClick"
+                                                        Content="Toggle selected" />
+                                                <Button x:Name="DeleteSelectedVoiceProfileButton"
+                                                        Width="130"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Click="DeleteSelectedVoiceProfileButton_OnClick"
+                                                        Content="Delete selected" />
+                                                <Button x:Name="DeleteAllVoiceProfilesButton"
+                                                        Width="150"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Click="DeleteAllVoiceProfilesButton_OnClick"
+                                                        Content="Delete all profiles" />
+                                            </WrapPanel>
+                                            <TextBlock x:Name="VoiceProfilesStatusTextBlock"
                                                        Margin="0,8,0,0"
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
                                         </StackPanel>

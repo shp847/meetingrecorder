@@ -161,7 +161,7 @@ The dependency checker currently verifies:
 The app now keeps the main workflow in two primary destinations inside one visible segmented top navigation strip:
 
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, the detected audio source summary, live audio graph, start/stop controls, and quick settings for microphone capture and auto-detection
-- `Meetings` for the recent-and-published meetings workspace, grouped browsing, cleanup review, quick actions, and compact meeting drafts
+- `Meetings` for the recent-and-published meetings library, grouped browsing, queue status, cleanup review, artifact shortcuts, and `Open Details` for single-meeting transcript review and maintenance
 Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. `Speaker labeling` now also includes a direct `When to run speaker labeling` selector so you can move between `Deferred`, `Throttled`, and `Inline` without leaving Setup. Recording and auto-detect stay blocked until transcription is ready.
 When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
@@ -188,7 +188,7 @@ Secondary maintenance and support actions live in the header:
 The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
 
-For one urgent meeting, use `Process This ASAP...` from the focused meeting actions or context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
+For one urgent meeting, use `Process ASAP` from the meeting detail window or `Process This ASAP...` from the context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
 
 When auto-detection is on, the app now also tries to attribute active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata. The compact summary appears on `Home`, and `Help` includes the current app/window/tab match plus confidence when attribution is available.
 For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, but an explicit active `Meet - ...` browser window can now auto-start from active browser-family audio even when browser session metadata is too weak to name the exact tab.
@@ -370,6 +370,10 @@ Speaker labeling is the optional diarization model-bundle path. It can group tra
 
 When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries stricter clustering thresholds before publishing labels.
 
+Speaker names can also improve over time when `Settings > General > Learn speaker names from my corrections` is enabled. The app stores local voice-profile embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles\voice-profiles.json` (or the portable app `data\speaker-profiles` folder), compares future anonymous speaker clusters with those user-confirmed profiles, and auto-applies names only when the best match is above the high-confidence threshold and clearly ahead of the next profile. Lower-confidence matches stay anonymous and appear as suggestions in the speaker-name editor.
+
+Voice profiles are local-only user data. The app stores embeddings/centroids rather than raw audio, does not upload them, and lets you disable, delete selected profiles, or delete all profiles from Settings. Voice-profile data can still be sensitive because it is derived from a person's voice; review your local policies before teaching names for other people. Background reference: [sherpa-onnx speaker identification](https://k2-fsa.github.io/sherpa/onnx/speaker-identification/index.html) and [FTC biometric information warning](https://www.ftc.gov/news-events/news/press-releases/2023/05/ftc-warns-about-misuses-biometric-information-harm-consumers).
+
 Built-in automatic speaker-labeling downloads use GitHub release assets only. Alternate public download locations, when shown, are curated links and may currently be unavailable.
 
 `Settings > Setup` presents this as a guided checklist:
@@ -403,7 +407,7 @@ Advanced details:
 
 - `Advanced` shows the configured asset folder path, CPU-only acceleration status, and the raw readiness details
 - the recommended bundle is preferred because it installs the segmentation model, embedding model, and bundle manifest together
-- diarization labels remain anonymous voice clusters; the app does not identify real people from their voices
+- diarization labels begin as anonymous voice clusters; the app only predicts real names later from local profiles that you taught through speaker-name corrections
 - the app looks for the bundled local `SETUP.md` first and only falls back to GitHub help when the local guide cannot be found
 - `Alternate public download locations` can legitimately show `No vetted public mirror configured yet.` when no curated mirror is configured
 - the alternative asset picker is mainly for cases where you already know you need a specific supporting file instead of the bundle
@@ -533,9 +537,9 @@ Important behavior:
 
 Archive output is user-recoverable. The app moves artifacts into timestamped folders under `Documents\Meetings\Archive` instead of permanently deleting them. Current builds also treat older top-level folders such as `ArchivedRepairs`, `ArchivedFalseStarts`, and `ArchivedGenericCleanup` as legacy inputs that can be consolidated under the single `Archive` root. On Windows, archived artifacts are marked unpinned after they are written so OneDrive Files On-Demand can keep the recovery copy online without forcing the WAV backup to remain allocated on the local disk. Generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are automatically removed after 14 days; manual meeting archive folders remain user-managed.
 
-## 8.2 Selected Meeting Inspector and Context Menu
+## 8.2 Meetings Library, Detail Window, and Context Menu
 
-The Meetings tab now keeps a focused meeting inspector and quick actions visible below the main list.
+The Meetings tab is now a library and work-queue surface. It keeps queue status, folder links, filtering, grouped browsing, a full-width meeting list, and a compact selection command strip on the tab. Single-meeting reading and maintenance open in one owned detail window, similar to transcript-first meeting tools.
 
 Meetings workspace behavior:
 
@@ -543,10 +547,12 @@ Meetings workspace behavior:
 - grouped browsing can now pivot by client / project and attendee as well as time, platform, and status
 - grouped browsing opens only the first visible group by default and keeps the rest collapsed until you expand them
 - `Expand All` and `Collapse All` appear when grouped browsing is active
-- meeting timestamps in the list and inspector use the local system time zone with the current short date/time format
-- a `Project` field can be applied or cleared for one meeting or multiple selected meetings from the focused tools area
+- meeting timestamps in the list and detail window use the local system time zone with the current short date/time format
+- one selected meeting enables `Open Details`, `Open Transcript`, `Open Audio`, and `Open Folder`
+- multiple selected meetings keep bulk-safe actions in the context menu
+- cleanup recommendations stay in the library-level cleanup review panel instead of mixing with selected-meeting controls
 
-What it shows for the focused meeting:
+What the detail window shows for the focused meeting:
 
 - title
 - project
@@ -558,6 +564,9 @@ What it shows for the focused meeting:
 - cleanup recommendation badges
 - transcript model metadata
 - speaker-label state
+- detected audio source and collapsed capture diagnostics
+- transcript segments read from the local JSON sidecar, with Markdown fallback for app-rendered transcripts
+- an inactive AI-summary placeholder reserved for a later update
 
 You can also right-click a meeting to open the context menu for common maintenance actions.
 
@@ -583,12 +592,12 @@ When multiple meetings are selected, the same context menu also exposes bulk act
 - archive selected
 - delete selected permanently
 
-The lower Meetings area is now intentionally simpler and more contextual:
+The lower Meetings area is now intentionally library-level:
 
 - the cleanup review area is for bulk review, apply, dismiss, and open-related actions
-- the selected-meeting inspector is for understanding the focused record
-- the quick actions row handles the most common artifact and maintenance flows without making the page longer
-- the compact meeting drafts only show the action cards that fit the current selection, such as title editing for one meeting or merge confirmation for multiple meetings
+- the selected-meeting command strip handles the most common artifact and detail-entry flows without making the page longer
+- meeting-specific metadata, transcript reading, project edits, rename, retry, split, speaker labels, archive, and delete live in the detail window
+- generated AI summaries are not part of this release; transcript reading remains local-file based
 
 Separately, the Meetings tab context menu now includes a manual `Delete Permanently` action. That path is not part of cleanup recommendations, requires typing `DELETE` exactly to confirm, and irreversibly removes the published audio, transcript markdown, transcript JSON, ready marker, and linked session work folder when one still exists.
 

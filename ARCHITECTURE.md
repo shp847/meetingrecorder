@@ -67,7 +67,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - candidate ranking now prefers a specific Teams meeting with attributed Teams render audio over a stale Google Meet browser window that no longer has attributed Meet audio, which prevents old visible Meet tabs from stealing a real Teams auto-start
   - resilient Teams shell-title parsing so bare navigation surfaces like `Chat | Microsoft Teams` do not crash the background detection loop
   - config editing and hot reload
-  - meetings library, rename, and retry actions
+  - meetings library plus an owned meeting detail window for transcript reading, rename, retry, split, project, speaker-label, archive, and delete actions
   - Whisper model setup UI
 - `MeetingRecorder.Core`
   - shared domain models
@@ -76,6 +76,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - output catalog logic
 - WAV merge and mix logic, including loopback-aware microphone bleed reduction, short-lag raw correlation checks, and a rolling `20 ms` envelope-history detector that can suppress delayed `80-400 ms` speaker pickup during published-audio preparation
   - transcript rendering
+  - transcript document reading for the Meetings detail window, preferring structured JSON sidecars and falling back to the app-owned Markdown transcript format
   - publish helpers
   - Whisper model inspection, download, and import logic
 - `MeetingRecorder.ProcessingWorker`
@@ -162,12 +163,16 @@ Responsibilities:
 - let search match title, project, key attendees, and captured attendee names
 - surface cleanup recommendation badges independently from publish status
 - host the one-time historical cleanup review banner and ongoing recommendation block
-- render persisted capture diagnostics in the selected-meeting inspector so finished sessions still show which loopback endpoint was used, when swaps happened, and whether capture fallback or swap-failure events occurred
-- host the selected-meeting inspector, quick-action launchers, and Meetings-tab context menu so manual maintenance actions reuse the same underlying meeting services
-- keep the lower Meetings area focused on compact recommendation review plus the small set of action drafts that still need extra user input
+- keep the Meetings tab itself as a library/work-queue surface with a compact selection command strip instead of a mixed selected-meeting right rail
+- open one reusable owned `MeetingDetailWindow` for a single selected meeting when the user double-clicks a row or chooses `Open Details`
+- render persisted capture diagnostics in the detail window so finished sessions still show which loopback endpoint was used, when swaps happened, and whether capture fallback or swap-failure events occurred
+- route detail-window maintenance events back through `MainWindow` service methods, then refresh the meeting library and open detail state after mutations
+- keep the lower Meetings area focused on collapsible cleanup recommendation review rather than single-meeting metadata and controls
+- render transcript segments in the detail window from local JSON sidecars, with app-owned Markdown fallback when structured JSON is not available
+- reserve an inactive AI-summary placeholder in the detail window; current builds do not generate summaries or call cloud services for summarization
 - rename published meetings and keep stems aligned
 - expose transcript re-generation for failed sessions and audio-only sessions
-- allow project metadata edits for one meeting or a multi-selection without leaving the Meetings workspace
+- allow project metadata edits for one meeting from the detail window
 
 ### Settings-hosted setup
 
@@ -228,7 +233,7 @@ The durable session lifecycle uses these states:
    For single-file app installs, worker discovery prefers the installed app directory derived from `Environment.ProcessPath` instead of the transient `.net` extraction directory behind `AppContext.BaseDirectory`.
 6. The worker loads the manifest, merges audio, and publishes the final WAV.
 7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
-8. If speaker labeling succeeds, transcript artifacts are rendered and published from the labeled segments.
+8. If speaker labeling succeeds, the worker can compute local speaker-cluster embeddings, match them against user-confirmed voice profiles, auto-apply only high-confidence names, and render transcript artifacts from the labeled segments.
 9. If optional speaker labeling crashes the worker process, the queue stamps the manifest with an internal skip-label override, switches future speaker labeling back to `Deferred`, and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
 10. If microphone merging fails while loopback chunks are still readable, source-audio preparation falls back to a loopback-only WAV so transcript publishing can continue. If no usable source audio can be prepared, the processor and queue mark the manifest `Failed` instead of leaving it `Queued` for repeated startup retries.
 11. On startup, the queue also scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
@@ -271,7 +276,7 @@ The processing folder now also carries a fixed `transcription.snapshot.json` sid
 - microphone chunk paths
 - processing overrides
 - whether speaker labeling should be skipped for a repaired or recovered processing run
-- processing metadata such as the transcription model file name used and whether speaker labels were present
+- processing metadata such as the transcription model file name used, whether speaker labels were present, speaker catalog entries, raw diarization turns, and local-only speaker voice samples used for later user-confirmed name learning
 - processing state
 - error summary
 
@@ -279,7 +284,7 @@ The Meetings tab uses the shared filename stem to reconnect published output fil
 If a stale imported-source reprocessing manifest survives for a published stem, the catalog prefers the artifact-backed published row over that queued manifest state so the meeting remains openable and truthful in the UI.
 If the original work manifest is missing but the published audio file still exists, the app can synthesize a new queued manifest in the work folder to support transcript regeneration.
 
-Published transcript JSON sidecars now also persist attendee, project, key-attendee, detected-audio-source, and processing metadata so meeting rows can still recover those details even when the original work manifest is gone.
+Published transcript JSON sidecars now also persist attendee, project, key-attendee, detected-audio-source, and processing metadata so meeting rows can still recover those details even when the original work manifest is gone. Voice-profile embeddings stay out of published transcript JSON and remain in the local work manifest/profile store boundary.
 
 When Outlook appointment matching succeeds, the queue can stamp calendar attendee metadata into the manifest before publish so both the raw attendee list and the curated key-attendee list survive into the published transcript JSON sidecar as durable fallbacks without slowing down the foreground stop action.
 
@@ -589,6 +594,6 @@ The codebase intentionally does not yet provide:
 - bulk retry
 - rich per-session troubleshooting views inside the app
 - automatic cleanup policies for old work folders
-- production-grade speaker identity mapping
+- shared or organization-grade speaker identity mapping beyond local user-taught voice profiles
 
 These remain future enhancements, not hidden assumptions in the current design.

@@ -71,6 +71,8 @@ public partial class MainWindow : Window
     private readonly MeetingRecorderModelCatalogService _meetingRecorderModelCatalogService;
     private readonly MeetingRecorderModelCatalog _bundledModelCatalog;
     private readonly ModelProvisioningService _modelProvisioningService;
+    private readonly VoiceProfileStore _voiceProfileStore;
+    private readonly SpeakerNameLearningService _speakerNameLearningService;
     private readonly ExternalAudioImportService _externalAudioImportService;
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
     private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
@@ -170,6 +172,8 @@ public partial class MainWindow : Window
     private ModelsTabSetupState? _currentSpeakerLabelingSetupState;
     private SettingsHostWindow? _settingsWindow;
     private HelpHostWindow? _helpWindow;
+    private MeetingDetailWindow? _meetingDetailWindow;
+    private string? _openMeetingDetailStem;
     private UIElement? _detachedSettingsBody;
     private ShellStatusState? _shellStatusOverride;
     private ConfigEditorSnapshot? _pendingConfigEditorSnapshotRestore;
@@ -247,6 +251,8 @@ public partial class MainWindow : Window
             _whisperModelReleaseCatalogService,
             _diarizationAssetCatalogService,
             _diarizationAssetReleaseCatalogService);
+        _voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+        _speakerNameLearningService = new SpeakerNameLearningService(_voiceProfileStore);
         _externalAudioImportService = new ExternalAudioImportService(_pathBuilder);
         _autoRecordingContinuityPolicy = new AutoRecordingContinuityPolicy();
         var teamsThirdPartyApiAdapter = new UnavailableTeamsThirdPartyApiAdapter();
@@ -315,6 +321,7 @@ public partial class MainWindow : Window
         UpdateProcessingQueueStatusTimerState();
         _isUiReady = true;
         UpdateMeetingActionState();
+        _ = RefreshVoiceProfileListAsync(_lifetimeCts.Token);
     }
 
     private void AttachSetupSectionsToSettingsHosts()
@@ -1127,6 +1134,7 @@ public partial class MainWindow : Window
         _settingsWindow.NavigateTo(GetSettingsSectionId(section));
         _settingsWindow.SetFooterStatus(ConfigSaveStatusTextBlock.Text);
         UpdateConfigActionState();
+        _ = RefreshVoiceProfileListAsync(_lifetimeCts.Token);
         if (!_settingsWindow.IsVisible)
         {
             _settingsWindow.Show();
@@ -2272,6 +2280,19 @@ public partial class MainWindow : Window
         UpdateSelectedMeetingInspector(MeetingsDataGrid.SelectedItem as MeetingListRow);
         UpdateMergeMeetingsEditor();
         UpdateMeetingCleanupRecommendationsEditor();
+        RefreshOpenMeetingDetailWindow();
+    }
+
+    private void MeetingsDataGrid_OnMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (TryGetMeetingRowFromSender(e.OriginalSource) is { } row)
+        {
+            OpenMeetingDetails(row);
+            e.Handled = true;
+            return;
+        }
+
+        OpenMeetingDetailsForSelection();
     }
 
     private void ExpandAllMeetingGroupsButton_OnClick(object sender, RoutedEventArgs e)
@@ -2731,14 +2752,22 @@ public partial class MainWindow : Window
 
         try
         {
+            var learningResult = await TryLearnSpeakerNamesFromCorrectionsAsync(
+                selectedMeeting.Source,
+                labelMap,
+                _lifetimeCts.Token);
+
             await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(
                 selectedMeeting.Source,
                 labelMap,
                 _lifetimeCts.Token);
 
             UpdateSelectedMeetingEditor(selectedMeeting);
-            SpeakerNamesStatusTextBlock.Text = $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'.";
+            SpeakerNamesStatusTextBlock.Text =
+                $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'." +
+                FormatSpeakerNameLearningStatus(learningResult);
             AppendActivity($"Updated speaker labels for '{selectedMeeting.Title}'.");
+            await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
         }
         catch (Exception exception)
         {
@@ -2993,6 +3022,12 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
+                SpeakerNameLearningMode = ConfigSpeakerNameLearningCheckBox.IsChecked == true
+                    ? SpeakerNameLearningMode.LocalAutoLearn
+                    : SpeakerNameLearningMode.Disabled,
+                SpeakerNameAutoApplyConfidenceThreshold = currentConfig.SpeakerNameAutoApplyConfidenceThreshold,
+                SpeakerNameSuggestionConfidenceThreshold = currentConfig.SpeakerNameSuggestionConfidenceThreshold,
+                SpeakerNameMatchMarginThreshold = currentConfig.SpeakerNameMatchMarginThreshold,
                 LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
                 InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
                 InstalledReleasePublishedAtUtc = currentConfig.InstalledReleasePublishedAtUtc,
@@ -4226,6 +4261,7 @@ public partial class MainWindow : Window
         MeetingsDataGrid.ItemsSource = _allMeetingRows;
         ApplyMeetingsWorkspaceView(selectedStems, preserveEditorDrafts);
         UpdateProcessingQueueStatusUi();
+        RefreshOpenMeetingDetailWindow();
     }
 
     private MeetingListRow[] BuildMeetingRows(
@@ -4765,8 +4801,8 @@ public partial class MainWindow : Window
         var inspectorState = MainWindowInteractionLogic.BuildMeetingInspectorState(row.Source, row.Recommendations);
         var selectedCount = GetSelectedMeetingRows().Length;
         MeetingWorkspaceStatusTextBlock.Text = selectedCount <= 1
-            ? $"Focused on '{row.Title}'. Open artifacts directly or reveal compact tools below when you need deeper edits."
-            : $"{selectedCount} meetings selected. Bulk actions stay available in the context menu and the compact drafts below.";
+            ? $"Selected '{row.Title}'. Open Details for transcript review and focused maintenance."
+            : $"{selectedCount} meetings selected. Bulk actions stay available from the meeting list context menu.";
         var asapInspectorText = IsMeetingMarkedAsap(row)
             ? " This meeting is marked ASAP in the processing queue."
             : string.Empty;
@@ -4792,15 +4828,463 @@ public partial class MainWindow : Window
             : string.Empty;
     }
 
-    private void UpdateMeetingProjectEditor(IReadOnlyList<MeetingListRow> selectedMeetings, bool preserveDraftInputs = false)
+    private void OpenMeetingDetailsForSelection()
     {
-        var recentProjects = _allMeetingRows
+        var selectedMeetings = GetSelectedMeetingRows();
+        if (selectedMeetings.Length != 1)
+        {
+            MeetingWorkspaceStatusTextBlock.Text = selectedMeetings.Length == 0
+                ? "Select one meeting before opening details."
+                : "Open Details works with one meeting at a time. Reduce the selection to one meeting first.";
+            return;
+        }
+
+        OpenMeetingDetails(selectedMeetings[0]);
+    }
+
+    private void OpenMeetingDetails(MeetingListRow row)
+    {
+        _openMeetingDetailStem = row.Source.Stem;
+        if (_meetingDetailWindow is null)
+        {
+            _meetingDetailWindow = new MeetingDetailWindow
+            {
+                Owner = this,
+            };
+            _meetingDetailWindow.Closed += (_, _) =>
+            {
+                _meetingDetailWindow = null;
+                _openMeetingDetailStem = null;
+            };
+            _meetingDetailWindow.OpenTranscriptRequested += (_, _) => OpenMeetingDetailTranscript();
+            _meetingDetailWindow.OpenAudioRequested += (_, _) => OpenMeetingDetailAudio();
+            _meetingDetailWindow.OpenFolderRequested += (_, _) => OpenMeetingDetailFolder();
+            _meetingDetailWindow.RenameRequested += async (_, args) => await RenameOpenMeetingDetailAsync(args.Text);
+            _meetingDetailWindow.SuggestTitleRequested += async (_, _) => await SuggestOpenMeetingDetailTitleAsync();
+            _meetingDetailWindow.ApplyProjectRequested += async (_, args) => await UpdateOpenMeetingDetailProjectAsync(args.Text, clearProject: false);
+            _meetingDetailWindow.ClearProjectRequested += async (_, _) => await UpdateOpenMeetingDetailProjectAsync(projectName: null, clearProject: true);
+            _meetingDetailWindow.RetryTranscriptRequested += async (_, _) => await RetryOpenMeetingDetailTranscriptAsync();
+            _meetingDetailWindow.ReTranscribeRequested += (_, _) => OpenMeetingDetailTranscriptionSetup();
+            _meetingDetailWindow.AddSpeakerLabelsRequested += async (_, _) => await AddSpeakerLabelsForOpenMeetingDetailAsync();
+            _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
+            _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
+            _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
+            _meetingDetailWindow.ArchiveRequested += async (_, _) => await ArchiveOpenMeetingDetailAsync();
+            _meetingDetailWindow.DeleteRequested += async (_, _) => await DeleteOpenMeetingDetailAsync();
+        }
+
+        ApplyMeetingDetailWindowState(row);
+        _meetingDetailWindow.Show();
+        _meetingDetailWindow.Activate();
+    }
+
+    private void RefreshOpenMeetingDetailWindow()
+    {
+        if (_meetingDetailWindow is null || string.IsNullOrWhiteSpace(_openMeetingDetailStem))
+        {
+            return;
+        }
+
+        var row = FindMeetingRowByStem(_openMeetingDetailStem);
+        if (row is null)
+        {
+            _meetingDetailWindow.SetMaintenanceStatus("This meeting is no longer in the current library view.");
+            return;
+        }
+
+        ApplyMeetingDetailWindowState(row);
+    }
+
+    private void ApplyMeetingDetailWindowState(MeetingListRow row)
+    {
+        if (_meetingDetailWindow is null)
+        {
+            return;
+        }
+
+        var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
+        var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            row.Source,
+            row.Recommendations,
+            transcript,
+            row.CanOpenAudioArtifact,
+            row.CanOpenTranscriptArtifact,
+            row.CanRegenerateTranscript,
+            CanQueueSpeakerLabelsForMeeting(row),
+            CanChangeRushProcessing(row),
+            IsMeetingMarkedAsap(row));
+        var speakerRows = _meetingOutputCatalogService
+            .ListSpeakerLabels(row.Source)
+            .Select(label => new MeetingDetailSpeakerLabelEditorRow(label))
+            .ToArray();
+
+        _meetingDetailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+        _meetingDetailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
+    }
+
+    private MeetingListRow? GetOpenMeetingDetailRow()
+    {
+        return string.IsNullOrWhiteSpace(_openMeetingDetailStem)
+            ? null
+            : FindMeetingRowByStem(_openMeetingDetailStem);
+    }
+
+    private MeetingListRow? FindMeetingRowByStem(string? stem)
+    {
+        return string.IsNullOrWhiteSpace(stem)
+            ? null
+            : _allMeetingRows.FirstOrDefault(row =>
+                string.Equals(row.Source.Stem, stem, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string[] GetRecentMeetingProjectNames()
+    {
+        return _allMeetingRows
             .Select(row => row.Source.ProjectName)
             .Where(projectName => !string.IsNullOrWhiteSpace(projectName))
             .Select(projectName => projectName!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(projectName => projectName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private void OpenMeetingDetailTranscript()
+    {
+        if (GetOpenMeetingDetailRow() is { } row)
+        {
+            OpenPath(row.PrimaryTranscriptPath ?? string.Empty);
+        }
+    }
+
+    private void OpenMeetingDetailAudio()
+    {
+        if (GetOpenMeetingDetailRow() is { } row)
+        {
+            OpenPath(row.Source.AudioPath ?? string.Empty);
+        }
+    }
+
+    private void OpenMeetingDetailFolder()
+    {
+        if (GetOpenMeetingDetailRow() is { } row)
+        {
+            OpenContainingFolder(GetPreferredMeetingFolderPath(row));
+        }
+    }
+
+    private async Task RenameOpenMeetingDetailAsync(string newTitle)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(newTitle))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Enter a meeting title before renaming.");
+            return;
+        }
+
+        _isRenamingMeeting = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Renaming '{row.Title}'...");
+        try
+        {
+            var renamed = await _meetingOutputCatalogService.RenameMeetingAsync(
+                _liveConfig.Current.AudioOutputDir,
+                _liveConfig.Current.TranscriptOutputDir,
+                row.Source.Stem,
+                newTitle,
+                _liveConfig.Current.WorkDir,
+                _lifetimeCts.Token);
+            _openMeetingDetailStem = renamed.Stem;
+            await RefreshMeetingListAsync(renamed.Stem);
+            _meetingDetailWindow?.SetMaintenanceStatus($"Renamed meeting to '{renamed.Title}'.");
+            AppendActivity($"Renamed published meeting '{row.Title}' to '{renamed.Title}'.");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Rename failed: {exception.Message}");
+            AppendActivity($"Failed to rename published meeting: {exception.Message}");
+        }
+        finally
+        {
+            _isRenamingMeeting = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task SuggestOpenMeetingDetailTitleAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        _isSuggestingMeetingTitle = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Looking for a better title for '{row.Title}'...");
+        try
+        {
+            var suggestion = await TryGetMeetingTitleSuggestionAsync(row, _lifetimeCts.Token);
+            if (suggestion is null)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus($"No better Outlook or Teams title history match was found for '{row.Title}'.");
+                return;
+            }
+
+            _meetingDetailWindow?.SetTitleDraft(
+                suggestion.Title,
+                $"Suggested '{suggestion.Title}' from {suggestion.Source}. Review it, then click Rename.");
+            AppendActivity($"Suggested title '{suggestion.Title}' from {suggestion.Source} for '{row.Title}'.");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Unable to suggest a title: {exception.Message}");
+            AppendActivity($"Failed to suggest a meeting title: {exception.Message}");
+        }
+        finally
+        {
+            _isSuggestingMeetingTitle = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task UpdateOpenMeetingDetailProjectAsync(string? projectName, bool clearProject)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        var normalizedProjectName = clearProject ? null : projectName?.Trim();
+        if (!clearProject && string.IsNullOrWhiteSpace(normalizedProjectName))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Enter a project name, or use Clear Project.");
+            return;
+        }
+
+        _isUpdatingMeetingProject = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus(clearProject
+            ? $"Clearing project metadata for '{row.Title}'..."
+            : $"Applying project '{normalizedProjectName}' to '{row.Title}'...");
+        try
+        {
+            await _meetingOutputCatalogService.UpdateMeetingProjectAsync(
+                _liveConfig.Current.AudioOutputDir,
+                _liveConfig.Current.TranscriptOutputDir,
+                row.Source.Stem,
+                normalizedProjectName,
+                _liveConfig.Current.WorkDir,
+                _lifetimeCts.Token);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            _meetingDetailWindow?.SetMaintenanceStatus(clearProject
+                ? "Cleared project metadata."
+                : $"Applied project '{normalizedProjectName}'.");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Project update failed: {exception.Message}");
+            AppendActivity($"Meeting project update failed: {exception.Message}");
+        }
+        finally
+        {
+            _isUpdatingMeetingProject = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task RetryOpenMeetingDetailTranscriptAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || !row.CanRegenerateTranscript)
+        {
+            return;
+        }
+
+        _isRetryingMeeting = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Queueing transcript re-generation for '{row.Title}'...");
+        try
+        {
+            await QueueTranscriptRegenerationAsync(row.Source, _lifetimeCts.Token);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            _meetingDetailWindow?.SetMaintenanceStatus("Transcript re-generation is queued.");
+            AppendActivity($"Re-generated transcript requested for '{row.Title}'.");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Failed to re-generate transcript: {exception.Message}");
+            AppendActivity($"Failed to re-generate transcript: {exception.Message}");
+        }
+        finally
+        {
+            _isRetryingMeeting = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private void OpenMeetingDetailTranscriptionSetup()
+    {
+        OpenSetupWindow(
+            SetupWindowSection.Transcription,
+            SettingsTranscriptionSetupSectionBorder,
+            _currentTranscriptionSetupState,
+            ModelActionStatusTextBlock);
+        AppendActivity("Open Setup to choose a different Whisper model, then re-generate the transcript for the focused meeting.");
+    }
+
+    private async Task AddSpeakerLabelsForOpenMeetingDetailAsync()
+    {
+        if (GetOpenMeetingDetailRow() is { } row)
+        {
+            await QueueSpeakerLabelsForMeetingsAsync([row], "detail-speaker-labels");
+            _meetingDetailWindow?.SetMaintenanceStatus("Speaker labeling is queued.");
+        }
+    }
+
+    private async Task UpdateRushProcessingForOpenMeetingDetailAsync()
+    {
+        if (GetOpenMeetingDetailRow() is not { } row)
+        {
+            return;
+        }
+
+        SelectMeetingsByStem([row.Source.Stem]);
+        await UpdateRushProcessingForSelectionAsync(this);
+        RefreshOpenMeetingDetailWindow();
+    }
+
+    private async Task SplitOpenMeetingDetailAsync(string splitPointText)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        if (!MainWindowInteractionLogic.TryParseMeetingSplitPoint(
+                splitPointText,
+                row.Source.Duration,
+                out var splitPoint,
+                out var errorMessage))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus(errorMessage);
+            return;
+        }
+
+        _isSplittingMeeting = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Splitting '{row.Title}' at {MainWindowInteractionLogic.FormatMeetingSplitPoint(splitPoint)}...");
+        try
+        {
+            var splitResult = await QueueSplitMeetingAsync(row.Source, splitPoint, _lifetimeCts.Token);
+            await RefreshMeetingListAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus(
+                $"Queued '{splitResult.FirstTitle}' and '{splitResult.SecondTitle}'. They will appear after processing finishes.");
+            AppendActivity($"Queued split meetings '{splitResult.FirstTitle}' and '{splitResult.SecondTitle}' from '{row.Title}'.");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Split failed: {exception.Message}");
+            AppendActivity($"Failed to split selected meeting: {exception.Message}");
+        }
+        finally
+        {
+            _isSplittingMeeting = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task ApplyOpenMeetingDetailSpeakerNamesAsync(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        var labelMap = MainWindowInteractionLogic.BuildSpeakerLabelMap(
+            rows.Select(labelRow => new SpeakerLabelDraft(labelRow.OriginalLabel, labelRow.EditedLabel)));
+        if (labelMap.Count == 0)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("No speaker name changes are pending.");
+            return;
+        }
+
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus("Applying speaker name changes...");
+        try
+        {
+            var learningResult = await TryLearnSpeakerNamesFromCorrectionsAsync(row.Source, labelMap, _lifetimeCts.Token);
+            await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(row.Source, labelMap, _lifetimeCts.Token);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            _meetingDetailWindow?.SetMaintenanceStatus(
+                $"Updated {labelMap.Count} speaker label(s)." + FormatSpeakerNameLearningStatus(learningResult));
+            AppendActivity($"Updated speaker labels for '{row.Title}'.");
+            await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Failed to update speaker labels: {exception.Message}");
+            AppendActivity($"Failed to update speaker labels: {exception.Message}");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task ArchiveOpenMeetingDetailAsync()
+    {
+        if (GetOpenMeetingDetailRow() is { } row)
+        {
+            await ArchiveMeetingsAsync([row], "detail-archive");
+            _meetingDetailWindow?.SetMaintenanceStatus($"Archived '{row.Title}'.");
+        }
+    }
+
+    private async Task DeleteOpenMeetingDetailAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || !TryConfirmPermanentDelete([row]))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Permanent delete cancelled.");
+            return;
+        }
+
+        _isDeletingMeetings = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Deleting '{row.Title}' permanently...");
+        try
+        {
+            await _meetingCleanupExecutionService.DeleteMeetingPermanentlyAsync(row.Source, _lifetimeCts.Token);
+            AppendActivity($"Permanently deleted published meeting '{row.Title}'.");
+            _openMeetingDetailStem = null;
+            await RefreshMeetingListAsync();
+            _meetingDetailWindow?.Close();
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Permanent delete failed: {exception.Message}");
+            AppendActivity($"Permanent delete failed: {exception.Message}");
+        }
+        finally
+        {
+            _isDeletingMeetings = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private void UpdateMeetingProjectEditor(IReadOnlyList<MeetingListRow> selectedMeetings, bool preserveDraftInputs = false)
+    {
+        var recentProjects = GetRecentMeetingProjectNames();
         SelectedMeetingProjectComboBox.ItemsSource = recentProjects;
 
         if (selectedMeetings.Count == 0)
@@ -5062,7 +5546,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var labels = _meetingOutputCatalogService.ListSpeakerLabels(row.Source);
+        var labels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
         var labelRows = labels
             .Select(label => new SpeakerLabelEditorRow(label, UpdateMeetingActionState))
             .ToArray();
@@ -5101,10 +5585,26 @@ public partial class MainWindow : Window
             selectedMeetings.Length,
             hasSpeakerLabels,
             visibleCleanupRecommendationRows);
+        var selectionCommandState = MainWindowInteractionLogic.BuildMeetingSelectionCommandState(
+            selectedMeetings.Length,
+            singleSelectedMeeting is not null,
+            singleSelectedMeeting?.CanOpenAudioArtifact == true,
+            singleSelectedMeeting?.CanOpenTranscriptArtifact == true,
+            visibleCleanupRecommendationRows,
+            isMeetingActionInProgress);
 
         RefreshMeetingsButton.Content = Volatile.Read(ref _meetingBaselineRefreshOperations) > 0
             ? "Refreshing..."
             : "Refresh List";
+        MeetingSelectionSummaryTextBlock.Text = selectionCommandState.SummaryText;
+        MeetingSelectionBulkHintTextBlock.Visibility = selectionCommandState.ShowBulkMeetingCommands
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        OpenMeetingDetailsButton.IsEnabled = selectionCommandState.CanOpenDetails;
+        OpenSelectedTranscriptLibraryButton.IsEnabled = selectionCommandState.CanOpenTranscript;
+        OpenSelectedAudioLibraryButton.IsEnabled = selectionCommandState.CanOpenAudio;
+        OpenSelectedFolderLibraryButton.IsEnabled = selectionCommandState.CanOpenContainingFolder;
+        ReviewCleanupSuggestionsLibraryButton.IsEnabled = selectionCommandState.CanReviewCleanup;
         RenameSelectedMeetingButton.Content = _isRenamingMeeting ? "Renaming..." : "Rename Meeting";
         ApplySpeakerNamesButton.Content = _isApplyingSpeakerNames ? "Applying..." : "Apply Speaker Names";
         SplitSelectedMeetingButton.Content = _isSplittingMeeting ? "Splitting..." : "Split Into Two";
@@ -5122,7 +5622,8 @@ public partial class MainWindow : Window
             ? "Applying..."
             : "Apply Safe Fixes";
         LegacyMeetingCleanupReviewBorder.Visibility = workspaceToolState.ShowCleanupTray ? Visibility.Visible : Visibility.Collapsed;
-        LegacyMeetingActionDraftsBorder.Visibility = workspaceToolState.ShowWorkspaceTools ? Visibility.Visible : Visibility.Collapsed;
+        LegacyMeetingActionDraftsBorder.Visibility = Visibility.Collapsed;
+        LegacyMeetingActionDraftsExpander.IsExpanded = false;
         MeetingProjectToolCard.Visibility = workspaceToolState.ShowProjectTool ? Visibility.Visible : Visibility.Collapsed;
         SingleMeetingActionsHeadingTextBlock.Visibility = workspaceToolState.ShowSingleMeetingActions ? Visibility.Visible : Visibility.Collapsed;
         MultiMeetingActionsHeadingTextBlock.Visibility = workspaceToolState.ShowMultiMeetingActions ? Visibility.Visible : Visibility.Collapsed;
@@ -5192,6 +5693,7 @@ public partial class MainWindow : Window
             MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations).Count > 0 &&
             !isMeetingActionInProgress;
         ReviewMeetingCleanupSuggestionsButton.IsEnabled = !isMeetingActionInProgress;
+        _meetingDetailWindow?.SetMaintenanceBusy(isMeetingActionInProgress);
         UpdateMeetingsContextMenuState();
     }
 
@@ -5283,6 +5785,7 @@ public partial class MainWindow : Window
         ConfigTranscriptionStorageTextBlock.Text = config.TranscriptionModelPath;
         ConfigSpeakerLabelingStorageTextBlock.Text = config.DiarizationAssetPath;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
+        ConfigSpeakerNameLearningCheckBox.IsChecked = config.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn;
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
         ConfigMeetingStopTimeoutTextBox.Text = config.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigMicCaptureCheckBox.IsChecked = config.MicCaptureEnabled;
@@ -5352,6 +5855,7 @@ public partial class MainWindow : Window
                  {
                      ConfigMicCaptureCheckBox,
                      ConfigDiarizationGpuAccelerationCheckBox,
+                     ConfigSpeakerNameLearningCheckBox,
                      ConfigLaunchOnLoginCheckBox,
                      ConfigAutoDetectCheckBox,
                      ConfigCalendarTitleFallbackCheckBox,
@@ -5405,6 +5909,103 @@ public partial class MainWindow : Window
         _settingsWindow?.SetFooterStatus(statusText);
     }
 
+    private async void RefreshVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
+    }
+
+    private async void DisableSelectedVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileListRow selectedProfile)
+        {
+            VoiceProfilesStatusTextBlock.Text = "Select a voice profile first.";
+            return;
+        }
+
+        await _voiceProfileStore.UpdateAsync(
+            document => document with
+            {
+                Profiles = document.Profiles
+                    .Select(profile => string.Equals(profile.ProfileId, selectedProfile.ProfileId, StringComparison.Ordinal)
+                        ? profile with
+                        {
+                            Status = profile.Status == VoiceProfileStatus.Active
+                                ? VoiceProfileStatus.Disabled
+                                : VoiceProfileStatus.Active,
+                        }
+                        : profile)
+                    .ToArray(),
+            },
+            _lifetimeCts.Token);
+        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
+    }
+
+    private async void DeleteSelectedVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileListRow selectedProfile)
+        {
+            VoiceProfilesStatusTextBlock.Text = "Select a voice profile first.";
+            return;
+        }
+
+        var confirmation = MessageBox.Show(
+            this,
+            $"Delete the local voice profile for '{selectedProfile.DisplayName}'?",
+            "Delete Voice Profile",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirmation != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await _voiceProfileStore.UpdateAsync(
+            document => document with
+            {
+                Profiles = document.Profiles
+                    .Where(profile => !string.Equals(profile.ProfileId, selectedProfile.ProfileId, StringComparison.Ordinal))
+                    .ToArray(),
+            },
+            _lifetimeCts.Token);
+        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
+    }
+
+    private async void DeleteAllVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var confirmation = MessageBox.Show(
+            this,
+            "Delete all local voice profiles? Future meetings will stay anonymous until you teach names again.",
+            "Delete All Voice Profiles",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirmation != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await _voiceProfileStore.DeleteAllAsync(_lifetimeCts.Token);
+        await RefreshVoiceProfileListAsync(_lifetimeCts.Token);
+    }
+
+    private async Task RefreshVoiceProfileListAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var document = await _voiceProfileStore.LoadOrCreateAsync(cancellationToken);
+            var rows = document.Profiles
+                .Select(profile => new VoiceProfileListRow(profile))
+                .ToArray();
+            VoiceProfilesDataGrid.ItemsSource = rows;
+            VoiceProfilesStatusTextBlock.Text = rows.Length == 0
+                ? "No local voice profiles have been learned yet."
+                : $"Loaded {rows.Length} local voice profile(s). Profiles stay on this PC.";
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            VoiceProfilesStatusTextBlock.Text = $"Could not load voice profiles: {exception.Message}";
+        }
+    }
+
     private ConfigEditorSnapshot ReadConfigEditorSnapshot()
     {
         return new ConfigEditorSnapshot(
@@ -5412,6 +6013,7 @@ public partial class MainWindow : Window
             ConfigTranscriptOutputDirTextBox.Text,
             ConfigWorkDirTextBox.Text,
             false,
+            ConfigSpeakerNameLearningCheckBox.IsChecked == true,
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
             ConfigMicCaptureCheckBox.IsChecked == true,
@@ -5439,6 +6041,7 @@ public partial class MainWindow : Window
         ConfigTranscriptOutputDirTextBox.Text = snapshot.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = snapshot.WorkDir;
         ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
+        ConfigSpeakerNameLearningCheckBox.IsChecked = snapshot.SpeakerNameLearningEnabled;
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
         ConfigMicCaptureCheckBox.IsChecked = snapshot.MicCaptureEnabled;
@@ -5488,6 +6091,45 @@ public partial class MainWindow : Window
             ConfigBackgroundSpeakerLabelingModeHelpTextBlock.Text =
                 MainWindowInteractionLogic.BuildSpeakerLabelingModeHelpText(speakerLabelingMode);
         }
+    }
+
+    private async Task<SpeakerNameLearningResult?> TryLearnSpeakerNamesFromCorrectionsAsync(
+        MeetingOutputRecord meeting,
+        IReadOnlyDictionary<string, string> labelMap,
+        CancellationToken cancellationToken)
+    {
+        if (_liveConfig.Current.SpeakerNameLearningMode == SpeakerNameLearningMode.Disabled ||
+            string.IsNullOrWhiteSpace(meeting.ManifestPath) ||
+            !File.Exists(meeting.ManifestPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(meeting.ManifestPath, cancellationToken);
+            return await _speakerNameLearningService.LearnFromCorrectionsAsync(
+                manifest,
+                labelMap,
+                _liveConfig.Current.SpeakerNameLearningMode,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Speaker name learning skipped for '{meeting.ManifestPath}': {exception}");
+            return null;
+        }
+    }
+
+    private static string FormatSpeakerNameLearningStatus(SpeakerNameLearningResult? result)
+    {
+        if (result is null || result.CreatedCount + result.UpdatedCount == 0)
+        {
+            return string.Empty;
+        }
+
+        return $" Learned {result.CreatedCount} new voice profile(s) and updated {result.UpdatedCount}.";
     }
 
     private void UpdateBackgroundProcessingModeHelpText(BackgroundProcessingMode mode)
@@ -8734,11 +9376,13 @@ public partial class MainWindow : Window
             isSelectedMeetingAsap,
             IsMeetingActionInProgress());
 
+        OpenMeetingDetailsMenuItem.IsEnabled = contextState.ShowSingleMeetingActionGroup && !IsMeetingActionInProgress();
         OpenMeetingTranscriptMenuItem.IsEnabled = contextState.CanOpenTranscript;
         OpenMeetingAudioMenuItem.IsEnabled = contextState.CanOpenAudio;
         OpenMeetingContainingFolderMenuItem.IsEnabled = contextState.CanOpenContainingFolder;
         CopyMeetingTranscriptPathMenuItem.IsEnabled = contextState.CanCopyTranscriptPath;
         CopyMeetingAudioPathMenuItem.IsEnabled = contextState.CanCopyAudioPath;
+        OpenMeetingDetailsMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         OpenMeetingTranscriptMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         OpenMeetingAudioMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         OpenMeetingContainingFolderMenuItem.Visibility = contextState.ShowSingleMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
@@ -8784,6 +9428,23 @@ public partial class MainWindow : Window
         DeleteSelectedMeetingsPermanentlyMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void OpenMeetingDetailsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenMeetingDetailsForSelection();
+    }
+
+    private void OpenMeetingDetailsMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        var targetMeetings = GetMeetingRowsForContextMenuAction(sender);
+        if (targetMeetings.Length == 1)
+        {
+            OpenMeetingDetails(targetMeetings[0]);
+            return;
+        }
+
+        OpenMeetingDetailsForSelection();
+    }
+
     private void OpenMeetingTranscriptMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
         if (MeetingsDataGrid.SelectedItem is MeetingListRow row)
@@ -8805,6 +9466,15 @@ public partial class MainWindow : Window
         if (MeetingsDataGrid.SelectedItem is MeetingListRow row)
         {
             OpenContainingFolder(GetPreferredMeetingFolderPath(row));
+        }
+    }
+
+    private void OpenSelectedFolderLibraryButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var selectedMeetings = GetSelectedMeetingRows();
+        if (selectedMeetings.Length == 1)
+        {
+            OpenContainingFolder(GetPreferredMeetingFolderPath(selectedMeetings[0]));
         }
     }
 
@@ -8836,11 +9506,14 @@ public partial class MainWindow : Window
 
     private void RenameMeetingContextMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
-        LegacyMeetingActionDraftsBorder.Visibility = Visibility.Visible;
-        LegacyMeetingActionDraftsExpander.IsExpanded = true;
-        SelectedMeetingTitleTextBox.Focus();
-        SelectedMeetingTitleTextBox.SelectAll();
-        SelectedMeetingStatusTextBlock.Text = "Edit the meeting title, then click Rename Meeting to apply it.";
+        var targetMeetings = GetMeetingRowsForContextMenuAction(sender);
+        if (targetMeetings.Length == 1)
+        {
+            OpenMeetingDetails(targetMeetings[0]);
+            _meetingDetailWindow?.SetTitleDraft(
+                targetMeetings[0].Title,
+                "Edit the meeting title, then click Rename to apply it.");
+        }
     }
 
     private async void SuggestMeetingTitleContextMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -8883,11 +9556,12 @@ public partial class MainWindow : Window
 
     private void SplitMeetingContextMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
-        LegacyMeetingActionDraftsBorder.Visibility = Visibility.Visible;
-        LegacyMeetingActionDraftsExpander.IsExpanded = true;
-        SplitSelectedMeetingPointTextBox.Focus();
-        SplitSelectedMeetingPointTextBox.SelectAll();
-        SplitSelectedMeetingStatusTextBlock.Text = "Choose a split point, then click Split Into Two.";
+        var targetMeetings = GetMeetingRowsForContextMenuAction(sender);
+        if (targetMeetings.Length == 1)
+        {
+            OpenMeetingDetails(targetMeetings[0]);
+            _meetingDetailWindow?.SetMaintenanceStatus("Choose a split point, then click Split.");
+        }
     }
 
     private async void ArchiveMeetingContextMenuItem_OnClick(object sender, RoutedEventArgs e)
@@ -8921,8 +9595,6 @@ public partial class MainWindow : Window
 
     private async void MergeSelectedMeetingsContextMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
-        LegacyMeetingActionDraftsBorder.Visibility = Visibility.Visible;
-        LegacyMeetingActionDraftsExpander.IsExpanded = true;
         MergeSelectedMeetingsButton_OnClick(sender, e);
         await Task.CompletedTask;
     }
@@ -10167,14 +10839,17 @@ public partial class MainWindow : Window
         private readonly Action _onEditedLabelChanged;
         private string _editedLabel;
 
-        public SpeakerLabelEditorRow(string originalLabel, Action onEditedLabelChanged)
+        public SpeakerLabelEditorRow(SpeakerLabelInfo label, Action onEditedLabelChanged)
         {
-            OriginalLabel = originalLabel;
-            _editedLabel = originalLabel;
+            OriginalLabel = label.DisplayName;
+            _editedLabel = label.DisplayName;
+            Provenance = BuildProvenanceText(label);
             _onEditedLabelChanged = onEditedLabelChanged;
         }
 
         public string OriginalLabel { get; }
+
+        public string Provenance { get; }
 
         public string EditedLabel
         {
@@ -10190,5 +10865,47 @@ public partial class MainWindow : Window
                 _onEditedLabelChanged();
             }
         }
+
+        private static string BuildProvenanceText(SpeakerLabelInfo label)
+        {
+            var confidenceText = label.Confidence.HasValue
+                ? $"{label.Confidence.Value:P0}"
+                : null;
+
+            return label.NameSource switch
+            {
+                SpeakerNameSource.AutoAppliedVoiceProfile when !string.IsNullOrWhiteSpace(confidenceText) =>
+                    $"Auto-applied from local voice profile, {confidenceText}.",
+                SpeakerNameSource.SuggestedVoiceProfile when !string.IsNullOrWhiteSpace(label.SuggestedDisplayName) &&
+                                                            !string.IsNullOrWhiteSpace(confidenceText) =>
+                    $"Suggested: {label.SuggestedDisplayName}, {confidenceText}.",
+                SpeakerNameSource.UserEdited => "User confirmed.",
+                _ => string.Empty,
+            };
+        }
+    }
+
+    private sealed class VoiceProfileListRow
+    {
+        public VoiceProfileListRow(VoiceProfile profile)
+        {
+            ProfileId = profile.ProfileId;
+            DisplayName = profile.DisplayName;
+            SampleCount = profile.SampleCount;
+            LastMatchedText = profile.LastMatchedAtUtc.HasValue
+                ? profile.LastMatchedAtUtc.Value.LocalDateTime.ToString("g", CultureInfo.CurrentCulture)
+                : "Never";
+            Status = profile.Status.ToString();
+        }
+
+        public string ProfileId { get; }
+
+        public string DisplayName { get; }
+
+        public int SampleCount { get; }
+
+        public string LastMatchedText { get; }
+
+        public string Status { get; }
     }
 }

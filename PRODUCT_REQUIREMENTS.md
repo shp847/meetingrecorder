@@ -43,9 +43,9 @@ The current app uses a task-first shell with two primary destinations plus dedic
   - published meetings workspace derived from current outputs plus retained metadata
   - search, view, sort, direction, and grouped browsing controls
   - grouped browsing by week, month, platform, or status
-  - selected-meeting inspector with metadata, attendees, model details, speaker-label state, recommendations, and quick actions
-  - cleanup recommendation review area with safe-fix flows
-  - compact action drafts for project edits, rename, transcript retry, split, merge, and speaker-label maintenance
+  - full-width meeting library with a compact selection command strip for `Open Details`, artifacts, containing folder, and cleanup review
+  - separate owned meeting detail window with local transcript reading, metadata, attendees, model details, speaker-label state, recommendations, and focused maintenance actions
+  - cleanup recommendation review area with safe-fix flows that stays separate from single-meeting details
   - per-meeting and multi-selection maintenance actions such as open artifact, rename, re-transcribe, add speaker labels, archive, and delete permanently
 - `Setup`
   - dedicated guided window launched from `Home` and related actions
@@ -102,7 +102,7 @@ The product family also includes installer and update surfaces:
 - Optional diarization with post-publish speaker-label editing
 - Whisper model download, import, selection, validation, and fallback handling from the guided Setup flow
 - Stable published `.wav`, `.md`, `.json`, and `.ready` outputs
-- Meetings workspace with search, sort, group, inspector, quick actions, and focused action drafts
+- Meetings workspace with search, sort, group, selection command strip, cleanup review, and a separate meeting detail window
 - Meeting cleanup recommendations and archive-first safe-fix flows
 - Meeting rename, transcript retry, re-transcribe-with-model, merge, split, archive, and permanent delete actions
 - Optional project metadata editing
@@ -120,7 +120,7 @@ The product family also includes installer and update surfaces:
 - Full calendar-native scheduling or calendar-management workflow
 - Required browser extension integration
 - Required cloud services
-- In-app summarization or meeting note generation
+- Generated AI summaries or meeting note generation; the detail window may reserve inactive space for future AI summaries
 - Cross-device sync or shared-account collaboration features
 
 ## 6. Functional Requirements
@@ -218,11 +218,14 @@ The product family also includes installer and update surfaces:
 - The workspace must expose direct links to published audio and transcript artifacts.
 - The workspace must support search, explicit sorting, and grouped browsing.
 - The workspace should support grouping by week, month, platform, or status without changing the underlying meeting source.
-- The selected-meeting inspector must show the key metadata needed for follow-up work, including timing, status, project value, attendee data when available, transcript model, and speaker-label state.
+- Single-meeting reading and maintenance must happen in an owned detail window opened from the Meetings library, not in a long mixed right rail.
+- The detail window must show the key metadata needed for follow-up work, including timing, status, project value, attendee data when available, transcript model, speaker-label state, recommendations, detected audio source, and capture diagnostics.
+- The detail window must render local transcript segments from structured JSON sidecars and fall back to the app-owned Markdown transcript format when possible.
+- The detail window must show an inactive AI-summary placeholder and must not generate summaries in the current scope.
 - Cleanup recommendations must remain separate from publish status and may suggest actions such as archive, rename, retry transcript, merge, split, or add speaker labels.
 - Historical cleanup review and ongoing recommendation flows must remain archive-first and reversible where possible.
 - The workspace must expose `Re-Generate Transcript` for sessions that can be retried from an existing or synthesized work manifest.
-- The workspace must support rename, merge, split, archive, permanent delete, project editing, and speaker-label maintenance without leaving the Meetings surface.
+- The workspace and detail window together must support rename, merge, split, archive, permanent delete, project editing, and speaker-label maintenance without requiring external file editing.
 - The workspace must support multi-selection for the maintenance actions that are safe and meaningful in bulk.
 
 ## 6.9 Configuration and Operational Settings

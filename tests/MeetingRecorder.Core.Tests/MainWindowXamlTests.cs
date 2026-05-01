@@ -459,12 +459,12 @@ public sealed class MainWindowXamlTests
     [Fact]
     public void Meetings_Inspector_Includes_Detected_Audio_Source_Field()
     {
-        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml");
 
         var xaml = File.ReadAllText(xamlPath);
 
         Assert.Contains("Text=\"Detected Audio Source\"", xaml);
-        Assert.Contains("x:Name=\"SelectedMeetingInspectorDetectedAudioSourceTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"DetectedAudioSourceTextBlock\"", xaml);
     }
 
     [Fact]

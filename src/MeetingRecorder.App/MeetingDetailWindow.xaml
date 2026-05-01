@@ -1,0 +1,387 @@
+<Window x:Class="MeetingRecorder.App.MeetingDetailWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Meeting Details"
+        Width="1180"
+        Height="760"
+        MinWidth="960"
+        MinHeight="640"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppCanvasBrush}">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AppPlatform.Shell.Wpf;component/ShellTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock FontSize="12"
+                           Foreground="{StaticResource AppMutedTextBrush}"
+                           Text="Meetings / Detail" />
+                <TextBlock x:Name="MeetingTitleTextBlock"
+                           Margin="0,8,0,0"
+                           FontSize="24"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource AppTextBrush}"
+                           TextWrapping="Wrap" />
+                <TextBlock x:Name="MeetingSubtitleTextBlock"
+                           Margin="0,6,0,0"
+                           FontFamily="{StaticResource AppMonoFontFamily}"
+                           Foreground="{StaticResource AppMutedTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+            <WrapPanel Grid.Column="1"
+                       Margin="16,0,0,0"
+                       VerticalAlignment="Top">
+                <Button x:Name="OpenTranscriptButton"
+                        Margin="0,0,10,10"
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="OpenTranscriptButton_OnClick"
+                        Content="Open Transcript" />
+                <Button x:Name="OpenAudioButton"
+                        Margin="0,0,10,10"
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="OpenAudioButton_OnClick"
+                        Content="Open Audio" />
+                <Button x:Name="OpenFolderButton"
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="OpenFolderButton_OnClick"
+                        Content="Open Folder" />
+            </WrapPanel>
+        </Grid>
+
+        <Grid Grid.Row="1"
+              Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="390" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Column="0"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Border Style="{StaticResource DialogCardStyle}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource DialogSectionTitleStyle}"
+                                       Text="AI Summary" />
+                            <TextBlock x:Name="AiSummaryPlaceholderTextBlock"
+                                       Margin="0,10,0,0"
+                                       Style="{StaticResource DialogBodyTextStyle}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,14,0,0"
+                            Style="{StaticResource DialogCardStyle}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource DialogSectionTitleStyle}"
+                                       Text="Meeting" />
+                            <UniformGrid Margin="0,10,0,0"
+                                         Columns="2">
+                                <StackPanel Margin="0,0,12,10">
+                                    <TextBlock FontWeight="SemiBold" Text="Project" />
+                                    <TextBlock x:Name="ProjectTextBlock"
+                                               Margin="0,4,0,0"
+                                               Style="{StaticResource DialogBodyTextStyle}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock FontWeight="SemiBold" Text="Status" />
+                                    <TextBlock x:Name="StatusTextBlock"
+                                               Margin="0,4,0,0"
+                                               Style="{StaticResource DialogBodyTextStyle}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,12,10">
+                                    <TextBlock FontWeight="SemiBold" Text="Model" />
+                                    <TextBlock x:Name="TranscriptModelTextBlock"
+                                               Margin="0,4,0,0"
+                                               Style="{StaticResource DialogBodyTextStyle}" />
+                                </StackPanel>
+                                <StackPanel Margin="0,0,0,10">
+                                    <TextBlock FontWeight="SemiBold" Text="Speakers" />
+                                    <TextBlock x:Name="SpeakerStateTextBlock"
+                                               Margin="0,4,0,0"
+                                               Style="{StaticResource DialogBodyTextStyle}" />
+                                </StackPanel>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <Expander Margin="0,14,0,0"
+                              Header="Recommendations">
+                        <Border Style="{StaticResource DialogCardStyle}">
+                            <StackPanel>
+                                <ItemsControl x:Name="RecommendationItemsControl">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,8,8"
+                                                    Padding="8,4"
+                                                    CornerRadius="4"
+                                                    Background="{StaticResource AppMutedCardBrush}"
+                                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                                    BorderThickness="1">
+                                                <TextBlock Text="{Binding}" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="NoRecommendationsTextBlock"
+                                           Style="{StaticResource DialogBodyTextStyle}" />
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+
+                    <Expander Margin="0,14,0,0"
+                              Header="Attendees">
+                        <Border Style="{StaticResource DialogCardStyle}">
+                            <StackPanel>
+                                <ItemsControl x:Name="AttendeeItemsControl">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Margin="0,0,0,6"
+                                                       Style="{StaticResource DialogBodyTextStyle}"
+                                                       Text="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="NoAttendeesTextBlock"
+                                           Style="{StaticResource DialogBodyTextStyle}" />
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+
+                    <Expander Margin="0,14,0,0"
+                              Header="Diagnostics">
+                        <Border Style="{StaticResource DialogCardStyle}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Detected Audio Source" />
+                                <TextBlock x:Name="DetectedAudioSourceTextBlock"
+                                           Margin="0,6,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}" />
+                                <TextBlock Margin="0,12,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Capture Diagnostics" />
+                                <TextBlock x:Name="CaptureDiagnosticsTextBlock"
+                                           Margin="0,6,0,0"
+                                           FontFamily="{StaticResource AppMonoFontFamily}"
+                                           Style="{StaticResource DialogBodyTextStyle}"
+                                           xml:space="preserve" />
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+
+                    <Expander x:Name="MaintenanceExpander"
+                              Margin="0,14,0,0"
+                              Header="Maintenance">
+                        <Border Style="{StaticResource DialogCardStyle}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Title" />
+                                <TextBox x:Name="TitleDraftTextBox"
+                                         Margin="0,6,0,0"
+                                         Height="32"
+                                         VerticalContentAlignment="Center" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="RenameButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="RenameButton_OnClick"
+                                            Content="Rename" />
+                                    <Button x:Name="SuggestTitleButton"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="SuggestTitleButton_OnClick"
+                                            Content="Suggest Title" />
+                                </WrapPanel>
+
+                                <TextBlock Margin="0,10,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Project" />
+                                <ComboBox x:Name="ProjectComboBox"
+                                          Margin="0,6,0,0"
+                                          Height="32"
+                                          IsEditable="True"
+                                          IsTextSearchEnabled="False" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="ApplyProjectButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ApplyProjectButton_OnClick"
+                                            Content="Apply Project" />
+                                    <Button x:Name="ClearProjectButton"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ClearProjectButton_OnClick"
+                                            Content="Clear Project" />
+                                </WrapPanel>
+
+                                <TextBlock Margin="0,10,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Transcript Processing" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="RetryTranscriptButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="RetryTranscriptButton_OnClick"
+                                            Content="Retry Transcript" />
+                                    <Button x:Name="ReTranscribeButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ReTranscribeButton_OnClick"
+                                            Content="Choose Model" />
+                                    <Button x:Name="AddSpeakerLabelsButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="AddSpeakerLabelsButton_OnClick"
+                                            Content="Add Speaker Labels" />
+                                    <Button x:Name="ProcessAsapButton"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ProcessAsapButton_OnClick"
+                                            Content="Process ASAP" />
+                                </WrapPanel>
+
+                                <TextBlock Margin="0,10,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Split" />
+                                <TextBox x:Name="SplitPointTextBox"
+                                         Margin="0,6,0,0"
+                                         Height="32"
+                                         VerticalContentAlignment="Center"
+                                         ToolTip="Use mm:ss or hh:mm:ss." />
+                                <Button x:Name="SplitButton"
+                                        Margin="0,10,0,0"
+                                        HorizontalAlignment="Left"
+                                        Style="{StaticResource SecondaryActionButtonStyle}"
+                                        Click="SplitButton_OnClick"
+                                        Content="Split Into Two" />
+
+                                <TextBlock Margin="0,12,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Speaker Names" />
+                                <DataGrid x:Name="SpeakerLabelsDataGrid"
+                                          Margin="0,8,0,0"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          HeadersVisibility="Column"
+                                          RowHeaderWidth="0"
+                                          Height="130">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Current"
+                                                            Binding="{Binding OriginalLabel, Mode=OneWay}"
+                                                            IsReadOnly="True"
+                                                            Width="*" />
+                                        <DataGridTextColumn Header="Display Name"
+                                                            Binding="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                            Width="1.2*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <Button x:Name="ApplySpeakerNamesButton"
+                                        Margin="0,10,0,0"
+                                        HorizontalAlignment="Left"
+                                        Style="{StaticResource SecondaryActionButtonStyle}"
+                                        Click="ApplySpeakerNamesButton_OnClick"
+                                        Content="Apply Speaker Names" />
+
+                                <TextBlock x:Name="MaintenanceStatusTextBlock"
+                                           Margin="0,12,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}" />
+
+                                <WrapPanel Margin="0,14,0,0">
+                                    <Button x:Name="ArchiveButton"
+                                            Margin="0,0,10,10"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ArchiveButton_OnClick"
+                                            Content="Archive" />
+                                    <Button x:Name="DeleteButton"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="DeleteButton_OnClick"
+                                            Content="Delete Permanently" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </Expander>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Column="2"
+                    Style="{StaticResource DialogCardStyle}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="TranscriptSearchTextBox"
+                                 Height="32"
+                                 VerticalContentAlignment="Center"
+                                 TextChanged="TranscriptSearchTextBox_OnTextChanged" />
+                        <TextBlock x:Name="TranscriptStatusTextBlock"
+                                   Grid.Column="1"
+                                   Margin="14,0,0,0"
+                                   VerticalAlignment="Center"
+                                   Style="{StaticResource DialogBodyTextStyle}" />
+                    </Grid>
+
+                    <ListBox x:Name="TranscriptSegmentsListBox"
+                             Grid.Row="1"
+                             Margin="0,14,0,0"
+                             BorderBrush="{StaticResource AppOutlineBrush}"
+                             BorderThickness="1"
+                             Background="{StaticResource AppMutedCardBrush}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="8,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="96" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock FontFamily="{StaticResource AppMonoFontFamily}"
+                                               Foreground="{StaticResource AppSecondaryBrush}"
+                                               Text="{Binding Timestamp}" />
+                                    <TextBlock Grid.Column="1"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding SpeakerLabel}" />
+                                    <TextBlock Grid.Column="2"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding Text}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="2"
+              Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="FooterStatusTextBlock"
+                       VerticalAlignment="Center"
+                       Style="{StaticResource DialogBodyTextStyle}" />
+            <Button Grid.Column="1"
+                    Style="{StaticResource SecondaryActionButtonStyle}"
+                    Click="CloseButton_OnClick"
+                    Content="Close" />
+        </Grid>
+    </Grid>
+</Window>

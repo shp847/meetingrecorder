@@ -7,7 +7,7 @@ public sealed class MeetingWorkspaceRefreshXamlTests
     [Fact]
     public void Meetings_Tab_Includes_Project_Metadata_Controls_And_Group_Expansion_Actions()
     {
-        var xamlPath = Path.GetFullPath(Path.Combine(
+        var mainWindowXamlPath = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..",
             "..",
@@ -17,30 +17,42 @@ public sealed class MeetingWorkspaceRefreshXamlTests
             "src",
             "MeetingRecorder.App",
             "MainWindow.xaml"));
+        var detailWindowXamlPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "MeetingRecorder.App",
+            "MeetingDetailWindow.xaml"));
 
-        var xaml = File.ReadAllText(xamlPath);
+        var mainWindowXaml = File.ReadAllText(mainWindowXamlPath);
+        var detailWindowXaml = File.ReadAllText(detailWindowXamlPath);
 
-        Assert.Contains("x:Name=\"ExpandAllMeetingGroupsButton\"", xaml);
-        Assert.Contains("x:Name=\"CollapseAllMeetingGroupsButton\"", xaml);
-        Assert.Contains("x:Name=\"SelectedMeetingProjectComboBox\"", xaml);
-        Assert.Contains("x:Name=\"ApplyMeetingProjectButton\"", xaml);
-        Assert.Contains("x:Name=\"ClearMeetingProjectButton\"", xaml);
-        Assert.Contains("x:Name=\"SelectedMeetingInspectorProjectTextBlock\"", xaml);
-        Assert.Contains("Header=\"Project\"", xaml);
-        Assert.Contains("Header=\"Started\"", xaml);
+        Assert.Contains("x:Name=\"ExpandAllMeetingGroupsButton\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"CollapseAllMeetingGroupsButton\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"OpenMeetingDetailsButton\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"ProjectComboBox\"", detailWindowXaml);
+        Assert.Contains("x:Name=\"ApplyProjectButton\"", detailWindowXaml);
+        Assert.Contains("x:Name=\"ClearProjectButton\"", detailWindowXaml);
+        Assert.Contains("x:Name=\"ProjectTextBlock\"", detailWindowXaml);
+        Assert.Contains("Header=\"Project\"", mainWindowXaml);
+        Assert.Contains("Header=\"Started\"", mainWindowXaml);
 
         Assert.True(
-            xaml.IndexOf("Header=\"Project\"", StringComparison.Ordinal) <
-            xaml.IndexOf("Header=\"Started\"", StringComparison.Ordinal));
+            mainWindowXaml.IndexOf("Header=\"Project\"", StringComparison.Ordinal) <
+            mainWindowXaml.IndexOf("Header=\"Started\"", StringComparison.Ordinal));
         Assert.True(
-            xaml.IndexOf("Header=\"Transcript\"", StringComparison.Ordinal) <
-            xaml.LastIndexOf("Header=\"Recommended\"", StringComparison.Ordinal));
+            mainWindowXaml.IndexOf("Header=\"Transcript\"", StringComparison.Ordinal) <
+            mainWindowXaml.LastIndexOf("Header=\"Recommended\"", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Meetings_Tab_Uses_A_Split_Workspace_So_The_List_Remains_Visible_Alongside_Inspector_Tools()
+    public void Meetings_Tab_Uses_A_Full_Width_Library_With_A_Detail_Window_Entry_Point()
     {
-        var xamlPath = Path.GetFullPath(Path.Combine(
+        var mainWindowXamlPath = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..",
             "..",
@@ -50,19 +62,41 @@ public sealed class MeetingWorkspaceRefreshXamlTests
             "src",
             "MeetingRecorder.App",
             "MainWindow.xaml"));
+        var detailWindowXamlPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "MeetingRecorder.App",
+            "MeetingDetailWindow.xaml"));
 
-        var xaml = File.ReadAllText(xamlPath);
-        var splitterStart = xaml.IndexOf("x:Name=\"MeetingsWorkspaceGridSplitter\"", StringComparison.Ordinal);
-        var splitterEnd = xaml.IndexOf("/>", splitterStart, StringComparison.Ordinal);
-        var splitterBlock = xaml[splitterStart..(splitterEnd + 2)];
+        var mainWindowXaml = File.ReadAllText(mainWindowXamlPath);
+        var detailWindowXaml = File.ReadAllText(detailWindowXamlPath);
+        var splitterStart = mainWindowXaml.IndexOf("x:Name=\"MeetingsWorkspaceGridSplitter\"", StringComparison.Ordinal);
+        var splitterEnd = mainWindowXaml.IndexOf("/>", splitterStart, StringComparison.Ordinal);
+        var splitterBlock = mainWindowXaml[splitterStart..(splitterEnd + 2)];
 
-        Assert.Contains("x:Name=\"MeetingsContentGrid\"", xaml);
-        Assert.Contains("x:Name=\"MeetingsInspectorScrollViewer\"", xaml);
-        Assert.Contains("x:Name=\"MeetingsWorkspaceGridSplitter\"", xaml);
-        Assert.Contains("Grid.Column=\"0\"", xaml);
-        Assert.Contains("Grid.Column=\"2\"", xaml);
-        Assert.DoesNotContain("<ScrollViewer Grid.Row=\"3\"", xaml);
-        Assert.DoesNotContain("Visibility=\"Collapsed\"", splitterBlock);
+        Assert.Contains("x:Name=\"MeetingsContentGrid\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"MeetingSelectionCommandBarBorder\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"OpenMeetingDetailsButton\"", mainWindowXaml);
+        Assert.Contains("MouseDoubleClick=\"MeetingsDataGrid_OnMouseDoubleClick\"", mainWindowXaml);
+        Assert.Contains("<ScrollViewer x:Name=\"MeetingsInspectorScrollViewer\"", mainWindowXaml);
+        Assert.Contains("Visibility=\"Collapsed\"", splitterBlock);
+        Assert.Contains("x:Name=\"TranscriptSegmentsListBox\"", detailWindowXaml);
+        Assert.Contains("AI summary is reserved", File.ReadAllText(Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "MeetingRecorder.Core",
+            "Services",
+            "MainWindowInteractionLogic.cs"))));
     }
 
     [Fact]

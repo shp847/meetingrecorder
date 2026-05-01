@@ -1338,6 +1338,7 @@ public sealed class MainWindowInteractionLogicTests
             @" C:\Transcripts ",
             @" C:\Work ",
             false,
+            true,
             "0.125",
             "15",
             true,
@@ -1383,6 +1384,7 @@ public sealed class MainWindowInteractionLogicTests
             @"C:\Transcripts",
             @"C:\Work",
             true,
+            true,
             "0.125",
             "15",
             true,
@@ -1413,6 +1415,7 @@ public sealed class MainWindowInteractionLogicTests
             string.Empty,
             string.Empty,
             string.Empty,
+            true,
             true,
             "0.02",
             "30",
@@ -1937,6 +1940,106 @@ public sealed class MainWindowInteractionLogicTests
         Assert.False(multiSelection.ShowSpeakerLabelsTool);
         Assert.True(multiSelection.ShowMergeTool);
         Assert.True(multiSelection.ShowCleanupTray);
+    }
+
+    [Fact]
+    public void BuildMeetingSelectionCommandState_Separates_Library_Single_And_Bulk_Commands()
+    {
+        var noSelection = MainWindowInteractionLogic.BuildMeetingSelectionCommandState(
+            selectedMeetingCount: 0,
+            hasFocusedMeeting: false,
+            canOpenAudio: false,
+            canOpenTranscript: false,
+            hasCleanupRecommendations: true,
+            isBusy: false);
+
+        Assert.Equal("Select a meeting to open details, artifacts, or focused actions.", noSelection.SummaryText);
+        Assert.False(noSelection.ShowSingleMeetingCommands);
+        Assert.False(noSelection.ShowBulkMeetingCommands);
+        Assert.True(noSelection.CanReviewCleanup);
+
+        var singleSelection = MainWindowInteractionLogic.BuildMeetingSelectionCommandState(
+            selectedMeetingCount: 1,
+            hasFocusedMeeting: true,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            hasCleanupRecommendations: false,
+            isBusy: false);
+
+        Assert.True(singleSelection.ShowSingleMeetingCommands);
+        Assert.False(singleSelection.ShowBulkMeetingCommands);
+        Assert.True(singleSelection.CanOpenDetails);
+        Assert.True(singleSelection.CanOpenAudio);
+        Assert.True(singleSelection.CanOpenTranscript);
+        Assert.False(singleSelection.CanReviewCleanup);
+
+        var multiSelection = MainWindowInteractionLogic.BuildMeetingSelectionCommandState(
+            selectedMeetingCount: 3,
+            hasFocusedMeeting: true,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            hasCleanupRecommendations: true,
+            isBusy: false);
+
+        Assert.Equal("3 meetings selected. Use the context menu for bulk actions, or reduce the selection to open one meeting.", multiSelection.SummaryText);
+        Assert.False(multiSelection.ShowSingleMeetingCommands);
+        Assert.True(multiSelection.ShowBulkMeetingCommands);
+        Assert.False(multiSelection.CanOpenDetails);
+        Assert.False(multiSelection.CanOpenAudio);
+        Assert.False(multiSelection.CanOpenTranscript);
+        Assert.True(multiSelection.CanReviewCleanup);
+    }
+
+    [Fact]
+    public void BuildMeetingDetailWindowState_Uses_Inspector_Metadata_And_Future_Ai_Summary_Placeholder()
+    {
+        var meeting = new MeetingOutputRecord(
+            "meeting-1",
+            "Client Sync",
+            DateTimeOffset.Parse("2026-04-20T14:15:00Z", null, DateTimeStyles.RoundtripKind),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(31),
+            AudioPath: @"C:\Meetings\client-sync.wav",
+            MarkdownPath: @"C:\Meetings\client-sync.md",
+            JsonPath: @"C:\Meetings\json\client-sync.json",
+            ReadyMarkerPath: @"C:\Meetings\json\client-sync.ready",
+            ManifestPath: @"C:\Meetings\work\session\manifest.json",
+            ManifestState: SessionState.Published,
+            Attendees:
+            [
+                new MeetingAttendee("Pranav Sharma", new[] { MeetingAttendeeSource.OutlookCalendar }),
+            ],
+            HasSpeakerLabels: true,
+            TranscriptionModelFileName: "ggml-small.bin",
+            ProjectName: "IonQ");
+        var transcript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from JSON sidecar.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker 1", "What are the objectives?")]);
+
+        var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            transcript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            CultureInfo.GetCultureInfo("en-US"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal("Client Sync", state.Title);
+        Assert.Equal("Teams | 4/20/2026 2:15 PM | 31:00", state.Subtitle);
+        Assert.Equal("AI summary is reserved for a later update. This view currently reads only local transcript artifacts.", state.AiSummaryPlaceholderText);
+        Assert.Equal("IonQ", state.ProjectName);
+        Assert.True(state.CanOpenAudio);
+        Assert.True(state.CanOpenTranscript);
+        Assert.True(state.CanRegenerateTranscript);
+        Assert.True(state.CanProcessAsap);
+        Assert.False(state.CanClearAsap);
+        Assert.Same(transcript, state.Transcript);
     }
 
     [Fact]

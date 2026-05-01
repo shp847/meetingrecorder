@@ -18,9 +18,9 @@ Legal notice: You are responsible for complying with applicable recording, priva
 The app now uses a task-first shell with two main destinations in one visible segmented navigation strip:
 
 - `Home` for the recording console: editable title, client/project, and key-attendee metadata, a live recording timer, the live audio graph, start/stop controls, quick microphone/auto-detect settings, and a compact capture-status well for the active loopback path
-- `Meetings` for the recent-and-published meetings workspace and maintenance actions
+- `Meetings` for the recent-and-published meetings library, cleanup review, and bulk-safe work queue; single-meeting reading and maintenance open in a separate detail window via double-click or `Open Details`
 - backlog processing now also surfaces through a compact mono queue chip in the header and a denser processing strip at the top of `Meetings`, so you can see whether the queue is `Processing`, `Paused`, `Queued`, or `Idle`, why it is paused, and approximate current-item / overall ETAs without opening extra tools; if the live worker snapshot has not reconnected yet after startup or recovery, the shell now falls back to saved queued/processing meeting rows and shows `ETA unavailable` instead of hiding backlog state entirely
-- `Meetings` now also exposes a single persistent `Process This ASAP...` lane for one queued or in-progress meeting at a time. You can mark a meeting to run next, optionally let just that rushed item ignore the normal `Light` live-recording pause rule, and clear or replace that rush request directly from the focused meeting actions or context menu.
+- `Meetings` now also exposes a single persistent `Process This ASAP...` lane for one queued or in-progress meeting at a time. You can mark a meeting to run next, optionally let just that rushed item ignore the normal `Light` live-recording pause rule, and clear or replace that rush request from the meeting detail window or context menu.
 - When backlog exists, the Meetings processing strip exposes `Rush Backlog...` so you can defer speaker labels for the current backlog, or make that transcript-first behavior the future default too.
 Capability setup is still first-class, but it now lives inside `Settings > Setup` instead of the primary navigation.
 
@@ -43,9 +43,9 @@ Maintenance and support actions live in the header instead of the main navigatio
 - Transcribes recordings offline with local Whisper models
 - Publishes transcript artifacts in Markdown, JSON, and ready-marker form for automation
 - Makes title, project, key-attendee, and attendee metadata searchable from the Meetings workspace
-- Lets you rename meetings, regenerate transcripts, merge meetings, split meetings, and edit diarized speaker names from the Meetings tab
+- Lets you rename meetings, regenerate transcripts, split meetings, edit project metadata, and edit diarized speaker names from a focused meeting detail window, while merge and other multi-selection actions stay in the Meetings library context menu
 - Flags likely errant meetings with cleanup recommendations such as archive, merge, split, rename, retry-transcript, and add-speaker-label actions
-- Offers a one-time historical cleanup review plus ongoing row badges, a lighter cleanup review banner, and compact action drafts that stay tucked away until needed
+- Offers a one-time historical cleanup review plus ongoing row badges and a collapsible cleanup review panel that stays separate from selected-meeting controls
 - On first launch after the updated build, the versioned `published-meeting-repair-v6` pass can now collapse a heavily stop/start-fragmented same-call chain into one merged publish, auto-merge a short-gap exact-title split when the preserved work manifests agree on the same specific meeting identity, and republish repairable historical microphone sessions from the durable `%LOCALAPPDATA%\MeetingRecorder\work` raw chunks while archiving the overwritten WAVs plus a plain-text echo-repair report under `Documents\Meetings\Archive`
 - Repaired published meetings now derive their displayed duration from the repaired merged artifact payload when that payload no longer matches the original work-manifest timing for the reused stem
 - Can ingest dropped audio files such as phone voice memos and queue them for automatic transcription
@@ -154,26 +154,27 @@ For newer managed installs, the app can also migrate prior portable data forward
 
 ### Meeting Management
 
-- Meetings workspace with a search/sort/group toolbar, a default grouped view for existing and new users, grouped browsing by week, month, platform, status, client / project, or attendee, and a calmer focused-detail area beneath the list
+- Meetings workspace with a search/sort/group toolbar, a default grouped view for existing and new users, grouped browsing by week, month, platform, status, client / project, or attendee, and a full-width library list with a compact selection command strip
 - Meetings workspace now publishes the current list first, then loads cleanup suggestions and recent attendee backfill in the background so the tab stays responsive on larger histories
 - Recent ended sessions that are still queued, processing, finalizing, or failed in the work queue now remain visible in `Meetings` even before publish artifacts land
 - Published audio/transcript artifacts now win over stale queued imported-source reprocessing manifests, so already-published meetings stay openable instead of regressing to false `Queued` / `Missing` rows
 - Imported-source reprocessing manifests now also collapse back onto the original published-audio stem when they point at the same meeting, so `Meetings` does not show a second near-duplicate row just because a retry manifest used a slightly different title string
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges
 - Grouped browsing now opens the first visible group by default, keeps other groups collapsed initially, and exposes quick `Expand All` and `Collapse All` controls
-- Selected-meeting inspector showing attendees, project, recommendation badges, transcript model metadata, speaker-label state, the persisted detected audio source summary, and a capture-diagnostics timeline for the finished meeting
+- Separate meeting detail window showing local transcript segments from JSON sidecars with Markdown fallback, meeting facts, attendees, recommendation badges, transcript model metadata, speaker-label state, the persisted detected audio source summary, and collapsed capture diagnostics
+- The detail window reserves an inactive AI-summary area for a later update; current builds do not generate summaries or send transcript content to cloud services
 - Recommendation badges for likely cleanup actions directly in the meeting list
 - Dedicated cleanup recommendation review area for bulk apply, dismiss, and open-related flows without leaving the Meetings workspace
-- Per-meeting context menu for transcript, audio, archive, delete, rename, retry, split, merge, and speaker-label maintenance actions
+- Per-meeting context menu for opening details, artifacts, archive, delete, rename, retry, split, and speaker-label maintenance actions
 - Rename published meetings while keeping artifacts aligned
 - Merge multiple meetings into one queued transcript job
 - Split one meeting into two queued transcript jobs
-- Apply or clear a simple free-text project value for one meeting or a multi-selection from the focused Meetings tools
+- Apply or clear a simple free-text project value for one meeting from the detail window
 - Speaker-name editing for diarized transcripts
 - Manual context-menu actions for archive, permanent delete, reprocessing, split, merge, and related meeting maintenance
 - Suggests adding missing speaker labels when the diarization model bundle is ready and the transcript can be upgraded safely
 - One-time historical review flow with `Review Suggestions` and `Apply Safe Fixes`
-- Unified Meetings workflow where quick actions sit next to the focused details, the context menu handles most maintenance actions, and the lower drafts stay collapsed until a task needs extra input
+- Library/detail workflow where the Meetings tab stays focused on browsing, queue status, artifact shortcuts, and cleanup review, while the owned detail window handles transcript review and one-meeting maintenance
 
 ### External Audio Import
 
@@ -306,6 +307,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - Diarization is optional and remains best-effort
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
 - Speaker diarization automatically estimates anonymous speakers from voice embeddings. It starts with the default clustering threshold and, when that pass collapses voices into fewer than two supported speakers, retries stricter thresholds before assigning transcript segments by time overlap.
+- Optional local voice-profile memory can learn names from user-confirmed speaker-label corrections, store embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles`, auto-apply high-confidence future matches, and show lower-confidence suggestions without exporting voice-profile embeddings in transcript JSON.
 - GPU acceleration for diarization is disabled in managed builds; existing `Auto` configs are normalized to CPU-only and the worker no longer packages the DirectML ONNX Runtime that can trigger endpoint-protection process-memory prompts
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
 - If the packaged `model-catalog.json` file is missing at runtime, curated Setup falls back to the built-in default catalog so `Use Standard` and `Use Higher Accuracy` still work
@@ -319,6 +321,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - Alternate public speaker-labeling download locations are curated links and may currently be unavailable
 - The speaker-labeling help path opens the bundled local `SETUP.md` first and falls back to GitHub only when the local guide cannot be found
 - Speaker-label editing works even after publication when diarized labels exist
+- Speaker-name learning is local-only and user-controlled from `Settings > General`, including disable, selected-profile delete, and delete-all controls. Voice-profile embeddings can be sensitive voice-derived data; review local policy before teaching names for other people.
 - The diarization bundle is a separate optional dependency from the main app installer and should include the segmentation model, embedding model, and bundle manifest together
 
 ## Configuration Highlights
