@@ -745,7 +745,10 @@
                                 <Button x:Name="DashboardPrimaryActionButton"
                                         Click="HeaderShellStatusActionButton_OnClick" />
                                 <TextBox x:Name="ActivityTextBox"
-                                         AcceptsReturn="True" />
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         IsUndoEnabled="False"
+                                         UndoLimit="0" />
                             </StackPanel>
                         </Grid>
                         </ScrollViewer>

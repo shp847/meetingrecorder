@@ -235,6 +235,21 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Hidden_Activity_Log_TextBox_Is_ReadOnly_And_Does_Not_Keep_An_Undo_Stack()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var activityTextBoxStart = xaml.IndexOf("<TextBox x:Name=\"ActivityTextBox\"", StringComparison.Ordinal);
+        var activityTextBoxEnd = xaml.IndexOf("/>", activityTextBoxStart, StringComparison.Ordinal);
+        var activityTextBoxTag = xaml[activityTextBoxStart..activityTextBoxEnd];
+
+        Assert.Contains("IsReadOnly=\"True\"", activityTextBoxTag);
+        Assert.Contains("IsUndoEnabled=\"False\"", activityTextBoxTag);
+        Assert.Contains("UndoLimit=\"0\"", activityTextBoxTag);
+    }
+
+    [Fact]
     public void Advanced_Settings_Expose_Background_Processing_And_Speaker_Labeling_Mode_Selectors()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

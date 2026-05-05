@@ -1134,6 +1134,109 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task ResumePendingSessionsAsync_Recovers_Stale_Recording_Manifest_With_Raw_Chunks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new FakeWorkerProcessFactory();
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+
+            var lastChunkWriteUtc = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var manifestPath = await CreateInterruptedRecordingManifestAsync(
+                manifestStore,
+                liveConfig.Current.WorkDir,
+                lastChunkWriteUtc);
+
+            await service.ResumePendingSessionsAsync();
+
+            var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var recoveredManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(SessionState.Queued, recoveredManifest.State);
+            Assert.Equal(lastChunkWriteUtc, recoveredManifest.EndedAtUtc);
+            Assert.Equal(StageExecutionState.Queued, recoveredManifest.TranscriptionStatus.State);
+            Assert.Equal(StageExecutionState.NotStarted, recoveredManifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.NotStarted, recoveredManifest.PublishStatus.State);
+            Assert.Equal(1, processFactory.StartCount);
+            Assert.Contains(manifestPath, processFactory.StartInfos[0].Arguments, StringComparison.Ordinal);
+
+            process.CompleteExit();
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ResumePendingSessionsAsync_Leaves_Recent_Recording_Manifest_Alone()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new FakeWorkerProcessFactory();
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+
+            var manifestPath = await CreateInterruptedRecordingManifestAsync(
+                manifestStore,
+                liveConfig.Current.WorkDir,
+                DateTimeOffset.UtcNow);
+
+            await service.ResumePendingSessionsAsync();
+            await Task.Delay(100);
+
+            var manifest = await manifestStore.LoadAsync(manifestPath);
+            Assert.Equal(SessionState.Recording, manifest.State);
+            Assert.Null(manifest.EndedAtUtc);
+            Assert.Equal(0, processFactory.StartCount);
+
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task ResumePendingSessionsAsync_Applies_Deferred_Speaker_Labeling_To_Queued_And_Interrupted_Backlog_Items()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -1550,6 +1653,57 @@ public sealed class ProcessingQueueServiceTests
                 TranscriptionStatus = transcriptionStatus,
                 DiarizationStatus = diarizationStatus,
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
+            },
+            manifestPath);
+        return manifestPath;
+    }
+
+    private static async Task<string> CreateInterruptedRecordingManifestAsync(
+        SessionManifestStore manifestStore,
+        string workDir,
+        DateTimeOffset lastChunkWriteUtc)
+    {
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.GoogleMeet,
+            "Meet - upa-prqe-huf and 28 more pages - Work - Microsoft Edge",
+            Array.Empty<DetectionSignal>());
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var sessionRoot = Path.GetDirectoryName(manifestPath)
+            ?? throw new InvalidOperationException("Manifest path must include a directory.");
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        Directory.CreateDirectory(rawDir);
+
+        var loopbackChunkPath = Path.Combine(rawDir, "loopback-0001-chunk-0001.wav");
+        var microphoneChunkPath = Path.Combine(rawDir, "microphone-0001-chunk-0001.wav");
+        CreateWaveFile(loopbackChunkPath, TimeSpan.FromSeconds(1));
+        CreateWaveFile(microphoneChunkPath, TimeSpan.FromSeconds(1));
+        File.SetLastWriteTimeUtc(loopbackChunkPath, lastChunkWriteUtc.UtcDateTime);
+        File.SetLastWriteTimeUtc(microphoneChunkPath, lastChunkWriteUtc.UtcDateTime);
+
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                State = SessionState.Recording,
+                StartedAtUtc = lastChunkWriteUtc.AddMinutes(-30),
+                EndedAtUtc = null,
+                LoopbackCaptureSegments =
+                [
+                    new LoopbackCaptureSegment(
+                        lastChunkWriteUtc.AddMinutes(-30),
+                        null,
+                        [loopbackChunkPath],
+                        "device-1",
+                        "Laptop speakers",
+                        "Multimedia"),
+                ],
+                MicrophoneCaptureSegments =
+                [
+                    new MicrophoneCaptureSegment(
+                        lastChunkWriteUtc.AddMinutes(-30),
+                        null,
+                        [microphoneChunkPath]),
+                ],
             },
             manifestPath);
         return manifestPath;

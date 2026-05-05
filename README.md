@@ -110,7 +110,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Auto-detection for Teams desktop and Google Meet, on by default for new installs and still reset off once for older configs that predate the security-prompt migration so existing users can opt back in deliberately
 - Google Meet detection now relies on explicit browser titles plus Windows render-session metadata, so a Meet call can still be recognized when the visible Edge or Chrome window is a shared Slides or Docs page and Windows exposes Meet-specific session details
 - Windows audio-session probing now also uses a short timeout and backoff window, so a hung render-session query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
-- Teams render-session probing now gives each scan a little more time and retries attribution sooner after one slow pass, which helps quieter Teams calls on slower Windows machines keep the session metadata needed for quiet auto-start
+- Teams render-session probing now gives each scan up to `1.5 s` and retries attribution after a `15 s` cooldown when one pass is slow, which helps quieter Teams calls on slower Windows machines keep the session metadata needed for quiet auto-start
 - Windows audio-session probing now merges both the default multimedia and communications render endpoints, so Teams auto-start can recover when meeting audio moves onto a Bluetooth headset or other communications-only output after the original speaker path drops
 - Live recording loopback capture now also prefers the active communications render endpoint when meeting playback is routed there, so recorded meeting audio is less likely to flatten out while only microphone room pickup remains
 - Live recording now keeps a readable capture timeline that records which loopback endpoint was selected, when the app swapped endpoints, and whether a loopback fallback or swap failure happened during the session
@@ -143,6 +143,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Teams chat-thread playback surfaces are now deprioritized so recording playback is less likely to auto-start as if it were a live meeting
 - Bare Teams shell or navigation titles such as `Chat | Microsoft Teams` and `Activity | Microsoft Teams` are now ignored safely instead of crashing the background detection loop
 - Lingering Teams background processes or weak process-only signals no longer keep an auto-started recording alive after the actual meeting window disappears
+- The hidden in-app activity feed now keeps only a rolling bounded view, disables its WPF undo stack, and skips scroll work while hidden, so frequent detection reclassification messages cannot destabilize the UI thread; the file log remains complete
 - Live audio activity graph during active capture
 
 ### Transcription
@@ -157,6 +158,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Meetings workspace with a search/sort/group toolbar, a default grouped view for existing and new users, grouped browsing by week, month, platform, status, client / project, or attendee, and a full-width library list with a compact selection command strip
 - Meetings workspace now publishes the current list first, then loads cleanup suggestions and recent attendee backfill in the background so the tab stays responsive on larger histories
 - Recent ended sessions that are still queued, processing, finalizing, or failed in the work queue now remain visible in `Meetings` even before publish artifacts land
+- If the app restarts after a crash while a live recording manifest is still open, startup now seals stale raw-chunk sessions, requeues them, and keeps them visible for normal processing instead of leaving the meeting hidden in the work folder
 - Published audio/transcript artifacts now win over stale queued imported-source reprocessing manifests, so already-published meetings stay openable instead of regressing to false `Queued` / `Missing` rows
 - Imported-source reprocessing manifests now also collapse back onto the original published-audio stem when they point at the same meeting, so `Meetings` does not show a second near-duplicate row just because a retry manifest used a slightly different title string
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges

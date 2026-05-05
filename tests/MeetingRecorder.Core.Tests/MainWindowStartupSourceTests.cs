@@ -221,6 +221,36 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Activity_Log_Is_Bounded_Before_Updating_The_Hidden_TextBox()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var appendStart = source.IndexOf("private void AppendActivity", StringComparison.Ordinal);
+        var appendEnd = source.IndexOf("private void LogDetectionChange", appendStart, StringComparison.Ordinal);
+        var appendBlock = source[appendStart..appendEnd];
+
+        Assert.Contains("MaxActivityLogLines", source);
+        Assert.Contains("_activityLogLines.Enqueue", appendBlock);
+        Assert.Contains("TrimActivityLogLines();", appendBlock);
+        Assert.DoesNotContain("ActivityTextBox.AppendText($\"{DateTimeOffset.Now:t} {message}{Environment.NewLine}\");", appendBlock);
+    }
+
+    [Fact]
+    public void Meeting_Detector_Audio_Probe_Timeout_And_Cooldown_Are_Long_Enough_For_Teams_Attribution()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var constructorStart = source.IndexOf("_meetingDetector = new WindowMeetingDetector(", StringComparison.Ordinal);
+        var constructorEnd = source.IndexOf("_meetingTitleSuggestionService =", constructorStart, StringComparison.Ordinal);
+        var constructorBlock = source[constructorStart..constructorEnd];
+
+        Assert.Contains("TimeSpan.FromMilliseconds(1500)", constructorBlock);
+        Assert.Contains("TimeSpan.FromSeconds(15)", constructorBlock);
+        Assert.DoesNotContain("TimeSpan.FromMilliseconds(750)", constructorBlock);
+        Assert.DoesNotContain("TimeSpan.FromMinutes(2)", constructorBlock);
+    }
+
+    [Fact]
     public void Detection_Timer_Uses_Manual_Stop_Suppression_Before_Auto_Starting_A_Detected_Meeting()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

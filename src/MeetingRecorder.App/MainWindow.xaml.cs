@@ -35,6 +35,7 @@ public partial class MainWindow : Window
 {
     private const int AudioGraphPointCount = 120;
     private const int RecentCaptureActivitySampleCount = 24;
+    private const int MaxActivityLogLines = 300;
     private const string MeetingCleanupHistoricalReviewMarkerFileName = "meeting-cleanup-review-v1.done";
     private const string SpeakerLabelingSetupGuideFallbackUrl = "https://github.com/shp847/meetingrecorder/blob/main/SETUP.md#speaker-labeling-optional";
     private const string TeamsThirdPartyApiGuideUrl = "https://support.microsoft.com/en-au/office/connect-to-third-party-devices-in-microsoft-teams-aabca9f2-47bb-407f-9f9b-81a104a883d6";
@@ -91,6 +92,7 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _externalAudioImportGate = new(1, 1);
     private readonly SemaphoreSlim _teamsAttendeeCaptureGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly Queue<string> _activityLogLines = new();
     private readonly double[] _audioGraphLoopbackLevels = new double[AudioGraphPointCount];
     private readonly double[] _audioGraphMicrophoneLevels = new double[AudioGraphPointCount];
     private readonly double[] _audioGraphCombinedLevels = new double[AudioGraphPointCount];
@@ -216,8 +218,8 @@ public partial class MainWindow : Window
             new SystemAudioActivityProbe(),
             new MeetingTitleEnricher(_outlookCalendarMeetingTitleProvider),
             WindowMeetingDetector.EnumerateCandidateWindows,
-            TimeSpan.FromMilliseconds(750),
-            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMilliseconds(1500),
+            TimeSpan.FromSeconds(15),
             logger.Log);
         _meetingTitleSuggestionService = new MeetingTitleSuggestionService(_outlookCalendarMeetingTitleProvider);
         _meetingsAttendeeBackfillService = new MeetingsAttendeeBackfillService(
@@ -8954,8 +8956,21 @@ public partial class MainWindow : Window
     private void AppendActivity(string message)
     {
         _logger.Log(message);
-        ActivityTextBox.AppendText($"{DateTimeOffset.Now:t} {message}{Environment.NewLine}");
-        ActivityTextBox.ScrollToEnd();
+        _activityLogLines.Enqueue($"{DateTimeOffset.Now:t} {message}");
+        TrimActivityLogLines();
+        ActivityTextBox.Text = string.Concat(_activityLogLines.Select(line => line + Environment.NewLine));
+        if (ActivityTextBox.IsVisible)
+        {
+            ActivityTextBox.ScrollToEnd();
+        }
+    }
+
+    private void TrimActivityLogLines()
+    {
+        while (_activityLogLines.Count > MaxActivityLogLines)
+        {
+            _activityLogLines.Dequeue();
+        }
     }
 
     private void LogDetectionChange(DetectionDecision? decision)

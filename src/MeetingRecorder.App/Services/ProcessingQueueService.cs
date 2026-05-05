@@ -13,6 +13,7 @@ internal sealed class ProcessingQueueService
 {
     private static readonly TimeSpan RecoverablePendingSessionStalenessThreshold = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultPublishTailEstimate = TimeSpan.FromSeconds(45);
+    private const long MinimumRecoverableWaveChunkBytes = 44;
     private const double DefaultTranscriptionSecondsPerAudioSecond = 0.55d;
     private const double DefaultDiarizationSecondsPerAudioSecond = 0.35d;
     private readonly LiveAppConfig _config;
@@ -104,6 +105,12 @@ internal sealed class ProcessingQueueService
         {
             _logger.Log(
                 $"Pruned raw work artifacts from {publishedWorkCleanupResult.SessionsPruned} published session(s), reclaiming {publishedWorkCleanupResult.BytesReclaimed} bytes.");
+        }
+
+        var interruptedRecordingRecoveryCount = await RecoverInterruptedRecordingSessionsAsync(_config.Current.WorkDir, cancellationToken);
+        if (interruptedRecordingRecoveryCount > 0)
+        {
+            _logger.Log($"Recovered {interruptedRecordingRecoveryCount} interrupted recording session(s) from preserved raw chunks.");
         }
 
         var deferredRepairCount = await ApplyDeferredSpeakerLabelingBacklogOverridesAsync(_config.Current.WorkDir, cancellationToken);
@@ -578,6 +585,47 @@ internal sealed class ProcessingQueueService
         PublishStatusSnapshot(UpdateStatusSnapshot());
     }
 
+    private async Task<int> RecoverInterruptedRecordingSessionsAsync(
+        string workDir,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(workDir) || _isRecordingProvider())
+        {
+            return 0;
+        }
+
+        var recoveredCount = 0;
+        var now = DateTimeOffset.UtcNow;
+        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+            if (!TryResolveInterruptedRecordingEndTime(manifest, now, out var endedAtUtc))
+            {
+                continue;
+            }
+
+            var updatedManifest = manifest with
+            {
+                State = SessionState.Queued,
+                EndedAtUtc = endedAtUtc,
+                TranscriptionStatus = new ProcessingStageStatus(
+                    "transcription",
+                    StageExecutionState.Queued,
+                    now,
+                    "Recovered from an interrupted recording after the app restarted."),
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
+                ErrorSummary = null,
+            };
+            await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+            recoveredCount++;
+        }
+
+        return recoveredCount;
+    }
+
     private async Task<int> RepairRecoverablePendingSessionsAsync(
         string workDir,
         CancellationToken cancellationToken)
@@ -738,6 +786,66 @@ internal sealed class ProcessingQueueService
         }
 
         await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+    }
+
+    private static bool TryResolveInterruptedRecordingEndTime(
+        MeetingSessionManifest manifest,
+        DateTimeOffset now,
+        out DateTimeOffset endedAtUtc)
+    {
+        endedAtUtc = default;
+        if (manifest.State != SessionState.Recording || manifest.EndedAtUtc is not null)
+        {
+            return false;
+        }
+
+        if (!TryGetLatestRecoverableChunkWriteTime(manifest, out var latestChunkWriteUtc))
+        {
+            return false;
+        }
+
+        if (latestChunkWriteUtc > now ||
+            now - latestChunkWriteUtc < RecoverablePendingSessionStalenessThreshold ||
+            latestChunkWriteUtc <= manifest.StartedAtUtc)
+        {
+            return false;
+        }
+
+        endedAtUtc = latestChunkWriteUtc;
+        return true;
+    }
+
+    private static bool TryGetLatestRecoverableChunkWriteTime(
+        MeetingSessionManifest manifest,
+        out DateTimeOffset latestChunkWriteUtc)
+    {
+        latestChunkWriteUtc = default;
+        var foundRecoverableChunk = false;
+        foreach (var chunkPath in EnumerateCapturedAudioChunkPaths(manifest))
+        {
+            var chunk = new FileInfo(chunkPath);
+            if (!chunk.Exists || chunk.Length <= MinimumRecoverableWaveChunkBytes)
+            {
+                continue;
+            }
+
+            var chunkWriteUtc = new DateTimeOffset(chunk.LastWriteTimeUtc);
+            if (!foundRecoverableChunk || chunkWriteUtc > latestChunkWriteUtc)
+            {
+                latestChunkWriteUtc = chunkWriteUtc;
+                foundRecoverableChunk = true;
+            }
+        }
+
+        return foundRecoverableChunk;
+    }
+
+    private static IEnumerable<string> EnumerateCapturedAudioChunkPaths(MeetingSessionManifest manifest)
+    {
+        return manifest.RawChunkPaths
+            .Concat(manifest.MicrophoneChunkPaths)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task<bool> TryApplyBacklogRushSpeakerLabelingOverrideAsync(
