@@ -112,7 +112,8 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
-        if (!decision.ShouldStart || decision.Platform == MeetingPlatform.Unknown)
+        if ((!decision.ShouldStart && !IsQuietSpecificTeamsMeetingCandidateCore(decision)) ||
+            decision.Platform == MeetingPlatform.Unknown)
         {
             return false;
         }
@@ -266,7 +267,22 @@ public sealed class AutoRecordingContinuityPolicy
             return true;
         }
 
+        if (decision.Platform == MeetingPlatform.Teams &&
+            HasSupportedMeetingAudioAttribution(decision) &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
         var hasRecentCaptureActivity = hasRecentLoopbackActivity || hasRecentMicrophoneActivity;
+        if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentCaptureActivity &&
+            HasUnavailableAudioProbeSignal(decision) &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
         if (decision.Platform == MeetingPlatform.Teams &&
             hasRecentLoopbackActivity &&
             HasOfficialTeamsMatchSignal(decision))
@@ -331,6 +347,21 @@ public sealed class AutoRecordingContinuityPolicy
 
         if (decision.Platform == MeetingPlatform.Teams &&
             HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            HasSupportedMeetingAudioAttribution(decision) &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
+        {
+            return true;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
+            (hasRecentLoopbackActivity || hasRecentMicrophoneActivity) &&
+            HasUnavailableAudioProbeSignal(decision) &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
         {
             return true;
         }
@@ -687,6 +718,24 @@ public sealed class AutoRecordingContinuityPolicy
         {
             if (string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(signal.Source, "audio-session-match", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasUnavailableAudioProbeSignal(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (!signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (signal.Value.Contains("audio probe", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

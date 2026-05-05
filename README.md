@@ -137,8 +137,8 @@ For newer managed installs, the app can also migrate prior portable data forward
 - An active auto-started Teams recording now ignores weak unrelated Google Meet browser candidates during quiet patches, so a stale Meet tab can no longer trigger repeated stop/start churn on the live Teams call
 - Auto-stop when meeting signals disappear
 - Auto-stop now surfaces a live countdown on `Home` for auto-started sessions and switches immediately into an `Auto-stopping` state when the timeout expires, so controls disable before background finalization finishes
-- Once that countdown is visible, weak quiet-continuation signals no longer silently reset it; only a real resumed meeting signal clears the countdown and keeps the recording alive
-- A quiet Teams meeting with the same specific title can now also preserve the current session when Teams attribution still points at that meeting and recent microphone activity shows the call is still live, reducing false session splits during one-sided speaking stretches
+- Once that countdown is visible, weak quiet-continuation signals no longer silently reset it; a real resumed meeting signal, or the same specific Teams meeting with current Teams audio attribution, clears the countdown and keeps the recording alive
+- A quiet Teams meeting with the same specific title can now also preserve the current session when Teams attribution still points at that meeting, or when Teams audio attribution is temporarily unavailable because the audio probe timed out but recent captured audio activity still shows the call is live, reducing false session splits during one-sided speaking stretches and brief audio-probe hiccups
 - Continuity handling for quiet patches, compact-view surfaces, and sharing-control surfaces in Teams
 - Teams chat-thread playback surfaces are now deprioritized so recording playback is less likely to auto-start as if it were a live meeting
 - Bare Teams shell or navigation titles such as `Chat | Microsoft Teams` and `Activity | Microsoft Teams` are now ignored safely instead of crashing the background detection loop

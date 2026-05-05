@@ -483,6 +483,140 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldRefreshLastPositiveSignal_Returns_True_For_Same_Teams_Title_When_Teams_Audio_Is_Attributed()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Session 1",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Session 1 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; window=Session 1 | Microsoft Teams; process=ms-teams; peak=0.553; confidence=Medium", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Session 1 | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldRefresh = policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Session 1",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: false);
+
+        Assert.True(shouldRefresh);
+    }
+
+    [Fact]
+    public void ShouldClearAutoStopCountdown_Returns_True_For_Same_Teams_Title_When_Teams_Audio_Is_Attributed()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Session 1",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Session 1 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; window=Session 1 | Microsoft Teams; process=ms-teams; peak=0.553; confidence=Medium", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Session 1 | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldClearCountdown = policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Session 1",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: false);
+
+        Assert.True(shouldClearCountdown);
+    }
+
+    [Fact]
+    public void ShouldRefreshLastPositiveSignal_Returns_True_For_Same_Teams_Title_When_Audio_Probe_Times_Out_And_Capture_Is_Recent()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Session 1",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Session 1 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "peak=0.000; status=audio probe timed out", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldRefresh = policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Session 1",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: true);
+
+        Assert.True(shouldRefresh);
+    }
+
+    [Fact]
+    public void ShouldClearAutoStopCountdown_Returns_True_For_Same_Teams_Title_When_Audio_Probe_Times_Out_And_Capture_Is_Recent()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Session 1",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Session 1 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "peak=0.000; status=audio probe timed out", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldClearCountdown = policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            activeSessionTitle: "Session 1",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: true);
+
+        Assert.True(shouldClearCountdown);
+    }
+
+    [Fact]
     public void ShouldRefreshLastPositiveSignal_Returns_False_When_Official_Teams_No_Current_Match_Is_Present()
     {
         var policy = new AutoRecordingContinuityPolicy();
@@ -1082,6 +1216,39 @@ public sealed class AutoRecordingContinuityPolicyTests
         var shouldRecover = policy.ShouldRecoverFromRecentAutoStop(decision, recentStop, now);
 
         Assert.False(shouldRecover);
+    }
+
+    [Fact]
+    public void ShouldRecoverFromRecentAutoStop_Returns_True_For_Recent_Quiet_Teams_Audio_Match()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var recentStop = new RecentAutoStopContext(MeetingPlatform.Teams, now.AddSeconds(-30));
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Session 1",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Session 1 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-session-match", "Microsoft Teams; window=Session 1 | Microsoft Teams; process=ms-teams; peak=0.553; confidence=Medium", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Session 1 | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Process,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldRecover = policy.ShouldRecoverFromRecentAutoStop(decision, recentStop, now);
+
+        Assert.True(shouldRecover);
     }
 
     [Fact]

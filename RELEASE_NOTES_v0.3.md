@@ -159,6 +159,7 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - Teams desktop support
 - Google Meet browser support
 - quiet Teams continuity handling
+- same-title Teams audio attribution now clears active auto-stop countdowns and can immediately recover from a recent false auto-stop; same-title Teams sessions also survive short audio-probe timeouts when recent captured audio activity is still present
 - Google Meet browser/title continuity handling
 - audio-attributed tie-breaking between competing meeting candidates
 - bounded detection probes so browser or audio inspection failures do not stall the app indefinitely
