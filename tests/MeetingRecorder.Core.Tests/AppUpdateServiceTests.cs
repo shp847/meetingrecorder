@@ -1,5 +1,7 @@
 using MeetingRecorder.Core.Branding;
 using MeetingRecorder.Core.Services;
+using System.IO.Compression;
+using System.Text;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -79,8 +81,8 @@ public sealed class AppUpdateServiceTests
               "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/beta",
               "assets": [
                 {
-                  "name": "MeetingRecorderInstaller.exe",
-                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/beta/MeetingRecorderInstaller.exe",
+                  "name": "MeetingRecorder-v0.2-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/beta/MeetingRecorder-v0.2-win-x64.zip",
                   "size": 167258521
                 }
               ]
@@ -97,7 +99,7 @@ public sealed class AppUpdateServiceTests
             enabled: true);
 
         Assert.Equal(AppUpdateStatusKind.UpdateAvailable, result.Status);
-        Assert.Equal("beta", result.LatestVersion);
+        Assert.Equal("0.2", result.LatestVersion);
         Assert.False(result.IsNewerByVersion);
         Assert.True(result.IsNewerByPublishedAt);
         Assert.DoesNotContain("not a supported semantic version", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -110,7 +112,12 @@ public sealed class AppUpdateServiceTests
             {
               "tag_name": "v0.2",
               "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.2",
-              "assets": []
+              "assets": [
+                {
+                  "name": "MeetingRecorder-v0.2-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/v0.2/MeetingRecorder-v0.2-win-x64.zip"
+                }
+              ]
             }
             """));
 
@@ -298,6 +305,42 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
+    public async Task CheckForUpdateAsync_Prefers_App_Zip_When_Model_Binary_Appears_First()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "v0.3",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.3",
+              "assets": [
+                {
+                  "name": "ggml-medium.en-q8_0.bin",
+                  "browser_download_url": "https://example.com/ggml-medium.en-q8_0.bin",
+                  "size": 823382461
+                },
+                {
+                  "name": "MeetingRecorder-v0.3-win-x64.zip",
+                  "browser_download_url": "https://example.com/MeetingRecorder-v0.3-win-x64.zip",
+                  "size": 147017922
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                "0.2",
+                "0.2",
+                DateTimeOffset.Parse("2026-03-21T21:57:12Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                104047356),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal(AppUpdateStatusKind.UpdateAvailable, result.Status);
+        Assert.Equal("https://example.com/MeetingRecorder-v0.3-win-x64.zip", result.DownloadUrl);
+        Assert.Equal(147017922L, result.LatestAssetSizeBytes);
+    }
+
+    [Fact]
     public async Task CheckForUpdateAsync_Ignores_Model_Bundle_Zips_When_Selecting_The_App_Update_Asset()
     {
         var service = new AppUpdateService(new FakeUpdateFeedClient("""
@@ -332,14 +375,118 @@ public sealed class AppUpdateServiceTests
         Assert.Equal(271610979L, result.LatestAssetSizeBytes);
     }
 
+    [Fact]
+    public async Task CheckForUpdateAsync_Returns_Error_When_GitHub_Release_Has_Only_Model_Assets()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "v0.3",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.3",
+              "assets": [
+                {
+                  "name": "ggml-medium.en-q8_0.bin",
+                  "browser_download_url": "https://example.com/ggml-medium.en-q8_0.bin",
+                  "size": 823382461
+                },
+                {
+                  "name": "meeting-recorder-diarization-bundle-standard-win-x64.zip",
+                  "browser_download_url": "https://example.com/meeting-recorder-diarization-bundle-standard-win-x64.zip",
+                  "size": 38614922
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                "0.2",
+                "0.2",
+                DateTimeOffset.Parse("2026-03-21T21:57:12Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                104047356),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal(AppUpdateStatusKind.Error, result.Status);
+        Assert.Null(result.DownloadUrl);
+        Assert.Contains("Meeting Recorder app ZIP", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DownloadUpdateAsync_Rejects_NonApp_Asset_Without_Downloading()
+    {
+        var updatesDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderUpdateDownloadTests", Guid.NewGuid().ToString("N"));
+        var client = new FakeUpdateFeedClient(
+            "{}",
+            (_, _, _) => throw new InvalidOperationException("The downloader should not be called for a model asset."));
+        var service = new AppUpdateService(client, updatesDirectory);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.DownloadUpdateAsync(
+            "https://example.com/releases/download/v0.3/ggml-medium.en-q8_0.bin",
+            "0.3",
+            823382461,
+            CancellationToken.None));
+
+        Assert.Contains("Meeting Recorder app ZIP", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(client.DownloadWasCalled);
+        Assert.False(Directory.Exists(updatesDirectory));
+    }
+
+    [Fact]
+    public async Task DownloadUpdateAsync_Deletes_Temp_And_Final_File_When_Size_Does_Not_Match()
+    {
+        var updatesDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderUpdateDownloadTests", Guid.NewGuid().ToString("N"));
+        var payload = CreateZipBytes(("MeetingRecorder.App.exe", "app"));
+        var client = new FakeUpdateFeedClient(
+            "{}",
+            async (_, destinationPath, cancellationToken) => await File.WriteAllBytesAsync(destinationPath, payload, cancellationToken));
+        var service = new AppUpdateService(client, updatesDirectory);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.DownloadUpdateAsync(
+            "https://example.com/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip",
+            "0.3",
+            payload.Length + 1,
+            CancellationToken.None));
+
+        Assert.Contains("incomplete", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(updatesDirectory, "MeetingRecorder-v0.3-win-x64.zip")));
+        Assert.False(File.Exists(Path.Combine(updatesDirectory, "MeetingRecorder-v0.3-win-x64.zip.download")));
+    }
+
+    [Fact]
+    public async Task DownloadUpdateAsync_Deletes_Temp_And_Final_File_When_Zip_Is_Corrupt()
+    {
+        var updatesDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderUpdateDownloadTests", Guid.NewGuid().ToString("N"));
+        var payload = Encoding.UTF8.GetBytes("not a zip");
+        var client = new FakeUpdateFeedClient(
+            "{}",
+            async (_, destinationPath, cancellationToken) => await File.WriteAllBytesAsync(destinationPath, payload, cancellationToken));
+        var service = new AppUpdateService(client, updatesDirectory);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.DownloadUpdateAsync(
+            "https://example.com/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip",
+            "0.3",
+            payload.Length,
+            CancellationToken.None));
+
+        Assert.Contains("readable ZIP", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(updatesDirectory, "MeetingRecorder-v0.3-win-x64.zip")));
+        Assert.False(File.Exists(Path.Combine(updatesDirectory, "MeetingRecorder-v0.3-win-x64.zip.download")));
+    }
+
     private sealed class FakeUpdateFeedClient : IAppUpdateFeedClient
     {
         private readonly string _responseBody;
+        private readonly Func<string, string, CancellationToken, Task>? _downloadHandler;
 
-        public FakeUpdateFeedClient(string responseBody)
+        public FakeUpdateFeedClient(
+            string responseBody,
+            Func<string, string, CancellationToken, Task>? downloadHandler = null)
         {
             _responseBody = responseBody;
+            _downloadHandler = downloadHandler;
         }
+
+        public bool DownloadWasCalled { get; private set; }
 
         public Task<string> GetStringAsync(string feedUrl, CancellationToken cancellationToken)
         {
@@ -349,7 +496,27 @@ public sealed class AppUpdateServiceTests
 
         public Task DownloadFileAsync(string downloadUrl, string destinationPath, CancellationToken cancellationToken)
         {
-            throw new NotSupportedException("Downloads are not exercised in this test.");
+            DownloadWasCalled = true;
+            return _downloadHandler is null
+                ? throw new NotSupportedException("Downloads are not exercised in this test.")
+                : _downloadHandler(downloadUrl, destinationPath, cancellationToken);
         }
+    }
+
+    private static byte[] CreateZipBytes(params (string RelativePath, string Contents)[] entries)
+    {
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (relativePath, contents) in entries)
+            {
+                var entry = archive.CreateEntry(relativePath);
+                using var entryStream = entry.Open();
+                using var writer = new StreamWriter(entryStream, Encoding.UTF8);
+                writer.Write(contents);
+            }
+        }
+
+        return stream.ToArray();
     }
 }

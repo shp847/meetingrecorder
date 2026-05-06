@@ -95,6 +95,7 @@ Packaging validation notes:
 - the CLI relaunch path should prefer starting `MeetingRecorder.App.exe` directly instead of shell-executing `Run-MeetingRecorder.cmd`, reducing Explorer-coupled relaunch behavior during silent updates while still keeping the launcher script available as a fallback
 - after promoting an updated bundle into the managed install root, the CLI should revalidate the installed `bundle-integrity.json` contract and roll back if required executables disappear before launch, because some endpoint tools can quarantine freshly written unsigned executables immediately after update
 - the CLI should restore any missing required executable payload files from the already-validated source bundle before that final validation and should materialize the top-level move list before mutating staging/install directories, so in-place updates cannot skip `MeetingRecorder.App.exe` or other required siblings mid-promotion
+- in-app update selection and pending-update retry must only accept the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs must fail before the app is asked to shut down
 - keep non-MSI fallbacks thin; they should hand off into `Install-LatestFromGitHub.cmd/.ps1` and should not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts themselves
 - keep install messaging explicit about the split between app files in `%USERPROFILE%\Documents\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
 - the shared deployment CLI should reject bundles that fail `bundle-integrity.json` validation before it touches the managed install root
@@ -319,7 +320,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runti
 Important:
 
 - upload the built installer ZIP asset, not only GitHub's automatic source ZIP
-- the bootstrap flow depends on the GitHub release having a real app ZIP asset
+- the bootstrap flow and in-app updater depend on the GitHub release having a real `MeetingRecorder-v<version>-win-x64.zip` app ZIP asset; separately published `ggml-*.bin` and diarization ZIP assets are for model setup only and must not be selected as app updates
 - the built-in Standard and Higher Accuracy options only work as downloads when all four curated assets are uploaded as release assets
 - the MSI/ZIP payload no longer bundles Standard model payloads, so a successful install may still resume transcription setup at first launch when downloads are blocked
 - `Build-Release.ps1 -UploadToGitHubLatestRelease` can automate the upload step when a GitHub token is available

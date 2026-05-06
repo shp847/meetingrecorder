@@ -3197,6 +3197,7 @@ public partial class MainWindow : Window
             var downloadedPath = await _appUpdateService.DownloadUpdateAsync(
                 result.DownloadUrl,
                 result.LatestVersion,
+                result.LatestAssetSizeBytes,
                 _lifetimeCts.Token);
             UpdateCheckStatusTextBlock.Text = $"Downloaded {FormatVersionLabel(result.LatestVersion)} to '{downloadedPath}'.";
             AppendActivity($"Downloaded update {FormatVersionLabel(result.LatestVersion)} to '{downloadedPath}'.");
@@ -6931,6 +6932,7 @@ public partial class MainWindow : Window
         var downloadedPath = await _appUpdateService.DownloadUpdateAsync(
             updateResult.DownloadUrl!,
             updateResult.LatestVersion,
+            updateResult.LatestAssetSizeBytes,
             cancellationToken);
         await PersistPendingDownloadedUpdateAsync(
             downloadedPath,

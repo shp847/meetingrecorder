@@ -1,10 +1,12 @@
 using AppPlatform.Abstractions;
+using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using InstallPathProcessManager = AppPlatform.Deployment.InstallPathProcessManager;
 using NullDeploymentLogger = AppPlatform.Deployment.NullDeploymentLogger;
 using PortableBundleInstaller = AppPlatform.Deployment.PortableBundleInstaller;
+using UpdatePackageInstaller = AppPlatform.Deployment.UpdatePackageInstaller;
 using WindowsShortcutService = AppPlatform.Deployment.WindowsShortcutService;
 
 namespace MeetingRecorder.Core.Tests;
@@ -150,6 +152,57 @@ public sealed class AppPlatformDeploymentTests
 
             Assert.Equal("new-app", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
             Assert.False(Directory.Exists(bundleRoot));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlatformUpdatePackageInstaller_Rejects_Corrupt_Zip_Before_Source_Process_Shutdown()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var zipPath = Path.Combine(root, "MeetingRecorder-v0.3-win-x64.zip");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(zipPath, "not a zip");
+
+        try
+        {
+            var processController = new FakeInstallPathProcessController(signalResult: true);
+            var installer = new UpdatePackageInstaller(
+                new PortableBundleInstaller(
+                    new InstallPathProcessManager(processController),
+                    new WindowsShortcutService(),
+                    NullDeploymentLogger.Instance),
+                new InstallPathProcessManager(processController),
+                NullDeploymentLogger.Instance);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installer.ApplyAsync(
+                CreateManifest(installRoot, dataRoot),
+                new UpdateRequest(
+                    ZipPath: zipPath,
+                    InstallRoot: installRoot,
+                    SourceProcessId: int.MaxValue,
+                    ReleaseVersion: "0.3",
+                    ReleasePublishedAtUtc: DateTimeOffset.Parse("2026-05-05T14:29:30Z"),
+                    ReleaseAssetSizeBytes: new FileInfo(zipPath).Length,
+                    Channel: InstallChannel.AutoUpdate,
+                    LaunchAfterInstall: false),
+                CancellationToken.None));
+
+            Assert.Contains("wrong release asset or an incomplete download", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(processController.SignalRequested);
+            Assert.False(File.Exists(zipPath));
         }
         finally
         {

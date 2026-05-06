@@ -215,10 +215,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
                 ? string.Empty
                 : defaults.DiarizationAssetPath
             : config.DiarizationAssetPath;
-        var normalizedPendingUpdateZipPath = string.IsNullOrWhiteSpace(config.PendingUpdateZipPath)
-            ? string.Empty
-            : config.PendingUpdateZipPath;
-        var normalizedPendingUpdateVersion = string.IsNullOrWhiteSpace(config.PendingUpdateVersion)
+        var normalizedPendingUpdateZipPath = NormalizePendingUpdateZipPath(config.PendingUpdateZipPath);
+        var hasValidPendingUpdate = !string.IsNullOrWhiteSpace(normalizedPendingUpdateZipPath);
+        var normalizedPendingUpdateVersion = !hasValidPendingUpdate || string.IsNullOrWhiteSpace(config.PendingUpdateVersion)
             ? string.Empty
             : config.PendingUpdateVersion;
         var isLegacyMeetingsWorkspaceConfig = !config.MeetingsGroupedViewMigrationApplied;
@@ -294,8 +293,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
             PendingUpdateZipPath = normalizedPendingUpdateZipPath,
             PendingUpdateVersion = normalizedPendingUpdateVersion,
+            PendingUpdatePublishedAtUtc = hasValidPendingUpdate ? config.PendingUpdatePublishedAtUtc : null,
+            PendingUpdateAssetSizeBytes = hasValidPendingUpdate ? config.PendingUpdateAssetSizeBytes : null,
             PendingUpdateInstallWhenIdleRequested =
-                !string.IsNullOrWhiteSpace(normalizedPendingUpdateZipPath) &&
+                hasValidPendingUpdate &&
                 config.PendingUpdateInstallWhenIdleRequested,
             AutoDetectAudioPeakThreshold = config.AutoDetectAudioPeakThreshold <= 0d ? defaults.AutoDetectAudioPeakThreshold : config.AutoDetectAudioPeakThreshold,
             MeetingStopTimeoutSeconds = config.MeetingStopTimeoutSeconds <= 0 ? defaults.MeetingStopTimeoutSeconds : config.MeetingStopTimeoutSeconds,
@@ -312,6 +313,18 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             RushProcessingRequest = NormalizeRushProcessingRequest(config.RushProcessingRequest),
             DismissedMeetingRecommendations = NormalizeDismissedMeetingRecommendations(config.DismissedMeetingRecommendations),
         };
+    }
+
+    private static string NormalizePendingUpdateZipPath(string? pendingUpdateZipPath)
+    {
+        if (string.IsNullOrWhiteSpace(pendingUpdateZipPath) ||
+            !File.Exists(pendingUpdateZipPath) ||
+            !AppUpdatePackageClassifier.IsWindowsX64AppZipPath(pendingUpdateZipPath))
+        {
+            return string.Empty;
+        }
+
+        return pendingUpdateZipPath;
     }
 
     private static TEnum NormalizeEnum<TEnum>(TEnum configuredValue, TEnum fallbackValue)

@@ -78,6 +78,9 @@ public sealed class AppConfigStoreTests
         var configPath = Path.Combine(root, "config", "appsettings.json");
         var store = new AppConfigStore(configPath, documentsRoot);
         _ = await store.LoadOrCreateAsync();
+        var pendingUpdatePath = Path.Combine(root, "downloads", "MeetingRecorder-v0.3-win-x64.zip");
+        Directory.CreateDirectory(Path.GetDirectoryName(pendingUpdatePath)!);
+        File.WriteAllText(pendingUpdatePath, "pending update");
 
         var saved = await store.SaveAsync(new MeetingRecorder.Core.Configuration.AppConfig
         {
@@ -103,7 +106,7 @@ public sealed class AppConfigStoreTests
             InstalledReleaseVersion = "0.2",
             InstalledReleasePublishedAtUtc = DateTimeOffset.Parse("2026-03-16T11:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
             InstalledReleaseAssetSizeBytes = 987654321,
-            PendingUpdateZipPath = Path.Combine(root, "downloads", "MeetingRecorder-v0.3-win-x64.zip"),
+            PendingUpdateZipPath = pendingUpdatePath,
             PendingUpdateVersion = "0.3",
             PendingUpdatePublishedAtUtc = DateTimeOffset.Parse("2026-03-16T12:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
             PendingUpdateAssetSizeBytes = 123456789,
@@ -375,6 +378,61 @@ public sealed class AppConfigStoreTests
         Assert.True(reenabled.SpeakerLabelingSecurityPromptMigrationApplied);
         Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, reloaded.BackgroundSpeakerLabelingMode);
         Assert.True(reloaded.SpeakerLabelingSecurityPromptMigrationApplied);
+    }
+
+    [Theory]
+    [InlineData("MeetingRecorder-v0.3-win-x64.zip", false)]
+    [InlineData("ggml-medium.en-q8_0.bin", true)]
+    [InlineData("meeting-recorder-diarization-bundle-standard-win-x64.zip", true)]
+    public async Task LoadOrCreateAsync_Clears_Invalid_Pending_Update_State(string pendingFileName, bool createPendingFile)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var pendingUpdatePath = Path.Combine(root, "downloads", pendingFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        if (createPendingFile)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(pendingUpdatePath)!);
+            File.WriteAllText(pendingUpdatePath, "not an app update");
+        }
+
+        await File.WriteAllTextAsync(
+            configPath,
+            $$"""
+            {
+              "audioOutputDir": "",
+              "transcriptOutputDir": "",
+              "workDir": "",
+              "modelCacheDir": "",
+              "transcriptionModelPath": "",
+              "diarizationAssetPath": "",
+              "micCaptureEnabled": true,
+              "launchOnLoginEnabled": true,
+              "autoDetectEnabled": false,
+              "autoDetectSecurityPromptMigrationApplied": true,
+              "calendarTitleFallbackEnabled": false,
+              "meetingAttendeeEnrichmentEnabled": true,
+              "updateCheckEnabled": true,
+              "autoInstallUpdatesEnabled": true,
+              "updateFeedUrl": "{{AppBranding.DefaultUpdateFeedUrl}}",
+              "pendingUpdateZipPath": "{{pendingUpdatePath.Replace("\\", "\\\\")}}",
+              "pendingUpdateVersion": "0.3",
+              "pendingUpdatePublishedAtUtc": "2026-05-05T14:29:30Z",
+              "pendingUpdateAssetSizeBytes": 823382461,
+              "pendingUpdateInstallWhenIdleRequested": true
+            }
+            """);
+
+        var store = new AppConfigStore(configPath, documentsRoot);
+
+        var config = await store.LoadOrCreateAsync();
+
+        Assert.Equal(string.Empty, config.PendingUpdateZipPath);
+        Assert.Equal(string.Empty, config.PendingUpdateVersion);
+        Assert.Null(config.PendingUpdatePublishedAtUtc);
+        Assert.Null(config.PendingUpdateAssetSizeBytes);
+        Assert.False(config.PendingUpdateInstallWhenIdleRequested);
     }
 
     [Fact]

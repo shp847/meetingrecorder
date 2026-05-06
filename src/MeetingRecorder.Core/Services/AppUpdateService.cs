@@ -8,11 +8,8 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class AppUpdateService
 {
-    private static readonly Regex PortableAppZipAssetNamePattern = new(
-        "^MeetingRecorder(?:-v?[^\\\\/]+)?-win-(?:x64|arm64|x86)\\.zip$",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
     private readonly IAppUpdateFeedClient _feedClient;
+    private readonly string? _updatesDirectoryOverride;
 
     public AppUpdateService()
         : this(new HttpAppUpdateFeedClient())
@@ -20,8 +17,14 @@ public sealed class AppUpdateService
     }
 
     public AppUpdateService(IAppUpdateFeedClient feedClient)
+        : this(feedClient, updatesDirectoryOverride: null)
+    {
+    }
+
+    internal AppUpdateService(IAppUpdateFeedClient feedClient, string? updatesDirectoryOverride)
     {
         _feedClient = feedClient;
+        _updatesDirectoryOverride = updatesDirectoryOverride;
     }
 
     public Task<AppUpdateCheckResult> CheckForUpdateAsync(
@@ -142,25 +145,51 @@ public sealed class AppUpdateService
         string version,
         CancellationToken cancellationToken = default)
     {
+        return await DownloadUpdateAsync(downloadUrl, version, expectedSizeBytes: null, cancellationToken);
+    }
+
+    public async Task<string> DownloadUpdateAsync(
+        string downloadUrl,
+        string version,
+        long? expectedSizeBytes,
+        CancellationToken cancellationToken = default)
+    {
         if (string.IsNullOrWhiteSpace(downloadUrl))
         {
             throw new InvalidOperationException("A download URL is required to fetch the update package.");
         }
 
-        var updatesDirectory = Path.Combine(
+        var fileName = AppUpdatePackageClassifier.ResolveDownloadFileName(downloadUrl, version);
+        if (!AppUpdatePackageClassifier.IsWindowsX64AppZipFileName(fileName))
+        {
+            throw new InvalidOperationException(
+                $"The selected release asset '{fileName}' is not a Meeting Recorder app ZIP. Expected an asset named like 'MeetingRecorder-v{version}-win-x64.zip'.");
+        }
+
+        var updatesDirectory = _updatesDirectoryOverride ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Downloads",
             "MeetingRecorder Updates");
         Directory.CreateDirectory(updatesDirectory);
 
-        var fileName = Path.GetFileName(new Uri(downloadUrl).AbsolutePath);
-        if (string.IsNullOrWhiteSpace(fileName))
+        var destinationPath = Path.Combine(updatesDirectory, fileName);
+        var tempDownloadPath = destinationPath + ".download";
+        TryDeleteFile(tempDownloadPath);
+        TryDeleteFile(destinationPath);
+
+        try
         {
-            fileName = $"MeetingRecorder-v{version}-win-x64.zip";
+            await _feedClient.DownloadFileAsync(downloadUrl, tempDownloadPath, cancellationToken);
+            AppUpdatePackageClassifier.ValidateDownloadedAppZip(tempDownloadPath, expectedSizeBytes);
+            File.Move(tempDownloadPath, destinationPath);
+        }
+        catch
+        {
+            TryDeleteFile(tempDownloadPath);
+            TryDeleteFile(destinationPath);
+            throw;
         }
 
-        var destinationPath = Path.Combine(updatesDirectory, fileName);
-        await _feedClient.DownloadFileAsync(downloadUrl, destinationPath, cancellationToken);
         return destinationPath;
     }
 
@@ -215,18 +244,15 @@ public sealed class AppUpdateService
             .Where(asset => !string.IsNullOrWhiteSpace(asset.Url))
             .ToArray();
 
-        return assets
-            .FirstOrDefault(asset =>
-                IsPortableAppZipAsset(asset.Name) &&
-                asset.Name!.Contains("win-x64", StringComparison.OrdinalIgnoreCase))
-            ?? assets.FirstOrDefault(asset => IsPortableAppZipAsset(asset.Name))
-            ?? assets.FirstOrDefault();
-    }
+        var selectedAsset = assets.FirstOrDefault(asset =>
+            AppUpdatePackageClassifier.IsWindowsX64AppZipFileName(asset.Name));
+        if (selectedAsset is null)
+        {
+            throw new InvalidOperationException(
+                "The GitHub release did not contain a Meeting Recorder app ZIP asset named like 'MeetingRecorder-v<version>-win-x64.zip'. Model binaries, diarization bundles, MSI assets, and bootstrap scripts are not valid in-app update packages.");
+        }
 
-    private static bool IsPortableAppZipAsset(string? assetName)
-    {
-        return !string.IsNullOrWhiteSpace(assetName) &&
-            PortableAppZipAssetNamePattern.IsMatch(assetName);
+        return selectedAsset;
     }
 
     private static DateTimeOffset? ResolveEffectivePublishedAtUtc(
@@ -300,6 +326,23 @@ public sealed class AppUpdateService
         return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
     }
 }
 

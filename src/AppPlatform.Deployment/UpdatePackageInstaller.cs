@@ -44,18 +44,28 @@ public sealed class UpdatePackageInstaller
             throw new FileNotFoundException("The downloaded update package could not be found.", request.ZipPath);
         }
 
-        _logger.Info($"Applying update from '{request.ZipPath}' into '{request.InstallRoot}'.");
-        await WaitForSourceProcessExitAsync(request.SourceProcessId, request.InstallRoot, cancellationToken);
-
         var tempRoot = Path.Combine(Path.GetTempPath(), manifest.ProductId + "-update-" + Guid.NewGuid().ToString("N"));
         var extractPath = Path.Combine(tempRoot, "extract");
-        _logger.Info($"Using update workspace '{tempRoot}'.");
 
         try
         {
+            _logger.Info($"Validating update package '{request.ZipPath}'.");
+            ValidateUpdatePackage(request.ZipPath, request.ReleaseAssetSizeBytes);
+
+            _logger.Info($"Applying update from '{request.ZipPath}' into '{request.InstallRoot}'.");
+            await WaitForSourceProcessExitAsync(request.SourceProcessId, request.InstallRoot, cancellationToken);
+
+            _logger.Info($"Using update workspace '{tempRoot}'.");
             Directory.CreateDirectory(extractPath);
             _logger.Info($"Extracting update package into '{extractPath}'.");
-            ZipFile.ExtractToDirectory(request.ZipPath, extractPath, overwriteFiles: true);
+            try
+            {
+                ZipFile.ExtractToDirectory(request.ZipPath, extractPath, overwriteFiles: true);
+            }
+            catch (InvalidDataException exception)
+            {
+                throw CreateInvalidUpdatePackageException(request.ZipPath, exception);
+            }
 
             var installResult = await _bundleInstaller.InstallAsync(
                 manifest,
@@ -83,6 +93,44 @@ public sealed class UpdatePackageInstaller
             TryDeleteDirectory(tempRoot);
             TryDeleteFile(request.ZipPath);
         }
+    }
+
+    private static void ValidateUpdatePackage(string zipPath, long? expectedSizeBytes)
+    {
+        var actualSizeBytes = new FileInfo(zipPath).Length;
+        if (expectedSizeBytes is > 0 && actualSizeBytes != expectedSizeBytes.Value)
+        {
+            throw CreateInvalidUpdatePackageException(
+                zipPath,
+                $"expected {expectedSizeBytes.Value} bytes but found {actualSizeBytes} bytes");
+        }
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(zipPath);
+            _ = archive.Entries.Count;
+        }
+        catch (InvalidDataException exception)
+        {
+            throw CreateInvalidUpdatePackageException(zipPath, exception);
+        }
+    }
+
+    private static InvalidOperationException CreateInvalidUpdatePackageException(
+        string zipPath,
+        string detail)
+    {
+        return new InvalidOperationException(
+            $"The downloaded update package '{zipPath}' is not a valid app update ZIP ({detail}). It may be the wrong release asset or an incomplete download. Download the Meeting Recorder app ZIP again.");
+    }
+
+    private static InvalidOperationException CreateInvalidUpdatePackageException(
+        string zipPath,
+        Exception exception)
+    {
+        return new InvalidOperationException(
+            $"The downloaded update package '{zipPath}' is not a readable ZIP archive. It may be the wrong release asset or an incomplete download. Download the Meeting Recorder app ZIP again.",
+            exception);
     }
 
     private async Task WaitForSourceProcessExitAsync(
