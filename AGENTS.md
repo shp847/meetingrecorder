@@ -105,10 +105,13 @@ If unanswered, proceed with explicit assumptions and label them clearly.
 - Main verification command: `powershell -ExecutionPolicy Bypass -File .\scripts\Test-All.ps1`. Defined in `scripts\Test-All.ps1`; it shuts down dotnet build servers, builds core/app/worker/installer/test projects serially with `RestoreIgnoreFailedSources=true` and `NuGetAudit=false`, then runs `MeetingRecorder.Core.Tests` and `MeetingRecorder.IntegrationTests`.
 - TODO: `tests\AppPlatform.Tests` exists in both solutions but is not invoked by `scripts\Test-All.ps1`; confirm whether AppPlatform changes should run `dotnet test .\tests\AppPlatform.Tests\AppPlatform.Tests.csproj` separately before treating platform work as fully verified.
 - Installer asset rebuild command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1`. Defined in `scripts\Build-Installer.ps1`; it runs `Publish-Portable.ps1`, generates WiX authoring, builds `MeetingRecorderInstaller.msi`, and writes ZIP/MSI/bootstrap assets under `.artifacts\installer\win-x64`.
+- Smaller framework-dependent packaging command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1 -FrameworkDependent`. Defined in `scripts\Build-Installer.ps1`; use only when target machines already have the .NET 8 Desktop Runtime installed.
 - Release build command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1`. Defined in `scripts\Build-Release.ps1`; it runs `Test-All.ps1` unless `-SkipTests` is passed, then runs `Build-Installer.ps1`, copies model assets, writes release metadata, and can optionally upload to GitHub with `-UploadToGitHubLatestRelease` or dry-run with `-DryRunGitHubUpload`.
+- Packaging-only release command: `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1 -SkipTests`. Defined in `scripts\Build-Release.ps1`; use only when tests were already run or the task explicitly calls for a faster packaging-only rebuild.
 - Packaged startup smoke test: `powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runtime win-x64`. Defined in `scripts\Smoke-Test-Release.ps1`; it requires no running `MeetingRecorder.App` process and checks built bundle/MSI-installed startup plus relevant Windows crash events.
 - Do not use `scripts\Deploy-Local.ps1` or `scripts\Deploy-Local.cmd` for validation; the script intentionally throws and directs validation through MSI, bootstrapper, or in-app update paths.
-- Release upload helper: `scripts\Upload-ReleaseAssets.cmd` is documented in `RELEASING.md`; keep real tokens only in ignored local files or environment variables and never commit or print them.
+- Release upload helper: `scripts\Upload-ReleaseAssets.cmd` is documented in `RELEASING.md`; it validates `release-source.json`, rebuilds stale installer assets only when the current source state is clean, skips EXE/MSI uploads unless `-Installers` is passed, supports `-DryRun` and `-MaxParallelUploads`, and must keep real tokens only in ignored local files or environment variables.
+- In-app update package validation is intentionally narrow: only `MeetingRecorder-v<version>-win-x64.zip` is an app update asset. Model binaries, diarization bundles, MSI files, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs must be rejected before update apply asks the running app to shut down.
 
 ## 6. Definition of Done
 
@@ -141,6 +144,7 @@ Before submitting, list:
 ## 9. Release Hygiene
 
 - Treat installer assets as part of the shipped product, not an optional follow-up.
+- When the user asks to `deploy` or requests a deployment, interpret that as: run the required verification/build flow, commit the intended source changes, push the commit, rebuild release artifacts from the clean pushed commit when needed, then upload GitHub release assets including installers. Do not treat `deploy` as a local install or local file-copy deployment.
 - For every app, installer, script, or runtime behavior change, rebuild the installer assets before considering the task complete.
 - After every build-backed change set that is intended to ship, commit and push the work, then upload the release assets including installers.
 - For every app, installer, script, or runtime behavior change, update the relevant documentation in the same task so the written guidance stays in sync with the shipped behavior.

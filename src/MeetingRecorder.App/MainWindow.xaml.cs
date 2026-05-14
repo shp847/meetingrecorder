@@ -3010,6 +3010,7 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
+                SpeakerLabelingSecurityPromptMigrationApplied = currentConfig.SpeakerLabelingSecurityPromptMigrationApplied,
                 LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
                 InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
                 InstalledReleasePublishedAtUtc = currentConfig.InstalledReleasePublishedAtUtc,

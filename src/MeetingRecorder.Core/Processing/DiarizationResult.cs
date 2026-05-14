@@ -8,7 +8,8 @@ public sealed record DiarizationResult(
     string? Message,
     IReadOnlyList<SpeakerIdentity>? Speakers,
     IReadOnlyList<SpeakerTurn>? SpeakerTurns,
-    DiarizationMetadata? Metadata)
+    DiarizationMetadata? Metadata,
+    IReadOnlyList<SpeakerVoiceSample>? SpeakerVoiceSamples = null)
 {
     public DiarizationResult(
         IReadOnlyList<TranscriptSegment> Segments,
@@ -18,6 +19,7 @@ public sealed record DiarizationResult(
             Segments,
             AppliedSpeakerLabels,
             Message,
+            null,
             null,
             null,
             null)

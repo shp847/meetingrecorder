@@ -57,15 +57,36 @@ public enum DiarizationExecutionProvider
     Directml = 1,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<SpeakerNameSource>))]
+public enum SpeakerNameSource
+{
+    None = 0,
+    UserEdited = 1,
+    AutoAppliedVoiceProfile = 2,
+    SuggestedVoiceProfile = 3,
+}
+
 public sealed record SpeakerIdentity(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("displayName")] string DisplayName,
-    [property: JsonPropertyName("isUserEdited")] bool IsUserEdited);
+    [property: JsonPropertyName("isUserEdited")] bool IsUserEdited,
+    [property: JsonPropertyName("profileId")] string? ProfileId = null,
+    [property: JsonPropertyName("nameSource")] SpeakerNameSource NameSource = SpeakerNameSource.None,
+    [property: JsonPropertyName("confidence")] double? Confidence = null,
+    [property: JsonPropertyName("suggestedDisplayName")] string? SuggestedDisplayName = null);
 
 public sealed record SpeakerTurn(
     [property: JsonPropertyName("speakerId")] string SpeakerId,
     [property: JsonPropertyName("start")] TimeSpan Start,
     [property: JsonPropertyName("end")] TimeSpan End);
+
+public sealed record SpeakerVoiceSample(
+    [property: JsonPropertyName("speakerId")] string SpeakerId,
+    [property: JsonPropertyName("embeddingModelFileName")] string EmbeddingModelFileName,
+    [property: JsonPropertyName("embeddingDimension")] int EmbeddingDimension,
+    [property: JsonPropertyName("embedding")] IReadOnlyList<float> Embedding,
+    [property: JsonPropertyName("speechDuration")] TimeSpan SpeechDuration,
+    [property: JsonPropertyName("createdAtUtc")] DateTimeOffset CreatedAtUtc);
 
 public sealed record DiarizationMetadata
 {
@@ -125,4 +146,5 @@ public sealed record MeetingProcessingMetadata(
     bool HasSpeakerLabels,
     IReadOnlyList<SpeakerIdentity>? Speakers = null,
     IReadOnlyList<SpeakerTurn>? SpeakerTurns = null,
-    DiarizationMetadata? DiarizationMetadata = null);
+    DiarizationMetadata? DiarizationMetadata = null,
+    IReadOnlyList<SpeakerVoiceSample>? SpeakerVoiceSamples = null);

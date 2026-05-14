@@ -97,6 +97,7 @@ After stop, the background worker processes the session locally:
 - finalizes meeting audio
 - runs Whisper transcription
 - optionally runs speaker labeling
+- optionally matches diarized speaker clusters against local user-confirmed voice profiles to auto-apply high-confidence names or show lower-confidence suggestions
 - publishes stable artifacts
 
 Speaker labeling is optional and best-effort. A meeting can still complete successfully even when diarization is unavailable, skipped, or fails.
@@ -162,7 +163,7 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - same-title Teams audio attribution now clears active auto-stop countdowns and can immediately recover from a recent false auto-stop; same-title Teams sessions also survive short audio-probe timeouts when recent captured audio activity is still present
 - Google Meet browser/title continuity handling
 - audio-attributed tie-breaking between competing meeting candidates
-- bounded detection probes so browser or audio inspection failures do not stall the app indefinitely
+- bounded detection probes with a `1.5 s` Teams audio-attribution window and `15 s` retry cooldown so slow Core Audio scans do not starve quiet-call auto-start
 
 ### Transcription and speaker labeling
 

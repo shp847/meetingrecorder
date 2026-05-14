@@ -2,6 +2,7 @@ using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using NAudio.Wave;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -985,6 +986,23 @@ public sealed class MeetingOutputCatalogServiceTests
             JsonSerializer.Serialize(new
             {
                 Title = "Client Call",
+                Speakers = new object[]
+                {
+                    new
+                    {
+                        displayName = "Speaker 1",
+                        isUserEdited = false,
+                        profileId = "voice_wrong",
+                        nameSource = "SuggestedVoiceProfile",
+                        confidence = 0.82d,
+                        suggestedDisplayName = "Pranav",
+                    },
+                    new
+                    {
+                        displayName = "Speaker 2",
+                        isUserEdited = false,
+                    },
+                },
                 Segments = new object[]
                 {
                     new { Start = "00:00:00", End = "00:00:05", SpeakerLabel = "Speaker 1", Text = "Hello there" },
@@ -1011,6 +1029,16 @@ public sealed class MeetingOutputCatalogServiceTests
         var updatedJson = await File.ReadAllTextAsync(jsonPath);
         Assert.Contains("\"SpeakerLabel\": \"Pranav\"", updatedJson, StringComparison.Ordinal);
         Assert.Contains("\"SpeakerLabel\": \"Emily\"", updatedJson, StringComparison.Ordinal);
+        var updatedDocument = JsonNode.Parse(updatedJson)?.AsObject()
+            ?? throw new InvalidOperationException("Expected updated transcript JSON.");
+        var updatedSpeaker = updatedDocument["Speakers"]?[0]?.AsObject()
+            ?? throw new InvalidOperationException("Expected updated speaker metadata.");
+        Assert.Equal("Pranav", updatedSpeaker["displayName"]?.GetValue<string>());
+        Assert.True(updatedSpeaker["isUserEdited"]?.GetValue<bool>());
+        Assert.Equal("UserEdited", updatedSpeaker["nameSource"]?.GetValue<string>());
+        Assert.Null(updatedSpeaker["profileId"]);
+        Assert.Null(updatedSpeaker["confidence"]);
+        Assert.Null(updatedSpeaker["suggestedDisplayName"]);
     }
 
     [Fact]

@@ -171,6 +171,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = AppBranding.DefaultUpdateFeedUrl,
             BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+            SpeakerNameLearningMode = SpeakerNameLearningMode.LocalAutoLearn,
+            SpeakerNameAutoApplyConfidenceThreshold = 0.86d,
+            SpeakerNameSuggestionConfidenceThreshold = 0.78d,
+            SpeakerNameMatchMarginThreshold = 0.05d,
             SpeakerLabelingSecurityPromptMigrationApplied = true,
             LastUpdateCheckUtc = null,
             InstalledReleaseVersion = AppBranding.Version,
@@ -258,6 +262,19 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var backgroundSpeakerLabelingMode = NormalizeEnum(
             config.BackgroundSpeakerLabelingMode,
             defaults.BackgroundSpeakerLabelingMode);
+        var speakerNameAutoApplyThreshold = NormalizeThreshold(
+            config.SpeakerNameAutoApplyConfidenceThreshold,
+            defaults.SpeakerNameAutoApplyConfidenceThreshold);
+        var speakerNameSuggestionThreshold = NormalizeThreshold(
+            config.SpeakerNameSuggestionConfidenceThreshold,
+            defaults.SpeakerNameSuggestionConfidenceThreshold);
+        var speakerNameMatchMarginThreshold = NormalizeThreshold(
+            config.SpeakerNameMatchMarginThreshold,
+            defaults.SpeakerNameMatchMarginThreshold);
+        if (speakerNameSuggestionThreshold > speakerNameAutoApplyThreshold)
+        {
+            speakerNameSuggestionThreshold = defaults.SpeakerNameSuggestionConfidenceThreshold;
+        }
         if (!speakerLabelingSecurityPromptMigrationApplied)
         {
             speakerLabelingSecurityPromptMigrationApplied = true;
@@ -289,6 +306,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,
+            SpeakerNameLearningMode = NormalizeEnum(config.SpeakerNameLearningMode, defaults.SpeakerNameLearningMode),
+            SpeakerNameAutoApplyConfidenceThreshold = speakerNameAutoApplyThreshold,
+            SpeakerNameSuggestionConfidenceThreshold = speakerNameSuggestionThreshold,
+            SpeakerNameMatchMarginThreshold = speakerNameMatchMarginThreshold,
             SpeakerLabelingSecurityPromptMigrationApplied = speakerLabelingSecurityPromptMigrationApplied,
             InstalledReleaseVersion = string.IsNullOrWhiteSpace(config.InstalledReleaseVersion) ? defaults.InstalledReleaseVersion : config.InstalledReleaseVersion,
             PendingUpdateZipPath = normalizedPendingUpdateZipPath,
@@ -331,6 +352,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         where TEnum : struct, Enum
     {
         return Enum.IsDefined(configuredValue)
+            ? configuredValue
+            : fallbackValue;
+    }
+
+    private static double NormalizeThreshold(double configuredValue, double fallbackValue)
+    {
+        return configuredValue is > 0d and <= 1d
             ? configuredValue
             : fallbackValue;
     }

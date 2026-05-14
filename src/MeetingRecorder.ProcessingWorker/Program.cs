@@ -38,7 +38,13 @@ internal static class Program
                     config.DiarizationAssetPath,
                     config.DiarizationAccelerationPreference,
                     diarizationThreadCount,
-                    logger),
+                    logger,
+                    config.SpeakerNameLearningMode,
+                    new SpeakerNameRecognitionOptions(
+                        config.SpeakerNameAutoApplyConfidenceThreshold,
+                        config.SpeakerNameSuggestionConfidenceThreshold,
+                        config.SpeakerNameMatchMarginThreshold),
+                    AppDataPaths.GetVoiceProfileStorePath()),
                 new TranscriptRenderer(),
                 new FilePublishService());
 

@@ -172,6 +172,12 @@ public sealed class SessionProcessorTests
         Assert.Contains("\"speakerTurns\": [", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"diarizationMetadata\": {", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"executionProvider\": \"Directml\"", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("speakerVoiceSamples", json, StringComparison.OrdinalIgnoreCase);
+
+        var finalManifest = await manifestStore.LoadAsync(manifestPath);
+        var voiceSample = Assert.Single(finalManifest.ProcessingMetadata?.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>());
+        Assert.Equal("speaker_00", voiceSample.SpeakerId);
+        Assert.Equal("nemo_en_titanet_small.onnx", voiceSample.EmbeddingModelFileName);
     }
 
     [Fact]
@@ -567,7 +573,18 @@ public sealed class SessionProcessorTests
                 gpuAccelerationAvailable: true,
                 diagnosticMessage: null);
 
-            return Task.FromResult(new DiarizationResult(segments, true, null, speakers, turns, metadata));
+            var voiceSamples = new[]
+            {
+                new SpeakerVoiceSample(
+                    "speaker_00",
+                    "nemo_en_titanet_small.onnx",
+                    3,
+                    [1f, 0f, 0f],
+                    TimeSpan.FromSeconds(9),
+                    DateTimeOffset.UtcNow),
+            };
+
+            return Task.FromResult(new DiarizationResult(segments, true, null, speakers, turns, metadata, voiceSamples));
         }
     }
 }

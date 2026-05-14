@@ -15,48 +15,73 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
+    private readonly SpeakerNameLearningMode _speakerNameLearningMode;
+    private readonly SpeakerNameRecognitionOptions _speakerNameRecognitionOptions;
     private readonly int _threadCount;
     private readonly FileLogWriter _logger;
     private readonly DiarizationAssetCatalogService _assetCatalogService;
     private readonly TranscriptionAudioPreparer _audioPreparer;
     private readonly TranscriptSpeakerAttributionService _speakerAttributionService;
     private readonly DiarizationClusterSelectionService _clusterSelectionService;
+    private readonly SherpaSpeakerEmbeddingService _speakerEmbeddingService;
+    private readonly VoiceProfileMatcher _voiceProfileMatcher;
+    private readonly VoiceProfileStore _voiceProfileStore;
+    private readonly SpeakerNameLearningService _speakerNameLearningService;
 
     public LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
         InferenceAccelerationPreference accelerationPreference,
         int threadCount,
-        FileLogWriter logger)
+        FileLogWriter logger,
+        SpeakerNameLearningMode speakerNameLearningMode = SpeakerNameLearningMode.LocalAutoLearn,
+        SpeakerNameRecognitionOptions? speakerNameRecognitionOptions = null,
+        string? voiceProfileStorePath = null)
         : this(
             diarizationAssetPath,
             accelerationPreference,
+            speakerNameLearningMode,
+            speakerNameRecognitionOptions ?? new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d),
             threadCount,
             logger,
             new DiarizationAssetCatalogService(),
             new TranscriptionAudioPreparer(),
             new TranscriptSpeakerAttributionService(),
-            new DiarizationClusterSelectionService())
+            new DiarizationClusterSelectionService(),
+            new SherpaSpeakerEmbeddingService(),
+            new VoiceProfileMatcher(),
+            new VoiceProfileStore(voiceProfileStorePath ?? AppDataPaths.GetVoiceProfileStorePath()))
     {
     }
 
     internal LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
         InferenceAccelerationPreference accelerationPreference,
+        SpeakerNameLearningMode speakerNameLearningMode,
+        SpeakerNameRecognitionOptions speakerNameRecognitionOptions,
         int threadCount,
         FileLogWriter logger,
         DiarizationAssetCatalogService assetCatalogService,
         TranscriptionAudioPreparer audioPreparer,
         TranscriptSpeakerAttributionService speakerAttributionService,
-        DiarizationClusterSelectionService clusterSelectionService)
+        DiarizationClusterSelectionService clusterSelectionService,
+        SherpaSpeakerEmbeddingService speakerEmbeddingService,
+        VoiceProfileMatcher voiceProfileMatcher,
+        VoiceProfileStore voiceProfileStore)
     {
         _diarizationAssetPath = diarizationAssetPath;
         _accelerationPreference = accelerationPreference;
+        _speakerNameLearningMode = speakerNameLearningMode;
+        _speakerNameRecognitionOptions = speakerNameRecognitionOptions;
         _threadCount = Math.Max(1, threadCount);
         _logger = logger;
         _assetCatalogService = assetCatalogService;
         _audioPreparer = audioPreparer;
         _speakerAttributionService = speakerAttributionService;
         _clusterSelectionService = clusterSelectionService;
+        _speakerEmbeddingService = speakerEmbeddingService;
+        _voiceProfileMatcher = voiceProfileMatcher;
+        _voiceProfileStore = voiceProfileStore;
+        _speakerNameLearningService = new SpeakerNameLearningService(_voiceProfileStore);
     }
 
     public async Task<DiarizationResult> ApplySpeakerLabelsAsync(
@@ -136,7 +161,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
                 directMlAvailable: false);
     }
 
-    private Task<DiarizationResult> RunWithProviderAsync(
+    private async Task<DiarizationResult> RunWithProviderAsync(
         string preparedAudioPath,
         IReadOnlyList<TranscriptSegment> transcriptSegments,
         DiarizationAssetInstallStatus installedAssets,
@@ -162,12 +187,48 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             cancellationToken);
         var speakerTurns = clusterSelection.Candidate.SpeakerTurns;
         var speakers = _speakerAttributionService.BuildSpeakerCatalog(speakerTurns);
+        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
+        string? voiceProfileDiagnosticMessage = null;
+        if (_speakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn &&
+            speakerTurns.Count > 0)
+        {
+            try
+            {
+                speakerVoiceSamples = _speakerEmbeddingService.ExtractSpeakerVoiceSamples(
+                    preparedAudioPath,
+                    speakerTurns,
+                    installedAssets,
+                    providerName,
+                    _threadCount,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
+                if (speakerVoiceSamples.Count > 0)
+                {
+                    var profileDocument = await _voiceProfileStore.LoadOrCreateAsync(cancellationToken);
+                    var predictions = _voiceProfileMatcher.Match(
+                        speakerVoiceSamples,
+                        profileDocument.Profiles,
+                        _speakerNameRecognitionOptions);
+                    speakers = _voiceProfileMatcher.ApplyPredictions(speakers, predictions);
+                    await _speakerNameLearningService.UpdateLastMatchedAsync(
+                        predictions,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                voiceProfileDiagnosticMessage = $"Speaker name profile matching skipped: {exception.Message}";
+                _logger.Log(voiceProfileDiagnosticMessage);
+            }
+        }
+
         var displayNamesBySpeakerId = speakers.ToDictionary(speaker => speaker.Id, speaker => speaker.DisplayName, StringComparer.Ordinal);
         var attributedSegments = _speakerAttributionService.ApplySpeakerTurns(
             transcriptSegments,
             speakerTurns,
             displayNamesBySpeakerId);
-        var combinedDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage);
+        var combinedDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage, voiceProfileDiagnosticMessage);
 
         var metadata = new DiarizationMetadata(
             provider: "sherpa-onnx",
@@ -193,13 +254,14 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             $"Speaker labeling completed. Provider={executionProvider}. Speakers={speakers.Count}. Turns={speakerTurns.Count}. " +
             $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{combinedDiagnosticMessage ?? "<none>"}'.");
 
-        return Task.FromResult(new DiarizationResult(
+        return new DiarizationResult(
             attributedSegments,
             appliedSpeakerLabels,
             message,
             speakers,
             speakerTurns,
-            metadata));
+            metadata,
+            speakerVoiceSamples);
     }
 
     private static DiarizationClusterSelection ProcessSpeakerTurns(

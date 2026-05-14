@@ -45,6 +45,12 @@ public enum BackgroundSpeakerLabelingMode
     Inline = 2,
 }
 
+public enum SpeakerNameLearningMode
+{
+    Disabled = 0,
+    LocalAutoLearn = 1,
+}
+
 public enum RushProcessingBehavior
 {
     RunNextOnly = 0,
@@ -216,6 +222,15 @@ public sealed record AppConfig
 
     public BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode { get; init; } =
         BackgroundSpeakerLabelingMode.Deferred;
+
+    public SpeakerNameLearningMode SpeakerNameLearningMode { get; init; } =
+        SpeakerNameLearningMode.LocalAutoLearn;
+
+    public double SpeakerNameAutoApplyConfidenceThreshold { get; init; } = 0.86d;
+
+    public double SpeakerNameSuggestionConfidenceThreshold { get; init; } = 0.78d;
+
+    public double SpeakerNameMatchMarginThreshold { get; init; } = 0.05d;
 
     public bool SpeakerLabelingSecurityPromptMigrationApplied { get; init; }
 

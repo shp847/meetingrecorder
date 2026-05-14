@@ -16,7 +16,13 @@ public sealed class TranscriptSchemaTests
                 "ggml-small.bin",
                 true,
                 [
-                    new SpeakerIdentity("speaker_00", "Speaker 1", false),
+                    new SpeakerIdentity(
+                        "speaker_00",
+                        "Pranav Sharma",
+                        false,
+                        "voice_pranav",
+                        SpeakerNameSource.AutoAppliedVoiceProfile,
+                        0.91d),
                     new SpeakerIdentity("speaker_01", "Speaker 2", true),
                 ],
                 [
@@ -32,7 +38,16 @@ public sealed class TranscriptSchemaTests
                     DiarizationExecutionProvider.Cpu,
                     gpuAccelerationRequested: true,
                     gpuAccelerationAvailable: false,
-                    diagnosticMessage: "DirectML probe failed."))
+                    diagnosticMessage: "DirectML probe failed."),
+                [
+                    new SpeakerVoiceSample(
+                        "speaker_00",
+                        "nemo_en_titanet_small.onnx",
+                        3,
+                        [1f, 0f, 0f],
+                        TimeSpan.FromSeconds(9),
+                        DateTimeOffset.Parse("2026-03-17T12:02:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind)),
+                ])
         };
 
         var json = renderer.RenderJson(
@@ -48,10 +63,14 @@ public sealed class TranscriptSchemaTests
         Assert.Equal("ggml-small.bin", document["transcriptionModelFileName"]?.GetValue<string>());
         Assert.True(document["hasSpeakerLabels"]?.GetValue<bool>());
         Assert.Equal(2, document["speakers"]?.AsArray().Count);
+        Assert.Equal("voice_pranav", document["speakers"]?[0]?["profileId"]?.GetValue<string>());
+        Assert.Equal("AutoAppliedVoiceProfile", document["speakers"]?[0]?["nameSource"]?.GetValue<string>());
+        Assert.Equal(0.91d, document["speakers"]?[0]?["confidence"]?.GetValue<double>());
         Assert.Equal(2, document["speakerTurns"]?.AsArray().Count);
+        Assert.False(document.ContainsKey("speakerVoiceSamples"));
         Assert.Equal("sherpa-onnx", document["diarizationMetadata"]?["provider"]?.GetValue<string>());
         Assert.Equal("directml probe failed.", document["diarizationMetadata"]?["diagnosticMessage"]?.GetValue<string>().ToLowerInvariant());
-        Assert.Equal("Speaker 1", document["segments"]?[0]?["speakerLabel"]?.GetValue<string>());
+        Assert.Equal("Pranav Sharma", document["segments"]?[0]?["speakerLabel"]?.GetValue<string>());
         Assert.Equal("Pranav", document["segments"]?[1]?["speakerLabel"]?.GetValue<string>());
     }
 

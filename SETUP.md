@@ -185,6 +185,7 @@ Secondary maintenance and support actions live in the header:
   - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for manual follow-up.
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
   - `Inline`: keep speaker labeling in the primary pass for labeled output sooner, with processing speed controlled by the selected background mode.
+  - Once the one-time legacy safety migration has run, saving Settings preserves explicit `Throttled` and `Inline` choices.
 
 The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.

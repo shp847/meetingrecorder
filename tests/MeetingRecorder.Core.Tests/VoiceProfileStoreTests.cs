@@ -1,0 +1,61 @@
+using MeetingRecorder.Core.Services;
+
+namespace MeetingRecorder.Core.Tests;
+
+public sealed class VoiceProfileStoreTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"MeetingRecorderVoiceProfiles-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root))
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Creates_Versioned_Empty_Profile_Document()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+
+        var document = await store.LoadOrCreateAsync();
+
+        Assert.Equal(1, document.SchemaVersion);
+        Assert.Empty(document.Profiles);
+        Assert.True(File.Exists(path));
+    }
+
+    [Fact]
+    public async Task SaveAsync_Persists_Profiles_Atomically()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        var document = new VoiceProfileStoreDocument(
+            1,
+            now,
+            [
+                new VoiceProfile(
+                    "voice_1",
+                    "Pranav Sharma",
+                    "embedding.onnx",
+                    3,
+                    [1f, 0f, 0f],
+                    2,
+                    ["meeting-a"],
+                    now.AddMinutes(-5),
+                    VoiceProfileStatus.Active),
+            ]);
+
+        await store.SaveAsync(document);
+        var reloaded = await store.LoadOrCreateAsync();
+
+        var profile = Assert.Single(reloaded.Profiles);
+        Assert.Equal("voice_1", profile.ProfileId);
+        Assert.Equal("Pranav Sharma", profile.DisplayName);
+        Assert.Equal([1f, 0f, 0f], profile.Centroid);
+        Assert.False(File.Exists(path + ".tmp"));
+    }
+}

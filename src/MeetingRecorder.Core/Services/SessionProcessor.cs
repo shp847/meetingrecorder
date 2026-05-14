@@ -171,6 +171,7 @@ public sealed class SessionProcessor
         IReadOnlyList<TranscriptSegment> transcriptSegments = transcription.Segments;
         IReadOnlyList<SpeakerIdentity> speakers = EmptySpeakers;
         IReadOnlyList<SpeakerTurn> speakerTurns = EmptySpeakerTurns;
+        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
         DiarizationMetadata? diarizationMetadata = null;
         if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true)
         {
@@ -198,6 +199,7 @@ public sealed class SessionProcessor
                 transcriptSegments = diarization.Segments;
                 speakers = diarization.Speakers ?? EmptySpeakers;
                 speakerTurns = diarization.SpeakerTurns ?? EmptySpeakerTurns;
+                speakerVoiceSamples = diarization.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>();
                 diarizationMetadata = diarization.Metadata;
                 manifest = manifest with
                 {
@@ -228,7 +230,8 @@ public sealed class SessionProcessor
                     !string.IsNullOrWhiteSpace(segment.SpeakerLabel)),
                 speakers,
                 speakerTurns,
-                diarizationMetadata),
+                diarizationMetadata,
+                speakerVoiceSamples),
         };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 

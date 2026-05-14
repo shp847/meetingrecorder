@@ -173,6 +173,20 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Config_Save_Preserves_Speaker_Labeling_Security_Migration_State()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var saveStart = source.IndexOf("private async void SaveConfigButton_OnClick", StringComparison.Ordinal);
+        var saveEnd = source.IndexOf("private async void RunTeamsIntegrationProbeButton_OnClick", saveStart, StringComparison.Ordinal);
+        var saveBlock = source[saveStart..saveEnd];
+
+        Assert.Contains(
+            "SpeakerLabelingSecurityPromptMigrationApplied = currentConfig.SpeakerLabelingSecurityPromptMigrationApplied",
+            saveBlock);
+    }
+
+    [Fact]
     public void Meeting_Refresh_Request_Is_Context_Aware_And_Only_Queues_Full_Loads_When_Meetings_Is_Active()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

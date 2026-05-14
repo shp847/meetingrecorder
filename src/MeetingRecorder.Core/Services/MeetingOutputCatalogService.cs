@@ -6,6 +6,12 @@ using System.Text.RegularExpressions;
 
 namespace MeetingRecorder.Core.Services;
 
+public sealed record SpeakerLabelInfo(
+    string DisplayName,
+    SpeakerNameSource NameSource,
+    string? SuggestedDisplayName,
+    double? Confidence);
+
 public sealed class MeetingOutputCatalogService
 {
     private const int MaxJsonTitlePreviewBytes = 64 * 1024;
@@ -217,13 +223,22 @@ public sealed class MeetingOutputCatalogService
 
     public IReadOnlyList<string> ListSpeakerLabels(MeetingOutputRecord record)
     {
-        var labels = TryReadJsonSpeakerLabels(record.JsonPath);
+        return ListSpeakerLabelDetails(record)
+            .Select(label => label.DisplayName)
+            .ToArray();
+    }
+
+    public IReadOnlyList<SpeakerLabelInfo> ListSpeakerLabelDetails(MeetingOutputRecord record)
+    {
+        var labels = TryReadJsonSpeakerLabelDetails(record.JsonPath);
         if (labels.Count > 0)
         {
             return labels;
         }
 
-        return TryReadMarkdownSpeakerLabels(record.MarkdownPath);
+        return TryReadMarkdownSpeakerLabels(record.MarkdownPath)
+            .Select(label => new SpeakerLabelInfo(label, SpeakerNameSource.None, null, null))
+            .ToArray();
     }
 
     public async Task RenameSpeakerLabelsAsync(
@@ -256,6 +271,11 @@ public sealed class MeetingOutputCatalogService
         if (!string.IsNullOrWhiteSpace(record.MarkdownPath) && File.Exists(record.MarkdownPath))
         {
             await UpdateMarkdownSpeakerLabelsAsync(record.MarkdownPath, normalizedMap, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.ManifestPath) && File.Exists(record.ManifestPath))
+        {
+            await UpdateManifestSpeakerLabelsAsync(record.ManifestPath, normalizedMap, cancellationToken);
         }
     }
 
@@ -954,9 +974,16 @@ public sealed class MeetingOutputCatalogService
 
     private static IReadOnlyList<string> TryReadJsonSpeakerLabels(string? jsonPath)
     {
+        return TryReadJsonSpeakerLabelDetails(jsonPath)
+            .Select(label => label.DisplayName)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<SpeakerLabelInfo> TryReadJsonSpeakerLabelDetails(string? jsonPath)
+    {
         if (string.IsNullOrWhiteSpace(jsonPath) || !File.Exists(jsonPath))
         {
-            return Array.Empty<string>();
+            return Array.Empty<SpeakerLabelInfo>();
         }
 
         try
@@ -965,7 +992,7 @@ public sealed class MeetingOutputCatalogService
             var speakers = GetSpeakersArray(node);
             if (speakers is { Count: > 0 })
             {
-                var speakerLabels = new List<string>();
+                var speakerLabels = new List<SpeakerLabelInfo>();
                 var seenSpeakerLabels = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var speakerNode in speakers)
                 {
@@ -980,7 +1007,18 @@ public sealed class MeetingOutputCatalogService
                         continue;
                     }
 
-                    speakerLabels.Add(displayName);
+                    var nameSource = TryParseJsonEnum<SpeakerNameSource>(
+                        speakerObject,
+                        out var parsedNameSource,
+                        "NameSource",
+                        "nameSource")
+                        ? parsedNameSource
+                        : SpeakerNameSource.None;
+                    speakerLabels.Add(new SpeakerLabelInfo(
+                        displayName,
+                        nameSource,
+                        GetJsonString(speakerObject, "SuggestedDisplayName", "suggestedDisplayName"),
+                        TryGetJsonDouble(speakerObject, "Confidence", "confidence")));
                 }
 
                 if (speakerLabels.Count > 0)
@@ -992,10 +1030,10 @@ public sealed class MeetingOutputCatalogService
             var segments = GetSegmentsArray(node);
             if (segments is null)
             {
-                return Array.Empty<string>();
+                return Array.Empty<SpeakerLabelInfo>();
             }
 
-            var labels = new List<string>();
+            var labels = new List<SpeakerLabelInfo>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var segmentNode in segments)
             {
@@ -1010,14 +1048,14 @@ public sealed class MeetingOutputCatalogService
                     continue;
                 }
 
-                labels.Add(label);
+                labels.Add(new SpeakerLabelInfo(label, SpeakerNameSource.None, null, null));
             }
 
             return labels;
         }
         catch
         {
-            return Array.Empty<string>();
+            return Array.Empty<SpeakerLabelInfo>();
         }
     }
 
@@ -1379,6 +1417,11 @@ public sealed class MeetingOutputCatalogService
                         }
 
                         speakerObject[propertyName] = updatedLabel;
+                        speakerObject[speakerObject.ContainsKey("isUserEdited") ? "isUserEdited" : "IsUserEdited"] = true;
+                        speakerObject[speakerObject.ContainsKey("nameSource") ? "nameSource" : "NameSource"] = SpeakerNameSource.UserEdited.ToString();
+                        speakerObject[speakerObject.ContainsKey("confidence") ? "confidence" : "Confidence"] = null;
+                        speakerObject[speakerObject.ContainsKey("suggestedDisplayName") ? "suggestedDisplayName" : "SuggestedDisplayName"] = null;
+                        speakerObject[speakerObject.ContainsKey("profileId") ? "profileId" : "ProfileId"] = null;
                     }
                 }
 
@@ -1412,6 +1455,55 @@ public sealed class MeetingOutputCatalogService
                     }
                 }
             },
+            cancellationToken);
+    }
+
+    private static async Task UpdateManifestSpeakerLabelsAsync(
+        string manifestPath,
+        IReadOnlyDictionary<string, string> speakerLabelMap,
+        CancellationToken cancellationToken)
+    {
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
+        if (manifest.ProcessingMetadata?.Speakers is not { Count: > 0 } speakers)
+        {
+            return;
+        }
+
+        var updatedSpeakers = speakers
+            .Select(speaker =>
+            {
+                if (string.IsNullOrWhiteSpace(speaker.DisplayName) ||
+                    !speakerLabelMap.TryGetValue(speaker.DisplayName.Trim(), out var updatedLabel))
+                {
+                    return speaker;
+                }
+
+                return speaker with
+                {
+                    DisplayName = updatedLabel,
+                    IsUserEdited = true,
+                    ProfileId = null,
+                    NameSource = SpeakerNameSource.UserEdited,
+                    Confidence = null,
+                    SuggestedDisplayName = null,
+                };
+            })
+            .ToArray();
+        if (updatedSpeakers.SequenceEqual(speakers))
+        {
+            return;
+        }
+
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                ProcessingMetadata = manifest.ProcessingMetadata with
+                {
+                    Speakers = updatedSpeakers,
+                },
+            },
+            manifestPath,
             cancellationToken);
     }
 
@@ -1679,6 +1771,30 @@ public sealed class MeetingOutputCatalogService
                 DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out timestamp))
             {
                 return timestamp;
+            }
+        }
+
+        return null;
+    }
+
+    private static double? TryGetJsonDouble(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is not JsonValue value)
+            {
+                continue;
+            }
+
+            if (value.TryGetValue<double>(out var number))
+            {
+                return number;
+            }
+
+            if (value.TryGetValue<string>(out var text) &&
+                double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
+            {
+                return number;
             }
         }
 

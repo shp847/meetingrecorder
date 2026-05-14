@@ -51,6 +51,10 @@ public sealed class AppConfigStoreTests
         Assert.Equal(AppBranding.DefaultUpdateFeedUrl, config.UpdateFeedUrl);
         Assert.Equal(BackgroundProcessingMode.Responsive, config.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, config.BackgroundSpeakerLabelingMode);
+        Assert.Equal(SpeakerNameLearningMode.LocalAutoLearn, config.SpeakerNameLearningMode);
+        Assert.Equal(0.86d, config.SpeakerNameAutoApplyConfidenceThreshold);
+        Assert.Equal(0.78d, config.SpeakerNameSuggestionConfidenceThreshold);
+        Assert.Equal(0.05d, config.SpeakerNameMatchMarginThreshold);
         Assert.Equal(AppBranding.Version, config.InstalledReleaseVersion);
         Assert.Equal(string.Empty, config.PendingUpdateZipPath);
         Assert.Equal(string.Empty, config.PendingUpdateVersion);

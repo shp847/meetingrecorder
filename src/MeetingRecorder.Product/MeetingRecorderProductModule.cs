@@ -73,7 +73,7 @@ public sealed class MeetingRecorderProductModule :
             InstallRoot: AppDataPaths.GetManagedInstallRoot(),
             DataRoot: AppDataPaths.GetManagedAppRoot(),
             ConfigPath: AppDataPaths.GetManagedConfigPath(),
-            PreservedDataDirectories: ["config", "logs", "audio", "transcripts", "work"],
+            PreservedDataDirectories: ["config", "logs", "audio", "transcripts", "work", "speaker-profiles"],
             MergeWithoutOverwriteDirectories: ["models"],
             LegacyInstallRoots:
             [
