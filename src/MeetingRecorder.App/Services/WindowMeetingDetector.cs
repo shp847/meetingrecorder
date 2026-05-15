@@ -1348,26 +1348,23 @@ internal static class AudioActivityProbeSupport
             {
                 using var session = sessions[index];
                 var processId = unchecked((int)session.GetProcessID);
-                var processName = TryGetSessionProcessName(processId);
                 var peakLevel = session.AudioMeterInformation.MasterPeakValue;
                 var isSystemSounds = TryGetSystemSoundsFlag(session);
                 var isCurrentProcess = processId == Environment.ProcessId;
                 var displayName = TryGetSessionDisplayName(session);
                 var sessionIdentifier = TryGetSessionIdentifier(session);
                 var stateText = TryGetSessionStateText(session);
-                var isActive = peakLevel >= threshold ||
-                    string.Equals(stateText, "AudioSessionStateActive", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase);
 
-                results.Add(new AudioSourceSessionSnapshot(
+                results.Add(BuildSessionSnapshot(
                     processId,
-                    processName,
                     peakLevel,
-                    isActive,
+                    threshold,
                     isSystemSounds,
                     isCurrentProcess,
                     displayName,
-                    sessionIdentifier));
+                    sessionIdentifier,
+                    stateText,
+                    TryGetSessionProcessName));
             }
 
             return results;
@@ -1376,6 +1373,53 @@ internal static class AudioActivityProbeSupport
         {
             return Array.Empty<AudioSourceSessionSnapshot>();
         }
+    }
+
+    internal static AudioSourceSessionSnapshot BuildSessionSnapshot(
+        int processId,
+        double peakLevel,
+        double activityThreshold,
+        bool isSystemSounds,
+        bool isCurrentProcess,
+        string? displayName,
+        string? sessionIdentifier,
+        string? stateText,
+        Func<int, string> resolveProcessName)
+    {
+        ArgumentNullException.ThrowIfNull(resolveProcessName);
+
+        var isActive = peakLevel >= activityThreshold ||
+            string.Equals(stateText, "AudioSessionStateActive", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase);
+        var processName = ShouldResolveAudioSessionProcessName(
+                processId,
+                isActive,
+                isSystemSounds,
+                isCurrentProcess)
+            ? resolveProcessName(processId)
+            : string.Empty;
+
+        return new AudioSourceSessionSnapshot(
+            processId,
+            processName,
+            peakLevel,
+            isActive,
+            isSystemSounds,
+            isCurrentProcess,
+            displayName,
+            sessionIdentifier);
+    }
+
+    private static bool ShouldResolveAudioSessionProcessName(
+        int processId,
+        bool isActive,
+        bool isSystemSounds,
+        bool isCurrentProcess)
+    {
+        return processId > 0 &&
+            isActive &&
+            !isSystemSounds &&
+            !isCurrentProcess;
     }
 
     private static string TryGetSessionProcessName(int processId)

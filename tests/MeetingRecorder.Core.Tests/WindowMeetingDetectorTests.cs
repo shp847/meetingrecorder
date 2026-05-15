@@ -718,6 +718,74 @@ public sealed class WindowMeetingDetectorTests
         Assert.Contains(result.Sessions, session => string.Equals(session.ProcessName, "ms-teams", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_System_Sounds()
+    {
+        var resolverWasCalled = false;
+
+        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
+            processId: 4242,
+            peakLevel: 0.65d,
+            activityThreshold: 0.05d,
+            isSystemSounds: true,
+            isCurrentProcess: false,
+            displayName: "System Sounds",
+            sessionIdentifier: "system-sounds",
+            stateText: "Active",
+            resolveProcessName: _ =>
+            {
+                resolverWasCalled = true;
+                return "svchost";
+            });
+
+        Assert.False(resolverWasCalled);
+        Assert.Equal(string.Empty, result.ProcessName);
+        Assert.True(result.IsSystemSounds);
+    }
+
+    [Fact]
+    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_Inactive_Sessions()
+    {
+        var resolverWasCalled = false;
+
+        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
+            processId: 4242,
+            peakLevel: 0d,
+            activityThreshold: 0.05d,
+            isSystemSounds: false,
+            isCurrentProcess: false,
+            displayName: null,
+            sessionIdentifier: null,
+            stateText: "AudioSessionStateInactive",
+            resolveProcessName: _ =>
+            {
+                resolverWasCalled = true;
+                return "svchost";
+            });
+
+        Assert.False(resolverWasCalled);
+        Assert.Equal(string.Empty, result.ProcessName);
+        Assert.False(result.IsActive);
+    }
+
+    [Fact]
+    public void BuildSessionSnapshot_Resolves_Process_Name_For_Active_NonSystem_Sessions()
+    {
+        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
+            processId: 4242,
+            peakLevel: 0.65d,
+            activityThreshold: 0.05d,
+            isSystemSounds: false,
+            isCurrentProcess: false,
+            displayName: "Microsoft Teams",
+            sessionIdentifier: "teams-session",
+            stateText: "Active",
+            resolveProcessName: _ => "ms-teams");
+
+        Assert.Equal("ms-teams", result.ProcessName);
+        Assert.True(result.IsActive);
+    }
+
     private static Task<WindowMeetingDetector> CreateDetectorAsync(params MeetingWindowCandidate[] candidates)
     {
         return CreateDetectorAsync(candidates, null);

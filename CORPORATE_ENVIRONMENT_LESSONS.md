@@ -159,6 +159,7 @@ Avoid in installer/update/bootstrap code:
 - UI Automation against unrelated app windows
 - `CloseMainWindow`
 - force-kill behavior as a normal install strategy
+- resolving process names for every Windows audio session before filtering out system sounds, inactive sessions, or the app's own session
 
 Prefer instead:
 
@@ -166,6 +167,7 @@ Prefer instead:
 - bounded waiting
 - normal file-replacement retries
 - a clear retry message when the app still will not release the install path
+- classifying audio-session state and metadata first, then resolving process names only for active non-system sessions that can affect meeting detection
 
 Reason:
 
