@@ -533,7 +533,7 @@ That MSI path:
 - downloads the selected Standard or Higher Accuracy transcription and speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
 - shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
 - invokes the installed `AppPlatform.Deployment.Cli provision-models` step after `InstallFinalize` so provisioning and later update repair share one model-management path without depending on pre-commit file visibility
-- uses already-extracted in-place update bundles as the staging source when they share a drive with the managed install, validates that staged source, and only then promotes files into `%USERPROFILE%\Documents\MeetingRecorder`
+- keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%USERPROFILE%\Documents\MeetingRecorder`
 - treats `MeetingRecorder-v<version>-win-x64.zip` as the only valid in-app update package shape; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs are rejected before update apply asks the app process to exit
 - keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow
 - keeps the install successful when optional Higher Accuracy downloads fail, records a one-time retry-needed result, and leaves Standard active

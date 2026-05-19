@@ -87,10 +87,13 @@ public sealed class PortableBundleInstaller
 
         Directory.CreateDirectory(installParent);
 
-        var stagingRoot = ResolveStagingRoot(sourceBundleRoot, installParent);
-        var stagingUsesSourceBundle = string.Equals(stagingRoot, sourceBundleRoot, StringComparison.OrdinalIgnoreCase);
         var backupRoot = CreateWorkspacePath(installParent, "APB");
         var isUpdate = Directory.Exists(resolvedInstallRoot);
+        var stagingRoot = ResolveStagingRoot(
+            sourceBundleRoot,
+            installParent,
+            preserveSourceBundleRoot: isUpdate);
+        var stagingUsesSourceBundle = string.Equals(stagingRoot, sourceBundleRoot, StringComparison.OrdinalIgnoreCase);
         var movedBackup = false;
         var finalInstallMoved = false;
         var desktopShortcutCreated = false;
@@ -350,8 +353,24 @@ public sealed class PortableBundleInstaller
 
     internal static string ResolveStagingRoot(string sourceBundleRoot, string installParent)
     {
+        return ResolveStagingRoot(
+            sourceBundleRoot,
+            installParent,
+            preserveSourceBundleRoot: false);
+    }
+
+    private static string ResolveStagingRoot(
+        string sourceBundleRoot,
+        string installParent,
+        bool preserveSourceBundleRoot)
+    {
         var resolvedSourceBundleRoot = Path.GetFullPath(sourceBundleRoot);
         var resolvedInstallParent = Path.GetFullPath(installParent);
+        if (preserveSourceBundleRoot)
+        {
+            return CreateStagingWorkspacePath(resolvedInstallParent);
+        }
+
         var sourceDrive = Path.GetPathRoot(resolvedSourceBundleRoot);
         var installDrive = Path.GetPathRoot(resolvedInstallParent);
         if (string.Equals(sourceDrive, installDrive, StringComparison.OrdinalIgnoreCase) &&

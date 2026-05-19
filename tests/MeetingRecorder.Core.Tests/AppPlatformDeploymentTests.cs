@@ -167,6 +167,58 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
+    public async Task PlatformPortableBundleInstaller_Update_Keeps_Temp_Extracted_Bundle_As_Repair_Source()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var bundleRoot = Path.Combine(root, "extract", "MeetingRecorder");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(bundleRoot);
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            WriteMinimalBundle(bundleRoot, appPayload: "new-app");
+            WriteMinimalBundle(installRoot, appPayload: "old-app");
+
+            var installer = new PortableBundleInstaller(
+                new InstallPathProcessManager(new FakeInstallPathProcessController(signalResult: false)),
+                new WindowsShortcutService(),
+                NullDeploymentLogger.Instance);
+
+            await installer.InstallAsync(
+                CreateManifest(installRoot, dataRoot),
+                new InstallRequest(
+                    BundleRoot: Path.Combine(root, "extract"),
+                    InstallRoot: installRoot,
+                    CreateDesktopShortcut: false,
+                    CreateStartMenuShortcut: false,
+                    LaunchAfterInstall: false,
+                    ReleaseVersion: "0.3",
+                    ReleasePublishedAtUtc: null,
+                    ReleaseAssetSizeBytes: null,
+                    Channel: InstallChannel.AutoUpdate),
+                CancellationToken.None);
+
+            Assert.Equal("new-app", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.True(File.Exists(Path.Combine(bundleRoot, "MeetingRecorder.App.exe")));
+            Assert.True(File.Exists(Path.Combine(bundleRoot, "AppPlatform.Deployment.Cli.exe")));
+            Assert.True(File.Exists(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.exe")));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlatformUpdatePackageInstaller_Rejects_Corrupt_Zip_Before_Source_Process_Shutdown()
     {
         var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
