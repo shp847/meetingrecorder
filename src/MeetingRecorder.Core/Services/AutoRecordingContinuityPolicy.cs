@@ -49,6 +49,14 @@ public sealed class AutoRecordingContinuityPolicy
                 : MinimumWeakSignalTimeout;
         }
 
+        if (HasActiveGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle))
+        {
+            var scaledTimeout = TimeSpan.FromSeconds(configuredTimeout.TotalSeconds * 6d);
+            return scaledTimeout >= MinimumWeakSignalTimeout
+                ? scaledTimeout
+                : MinimumWeakSignalTimeout;
+        }
+
         if (HasTeamsSpecificQuietContinuation(decision, activePlatform, activeSessionTitle) ||
             (decision is not null && HasSuppressedTeamsTitleContinuation(decision, activeSessionTitle)) ||
             (decision is not null && HasTeamsSharingSurfaceContinuation(decision, activeSessionTitle)))
@@ -436,6 +444,26 @@ public sealed class AutoRecordingContinuityPolicy
             HasBrowserSurfaceEvidence(decision);
     }
 
+    private static bool HasActiveGoogleMeetObscuredByTeamsNavigationSignal(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        if (activePlatform != MeetingPlatform.GoogleMeet ||
+            decision is null ||
+            decision.Platform != MeetingPlatform.Teams ||
+            decision.ShouldStart ||
+            decision.ShouldKeepRecording ||
+            !HasSuppressedTeamsNavigationSignal(decision) ||
+            !HasActiveAudioSignal(decision))
+        {
+            return false;
+        }
+
+        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
+        return !IsGenericMeetingTitle(normalizedActiveTitle, MeetingPlatform.GoogleMeet);
+    }
+
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
     {
         if (decision is null ||
@@ -458,6 +486,23 @@ public sealed class AutoRecordingContinuityPolicy
             {
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private static bool HasActiveAudioSignal(DetectionDecision decision)
+    {
+        foreach (var signal in decision.Signals)
+        {
+            if (!signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) ||
+                signal.Weight <= 0d)
+            {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
@@ -787,7 +832,8 @@ public sealed class AutoRecordingContinuityPolicy
             normalized.StartsWith("files |", StringComparison.Ordinal) ||
             normalized.StartsWith("approvals |", StringComparison.Ordinal) ||
             normalized.StartsWith("assignments |", StringComparison.Ordinal) ||
-            normalized.StartsWith("calls |", StringComparison.Ordinal);
+            normalized.StartsWith("calls |", StringComparison.Ordinal) ||
+            normalized.StartsWith("search |", StringComparison.Ordinal);
     }
 }
 
