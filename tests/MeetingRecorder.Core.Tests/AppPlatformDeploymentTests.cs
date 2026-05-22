@@ -550,7 +550,7 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
-    public void BuildSherpaDirectMlRuntimeScript_Pins_And_Validates_A_DirectMl_Enabled_Sherpa_Runtime()
+    public void BuildSherpaDirectMlRuntimeScript_Builds_And_Validates_A_DirectMl_Enabled_Sherpa_Runtime()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -565,6 +565,8 @@ public sealed class AppPlatformDeploymentTests
         var workflow = File.ReadAllText(workflowPath);
 
         Assert.Contains("SHERPA_ONNX_ENABLE_DIRECTML=ON", script, StringComparison.Ordinal);
+        Assert.Contains("sherpa-managed", script, StringComparison.Ordinal);
+        Assert.Contains("UsePreinstalledOnnxRuntime", script, StringComparison.Ordinal);
         Assert.Contains("Microsoft.ML.OnnxRuntime.DirectML", script, StringComparison.Ordinal);
         Assert.Contains("Failed to enable DirectML", script, StringComparison.Ordinal);
         Assert.Contains("DirectML is for Windows only", script, StringComparison.Ordinal);

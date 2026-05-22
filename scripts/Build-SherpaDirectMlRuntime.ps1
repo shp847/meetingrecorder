@@ -5,6 +5,7 @@ param(
     [string]$OutputRoot = "assets\native\sherpa-onnx-directml\win-x64",
     [string]$WorkRoot = ".tmp\sherpa-directml-runtime",
     [string]$Configuration = "Release",
+    [switch]$UsePreinstalledOnnxRuntime,
     [switch]$Clean
 )
 
@@ -18,6 +19,7 @@ $sourceRoot = Join-Path $resolvedWorkRoot "sherpa-onnx"
 $buildRoot = Join-Path $resolvedWorkRoot "build"
 $installRoot = Join-Path $resolvedWorkRoot "install"
 $dependencyRoot = Join-Path $resolvedWorkRoot "deps"
+$onnxRuntimeDependencyMode = "sherpa-managed"
 
 function Invoke-CheckedCommand {
     param(
@@ -101,20 +103,27 @@ else {
     Invoke-CheckedCommand -FileName "git" -Arguments @("-C", $sourceRoot, "checkout", "FETCH_HEAD") -WorkingDirectory $resolvedWorkRoot
 }
 
-$onnxRuntimeRoot = Expand-NuGetPackage `
-    -PackageId "Microsoft.ML.OnnxRuntime.DirectML" `
-    -Version $OnnxRuntimeDirectMlVersion `
-    -DestinationRoot $dependencyRoot
+if ($UsePreinstalledOnnxRuntime.IsPresent) {
+    $onnxRuntimeRoot = Expand-NuGetPackage `
+        -PackageId "Microsoft.ML.OnnxRuntime.DirectML" `
+        -Version $OnnxRuntimeDirectMlVersion `
+        -DestinationRoot $dependencyRoot
 
-$env:SHERPA_ONNXRUNTIME_INCLUDE_DIR = Join-Path $onnxRuntimeRoot "build\native\include"
-$env:SHERPA_ONNXRUNTIME_LIB_DIR = Join-Path $onnxRuntimeRoot "runtimes\win-x64\native"
+    $env:SHERPA_ONNXRUNTIME_INCLUDE_DIR = Join-Path $onnxRuntimeRoot "build\native\include"
+    $env:SHERPA_ONNXRUNTIME_LIB_DIR = Join-Path $onnxRuntimeRoot "runtimes\win-x64\native"
+    $onnxRuntimeDependencyMode = "preinstalled"
 
-if (-not (Test-Path (Join-Path $env:SHERPA_ONNXRUNTIME_INCLUDE_DIR "onnxruntime_c_api.h"))) {
-    throw "ONNX Runtime DirectML headers were not found under '$env:SHERPA_ONNXRUNTIME_INCLUDE_DIR'."
+    if (-not (Test-Path (Join-Path $env:SHERPA_ONNXRUNTIME_INCLUDE_DIR "onnxruntime_c_api.h"))) {
+        throw "ONNX Runtime DirectML headers were not found under '$env:SHERPA_ONNXRUNTIME_INCLUDE_DIR'."
+    }
+
+    if (-not (Test-Path (Join-Path $env:SHERPA_ONNXRUNTIME_LIB_DIR "onnxruntime.lib"))) {
+        throw "ONNX Runtime DirectML import library was not found under '$env:SHERPA_ONNXRUNTIME_LIB_DIR'."
+    }
 }
-
-if (-not (Test-Path (Join-Path $env:SHERPA_ONNXRUNTIME_LIB_DIR "onnxruntime.lib"))) {
-    throw "ONNX Runtime DirectML import library was not found under '$env:SHERPA_ONNXRUNTIME_LIB_DIR'."
+else {
+    Remove-Item Env:SHERPA_ONNXRUNTIME_INCLUDE_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:SHERPA_ONNXRUNTIME_LIB_DIR -ErrorAction SilentlyContinue
 }
 
 Remove-Item -Recurse -Force $buildRoot -ErrorAction SilentlyContinue
@@ -195,6 +204,7 @@ $manifest = [ordered]@{
     builtAtUtc                 = [DateTimeOffset]::UtcNow.ToString("O")
     sherpaRepository           = $SherpaRepository
     sherpaRef                  = $SherpaRef
+    onnxRuntimeDependencyMode  = $onnxRuntimeDependencyMode
     onnxRuntimeDirectMlVersion = $OnnxRuntimeDirectMlVersion
     runtime                    = "win-x64"
     files                      = @(
