@@ -190,11 +190,11 @@ foreach ($runtimeFile in ($requiredRuntimeFiles + $optionalRuntimeFiles)) {
 
 $sherpaNativePath = Join-Path $resolvedOutputRoot "sherpa-onnx-c-api.dll"
 $sherpaNativeText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($sherpaNativePath))
-if (-not $sherpaNativeText.Contains("Failed to enable DirectML", [StringComparison]::Ordinal)) {
+if ($sherpaNativeText.IndexOf("Failed to enable DirectML", [StringComparison]::Ordinal) -lt 0) {
     throw "Built sherpa-onnx-c-api.dll does not contain the expected DirectML enable path."
 }
 
-if ($sherpaNativeText.Contains("DirectML is for Windows only", [StringComparison]::Ordinal)) {
+if ($sherpaNativeText.IndexOf("DirectML is for Windows only", [StringComparison]::Ordinal) -ge 0) {
     throw "Built sherpa-onnx-c-api.dll still contains the CPU-only DirectML fallback marker."
 }
 

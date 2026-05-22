@@ -570,6 +570,7 @@ public sealed class AppPlatformDeploymentTests
         Assert.Contains("Microsoft.ML.OnnxRuntime.DirectML", script, StringComparison.Ordinal);
         Assert.Contains("Failed to enable DirectML", script, StringComparison.Ordinal);
         Assert.Contains("DirectML is for Windows only", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Contains(\"Failed to enable DirectML\", [StringComparison]::Ordinal)", script, StringComparison.Ordinal);
         Assert.Contains("sherpa-directml-runtime.json", script, StringComparison.Ordinal);
         Assert.Contains("Build-SherpaDirectMlRuntime.ps1", workflow, StringComparison.Ordinal);
         Assert.Contains("actions/upload-artifact", workflow, StringComparison.Ordinal);
