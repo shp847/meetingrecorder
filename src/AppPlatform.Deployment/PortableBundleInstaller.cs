@@ -158,6 +158,18 @@ public sealed class PortableBundleInstaller
             var executablePath = Path.Combine(resolvedInstallRoot, manifest.ExecutableName);
             var launcherPath = ResolveShortcutTargetPath(manifest, resolvedInstallRoot);
             var iconPath = Path.Combine(resolvedInstallRoot, "MeetingRecorder.ico");
+            var taskbarTargetPath = File.Exists(executablePath)
+                ? executablePath
+                : launcherPath;
+            var repairedPinnedTaskbarShortcuts = _shortcutService.RepairPinnedTaskbarShortcuts(
+                manifest.ShortcutPolicy,
+                taskbarTargetPath,
+                resolvedInstallRoot,
+                iconPath);
+            foreach (var repairedPinnedTaskbarShortcut in repairedPinnedTaskbarShortcuts)
+            {
+                _logger.Info($"Repaired pinned taskbar shortcut '{repairedPinnedTaskbarShortcut}'.");
+            }
 
             if (isUpdate && (request.CreateDesktopShortcut || request.CreateStartMenuShortcut))
             {

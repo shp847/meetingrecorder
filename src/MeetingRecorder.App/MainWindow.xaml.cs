@@ -6222,10 +6222,12 @@ public partial class MainWindow : Window
         try
         {
             var probeMessage = await RunDiarizationDirectMlProbeAsync(_lifetimeCts.Token);
-            ConfigDiarizationAccelerationStatusTextBlock.Text = probeMessage;
+            await EnableDiarizationGpuAccelerationAfterSuccessfulProbeAsync(_lifetimeCts.Token);
             SetConfigSaveStatus("Speaker-labeling GPU test finished.");
             var status = _diarizationAssetCatalogService.InspectInstalledAssets(_liveConfig.Current.DiarizationAssetPath);
             ApplyDiarizationAssetStatus(status);
+            ConfigDiarizationAccelerationStatusTextBlock.Text =
+                BuildDiarizationGpuProbeSuccessStatusText(_liveConfig.Current, status, probeMessage);
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -6244,6 +6246,34 @@ public partial class MainWindow : Window
             _isTestingDiarizationGpuAcceleration = false;
             UpdateConfigActionState();
         }
+    }
+
+    private async Task EnableDiarizationGpuAccelerationAfterSuccessfulProbeAsync(CancellationToken cancellationToken)
+    {
+        var currentConfig = _liveConfig.Current;
+        if (currentConfig.DiarizationAccelerationPreference != InferenceAccelerationPreference.Auto)
+        {
+            var editorSnapshot = ReadConfigEditorSnapshot();
+            var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(currentConfig, editorSnapshot);
+            _pendingConfigEditorSnapshotRestore = hasPendingChanges
+                ? editorSnapshot with { UseGpuAcceleration = true }
+                : null;
+
+            await _liveConfig.SaveAsync(
+                currentConfig with
+                {
+                    DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+                    DiarizationAccelerationSecurityPromptMigrationApplied = true,
+                },
+                cancellationToken);
+        }
+        else
+        {
+            _pendingConfigEditorSnapshotRestore = null;
+        }
+
+        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = true;
+        UpdateConfigActionState();
     }
 
     private async Task<string> RunDiarizationDirectMlProbeAsync(CancellationToken cancellationToken)
@@ -6279,7 +6309,7 @@ public partial class MainWindow : Window
             var workerMessage = string.IsNullOrWhiteSpace(standardOutput)
                 ? "DirectML probe succeeded."
                 : standardOutput.Trim();
-            return $"{workerMessage} Speaker labeling will try GPU first when the setting is enabled and will fall back to CPU if a run fails.";
+            return workerMessage;
         }
 
         var workerError = standardError.Trim();
@@ -9143,23 +9173,63 @@ public partial class MainWindow : Window
     private void UpdateDiarizationAccelerationStatusText(AppConfig config, DiarizationAssetInstallStatus? status)
     {
         var preferenceText = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
-            ? "GPU acceleration is enabled. Speaker labeling tries DirectML only when the bundled runtime supports it, then falls back to CPU if GPU initialization fails."
+            ? "GPU acceleration is enabled. Speaker labeling tries DirectML only when the bundled runtime supports it, then falls back to CPU if GPU initialization or a DirectML run fails."
             : "GPU acceleration is off. Speaker labeling uses CPU unless you opt into DirectML.";
         var accelerationDiagnostic = GetSafeAccelerationDiagnostic(status?.DiagnosticMessage);
 
-        var availabilityText = status?.EffectiveExecutionProvider switch
+        var lastRunText = status?.EffectiveExecutionProvider switch
         {
             DiarizationExecutionProvider.Directml => "The last speaker-labeling run used DirectML.",
             DiarizationExecutionProvider.Cpu when status.GpuAccelerationAvailable == false &&
                 !string.IsNullOrWhiteSpace(accelerationDiagnostic)
                     => $"{accelerationDiagnostic} CPU fallback was used.",
             DiarizationExecutionProvider.Cpu => "The last speaker-labeling run used CPU.",
-            _ => config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
+            _ => status?.LastDirectMlProbeSucceeded is not null
+                ? "No speaker-labeling run has reported DirectML or CPU yet."
+                : config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
                 ? "Use Test GPU to check DirectML before the next speaker-labeling run."
                 : "DirectML is not tested while GPU acceleration is off.",
         };
+        var probeText = BuildLastDirectMlProbeStatusText(status);
+        var deferredModeText = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto &&
+            config.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred
+                ? "DirectML will apply to manual speaker labeling or future Throttled/Inline runs."
+                : null;
 
-        ConfigDiarizationAccelerationStatusTextBlock.Text = $"{preferenceText} {availabilityText}";
+        ConfigDiarizationAccelerationStatusTextBlock.Text = string.Join(
+            " ",
+            new[] { preferenceText, lastRunText, probeText, deferredModeText }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
+
+    private static string BuildDiarizationGpuProbeSuccessStatusText(
+        AppConfig config,
+        DiarizationAssetInstallStatus? status,
+        string probeMessage)
+    {
+        var modeText = config.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred
+            ? " DirectML will apply to manual speaker labeling or future Throttled/Inline runs."
+            : string.Empty;
+        var lastRunText = status?.EffectiveExecutionProvider switch
+        {
+            DiarizationExecutionProvider.Directml => " The last speaker-labeling run used DirectML.",
+            DiarizationExecutionProvider.Cpu => " The last speaker-labeling run used CPU.",
+            _ => string.Empty,
+        };
+
+        return $"{probeMessage} GPU acceleration is now enabled. Speaker labeling will try GPU first and fall back to CPU if a DirectML run fails.{modeText}{lastRunText}";
+    }
+
+    private static string? BuildLastDirectMlProbeStatusText(DiarizationAssetInstallStatus? status)
+    {
+        var probeDiagnostic = GetSafeAccelerationDiagnostic(status?.LastDirectMlProbeMessage);
+        return status?.LastDirectMlProbeSucceeded switch
+        {
+            true => "Last GPU test succeeded.",
+            false when !string.IsNullOrWhiteSpace(probeDiagnostic) => $"Last GPU test failed: {probeDiagnostic}",
+            false => "Last GPU test failed.",
+            _ => null,
+        };
     }
 
     private static string? GetSafeAccelerationDiagnostic(string? diagnosticMessage)
@@ -9191,19 +9261,24 @@ public partial class MainWindow : Window
             _ => "No diarization run has reported an effective provider yet.",
         };
 
-        var availabilityText = status.GpuAccelerationAvailable switch
+        var runtimeAvailabilityText = status.GpuAccelerationAvailable switch
         {
-            true => "DirectML probe: available.",
-            false => "DirectML probe: unavailable or not requested; CPU fallback is available.",
-            _ => "DirectML probe: not run yet.",
+            true => "Last speaker-labeling run reported DirectML available.",
+            false => "Last speaker-labeling run reported CPU fallback available.",
+            _ => "No speaker-labeling run has reported GPU availability yet.",
         };
+        var lastProbeText = BuildLastDirectMlProbeStatusText(status) ?? "No GPU test has been recorded yet.";
 
         if (string.IsNullOrWhiteSpace(status.DiagnosticMessage))
         {
-            return $"{providerText} {availabilityText}";
+            return string.Join(" ", new[] { providerText, runtimeAvailabilityText, lastProbeText }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
         }
 
-        return $"{providerText} {availabilityText} Diagnostic: {status.DiagnosticMessage}";
+        return string.Join(
+            " ",
+            new[] { providerText, runtimeAvailabilityText, lastProbeText, $"Diagnostic: {status.DiagnosticMessage}" }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
     }
 
     private void UpdateModelsTabGuidance()

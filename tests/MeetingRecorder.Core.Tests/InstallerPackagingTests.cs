@@ -54,6 +54,23 @@ public sealed class InstallerPackagingTests
     }
 
     [Fact]
+    public void WixPackage_StartMenuShortcut_Does_Not_Pin_To_Installer_Cached_ProductIcon()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("<Icon Id=\"ProductIcon\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("<Property Id=\"ARPPRODUCTICON\" Value=\"ProductIcon\" />", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Icon=\"ProductIcon\"", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WixProject_Suppresses_Only_Intentional_PerUser_Validation_Warnings()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -255,6 +272,27 @@ public sealed class InstallerPackagingTests
         Assert.Contains(" -l ", packageContents, StringComparison.Ordinal);
         Assert.Contains("After=\"InstallFinalize\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("Return=\"ignore\"", packageContents, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WixPackage_Uses_Friendly_Progress_Action_Text_Instead_Of_Raw_Msi_Field_Templates()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var packagePath = Path.Combine(repoRoot, "src", "MeetingRecorder.Setup", "Package.wxs");
+
+        Assert.True(File.Exists(packagePath), $"Expected WiX package authoring at '{packagePath}'.");
+
+        var packageContents = File.ReadAllText(packagePath);
+
+        Assert.Contains("Action=\"InstallFiles\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Installing Meeting Recorder application files.", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Action=\"WriteRegistryValues\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Saving installer registration details.", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Action=\"CreateShortcuts\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Creating Meeting Recorder shortcuts.", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("File: [1], Directory: [9], Size: [6]", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

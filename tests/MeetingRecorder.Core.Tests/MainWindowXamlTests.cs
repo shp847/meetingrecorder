@@ -153,6 +153,21 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Settings_Speaker_Labeling_Gpu_Test_Saves_Auto_And_Separates_Probe_Status_From_Last_Run()
+    {
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var code = File.ReadAllText(codePath);
+
+        Assert.Contains("EnableDiarizationGpuAccelerationAfterSuccessfulProbeAsync", code);
+        Assert.Contains("DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto", code);
+        Assert.Contains("ConfigDiarizationGpuAccelerationCheckBox.IsChecked = true", code);
+        Assert.Contains("Last GPU test succeeded.", code);
+        Assert.Contains("Last GPU test failed", code);
+        Assert.Contains("The last speaker-labeling run used CPU.", code);
+        Assert.Contains("DirectML will apply to manual speaker labeling or future Throttled/Inline runs.", code);
+    }
+
+    [Fact]
     public void App_Shell_Uses_A_Global_Status_Surface_Outside_The_Home_Body()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

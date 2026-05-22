@@ -75,27 +75,74 @@ internal static class Program
     {
         var configPath = TryGetOption(args, "--config") ?? AppDataPaths.GetConfigPath();
         var logger = new FileLogWriter(AppDataPaths.GetGlobalLogPath());
+        var assetCatalogService = new DiarizationAssetCatalogService();
+        string? diarizationAssetPath = null;
 
         try
         {
             var configStore = new AppConfigStore(configPath);
             var config = await configStore.LoadOrCreateAsync();
+            diarizationAssetPath = config.DiarizationAssetPath;
             var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
-            LocalSpeakerDiarizationProvider.ProbeDirectMl(config.DiarizationAssetPath, diarizationThreadCount, logger);
+            LocalSpeakerDiarizationProvider.ProbeDirectMl(diarizationAssetPath, diarizationThreadCount, logger);
+            await TryWriteDirectMlProbeStatusAsync(
+                assetCatalogService,
+                diarizationAssetPath,
+                succeeded: true,
+                message: "DirectML probe succeeded.",
+                logger);
             Console.WriteLine("DirectML probe succeeded.");
             return 0;
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("DirectML-enabled speaker-labeling runtime", StringComparison.OrdinalIgnoreCase))
         {
             logger.Log("DirectML probe unavailable: DirectML-enabled Sherpa runtime is not packaged.");
+            await TryWriteDirectMlProbeStatusAsync(
+                assetCatalogService,
+                diarizationAssetPath,
+                succeeded: false,
+                message: exception.Message,
+                logger);
             Console.Error.WriteLine(exception.Message);
             return 2;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.Log($"DirectML probe failed safely: {exception.GetType().Name}");
+            await TryWriteDirectMlProbeStatusAsync(
+                assetCatalogService,
+                diarizationAssetPath,
+                succeeded: false,
+                message: "DirectML probe failed.",
+                logger);
             Console.Error.WriteLine("DirectML probe failed.");
             return 2;
+        }
+    }
+
+    private static async Task TryWriteDirectMlProbeStatusAsync(
+        DiarizationAssetCatalogService assetCatalogService,
+        string? diarizationAssetPath,
+        bool succeeded,
+        string message,
+        FileLogWriter logger)
+    {
+        if (string.IsNullOrWhiteSpace(diarizationAssetPath))
+        {
+            return;
+        }
+
+        try
+        {
+            await assetCatalogService.WriteDirectMlProbeStatusAsync(
+                diarizationAssetPath,
+                succeeded,
+                message,
+                DateTimeOffset.UtcNow);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.Log($"Unable to write DirectML probe status: {exception.Message}");
         }
     }
 

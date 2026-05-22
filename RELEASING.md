@@ -92,6 +92,7 @@ Packaging validation notes:
 - the updater apply path should not wait forever for the app to close; it should signal shutdown, escalate install-path release if needed, and then fail clearly if the process still will not exit
 - avoid cross-process inspection and control APIs in all installer paths so endpoint tools do not flag the flow as restricted process-memory access
 - silent in-app updates should not repair Desktop or Start Menu shortcuts during the CLI apply path unless that specific update flow explicitly requested shortcut changes, because shell shortcut COM traffic is more likely to trigger security prompts on managed Windows machines
+- silent in-app updates may repair an existing pinned taskbar shortcut because that does not create a new shell surface; it only rewrites an already-pinned `Meeting Recorder.lnk` to the installed app executable and installed `MeetingRecorder.ico` when the old pin references a stale icon cache
 - the CLI relaunch path should prefer starting `MeetingRecorder.App.exe` directly instead of shell-executing `Run-MeetingRecorder.cmd`, reducing Explorer-coupled relaunch behavior during silent updates while still keeping the launcher script available as a fallback
 - app startup should repair a missing or malformed process `windir` before WPF creates the main window, so installer or CLI relaunches with incomplete inherited environment variables do not trip WPF font initialization
 - unexpected dispatcher UI errors should close the app after logging, and launch activation should be acknowledged only after the existing instance surfaces a real main window, so a hidden primary instance cannot keep future launches stuck
@@ -350,17 +351,18 @@ Important:
 14. Confirm the `Setup` page offers `Use Standard`, `Use Higher Accuracy`, `Import approved file`, and open-folder diagnostics for both transcription and speaker labeling
 15. Confirm only the Higher Accuracy assets are shown as GitHub-backed downloads
 16. Confirm a later CLI/in-app update preserves the current transcription and speaker-labeling profile choice while restoring missing bundled Standard assets if needed
-17. With background processing active, open `Settings > Updates`, confirm the primary action changes to `Queue Install When Idle`, and confirm clicking it downloads the ZIP immediately instead of waiting for the queue to drain first
-18. Let background processing finish and confirm the queued in-app install starts automatically without requiring another manual click
-19. Repeat the same scenario and confirm the queued state exposes `Install Now Anyway`, then confirm that override interrupts background processing and proceeds with the installer handoff
-20. Start a live recording and confirm the in-app installer path still refuses to proceed even if an update ZIP is already downloaded
-21. Confirm a republished same-version build still does not auto-install on its own without an explicit user queue request
-22. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
-23. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
-24. Confirm `%USERPROFILE%\Documents\MeetingRecorder` and the user-scope shortcuts are removed
-25. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
-26. Run `MeetingRecorderInstaller.msi` again as a fresh install
-27. Confirm the app comes back with the preserved user data still available
+17. If DirectML is available on the test machine, confirm `Settings > General > Test GPU` succeeds, immediately saves GPU acceleration as enabled, and reports the last GPU test separately from the last speaker-labeling provider
+18. With background processing active, open `Settings > Updates`, confirm the primary action changes to `Queue Install When Idle`, and confirm clicking it downloads the ZIP immediately instead of waiting for the queue to drain first
+19. Let background processing finish and confirm the queued in-app install starts automatically without requiring another manual click
+20. Repeat the same scenario and confirm the queued state exposes `Install Now Anyway`, then confirm that override interrupts background processing and proceeds with the installer handoff
+21. Start a live recording and confirm the in-app installer path still refuses to proceed even if an update ZIP is already downloaded
+22. Confirm a republished same-version build still does not auto-install on its own without an explicit user queue request
+23. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
+24. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
+25. Confirm `%USERPROFILE%\Documents\MeetingRecorder` and the user-scope shortcuts are removed
+26. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
+27. Run `MeetingRecorderInstaller.msi` again as a fresh install
+28. Confirm the app comes back with the preserved user data still available
 
 ## User-Facing Install Story
 

@@ -22,6 +22,7 @@ That installer path:
 - explains the tradeoff clearly: `Higher Accuracy` can improve transcript or speaker-label quality, but it uses a larger download and may lead to slower processing than the included `Standard` option
 - keeps the install successful even if setup downloads are blocked, then tells the user to resume setup from `Settings > Setup`
 - creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%USERPROFILE%\Documents\MeetingRecorder`
+- repairs an existing pinned taskbar shortcut, if one already exists, so it points at the installed app executable and the installed `MeetingRecorder.ico` instead of a stale Windows Installer icon-cache path
 - skips the stock license-agreement page so the install flow stays short
 - shows a final completion screen so users can confirm the install succeeded
 - offers a `Launch Meeting Recorder` checkbox on that final screen for first launch, checked by default
@@ -451,11 +452,11 @@ Advanced details:
 GPU acceleration:
 
 - `Settings > General` exposes `Try GPU acceleration for speaker labeling (DirectML)` as an explicit opt-in
-- new installs stay CPU-only by default, and legacy `Auto` configs are migrated to CPU-only once; after that, saving the GPU checkbox preserves the user opt-in
+- new installs stay CPU-only by default, and legacy `Auto` configs are migrated to CPU-only once; after that, saving the GPU checkbox or a successful `Test GPU` preserves the user opt-in
 - users do not install or build Sherpa themselves; Meeting Recorder ships the pinned DirectML-enabled Sherpa runtime under `assets\native\sherpa-onnx-directml\win-x64`, and `scripts\Publish-Portable.ps1` bundles those files into the app payload
-- the processing worker refuses to mark DirectML available when the bundled native runtime only exposes CPU fallback, and automatically retries or stays on CPU without blocking transcript publishing
-- `Test GPU` validates whether the bundled speaker-labeling runtime can initialize DirectML with the installed assets only; it does not send transcript or meeting content
-- the diarization `Advanced` panel records the last effective provider and any safe GPU fallback message reported by the worker
+- the processing worker refuses to mark DirectML available when the bundled native runtime only exposes CPU fallback; if a real DirectML speaker-labeling run crashes, the queue retries the same labels once with CPU before falling back to the no-label recovery path
+- `Test GPU` validates whether the bundled speaker-labeling runtime can initialize DirectML with the installed assets only; it does not send transcript or meeting content, and a successful test immediately saves GPU acceleration as enabled
+- the diarization `Advanced` panel records the last effective provider separately from the last GPU test result and any safe GPU fallback message reported by the worker
 
 ## 6. Settings
 
@@ -712,7 +713,7 @@ What the current app does:
 - same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt when you launch them manually
 - background auto-install and passive pending-update retry only run for true version upgrades, while an explicitly queued manual same-version update can still install once background processing becomes idle
 - launch-on-login registration now resolves the installed `MeetingRecorder.App.exe` path from the running process instead of persisting a temporary `%TEMP%\\.net\\...` extraction path
-- update repair now rewrites existing Desktop and Start Menu launchers to the canonical `Documents\\MeetingRecorder` bundle and quarantines older `Documents\\Meeting Recorder` or `%LOCALAPPDATA%\\Programs\\Meeting Recorder` roots if they are still present
+- update repair now rewrites existing Desktop and Start Menu launchers to the canonical `Documents\\MeetingRecorder` bundle, repairs an existing pinned taskbar shortcut to the stable installed app/icon paths without creating a new pin, and quarantines older `Documents\\Meeting Recorder` or `%LOCALAPPDATA%\\Programs\\Meeting Recorder` roots if they are still present
 
 If you still see the warning:
 

@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using System.Text.Json;
 
@@ -45,5 +46,38 @@ public sealed class DiarizationAssetCatalogServiceTests
 
         Assert.False(status.IsReady);
         Assert.Contains("bundle manifest", status.DetailsText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WriteDirectMlProbeStatusAsync_Preserves_Last_Run_Provider_And_Records_Last_Probe()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var service = new DiarizationAssetCatalogService();
+        var runStatusTime = DateTimeOffset.Parse("2026-05-22T14:30:00Z");
+        var probeStatusTime = DateTimeOffset.Parse("2026-05-22T15:00:00Z");
+
+        await service.WriteRuntimeStatusAsync(
+            root,
+            new DiarizationRuntimeStatus(
+                GpuAccelerationAvailable: false,
+                EffectiveExecutionProvider: DiarizationExecutionProvider.Cpu,
+                DiagnosticMessage: "The last speaker-labeling run used CPU.",
+                UpdatedAtUtc: runStatusTime));
+
+        await service.WriteDirectMlProbeStatusAsync(
+            root,
+            succeeded: true,
+            message: "DirectML probe succeeded.",
+            atUtc: probeStatusTime);
+
+        var status = service.InspectInstalledAssets(root);
+
+        Assert.Equal(DiarizationExecutionProvider.Cpu, status.EffectiveExecutionProvider);
+        Assert.False(status.GpuAccelerationAvailable);
+        Assert.Equal("The last speaker-labeling run used CPU.", status.DiagnosticMessage);
+        Assert.True(status.LastDirectMlProbeSucceeded);
+        Assert.Equal(probeStatusTime, status.LastDirectMlProbeAtUtc);
+        Assert.Equal("DirectML probe succeeded.", status.LastDirectMlProbeMessage);
     }
 }

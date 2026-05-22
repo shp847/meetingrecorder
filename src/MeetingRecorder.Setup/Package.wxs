@@ -60,6 +60,10 @@
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <UI>
+      <ProgressText Action="InstallFiles" Message="Installing Meeting Recorder application files." />
+      <ProgressText Action="WriteRegistryValues" Message="Saving installer registration details." />
+      <ProgressText Action="CreateShortcuts" Message="Creating Meeting Recorder shortcuts." />
+
       <Dialog Id="ModelOptionsDlg" Width="370" Height="320" Title="[ProductName] Setup" NoMinimize="yes">
         <Control Id="Title" Type="Text" X="15" Y="8" Width="330" Height="18" Transparent="yes" NoPrefix="yes" Text="Choose setup options" />
         <Control Id="Description" Type="Text" X="20" Y="28" Width="330" Height="22" Transparent="yes" NoPrefix="yes" Text="Recommended setup tries the Standard transcription download now. Recommended setup also tries the Standard speaker-labeling download now." />
@@ -164,7 +168,6 @@
         Description="Meeting Recorder"
         Target="[INSTALLFOLDER]MeetingRecorder.App.exe"
         WorkingDirectory="INSTALLFOLDER"
-        Icon="ProductIcon"
         Advertise="no" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       <RegistryValue Root="HKCU" Key="Software\Meeting Recorder" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />

@@ -467,7 +467,8 @@ internal sealed class ProcessingQueueService
     private async Task<WorkerRunResult> RunWorkerAsync(
         string manifestPath,
         string configPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AppConfig? launchConfigOverride = null)
     {
         await _tempCleanupService.RunRecurringCleanupAsync(cancellationToken);
         var launch = _workerLaunchResolver();
@@ -482,13 +483,18 @@ internal sealed class ProcessingQueueService
             CreateNoWindow = true,
         };
 
-        var currentConfig = _config.Current;
+        var currentConfig = launchConfigOverride ?? _config.Current;
+        var launchSnapshot = new WorkerLaunchConfigSnapshot(
+            currentConfig.DiarizationAccelerationPreference,
+            currentConfig.BackgroundSpeakerLabelingMode,
+            currentConfig.DiarizationAssetPath);
         var priority = BackgroundProcessingPolicy.GetWorkerPriority(currentConfig);
         var transcriptionThreads = BackgroundProcessingPolicy.GetTranscriptionThreadCount(currentConfig, Environment.ProcessorCount);
         var diarizationThreads = BackgroundProcessingPolicy.GetDiarizationThreadCount(currentConfig, Environment.ProcessorCount);
         _logger.Log(
             $"Launching worker for '{manifestPath}'. FileName='{startInfo.FileName}'. Arguments='{startInfo.Arguments}'. " +
             $"Mode={currentConfig.BackgroundProcessingMode}. SpeakerLabelingMode={currentConfig.BackgroundSpeakerLabelingMode}. " +
+            $"DiarizationAcceleration={currentConfig.DiarizationAccelerationPreference}. " +
             $"Priority={priority}. TranscriptionThreads={transcriptionThreads}. DiarizationThreads={diarizationThreads}.");
         var process = _workerProcessFactory.Start(startInfo);
         SetCurrentWorker(process, manifestPath);
@@ -503,7 +509,11 @@ internal sealed class ProcessingQueueService
             await process.WaitForExitAsync(cancellationToken);
             await Task.WhenAll(standardOutputTask, standardErrorTask);
 
-            var result = new WorkerRunResult(process.ExitCode, standardOutputTask.Result, standardErrorTask.Result);
+            var result = new WorkerRunResult(
+                process.ExitCode,
+                standardOutputTask.Result,
+                standardErrorTask.Result,
+                launchSnapshot);
             if (result.ExitCode == 0)
             {
                 _logger.Log($"Worker completed for '{manifestPath}': {result.StandardOutput.Trim()}");
@@ -540,18 +550,102 @@ internal sealed class ProcessingQueueService
             return false;
         }
 
+        if (workerResult.LaunchConfig.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
+        {
+            return await TryRecoverDirectMlDiarizationCrashWithCpuAsync(
+                manifestPath,
+                cancellationToken);
+        }
+
+        return await TryRecoverDiarizationCrashWithoutSpeakerLabelingAsync(
+            manifestPath,
+            "Recovered from an earlier worker crash by retrying without optional speaker labeling.",
+            cancellationToken);
+    }
+
+    private async Task<bool> TryRecoverDirectMlDiarizationCrashWithCpuAsync(
+        string manifestPath,
+        CancellationToken cancellationToken)
+    {
+        var recoveryConfigPath = string.Empty;
+        try
+        {
+            var cpuOnlyConfig = await SaveCpuOnlyDiarizationPreferenceAfterDirectMlCrashAsync(cancellationToken);
+            var recoveryConfig = await CreateCpuOnlyDiarizationConfigAsync(manifestPath, cpuOnlyConfig, cancellationToken);
+            recoveryConfigPath = recoveryConfig.ConfigPath;
+            _logger.Log($"Retrying '{manifestPath}' once with CPU speaker labeling because the worker crashed during DirectML diarization.");
+
+            var retryResult = await RunWorkerAsync(
+                manifestPath,
+                recoveryConfig.ConfigPath,
+                cancellationToken,
+                recoveryConfig.Config);
+            if (retryResult.ExitCode == 0)
+            {
+                _logger.Log($"Recovered '{manifestPath}' by retrying speaker labeling on CPU after the DirectML worker crash.");
+                return true;
+            }
+
+            if (IsDiarizationCrash(retryResult.StandardError))
+            {
+                _logger.Log($"CPU speaker-labeling retry also crashed for '{manifestPath}'. Retrying once without optional speaker labeling.");
+                return await TryRecoverDiarizationCrashWithoutSpeakerLabelingAsync(
+                    manifestPath,
+                    "Recovered from repeated speaker-labeling crashes by retrying without optional speaker labeling.",
+                    cancellationToken);
+            }
+
+            LogWorkerFailure(manifestPath, retryResult);
+            return false;
+        }
+        finally
+        {
+            TryDeleteRecoveryConfig(recoveryConfigPath);
+        }
+    }
+
+    private async Task<AppConfig> SaveCpuOnlyDiarizationPreferenceAfterDirectMlCrashAsync(CancellationToken cancellationToken)
+    {
+        if (_config.Current.DiarizationAccelerationPreference == InferenceAccelerationPreference.CpuOnly)
+        {
+            return _config.Current;
+        }
+
+        var savedConfig = await _config.SaveAsync(
+            _config.Current with
+            {
+                DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
+                DiarizationAccelerationSecurityPromptMigrationApplied = true,
+            },
+            cancellationToken);
+        _logger.Log(
+            "Set future speaker-labeling GPU acceleration to CPU-only after a DirectML worker crash while preserving the speaker-labeling run mode.");
+        PublishStatusSnapshot(UpdateStatusSnapshot());
+        return savedConfig;
+    }
+
+    private async Task<bool> TryRecoverDiarizationCrashWithoutSpeakerLabelingAsync(
+        string manifestPath,
+        string reason,
+        CancellationToken cancellationToken)
+    {
         var recoveryConfigPath = string.Empty;
         try
         {
             await ApplySkipSpeakerLabelingOverrideAsync(
                 manifestPath,
-                "Recovered from an earlier worker crash by retrying without optional speaker labeling.",
+                reason,
                 resetSessionStateToQueued: false,
                 cancellationToken);
             await DeferFutureSpeakerLabelingAfterWorkerCrashAsync(cancellationToken);
-            recoveryConfigPath = await CreateDiarizationDisabledConfigAsync(manifestPath, cancellationToken);
+            var recoveryConfig = await CreateDiarizationDisabledConfigAsync(manifestPath, cancellationToken);
+            recoveryConfigPath = recoveryConfig.ConfigPath;
             _logger.Log($"Retrying '{manifestPath}' once without speaker labeling because the worker crashed during optional diarization.");
-            var retryResult = await RunWorkerAsync(manifestPath, recoveryConfigPath, cancellationToken);
+            var retryResult = await RunWorkerAsync(
+                manifestPath,
+                recoveryConfig.ConfigPath,
+                cancellationToken,
+                recoveryConfig.Config);
             if (retryResult.ExitCode == 0)
             {
                 _logger.Log($"Recovered '{manifestPath}' by retrying without speaker labeling after the initial worker crash.");
@@ -733,7 +827,30 @@ internal sealed class ProcessingQueueService
         return repairedCount;
     }
 
-    private async Task<string> CreateDiarizationDisabledConfigAsync(string manifestPath, CancellationToken cancellationToken)
+    private async Task<WorkerRecoveryConfig> CreateCpuOnlyDiarizationConfigAsync(
+        string manifestPath,
+        AppConfig cpuOnlyConfig,
+        CancellationToken cancellationToken)
+    {
+        var sessionRoot = Path.GetDirectoryName(manifestPath) ?? _config.Current.WorkDir;
+        var recoveryRoot = Path.Combine(sessionRoot, "processing", "recovery");
+        Directory.CreateDirectory(recoveryRoot);
+
+        var configPath = Path.Combine(recoveryRoot, $"appsettings-cpu-diarization-{Guid.NewGuid():N}.json");
+        var configStore = new AppConfigStore(configPath);
+        var savedConfig = await configStore.SaveAsync(
+            cpuOnlyConfig with
+            {
+                DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
+                DiarizationAccelerationSecurityPromptMigrationApplied = true,
+            },
+            cancellationToken);
+        return new WorkerRecoveryConfig(configPath, savedConfig);
+    }
+
+    private async Task<WorkerRecoveryConfig> CreateDiarizationDisabledConfigAsync(
+        string manifestPath,
+        CancellationToken cancellationToken)
     {
         var sessionRoot = Path.GetDirectoryName(manifestPath) ?? _config.Current.WorkDir;
         var recoveryRoot = Path.Combine(sessionRoot, "processing", "recovery");
@@ -742,14 +859,14 @@ internal sealed class ProcessingQueueService
         var configPath = Path.Combine(recoveryRoot, $"appsettings-no-diarization-{Guid.NewGuid():N}.json");
         var disabledDiarizationRoot = Path.Combine(recoveryRoot, $"diarization-disabled-{Guid.NewGuid():N}");
         var configStore = new AppConfigStore(configPath);
-        await configStore.SaveAsync(
+        var savedConfig = await configStore.SaveAsync(
             _config.Current with
             {
                 DiarizationAssetPath = disabledDiarizationRoot,
                 DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
             },
             cancellationToken);
-        return configPath;
+        return new WorkerRecoveryConfig(configPath, savedConfig);
     }
 
     private async Task ApplySkipSpeakerLabelingOverrideAsync(
@@ -2029,7 +2146,18 @@ internal sealed record BacklogRushResult(
     bool FutureMeetingsDeferred,
     bool InterruptedCurrentDiarization);
 
-internal sealed record WorkerRunResult(int ExitCode, string StandardOutput, string StandardError);
+internal sealed record WorkerLaunchConfigSnapshot(
+    InferenceAccelerationPreference DiarizationAccelerationPreference,
+    BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode,
+    string DiarizationAssetPath);
+
+internal sealed record WorkerRunResult(
+    int ExitCode,
+    string StandardOutput,
+    string StandardError,
+    WorkerLaunchConfigSnapshot LaunchConfig);
+
+internal sealed record WorkerRecoveryConfig(string ConfigPath, AppConfig Config);
 
 internal sealed record QueuedManifestStatusEntry(
     string ManifestPath,

@@ -51,6 +51,7 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.Contains("--probe-directml", program, StringComparison.Ordinal);
         Assert.Contains("ProbeDirectMl", program, StringComparison.Ordinal);
         Assert.Contains("DirectML probe succeeded.", program, StringComparison.Ordinal);
+        Assert.Contains("WriteDirectMlProbeStatusAsync", program, StringComparison.Ordinal);
     }
 
     private static string GetPath(params string[] segments)

@@ -38,6 +38,17 @@ public sealed class WindowsShortcutService
             shortcutPolicy.StartMenuShortcutFileName);
     }
 
+    public string GetPinnedTaskbarShortcutRoot()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "Microsoft",
+            "Internet Explorer",
+            "Quick Launch",
+            "User Pinned",
+            "TaskBar");
+    }
+
     public ShortcutCreationResult TryCreateShortcut(
         string shortcutPath,
         string targetPath,
@@ -147,6 +158,37 @@ public sealed class WindowsShortcutService
         return new ShortcutRepairResult(removedLegacyPaths, repairedShortcutPaths);
     }
 
+    public IReadOnlyList<string> RepairPinnedTaskbarShortcuts(
+        ShellShortcutPolicy shortcutPolicy,
+        string targetPath,
+        string workingDirectory,
+        string iconPath,
+        string? taskbarRoot = null)
+    {
+        var resolvedTaskbarRoot = taskbarRoot ?? GetPinnedTaskbarShortcutRoot();
+        if (string.IsNullOrWhiteSpace(resolvedTaskbarRoot) ||
+            !Directory.Exists(resolvedTaskbarRoot))
+        {
+            return [];
+        }
+
+        var repairedShortcutPaths = new List<string>();
+        foreach (var shortcutPath in GetPinnedTaskbarShortcutPaths(resolvedTaskbarRoot, shortcutPolicy))
+        {
+            if (!File.Exists(shortcutPath))
+            {
+                continue;
+            }
+
+            if (TryCreateShortcut(shortcutPath, targetPath, workingDirectory, iconPath).Success)
+            {
+                repairedShortcutPaths.Add(shortcutPath);
+            }
+        }
+
+        return repairedShortcutPaths;
+    }
+
     private static void CreateShortcut(
         string shortcutPath,
         string targetPath,
@@ -220,6 +262,33 @@ public sealed class WindowsShortcutService
         if (!string.Equals(cmdShortcutPath, shortcutPath, StringComparison.OrdinalIgnoreCase))
         {
             yield return cmdShortcutPath;
+        }
+    }
+
+    private static IEnumerable<string> GetPinnedTaskbarShortcutPaths(
+        string taskbarRoot,
+        ShellShortcutPolicy shortcutPolicy)
+    {
+        var candidateNames = new[]
+        {
+            shortcutPolicy.DisplayName + ".lnk",
+            shortcutPolicy.DesktopShortcutFileName,
+            shortcutPolicy.StartMenuShortcutFileName,
+        };
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var candidateName in candidateNames)
+        {
+            if (string.IsNullOrWhiteSpace(candidateName))
+            {
+                continue;
+            }
+
+            var shortcutPath = Path.Combine(taskbarRoot, Path.ChangeExtension(candidateName, ".lnk"));
+            if (seenPaths.Add(shortcutPath))
+            {
+                yield return shortcutPath;
+            }
         }
     }
 

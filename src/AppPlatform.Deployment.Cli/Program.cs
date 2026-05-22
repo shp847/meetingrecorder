@@ -247,10 +247,21 @@ internal static class Program
         var installRoot = GetRequiredOption(options, "--install-root", "-i");
         var shortcutService = new WindowsShortcutService();
         var targetPath = ResolveShortcutTargetPath(manifest, installRoot);
+        var taskbarTargetPath = ResolvePinnedTaskbarTargetPath(manifest, installRoot, targetPath);
         var iconPath = Path.Combine(installRoot, "MeetingRecorder.ico");
 
         var createDesktopShortcut = !HasSwitch(options, "--start-menu-only");
         var createStartMenuShortcut = !HasSwitch(options, "--desktop-only");
+
+        var repairedPinnedTaskbarShortcuts = shortcutService.RepairPinnedTaskbarShortcuts(
+            manifest.ShortcutPolicy,
+            taskbarTargetPath,
+            installRoot,
+            iconPath);
+        foreach (var repairedPinnedTaskbarShortcut in repairedPinnedTaskbarShortcuts)
+        {
+            logger.Info($"Repaired pinned taskbar shortcut '{repairedPinnedTaskbarShortcut}'.");
+        }
 
         shortcutService.RemoveLegacyShortcuts(
             manifest.ShortcutPolicy,
@@ -416,6 +427,20 @@ internal static class Program
         }
 
         return Path.Combine(installRoot, manifest.ExecutableName);
+    }
+
+    private static string ResolvePinnedTaskbarTargetPath(
+        AppProductManifest manifest,
+        string installRoot,
+        string fallbackTargetPath)
+    {
+        var executablePath = Path.Combine(installRoot, manifest.ExecutableName);
+        if (File.Exists(executablePath))
+        {
+            return executablePath;
+        }
+
+        return fallbackTargetPath;
     }
 
     private static IReadOnlyDictionary<string, string?> ParseOptions(IEnumerable<string> args)

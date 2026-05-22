@@ -82,7 +82,10 @@ public sealed class DiarizationAssetCatalogService
                 $"No '{BundleManifestFileName}' bundle manifest was found under '{normalizedRoot}'.",
                 runtimeStatus?.GpuAccelerationAvailable,
                 runtimeStatus?.EffectiveExecutionProvider,
-                runtimeStatus?.DiagnosticMessage);
+                runtimeStatus?.DiagnosticMessage,
+                runtimeStatus?.LastDirectMlProbeSucceeded,
+                runtimeStatus?.LastDirectMlProbeAtUtc,
+                runtimeStatus?.LastDirectMlProbeMessage);
         }
 
         DiarizationModelBundleManifest manifest;
@@ -106,7 +109,10 @@ public sealed class DiarizationAssetCatalogService
                 $"Unable to read '{BundleManifestFileName}': {exception.Message}",
                 runtimeStatus?.GpuAccelerationAvailable,
                 runtimeStatus?.EffectiveExecutionProvider,
-                runtimeStatus?.DiagnosticMessage);
+                runtimeStatus?.DiagnosticMessage,
+                runtimeStatus?.LastDirectMlProbeSucceeded,
+                runtimeStatus?.LastDirectMlProbeAtUtc,
+                runtimeStatus?.LastDirectMlProbeMessage);
         }
 
         if (string.IsNullOrWhiteSpace(manifest.BundleVersion) ||
@@ -125,7 +131,10 @@ public sealed class DiarizationAssetCatalogService
                 $"'{BundleManifestFileName}' must include bundleVersion, segmentationModelFileName, and embeddingModelFileName.",
                 runtimeStatus?.GpuAccelerationAvailable,
                 runtimeStatus?.EffectiveExecutionProvider,
-                runtimeStatus?.DiagnosticMessage);
+                runtimeStatus?.DiagnosticMessage,
+                runtimeStatus?.LastDirectMlProbeSucceeded,
+                runtimeStatus?.LastDirectMlProbeAtUtc,
+                runtimeStatus?.LastDirectMlProbeMessage);
         }
 
         var manifestDirectory = Path.GetDirectoryName(manifestPath) ?? normalizedRoot;
@@ -166,7 +175,10 @@ public sealed class DiarizationAssetCatalogService
                 $"The bundle manifest was found, but these files are missing: {string.Join(", ", missingFiles)}.",
                 runtimeStatus?.GpuAccelerationAvailable,
                 runtimeStatus?.EffectiveExecutionProvider,
-                runtimeStatus?.DiagnosticMessage);
+                runtimeStatus?.DiagnosticMessage,
+                runtimeStatus?.LastDirectMlProbeSucceeded,
+                runtimeStatus?.LastDirectMlProbeAtUtc,
+                runtimeStatus?.LastDirectMlProbeMessage);
         }
 
         return new DiarizationAssetInstallStatus(
@@ -181,7 +193,10 @@ public sealed class DiarizationAssetCatalogService
             $"Bundle version '{manifest.BundleVersion}' is installed. Speaker labeling will run with '{Path.GetFileName(segmentationModelPath)}' and '{Path.GetFileName(embeddingModelPath)}'.",
             runtimeStatus?.GpuAccelerationAvailable,
             runtimeStatus?.EffectiveExecutionProvider,
-            runtimeStatus?.DiagnosticMessage);
+            runtimeStatus?.DiagnosticMessage,
+            runtimeStatus?.LastDirectMlProbeSucceeded,
+            runtimeStatus?.LastDirectMlProbeAtUtc,
+            runtimeStatus?.LastDirectMlProbeMessage);
     }
 
     public async Task<DiarizationAssetInstallStatus> ImportAssetIntoManagedDirectoryAsync(
@@ -304,6 +319,31 @@ public sealed class DiarizationAssetCatalogService
             cancellationToken);
     }
 
+    public async Task WriteDirectMlProbeStatusAsync(
+        string diarizationAssetPath,
+        bool succeeded,
+        string message,
+        DateTimeOffset atUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(diarizationAssetPath))
+        {
+            return;
+        }
+
+        var existingStatus = TryReadRuntimeStatus(diarizationAssetPath);
+        var runtimeStatus = new DiarizationRuntimeStatus(
+            existingStatus?.GpuAccelerationAvailable,
+            existingStatus?.EffectiveExecutionProvider,
+            existingStatus?.DiagnosticMessage,
+            existingStatus?.UpdatedAtUtc ?? atUtc,
+            succeeded,
+            atUtc,
+            string.IsNullOrWhiteSpace(message) ? null : message.Trim());
+
+        await WriteRuntimeStatusAsync(diarizationAssetPath, runtimeStatus, cancellationToken);
+    }
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -372,7 +412,10 @@ public sealed record DiarizationAssetInstallStatus(
     string DetailsText,
     bool? GpuAccelerationAvailable,
     DiarizationExecutionProvider? EffectiveExecutionProvider,
-    string? DiagnosticMessage)
+    string? DiagnosticMessage,
+    bool? LastDirectMlProbeSucceeded = null,
+    DateTimeOffset? LastDirectMlProbeAtUtc = null,
+    string? LastDirectMlProbeMessage = null)
 {
     public string? SidecarExecutablePath => string.IsNullOrWhiteSpace(AssetRootPath) || !Directory.Exists(AssetRootPath)
         ? null
@@ -380,7 +423,10 @@ public sealed record DiarizationAssetInstallStatus(
 }
 
 public sealed record DiarizationRuntimeStatus(
-    [property: JsonPropertyName("gpuAccelerationAvailable")] bool GpuAccelerationAvailable,
+    [property: JsonPropertyName("gpuAccelerationAvailable")] bool? GpuAccelerationAvailable,
     [property: JsonPropertyName("effectiveExecutionProvider")] DiarizationExecutionProvider? EffectiveExecutionProvider,
     [property: JsonPropertyName("diagnosticMessage")] string? DiagnosticMessage,
-    [property: JsonPropertyName("updatedAtUtc")] DateTimeOffset UpdatedAtUtc);
+    [property: JsonPropertyName("updatedAtUtc")] DateTimeOffset UpdatedAtUtc,
+    [property: JsonPropertyName("lastDirectMlProbeSucceeded")] bool? LastDirectMlProbeSucceeded = null,
+    [property: JsonPropertyName("lastDirectMlProbeAtUtc")] DateTimeOffset? LastDirectMlProbeAtUtc = null,
+    [property: JsonPropertyName("lastDirectMlProbeMessage")] string? LastDirectMlProbeMessage = null);

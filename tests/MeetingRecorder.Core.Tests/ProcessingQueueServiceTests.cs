@@ -862,7 +862,7 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_Retries_Once_Without_Diarization_When_The_Worker_Crashes_During_Speaker_Labeling()
+    public async Task EnqueueAsync_Retries_DirectMlDiarizationCrash_With_CpuSpeakerLabeling_And_Preserves_RunMode()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -875,6 +875,8 @@ public sealed class ProcessingQueueServiceTests
                 await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
                 {
                     BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+                    DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+                    DiarizationAccelerationSecurityPromptMigrationApplied = true,
                 }));
             var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
             var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
@@ -908,12 +910,14 @@ public sealed class ProcessingQueueServiceTests
             Assert.NotNull(secondConfigPath);
             Assert.NotEqual(AppDataPaths.GetConfigPath(), secondConfigPath);
             Assert.True(File.Exists(secondConfigPath));
-            Assert.True(updatedManifest.ProcessingOverrides?.SkipSpeakerLabeling);
-            Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, liveConfig.Current.BackgroundSpeakerLabelingMode);
+            Assert.False(updatedManifest.ProcessingOverrides?.SkipSpeakerLabeling == true);
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, liveConfig.Current.DiarizationAccelerationPreference);
+            Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, liveConfig.Current.BackgroundSpeakerLabelingMode);
 
             var retryConfig = await new AppConfigStore(secondConfigPath!).LoadOrCreateAsync();
-            Assert.NotEqual(liveConfig.Current.DiarizationAssetPath, retryConfig.DiarizationAssetPath);
-            Assert.Empty(Directory.GetFiles(retryConfig.DiarizationAssetPath, "*", SearchOption.AllDirectories));
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, retryConfig.DiarizationAccelerationPreference);
+            Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, retryConfig.BackgroundSpeakerLabelingMode);
+            Assert.Equal(liveConfig.Current.DiarizationAssetPath, retryConfig.DiarizationAssetPath);
 
             secondProcess.CompleteExit();
             await service.StopAsync();
@@ -1129,6 +1133,160 @@ public sealed class ProcessingQueueServiceTests
             }
             catch
             {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_Falls_Back_To_NoDiarization_When_DirectMl_And_Cpu_Diarization_Crash()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(
+                configStore,
+                await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+                {
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+                    DiarizationAccelerationPreference = InferenceAccelerationPreference.Auto,
+                    DiarizationAccelerationSecurityPromptMigrationApplied = true,
+                }));
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new SequencedWorkerProcessFactory(
+                new FakeWorkerProcess
+                {
+                    ExitCode = unchecked((int)0xC0000005),
+                    StandardErrorText = "Fatal error. System.AccessViolationException\r\n   at SherpaOnnx.OfflineSpeakerDiarization.Process(Single[])",
+                },
+                new FakeWorkerProcess
+                {
+                    ExitCode = unchecked((int)0xC0000005),
+                    StandardErrorText = "Fatal error. System.AccessViolationException\r\n   at SherpaOnnx.OfflineSpeakerDiarization.Process(Single[])",
+                },
+                new FakeWorkerProcess());
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+
+            var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+
+            await service.EnqueueAsync(manifestPath);
+
+            var firstProcess = await processFactory.WaitForStartAsync(0);
+            firstProcess.CompleteExit();
+
+            var secondProcess = await processFactory.WaitForStartAsync(1);
+            secondProcess.CompleteExit();
+
+            var thirdProcess = await processFactory.WaitForStartAsync(2);
+            var thirdConfigPath = ExtractConfigPath(processFactory.StartInfos[2].Arguments);
+            var updatedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(3, processFactory.StartCount);
+            Assert.NotNull(thirdConfigPath);
+            Assert.True(File.Exists(thirdConfigPath));
+            Assert.True(updatedManifest.ProcessingOverrides?.SkipSpeakerLabeling);
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, liveConfig.Current.DiarizationAccelerationPreference);
+            Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, liveConfig.Current.BackgroundSpeakerLabelingMode);
+
+            var noLabelConfig = await new AppConfigStore(thirdConfigPath!).LoadOrCreateAsync();
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, noLabelConfig.DiarizationAccelerationPreference);
+            Assert.NotEqual(liveConfig.Current.DiarizationAssetPath, noLabelConfig.DiarizationAssetPath);
+            Assert.Empty(Directory.GetFiles(noLabelConfig.DiarizationAssetPath, "*", SearchOption.AllDirectories));
+
+            thirdProcess.CompleteExit();
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup for temp test files.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_CpuOnly_DiarizationCrash_Uses_NoDiarizationRecovery_And_DefersFutureLabels()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(
+                configStore,
+                await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+                {
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+                    DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
+                    DiarizationAccelerationSecurityPromptMigrationApplied = true,
+                }));
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new SequencedWorkerProcessFactory(
+                new FakeWorkerProcess
+                {
+                    ExitCode = unchecked((int)0xC0000005),
+                    StandardErrorText = "Fatal error. System.AccessViolationException\r\n   at SherpaOnnx.OfflineSpeakerDiarization.Process(Single[])",
+                },
+                new FakeWorkerProcess());
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+
+            var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+
+            await service.EnqueueAsync(manifestPath);
+
+            var firstProcess = await processFactory.WaitForStartAsync(0);
+            firstProcess.CompleteExit();
+
+            var secondProcess = await processFactory.WaitForStartAsync(1);
+            var secondConfigPath = ExtractConfigPath(processFactory.StartInfos[1].Arguments);
+            var updatedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(2, processFactory.StartCount);
+            Assert.NotNull(secondConfigPath);
+            Assert.True(File.Exists(secondConfigPath));
+            Assert.True(updatedManifest.ProcessingOverrides?.SkipSpeakerLabeling);
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, liveConfig.Current.DiarizationAccelerationPreference);
+            Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, liveConfig.Current.BackgroundSpeakerLabelingMode);
+
+            var noLabelConfig = await new AppConfigStore(secondConfigPath!).LoadOrCreateAsync();
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, noLabelConfig.DiarizationAccelerationPreference);
+            Assert.NotEqual(liveConfig.Current.DiarizationAssetPath, noLabelConfig.DiarizationAssetPath);
+            Assert.Empty(Directory.GetFiles(noLabelConfig.DiarizationAssetPath, "*", SearchOption.AllDirectories));
+
+            secondProcess.CompleteExit();
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup for temp test files.
             }
         }
     }

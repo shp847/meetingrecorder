@@ -103,6 +103,26 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
+    public void PlatformPortableBundleInstaller_Repairs_Taskbar_Pin_Even_When_Update_Skips_Desktop_And_StartMenu_Shortcuts()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var installerPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment", "PortableBundleInstaller.cs");
+
+        Assert.True(File.Exists(installerPath), $"Expected deployment installer source at '{installerPath}'.");
+
+        var source = File.ReadAllText(installerPath);
+
+        Assert.Contains("RepairPinnedTaskbarShortcuts(", source, StringComparison.Ordinal);
+        Assert.Contains("var taskbarTargetPath = File.Exists(executablePath)", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "if (isUpdate && (request.CreateDesktopShortcut || request.CreateStartMenuShortcut))",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlatformPortableBundleInstaller_Creates_Staging_Workspace_Outside_The_Documents_Install_Parent()
     {
         var tempRoot = Path.GetFullPath(Path.GetTempPath());
@@ -711,6 +731,62 @@ public sealed class AppPlatformDeploymentTests
             Assert.True(File.Exists(desktopShortcutPath));
             Assert.True(File.Exists(Path.Combine(programsRoot, "Meeting Recorder.lnk")));
             Assert.False(Directory.Exists(legacyFolder));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PlatformShortcutService_Repairs_Existing_Taskbar_Pin_To_Stable_App_Icon()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var taskbarRoot = Path.Combine(root, "TaskBar");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        Directory.CreateDirectory(taskbarRoot);
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            var pinnedShortcutPath = Path.Combine(taskbarRoot, "Meeting Recorder.lnk");
+            var staleInstallerIconPath = Path.Combine(root, "Microsoft", "Installer", "{old}", "ProductIcon");
+            var executablePath = Path.Combine(installRoot, "MeetingRecorder.App.exe");
+            var iconPath = Path.Combine(installRoot, "MeetingRecorder.ico");
+            File.WriteAllText(executablePath, "apphost");
+            File.WriteAllText(iconPath, "icon");
+
+            var service = new WindowsShortcutService();
+            var staleShortcut = service.TryCreateShortcut(
+                pinnedShortcutPath,
+                executablePath,
+                installRoot,
+                staleInstallerIconPath + ",0");
+            Assert.True(staleShortcut.Success, staleShortcut.ErrorMessage);
+
+            var repairedPaths = service.RepairPinnedTaskbarShortcuts(
+                new ShellShortcutPolicy(
+                    "Meeting Recorder",
+                    "Meeting Recorder.lnk",
+                    "Meeting Recorder.lnk",
+                    "MeetingRecorder"),
+                executablePath,
+                installRoot,
+                iconPath,
+                taskbarRoot);
+
+            var repairedShortcut = ReadShortcut(pinnedShortcutPath);
+            Assert.Contains(pinnedShortcutPath, repairedPaths);
+            Assert.Equal(executablePath, repairedShortcut.TargetPath);
+            Assert.Equal(installRoot, repairedShortcut.WorkingDirectory);
+            Assert.Equal(iconPath + ",0", repairedShortcut.IconLocation);
         }
         finally
         {
@@ -1383,6 +1459,58 @@ public sealed class AppPlatformDeploymentTests
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
+
+    private static ShortcutSnapshot ReadShortcut(string shortcutPath)
+    {
+        var shellType = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("WScript.Shell is unavailable on this machine.");
+        var shell = Activator.CreateInstance(shellType)
+            ?? throw new InvalidOperationException("Unable to create the Windows shortcut shell.");
+
+        try
+        {
+            dynamic dynamicShell = shell;
+            var shortcut = dynamicShell.CreateShortcut(shortcutPath);
+            if (shortcut is null)
+            {
+                throw new InvalidOperationException("Unable to read the Windows shortcut.");
+            }
+
+            try
+            {
+                dynamic dynamicShortcut = shortcut;
+                return new ShortcutSnapshot(
+                    dynamicShortcut.TargetPath,
+                    dynamicShortcut.WorkingDirectory,
+                    dynamicShortcut.IconLocation);
+            }
+            finally
+            {
+                TryReleaseComObject(shortcut);
+            }
+        }
+        finally
+        {
+            TryReleaseComObject(shell);
+        }
+    }
+
+    private static void TryReleaseComObject(object instance)
+    {
+        try
+        {
+            System.Runtime.InteropServices.Marshal.FinalReleaseComObject(instance);
+        }
+        catch
+        {
+            // Best effort cleanup only.
+        }
+    }
+
+    private sealed record ShortcutSnapshot(
+        string TargetPath,
+        string WorkingDirectory,
+        string IconLocation);
 
     private sealed class FakeInstallPathProcessController : AppPlatform.Deployment.IInstallPathProcessController
     {
