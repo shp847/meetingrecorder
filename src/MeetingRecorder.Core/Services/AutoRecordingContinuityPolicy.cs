@@ -13,8 +13,9 @@ public sealed class AutoRecordingContinuityPolicy
 {
     private static readonly TimeSpan MinimumWeakSignalTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumTeamsShellContinuationTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan GoogleMeetObscuredSilentTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan RecentAutoStopRecoveryWindow = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan QuietSpecificTeamsAutoStartDelay = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan QuietSpecificMeetingAutoStartDelay = TimeSpan.FromSeconds(20);
 
     public TimeSpan GetAutoStopTimeout(
         DetectionDecision? decision,
@@ -55,6 +56,13 @@ public sealed class AutoRecordingContinuityPolicy
             return scaledTimeout >= MinimumWeakSignalTimeout
                 ? scaledTimeout
                 : MinimumWeakSignalTimeout;
+        }
+
+        if (HasSilentGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle))
+        {
+            return configuredTimeout >= GoogleMeetObscuredSilentTimeout
+                ? configuredTimeout
+                : GoogleMeetObscuredSilentTimeout;
         }
 
         if (HasTeamsSpecificQuietContinuation(decision, activePlatform, activeSessionTitle) ||
@@ -120,7 +128,8 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
-        if ((!decision.ShouldStart && !IsQuietSpecificTeamsMeetingCandidateCore(decision)) ||
+        var isQuietSpecificTeamsCandidate = IsQuietSpecificTeamsMeetingCandidateCore(decision);
+        if ((!decision.ShouldStart && !isQuietSpecificTeamsCandidate) ||
             decision.Platform == MeetingPlatform.Unknown)
         {
             return false;
@@ -144,12 +153,30 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
-        return nowUtc - firstObservedUtc >= QuietSpecificTeamsAutoStartDelay;
+        return nowUtc - firstObservedUtc >= QuietSpecificMeetingAutoStartDelay;
     }
 
     internal bool IsQuietSpecificTeamsMeetingCandidate(DetectionDecision? decision)
     {
         return IsQuietSpecificTeamsMeetingCandidateCore(decision);
+    }
+
+    internal bool ShouldAutoStartQuietSpecificGoogleMeet(
+        DetectionDecision? decision,
+        DateTimeOffset firstObservedUtc,
+        DateTimeOffset nowUtc)
+    {
+        if (!IsQuietSpecificGoogleMeetCandidate(decision))
+        {
+            return false;
+        }
+
+        return nowUtc - firstObservedUtc >= QuietSpecificMeetingAutoStartDelay;
+    }
+
+    internal bool IsQuietSpecificGoogleMeetCandidate(DetectionDecision? decision)
+    {
+        return IsQuietSpecificGoogleMeetCandidateCore(decision);
     }
 
     public bool ShouldRefreshLastPositiveSignal(
@@ -449,19 +476,42 @@ public sealed class AutoRecordingContinuityPolicy
         MeetingPlatform activePlatform,
         string? activeSessionTitle)
     {
-        if (activePlatform != MeetingPlatform.GoogleMeet ||
-            decision is null ||
-            decision.Platform != MeetingPlatform.Teams ||
-            decision.ShouldStart ||
-            decision.ShouldKeepRecording ||
-            !HasSuppressedTeamsNavigationSignal(decision) ||
-            !HasActiveAudioSignal(decision))
+        if (!HasGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle) ||
+            !HasActiveAudioSignal(decision!))
         {
             return false;
         }
 
-        var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
-        return !IsGenericMeetingTitle(normalizedActiveTitle, MeetingPlatform.GoogleMeet);
+        return true;
+    }
+
+    private static bool HasSilentGoogleMeetObscuredByTeamsNavigationSignal(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        if (!HasGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle) ||
+            decision is null)
+        {
+            return false;
+        }
+
+        return !HasActiveAudioSignal(decision) &&
+            HasSilentAudioSignal(decision);
+    }
+
+    private static bool HasGoogleMeetObscuredByTeamsNavigationSignal(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        return activePlatform == MeetingPlatform.GoogleMeet &&
+            decision is not null &&
+            decision.Platform == MeetingPlatform.Teams &&
+            !decision.ShouldStart &&
+            !decision.ShouldKeepRecording &&
+            HasSuppressedTeamsNavigationSignal(decision) &&
+            HasSpecificGoogleMeetCode(activeSessionTitle);
     }
 
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
@@ -580,6 +630,27 @@ public sealed class AutoRecordingContinuityPolicy
         return true;
     }
 
+    private static bool IsQuietSpecificGoogleMeetCandidateCore(DetectionDecision? decision)
+    {
+        if (decision is null ||
+            decision.Platform != MeetingPlatform.GoogleMeet ||
+            decision.ShouldStart ||
+            !decision.ShouldKeepRecording)
+        {
+            return false;
+        }
+
+        if (!HasSpecificGoogleMeetCode(decision.SessionTitle) ||
+            !HasMeetingIdentityEvidence(decision) ||
+            !HasSilentAudioSignal(decision) ||
+            HasActiveAudioSignal(decision))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     private static bool HasTeamsShellContinuation(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
@@ -669,6 +740,27 @@ public sealed class AutoRecordingContinuityPolicy
     }
 
     private static string NormalizeMeetingTitle(string title) => MeetingTitleNormalizer.NormalizeForComparison(title);
+
+    private static bool HasSpecificGoogleMeetCode(string? title)
+    {
+        var normalizedTitle = NormalizeMeetingTitle(title ?? string.Empty);
+        return LooksLikeGoogleMeetCode(normalizedTitle);
+    }
+
+    private static bool LooksLikeGoogleMeetCode(string normalizedTitle)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            return false;
+        }
+
+        var tokens = normalizedTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length == 3 &&
+            tokens[0].Length == 3 &&
+            tokens[1].Length == 4 &&
+            tokens[2].Length == 3 &&
+            tokens.All(static token => token.All(char.IsLetter));
+    }
 
     private static bool IsGenericMeetingTitle(string title, MeetingPlatform platform)
     {

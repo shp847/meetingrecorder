@@ -42,7 +42,7 @@ public sealed class MeetingDetectionEvaluatorTests
     }
 
     [Fact]
-    public void Evaluate_Starts_For_A_Specific_Google_Meet_Window_When_Audio_Is_Silent()
+    public void Evaluate_Keeps_But_Does_Not_Start_For_A_Specific_Google_Meet_Window_When_Audio_Is_Silent()
     {
         var evaluator = new MeetingDetectionEvaluator();
         var signals = new[]
@@ -54,10 +54,10 @@ public sealed class MeetingDetectionEvaluatorTests
 
         var decision = evaluator.Evaluate(signals);
 
-        Assert.True(decision.ShouldStart);
+        Assert.False(decision.ShouldStart);
         Assert.True(decision.ShouldKeepRecording);
         Assert.Equal(MeetingPlatform.GoogleMeet, decision.Platform);
-        Assert.Contains("specific google meet", decision.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no active system audio", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

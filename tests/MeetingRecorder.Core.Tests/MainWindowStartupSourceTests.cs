@@ -221,7 +221,7 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Detection_Timer_Can_AutoStart_A_Sustained_Quiet_Teams_Meeting_Without_Waiting_For_Late_Audio()
+    public void Detection_Timer_Can_AutoStart_Sustained_Quiet_Meetings_Without_Waiting_For_Late_Audio()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -230,8 +230,10 @@ public sealed class MainWindowStartupSourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         Assert.Contains("var shouldAutoStartQuietTeamsMeeting = ShouldAutoStartQuietTeamsMeeting(decision, nowUtc);", methodBlock);
-        Assert.Contains("decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop", methodBlock);
+        Assert.Contains("var shouldAutoStartQuietGoogleMeet = ShouldAutoStartQuietGoogleMeet(decision, nowUtc);", methodBlock);
+        Assert.Contains("decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop", methodBlock);
         Assert.Contains("private bool ShouldAutoStartQuietTeamsMeeting(", source);
+        Assert.Contains("private bool ShouldAutoStartQuietGoogleMeet(", source);
     }
 
     [Fact]

@@ -584,7 +584,7 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
-    public async Task DetectBestCandidate_Starts_GoogleMeet_When_A_Specific_Meet_Window_Is_Present_But_Render_Audio_Is_Quiet()
+    public async Task DetectBestCandidate_Keeps_GoogleMeet_Without_Starting_When_A_Specific_Meet_Window_Is_Present_But_Render_Audio_Is_Quiet()
     {
         var detector = await CreateDetectorAsync(
             [
@@ -607,7 +607,7 @@ public sealed class WindowMeetingDetectorTests
 
         Assert.NotNull(result);
         Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
-        Assert.True(result.ShouldStart);
+        Assert.False(result.ShouldStart);
         Assert.True(result.ShouldKeepRecording);
         Assert.Equal("Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", result.SessionTitle);
         Assert.Null(result.DetectedAudioSource);

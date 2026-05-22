@@ -1620,7 +1620,7 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
-    public void GetAutoStopTimeout_Does_Not_Extend_When_Active_Google_Meet_Is_Obscured_By_Silent_Teams_Chat()
+    public void GetAutoStopTimeout_Extends_When_Active_Google_Meet_Is_Obscured_By_Silent_Teams_Chat()
     {
         var policy = new AutoRecordingContinuityPolicy();
         var now = DateTimeOffset.UtcNow;
@@ -1646,6 +1646,147 @@ public sealed class AutoRecordingContinuityPolicyTests
             activeSessionTitle: "Meet - btw-osmp-hmr and 26 more pages - Work - Microsoft Edge",
             configuredTimeout);
 
+        Assert.Equal(TimeSpan.FromMinutes(3), timeout);
+    }
+
+    [Fact]
+    public void GetAutoStopTimeout_Does_Not_Extend_When_Generic_Google_Meet_Is_Obscured_By_Silent_Teams_Chat()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var configuredTimeout = TimeSpan.FromSeconds(30);
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: false,
+            Confidence: 0.20d,
+            SessionTitle: "Sharma, Pranav (You)",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Chat | Sharma, Pranav (You) | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "The detected Teams window appears to be a chat or navigation view, not an active meeting.");
+
+        var timeout = policy.GetAutoStopTimeout(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Google Meet",
+            configuredTimeout);
+
         Assert.Equal(configuredTimeout, timeout);
+    }
+
+    [Fact]
+    public void GetAutoStopTimeout_Does_Not_Extend_For_Silent_Teams_Chat_When_Active_Platform_Is_Manual()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var configuredTimeout = TimeSpan.FromSeconds(30);
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: false,
+            Confidence: 0.20d,
+            SessionTitle: "Sharma, Pranav (You)",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Chat | Sharma, Pranav (You) | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "The detected Teams window appears to be a chat or navigation view, not an active meeting.");
+
+        var timeout = policy.GetAutoStopTimeout(
+            decision,
+            MeetingPlatform.Manual,
+            activeSessionTitle: "Manual recording",
+            configuredTimeout);
+
+        Assert.Equal(configuredTimeout, timeout);
+    }
+
+    [Fact]
+    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_False_Before_The_Sustained_Delay_Elapses()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - fkx-wxbo-vcg and 23 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - fkx-wxbo-vcg and 23 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Meet - fkx-wxbo-vcg and 23 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldStart = policy.ShouldAutoStartQuietSpecificGoogleMeet(
+            decision,
+            now.AddSeconds(-10),
+            now);
+
+        Assert.False(shouldStart);
+    }
+
+    [Fact]
+    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_True_After_Sustained_Specific_Meet_Evidence()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldStart = policy.ShouldAutoStartQuietSpecificGoogleMeet(
+            decision,
+            now.AddSeconds(-20),
+            now);
+
+        Assert.True(shouldStart);
+    }
+
+    [Fact]
+    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_False_For_Generic_Google_Meet_Window()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Google Meet and 15 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Google Meet and 15 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Google Meet and 15 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldStart = policy.ShouldAutoStartQuietSpecificGoogleMeet(
+            decision,
+            now.AddMinutes(-2),
+            now);
+
+        Assert.False(shouldStart);
     }
 }

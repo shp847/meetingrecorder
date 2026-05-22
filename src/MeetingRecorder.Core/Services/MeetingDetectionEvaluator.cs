@@ -85,13 +85,6 @@ public sealed class MeetingDetectionEvaluator
             !suppressedTeamsWindowDetected &&
             !genericTeamsShellDetected;
         var shouldStart = shouldKeepRecording && hasAudioActivity;
-        if (!shouldStart &&
-            shouldKeepRecording &&
-            platform == MeetingPlatform.GoogleMeet &&
-            HasSpecificGoogleMeetIdentity(title, signals))
-        {
-            shouldStart = true;
-        }
 
         var reason = shouldStart
             ? BuildStartReason(platform, hasAudioActivity)
@@ -160,87 +153,6 @@ public sealed class MeetingDetectionEvaluator
         return signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) &&
             signal.Weight > 0d;
-    }
-
-    private static bool HasSpecificGoogleMeetIdentity(string? title, IReadOnlyList<DetectionSignal> signals)
-    {
-        if (string.IsNullOrWhiteSpace(title) || !HasBrowserSurfaceEvidence(signals))
-        {
-            return false;
-        }
-
-        if (HasSpecificGoogleMeetWindowTitle(signals))
-        {
-            return true;
-        }
-
-        foreach (var signal in signals)
-        {
-            if (string.Equals(signal.Source, "browser-url", StringComparison.OrdinalIgnoreCase) &&
-                signal.Value.Contains("meet.google.com/", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasBrowserSurfaceEvidence(IReadOnlyList<DetectionSignal> signals)
-    {
-        foreach (var signal in signals)
-        {
-            if (string.Equals(signal.Source, "browser-window", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(signal.Source, "browser-tab", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(signal.Source, "browser-url", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool HasSpecificGoogleMeetWindowTitle(IReadOnlyList<DetectionSignal> signals)
-    {
-        foreach (var signal in signals)
-        {
-            if (!string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) ||
-                signal.Weight < 0.85d)
-            {
-                continue;
-            }
-
-            var trimmedTitle = signal.Value.Trim();
-            if (trimmedTitle.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase) ||
-                trimmedTitle.StartsWith("meet.google.com is sharing ", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(trimmedTitle);
-            if (LooksLikeGoogleMeetCode(normalizedTitle))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool LooksLikeGoogleMeetCode(string normalizedTitle)
-    {
-        if (string.IsNullOrWhiteSpace(normalizedTitle))
-        {
-            return false;
-        }
-
-        var tokens = normalizedTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return tokens.Length == 3 &&
-            tokens[0].Length == 3 &&
-            tokens[1].Length == 4 &&
-            tokens[2].Length == 3 &&
-            tokens.All(static token => token.All(char.IsLetter));
     }
 
     private static string CleanTitle(string value, string suffix)
