@@ -6833,7 +6833,9 @@ public partial class MainWindow : Window
         {
             AppendActivity($"Update check from {source}: version {result.LatestVersion} is available.");
         }
-        else if (manual || result.Status == AppUpdateStatusKind.Error)
+        else if (manual ||
+                 result.Status == AppUpdateStatusKind.Error ||
+                 result.Status == AppUpdateStatusKind.RequiresInstallerReset)
         {
             AppendActivity($"Update check from {source}: {result.Message}");
         }
@@ -7444,6 +7446,9 @@ public partial class MainWindow : Window
         var installedDiagnostics = InstalledApplicationDiagnosticsService.Inspect(
             Environment.ProcessPath,
             AppContext.BaseDirectory);
+        var installRoot = UpdateInstallerLaunchBuilder.ResolveInstalledAppRoot(
+            Environment.ProcessPath,
+            AppContext.BaseDirectory);
 
         return new AppUpdateLocalState(
             AppBranding.Version,
@@ -7451,7 +7456,8 @@ public partial class MainWindow : Window
                 ? AppBranding.Version
                 : config.InstalledReleaseVersion,
             installedDiagnostics.InstalledReleasePublishedAtUtc,
-            installedDiagnostics.InstalledReleaseAssetSizeBytes);
+            installedDiagnostics.InstalledReleaseAssetSizeBytes,
+            UpdateInstallerLaunchBuilder.SupportsStableAppHostInAppUpdates(installRoot));
     }
 
     private bool TryGetUpdateInstallBlockReason(
@@ -7507,6 +7513,13 @@ public partial class MainWindow : Window
             UpdateBannerTextBlock.Text =
                 $"A newer GitHub release is available: {FormatVersionLabel(result.LatestVersion)}. " +
                 installMessage;
+        }
+        else if (result.Status == AppUpdateStatusKind.RequiresInstallerReset)
+        {
+            UpdateBanner.Visibility = Visibility.Visible;
+            UpdateBannerTextBlock.Text =
+                $"A newer GitHub release is available: {FormatVersionLabel(result.LatestVersion)}. " +
+                "This install needs a one-time MSI or bootstrapper reset before in-app updates can resume.";
         }
         else
         {

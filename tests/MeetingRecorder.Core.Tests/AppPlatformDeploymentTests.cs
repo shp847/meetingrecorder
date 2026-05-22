@@ -85,15 +85,15 @@ public sealed class AppPlatformDeploymentTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot)",
+            "BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot, preservedPayloadFiles)",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot)",
+            "EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot, preservedPayloadFiles)",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "BundleIntegrityValidator.ValidateBundle(stagingRoot)",
+            "BundleIntegrityValidator.ValidateBundle(stagingRoot, preservedPayloadFiles)",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -178,8 +178,8 @@ public sealed class AppPlatformDeploymentTests
 
         try
         {
-            WriteMinimalBundle(bundleRoot, appPayload: "new-app");
-            WriteMinimalBundle(installRoot, appPayload: "old-app");
+            WriteMinimalV2Bundle(bundleRoot, appHostPayload: "new-apphost", appDllPayload: "new-app-dll");
+            WriteMinimalV2Bundle(installRoot, appHostPayload: "old-apphost", appDllPayload: "old-app-dll");
 
             var installer = new PortableBundleInstaller(
                 new InstallPathProcessManager(new FakeInstallPathProcessController(signalResult: false)),
@@ -200,7 +200,8 @@ public sealed class AppPlatformDeploymentTests
                     Channel: InstallChannel.AutoUpdate),
                 CancellationToken.None);
 
-            Assert.Equal("new-app", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.Equal("old-apphost", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.Equal("new-app-dll", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.dll")));
             Assert.True(File.Exists(Path.Combine(bundleRoot, "MeetingRecorder.App.exe")));
             Assert.True(File.Exists(Path.Combine(bundleRoot, "AppPlatform.Deployment.Cli.exe")));
             Assert.True(File.Exists(Path.Combine(bundleRoot, "MeetingRecorder.ProcessingWorker.exe")));
@@ -255,6 +256,186 @@ public sealed class AppPlatformDeploymentTests
             Assert.Contains("wrong release asset or an incomplete download", exception.Message, StringComparison.OrdinalIgnoreCase);
             Assert.False(processController.SignalRequested);
             Assert.False(File.Exists(zipPath));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlatformUpdatePackageInstaller_Requires_Installer_Reset_For_Legacy_SingleFile_Installs()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var packageRoot = Path.Combine(root, "package");
+        var bundleRoot = Path.Combine(packageRoot, "MeetingRecorder");
+        var zipPath = Path.Combine(root, "MeetingRecorder-v0.4-win-x64.zip");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(bundleRoot);
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            WriteMinimalV2Bundle(bundleRoot, appHostPayload: "new-apphost", appDllPayload: "new-app-dll");
+            WriteMinimalBundle(installRoot, appPayload: "legacy-apphost");
+            ZipFile.CreateFromDirectory(packageRoot, zipPath);
+
+            var processController = new FakeInstallPathProcessController(
+                signalResult: true,
+                waitResults: [true]);
+            var installer = new UpdatePackageInstaller(
+                new PortableBundleInstaller(
+                    new InstallPathProcessManager(processController),
+                    new WindowsShortcutService(),
+                    NullDeploymentLogger.Instance),
+                new InstallPathProcessManager(processController),
+                NullDeploymentLogger.Instance);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installer.ApplyAsync(
+                CreateManifest(installRoot, dataRoot),
+                new UpdateRequest(
+                    ZipPath: zipPath,
+                    InstallRoot: installRoot,
+                    SourceProcessId: int.MaxValue,
+                    ReleaseVersion: "0.4",
+                    ReleasePublishedAtUtc: DateTimeOffset.Parse("2026-05-22T06:19:05Z"),
+                    ReleaseAssetSizeBytes: new FileInfo(zipPath).Length,
+                    Channel: InstallChannel.AutoUpdate,
+                    LaunchAfterInstall: false),
+                CancellationToken.None));
+
+            Assert.Contains("one-time installer reset", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(processController.SignalRequested);
+            Assert.Equal("legacy-apphost", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlatformUpdatePackageInstaller_V2_Update_Preserves_Stable_AppHosts_And_Replaces_Mutable_Files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var packageRoot = Path.Combine(root, "package");
+        var bundleRoot = Path.Combine(packageRoot, "MeetingRecorder");
+        var zipPath = Path.Combine(root, "MeetingRecorder-v0.4-win-x64.zip");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(bundleRoot);
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            WriteMinimalV2Bundle(bundleRoot, appHostPayload: "new-apphost", appDllPayload: "new-app-dll");
+            WriteMinimalV2Bundle(installRoot, appHostPayload: "old-apphost", appDllPayload: "old-app-dll");
+            ZipFile.CreateFromDirectory(packageRoot, zipPath);
+
+            var processController = new FakeInstallPathProcessController(
+                signalResult: true,
+                waitResults: [true]);
+            var installer = new UpdatePackageInstaller(
+                new PortableBundleInstaller(
+                    new InstallPathProcessManager(processController),
+                    new WindowsShortcutService(),
+                    NullDeploymentLogger.Instance),
+                new InstallPathProcessManager(processController),
+                NullDeploymentLogger.Instance);
+
+            await installer.ApplyAsync(
+                CreateManifest(installRoot, dataRoot),
+                new UpdateRequest(
+                    ZipPath: zipPath,
+                    InstallRoot: installRoot,
+                    SourceProcessId: int.MaxValue,
+                    ReleaseVersion: "0.4",
+                    ReleasePublishedAtUtc: DateTimeOffset.Parse("2026-05-22T06:19:05Z"),
+                    ReleaseAssetSizeBytes: new FileInfo(zipPath).Length,
+                    Channel: InstallChannel.AutoUpdate,
+                    LaunchAfterInstall: false),
+                CancellationToken.None);
+
+            Assert.True(processController.SignalRequested);
+            Assert.Equal("old-apphost", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.Equal("old-cli-host", File.ReadAllText(Path.Combine(installRoot, "AppPlatform.Deployment.Cli.exe")));
+            Assert.Equal("old-worker-host", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.ProcessingWorker.exe")));
+            Assert.Equal("new-app-dll", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.dll")));
+            Assert.Equal("new-core", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.Core.dll")));
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlatformUpdatePackageInstaller_Rejects_Incomplete_V2_Staging_Before_Source_Process_Shutdown()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var packageRoot = Path.Combine(root, "package");
+        var bundleRoot = Path.Combine(packageRoot, "MeetingRecorder");
+        var zipPath = Path.Combine(root, "MeetingRecorder-v0.4-win-x64.zip");
+        var installRoot = Path.Combine(root, "Documents", "MeetingRecorder");
+        var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
+        Directory.CreateDirectory(bundleRoot);
+        Directory.CreateDirectory(installRoot);
+
+        try
+        {
+            WriteMinimalV2Bundle(bundleRoot, appHostPayload: "new-apphost", appDllPayload: "new-app-dll");
+            File.Delete(Path.Combine(bundleRoot, "MeetingRecorder.App.dll"));
+            WriteMinimalV2Bundle(installRoot, appHostPayload: "old-apphost", appDllPayload: "old-app-dll");
+            ZipFile.CreateFromDirectory(packageRoot, zipPath);
+
+            var processController = new FakeInstallPathProcessController(signalResult: true);
+            var installer = new UpdatePackageInstaller(
+                new PortableBundleInstaller(
+                    new InstallPathProcessManager(processController),
+                    new WindowsShortcutService(),
+                    NullDeploymentLogger.Instance),
+                new InstallPathProcessManager(processController),
+                NullDeploymentLogger.Instance);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installer.ApplyAsync(
+                CreateManifest(installRoot, dataRoot),
+                new UpdateRequest(
+                    ZipPath: zipPath,
+                    InstallRoot: installRoot,
+                    SourceProcessId: int.MaxValue,
+                    ReleaseVersion: "0.4",
+                    ReleasePublishedAtUtc: DateTimeOffset.Parse("2026-05-22T06:19:05Z"),
+                    ReleaseAssetSizeBytes: new FileInfo(zipPath).Length,
+                    Channel: InstallChannel.AutoUpdate,
+                    LaunchAfterInstall: false),
+                CancellationToken.None));
+
+            Assert.Contains("MeetingRecorder.App.dll", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(processController.SignalRequested);
+            Assert.Equal("old-apphost", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.exe")));
+            Assert.Equal("old-app-dll", File.ReadAllText(Path.Combine(installRoot, "MeetingRecorder.App.dll")));
         }
         finally
         {
@@ -1024,6 +1205,70 @@ public sealed class AppPlatformDeploymentTests
             ["MeetingRecorder.ProcessingWorker.deps.json"] = "{ }",
             ["MeetingRecorder.ProcessingWorker.runtimeconfig.json"] = "{ }",
             ["MeetingRecorder.Core.dll"] = "core",
+            ["MeetingRecorder.product.json"] = "{ }",
+            ["Run-MeetingRecorder.cmd"] = "@echo off",
+        };
+
+        foreach (var (relativePath, contents) in files)
+        {
+            File.WriteAllText(Path.Combine(bundleRoot, relativePath), contents);
+        }
+
+        var manifest = new
+        {
+            formatVersion = 1,
+            requiredFiles = files.Keys
+                .Select(relativePath =>
+                {
+                    var path = Path.Combine(bundleRoot, relativePath);
+                    return new
+                    {
+                        relativePath,
+                        lengthBytes = new FileInfo(path).Length,
+                        sha256 = ComputeSha256(path),
+                    };
+                })
+                .ToArray(),
+        };
+        File.WriteAllText(
+            Path.Combine(bundleRoot, "bundle-integrity.json"),
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static void WriteMinimalV2Bundle(
+        string bundleRoot,
+        string appHostPayload,
+        string appDllPayload)
+    {
+        var hostPrefix = appHostPayload.StartsWith("old-", StringComparison.Ordinal)
+            ? "old"
+            : "new";
+        var files = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["bundle-layout.json"] = JsonSerializer.Serialize(
+                new
+                {
+                    formatVersion = 1,
+                    layoutVersion = 2,
+                    stableExecutableFiles = new[]
+                    {
+                        "MeetingRecorder.App.exe",
+                        "AppPlatform.Deployment.Cli.exe",
+                        "MeetingRecorder.ProcessingWorker.exe",
+                    },
+                },
+                new JsonSerializerOptions { WriteIndented = true }),
+            ["MeetingRecorder.App.exe"] = appHostPayload,
+            ["MeetingRecorder.App.dll"] = appDllPayload,
+            ["MeetingRecorder.App.deps.json"] = "{ }",
+            ["MeetingRecorder.App.runtimeconfig.json"] = "{ }",
+            ["AppPlatform.Deployment.Cli.exe"] = hostPrefix + "-cli-host",
+            ["AppPlatform.Deployment.Cli.dll"] = hostPrefix + "-cli-dll",
+            ["MeetingRecorder.ProcessingWorker.exe"] = hostPrefix + "-worker-host",
+            ["MeetingRecorder.ProcessingWorker.dll"] = hostPrefix + "-worker-dll",
+            ["MeetingRecorder.ProcessingWorker.deps.json"] = "{ }",
+            ["MeetingRecorder.ProcessingWorker.runtimeconfig.json"] = "{ }",
+            ["MeetingRecorder.Core.dll"] = hostPrefix + "-core",
             ["MeetingRecorder.product.json"] = "{ }",
             ["Run-MeetingRecorder.cmd"] = "@echo off",
         };

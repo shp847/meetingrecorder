@@ -80,7 +80,7 @@ If you prefer not to install, the extract-and-run portable folder still works. I
 - `Run-MeetingRecorder.cmd`
 
 The default portable bundle is `self-contained`, so most laptops do not need a separate .NET Desktop Runtime install.
-That default self-contained bundle now publishes the WPF shell as a single-file `MeetingRecorder.App.exe`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` remain as external bundle files.
+That default self-contained bundle now publishes the WPF shell as a loose apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` remain as external bundle files.
 
 If you are rebuilding from source locally, note the difference between artifacts and the live installed app:
 
@@ -303,12 +303,13 @@ If an installer or updater console fails, copy the diagnostic log path shown in 
 The installer preserves the existing portable `data` folder during updates, so recordings, transcripts, logs, models, and config are kept.
 The shared deployment CLI now updates the managed install in place instead of renaming the whole `Documents\MeetingRecorder` root first, which makes updates more tolerant of locked files under the preserved `data` tree.
 In-place updates now keep the already-extracted app bundle as an immutable repair source, copy that validated source into a separate staging workspace, and only then move current install files aside. That keeps transient executable staging out of random sibling folders under `Documents` while still leaving a second validated copy available if endpoint protection removes freshly promoted `.exe` files.
+Current v2 updates go further: the MSI/bootstrapper reset installs a `bundle-layout.json` marker and stable apphosts, and routine in-app updates preserve those existing apphost EXEs while replacing mutable DLLs, scripts, assets, and manifests. Legacy single-file installs without that marker are sent through a one-time MSI or bootstrapper reset instead of trying to rewrite themselves in place.
 Managed install repair now also restores the required worker sidecar payload from the source bundle if any of those files are missing from an existing install, so queued sessions do not stay unpublished after restart because the worker cannot load `MeetingRecorder.Core.dll`.
 The actual apply/install work is now delegated to the shipped `AppPlatform.Deployment.Cli` helper so the script layer stays thin and reusable.
 That same CLI-first rule also applies after MSI-origin installs, so the app can update through the shared ZIP/CLI path without switching to MSI-based in-app patching.
 The in-app updater now filters GitHub release assets down to the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle and ignores the separately published model or speaker-labeling ZIP assets, so `Install Available Update` cannot hand a diarization bundle to `apply-update`.
-The in-app updater also validates that selected and pending update packages are real app ZIPs before persisting or applying them. Wrong release assets such as `ggml-*.bin`, diarization bundles, MSI files, bootstrap scripts, missing pending files, and incomplete or corrupt ZIP downloads are rejected before the app is asked to shut down.
-The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory instead of the temporary single-file extraction folder, so the updater can still launch correctly from the packaged managed install.
+The in-app updater also validates that selected and pending update packages are real app ZIPs before persisting or applying them under `%LOCALAPPDATA%\MeetingRecorder\updates`. Wrong release assets such as `ggml-*.bin`, diarization bundles, MSI files, bootstrap scripts, missing pending files, and incomplete or corrupt ZIP downloads are rejected before the app is asked to shut down.
+The in-app `Install Available Update` button now resolves that CLI helper from the installed `MeetingRecorder.App.exe` directory, so the updater stays rooted at the packaged managed install.
 Same-version pending updates are now only cleared when their published-at and asset-size identity matches the installed build, so a refreshed `0.x` package can still replace an older binary instead of being skipped just because the display version text matches when you install it manually.
 The MSI now also allows a refreshed same-version release asset to overwrite the already-installed app binaries on reinstall, so reinstalling an updated `0.x` package does not leave the previous apphost in place.
 Automatic updates are still allowed, but the app refuses installer shutdown handoff while a live recording is active and also avoids automatically interrupting background transcript-processing work.

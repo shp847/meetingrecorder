@@ -545,11 +545,14 @@ internal static class MainWindowInteractionLogic
                 "Settings");
         }
 
-        if (updateResult?.Status == AppUpdateStatusKind.UpdateAvailable && !autoInstallUpdatesEnabled)
+        if ((updateResult?.Status == AppUpdateStatusKind.UpdateAvailable && !autoInstallUpdatesEnabled) ||
+            updateResult?.Status == AppUpdateStatusKind.RequiresInstallerReset)
         {
             return new ShellStatusState(
                 "UPDATE",
-                "Version available",
+                updateResult.Status == AppUpdateStatusKind.RequiresInstallerReset
+                    ? "Installer reset"
+                    : "Version available",
                 ShellStatusTarget.SettingsUpdates,
                 "Updates");
         }
@@ -700,11 +703,16 @@ internal static class MainWindowInteractionLogic
                 "Open Settings");
         }
 
-        if (updateResult?.Status == AppUpdateStatusKind.UpdateAvailable && !autoInstallUpdatesEnabled)
+        if ((updateResult?.Status == AppUpdateStatusKind.UpdateAvailable && !autoInstallUpdatesEnabled) ||
+            updateResult?.Status == AppUpdateStatusKind.RequiresInstallerReset)
         {
             return new DashboardPrimaryActionState(
-                "A newer app version is ready",
-                "Open Settings and review the Updates section to install it when the app is idle.",
+                updateResult.Status == AppUpdateStatusKind.RequiresInstallerReset
+                    ? "A one-time installer reset is needed"
+                    : "A newer app version is ready",
+                updateResult.Status == AppUpdateStatusKind.RequiresInstallerReset
+                    ? "Open Settings and use the latest release page to reinstall once, then future in-app updates can resume."
+                    : "Open Settings and review the Updates section to install it when the app is idle.",
                 DashboardPrimaryActionTarget.SettingsUpdates,
                 "Review Updates");
         }

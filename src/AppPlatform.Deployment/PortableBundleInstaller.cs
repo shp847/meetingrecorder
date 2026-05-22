@@ -75,12 +75,18 @@ public sealed class PortableBundleInstaller
         CancellationToken cancellationToken)
     {
         var sourceBundleRoot = ResolveSourceBundleRoot(request.BundleRoot, manifest.ExecutableName);
-        _logger.Info($"Validating bundle integrity for '{sourceBundleRoot}'.");
-        BundleIntegrityValidator.ValidateBundle(sourceBundleRoot);
         var resolvedInstallRoot = Path.GetFullPath(
             string.IsNullOrWhiteSpace(request.InstallRoot)
                 ? GetDefaultInstallRoot(manifest)
                 : request.InstallRoot);
+        var isUpdate = Directory.Exists(resolvedInstallRoot);
+        var preservedPayloadFiles = ResolvePreservedPayloadFiles(
+            request,
+            sourceBundleRoot,
+            resolvedInstallRoot,
+            isUpdate);
+        _logger.Info($"Validating bundle integrity for '{sourceBundleRoot}'.");
+        BundleIntegrityValidator.ValidateBundle(sourceBundleRoot, preservedPayloadFiles);
         _logger.Info($"Installing bundle from '{sourceBundleRoot}' to '{resolvedInstallRoot}'.");
         var installParent = Directory.GetParent(resolvedInstallRoot)?.FullName
             ?? throw new InvalidOperationException("Install root must have a parent directory.");
@@ -88,7 +94,6 @@ public sealed class PortableBundleInstaller
         Directory.CreateDirectory(installParent);
 
         var backupRoot = CreateWorkspacePath(installParent, "APB");
-        var isUpdate = Directory.Exists(resolvedInstallRoot);
         var stagingRoot = ResolveStagingRoot(
             sourceBundleRoot,
             installParent,
@@ -102,8 +107,6 @@ public sealed class PortableBundleInstaller
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await _processManager.EnsureInstallPathReleasedAsync(resolvedInstallRoot, cancellationToken);
-
             if (stagingUsesSourceBundle)
             {
                 _logger.Info($"Using already-extracted bundle as staging root '{stagingRoot}'.");
@@ -111,18 +114,30 @@ public sealed class PortableBundleInstaller
             else
             {
                 _logger.Info($"Copying bundle into staging root '{stagingRoot}'.");
-                CopyDirectoryContents(sourceBundleRoot, stagingRoot, overwriteExisting: true, cancellationToken);
+                CopyDirectoryContents(
+                    sourceBundleRoot,
+                    stagingRoot,
+                    overwriteExisting: true,
+                    skippedRelativePaths: preservedPayloadFiles,
+                    cancellationToken);
             }
 
             PrepareBundleForManagedInstall(stagingRoot);
             _logger.Info("Prepared staged bundle for managed install.");
             _logger.Info($"Validating staged bundle integrity under '{stagingRoot}'.");
-            BundleIntegrityValidator.ValidateBundle(stagingRoot);
+            BundleIntegrityValidator.ValidateBundle(stagingRoot, preservedPayloadFiles);
+
+            await _processManager.EnsureInstallPathReleasedAsync(resolvedInstallRoot, cancellationToken);
 
             if (isUpdate)
             {
                 _logger.Info("Existing installation detected; promoting app files in place while preserving the current data directory.");
-                ApplyStagedBundleToExistingInstall(stagingRoot, resolvedInstallRoot, backupRoot, cancellationToken);
+                ApplyStagedBundleToExistingInstall(
+                    stagingRoot,
+                    resolvedInstallRoot,
+                    backupRoot,
+                    preservedPayloadFiles,
+                    cancellationToken);
                 movedBackup = Directory.Exists(backupRoot) && Directory.EnumerateFileSystemEntries(backupRoot).Any();
                 finalInstallMoved = true;
             }
@@ -214,11 +229,11 @@ public sealed class PortableBundleInstaller
                 _logger.Info($"Quarantined legacy install root to '{quarantinedLegacyInstallRoot}'.");
             }
 
-            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot);
+            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot, preservedPayloadFiles);
             _logger.Info($"Validating installed bundle integrity under '{resolvedInstallRoot}'.");
             try
             {
-                BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot);
+                BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot, preservedPayloadFiles);
             }
             catch (InvalidOperationException exception)
             {
@@ -261,7 +276,7 @@ public sealed class PortableBundleInstaller
             {
                 if (isUpdate)
                 {
-                    TryDeleteReplaceableInstallEntries(resolvedInstallRoot);
+                    TryDeleteReplaceableInstallEntries(resolvedInstallRoot, preservedPayloadFiles);
                     RestoreBackupEntries(backupRoot, resolvedInstallRoot);
                 }
                 else
@@ -308,6 +323,80 @@ public sealed class PortableBundleInstaller
         }
 
         throw new InvalidOperationException("The portable application bundle could not be found.");
+    }
+
+    private static IReadOnlySet<string> ResolvePreservedPayloadFiles(
+        InstallRequest request,
+        string sourceBundleRoot,
+        string installRoot,
+        bool isUpdate)
+    {
+        if (!isUpdate)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var requestedPreservedPayloadFiles = (request.PreservedPayloadFiles ?? [])
+            .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
+            .ToArray();
+        if (requestedPreservedPayloadFiles.Length > 0)
+        {
+            EnsureStableAppHostLayoutsSupportAutoUpdate(
+                sourceBundleRoot,
+                installRoot,
+                requestedPreservedPayloadFiles);
+            return new HashSet<string>(
+                requestedPreservedPayloadFiles,
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (request.Channel != InstallChannel.AutoUpdate)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var stableExecutableFiles = EnsureStableAppHostLayoutsSupportAutoUpdate(
+                sourceBundleRoot,
+                installRoot,
+                requestedPreservedPayloadFiles: null)
+            .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new HashSet<string>(
+            stableExecutableFiles,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string[] EnsureStableAppHostLayoutsSupportAutoUpdate(
+        string sourceBundleRoot,
+        string installRoot,
+        IReadOnlyList<string>? requestedPreservedPayloadFiles)
+    {
+        var sourceLayout = BundleLayoutInfoStore.TryLoad(sourceBundleRoot);
+        var installedLayout = BundleLayoutInfoStore.TryLoad(installRoot);
+        if (sourceLayout?.SupportsStableAppHostUpdates != true ||
+            installedLayout?.SupportsStableAppHostUpdates != true)
+        {
+            throw CreateInstallerResetRequiredException();
+        }
+
+        var stableExecutableFiles = requestedPreservedPayloadFiles is { Count: > 0 }
+            ? requestedPreservedPayloadFiles.ToArray()
+            : sourceLayout.StableExecutableFiles;
+        if (stableExecutableFiles.Length == 0 ||
+            stableExecutableFiles.Any(fileName => !File.Exists(Path.Combine(installRoot, fileName))))
+        {
+            throw CreateInstallerResetRequiredException();
+        }
+
+        return stableExecutableFiles;
+    }
+
+    private static InvalidOperationException CreateInstallerResetRequiredException()
+    {
+        return new InvalidOperationException(
+            "This installation uses the legacy single-file update layout or is missing stable apphost executables. Install the latest Meeting Recorder MSI or bootstrapper once to complete a one-time installer reset before using in-app updates again.");
     }
 
     internal static void PrepareBundleForManagedInstall(string stagingRoot)
@@ -394,7 +483,20 @@ public sealed class PortableBundleInstaller
         return normalizedCandidate.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static void EnsureInstalledExecutablePayload(string sourceBundleRoot, string installRoot)
+    internal static void EnsureInstalledExecutablePayload(
+        string sourceBundleRoot,
+        string installRoot)
+    {
+        EnsureInstalledExecutablePayload(
+            sourceBundleRoot,
+            installRoot,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    internal static void EnsureInstalledExecutablePayload(
+        string sourceBundleRoot,
+        string installRoot,
+        IReadOnlySet<string> preservedPayloadFiles)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceBundleRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(installRoot);
@@ -405,6 +507,11 @@ public sealed class PortableBundleInstaller
         {
             var installedPath = Path.Combine(installRoot, fileName);
             if (File.Exists(installedPath))
+            {
+                continue;
+            }
+
+            if (preservedPayloadFiles.Contains(fileName))
             {
                 continue;
             }
@@ -498,13 +605,14 @@ public sealed class PortableBundleInstaller
         string stagingRoot,
         string installRoot,
         string backupRoot,
+        IReadOnlySet<string> preservedPayloadFiles,
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(installRoot);
         Directory.CreateDirectory(backupRoot);
 
-        MoveReplaceableInstallEntriesToBackup(installRoot, backupRoot, cancellationToken);
-        MoveStagedEntriesIntoInstallRoot(stagingRoot, installRoot, cancellationToken);
+        MoveReplaceableInstallEntriesToBackup(installRoot, backupRoot, preservedPayloadFiles, cancellationToken);
+        MoveStagedEntriesIntoInstallRoot(stagingRoot, installRoot, preservedPayloadFiles, cancellationToken);
         MergeDirectoryWithoutOverwriting(
             Path.Combine(stagingRoot, ManagedDataDirectoryName),
             Path.Combine(installRoot, ManagedDataDirectoryName),
@@ -554,6 +662,7 @@ public sealed class PortableBundleInstaller
         string sourcePath,
         string destinationPath,
         bool overwriteExisting,
+        IReadOnlySet<string> skippedRelativePaths,
         CancellationToken cancellationToken)
     {
         if (!Directory.Exists(sourcePath))
@@ -574,6 +683,11 @@ public sealed class PortableBundleInstaller
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relativePath = Path.GetRelativePath(sourcePath, file);
+            if (skippedRelativePaths.Contains(relativePath))
+            {
+                continue;
+            }
+
             var destinationFile = Path.Combine(destinationPath, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)
                 ?? throw new InvalidOperationException("Destination file must have a parent directory."));
@@ -610,13 +724,14 @@ public sealed class PortableBundleInstaller
     private static void MoveReplaceableInstallEntriesToBackup(
         string installRoot,
         string backupRoot,
+        IReadOnlySet<string> preservedPayloadFiles,
         CancellationToken cancellationToken)
     {
         foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly).ToArray())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (IsPreservedTopLevelEntry(entryPath))
+            if (IsPreservedTopLevelEntry(entryPath, preservedPayloadFiles))
             {
                 continue;
             }
@@ -630,13 +745,14 @@ public sealed class PortableBundleInstaller
     private static void MoveStagedEntriesIntoInstallRoot(
         string stagingRoot,
         string installRoot,
+        IReadOnlySet<string> preservedPayloadFiles,
         CancellationToken cancellationToken)
     {
         foreach (var entryPath in Directory.EnumerateFileSystemEntries(stagingRoot, "*", SearchOption.TopDirectoryOnly).ToArray())
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (IsPreservedTopLevelEntry(entryPath))
+            if (IsPreservedTopLevelEntry(entryPath, preservedPayloadFiles))
             {
                 continue;
             }
@@ -662,7 +778,9 @@ public sealed class PortableBundleInstaller
         }
     }
 
-    private static void TryDeleteReplaceableInstallEntries(string installRoot)
+    private static void TryDeleteReplaceableInstallEntries(
+        string installRoot,
+        IReadOnlySet<string>? preservedPayloadFiles = null)
     {
         if (!Directory.Exists(installRoot))
         {
@@ -671,7 +789,7 @@ public sealed class PortableBundleInstaller
 
         foreach (var entryPath in Directory.EnumerateFileSystemEntries(installRoot, "*", SearchOption.TopDirectoryOnly))
         {
-            if (IsPreservedTopLevelEntry(entryPath))
+            if (IsPreservedTopLevelEntry(entryPath, preservedPayloadFiles))
             {
                 continue;
             }
@@ -694,10 +812,13 @@ public sealed class PortableBundleInstaller
         }
     }
 
-    private static bool IsPreservedTopLevelEntry(string entryPath)
+    private static bool IsPreservedTopLevelEntry(
+        string entryPath,
+        IReadOnlySet<string>? preservedPayloadFiles = null)
     {
         var entryName = Path.GetFileName(entryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        return string.Equals(entryName, ManagedDataDirectoryName, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(entryName, ManagedDataDirectoryName, StringComparison.OrdinalIgnoreCase) ||
+            preservedPayloadFiles?.Contains(entryName) == true;
     }
 
     private static void MoveFileSystemEntry(string sourcePath, string destinationPath)

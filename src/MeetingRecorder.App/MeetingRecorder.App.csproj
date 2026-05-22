@@ -7,10 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\MeetingRecorder.ico</ApplicationIcon>
-    <PublishSingleFile Condition="'$(SelfContained)' == 'true'">true</PublishSingleFile>
-    <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
-    <IncludeAllContentForSelfExtract Condition="'$(SelfContained)' == 'true'">true</IncludeAllContentForSelfExtract>
-    <IncludeNativeLibrariesForSelfExtract Condition="'$(SelfContained)' == 'true'">true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>

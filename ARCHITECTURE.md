@@ -90,8 +90,8 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - transcript and ready-marker publishing
 
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
-For self-contained release bundles, `MeetingRecorder.App` is now published as a single-file executable while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
-Because the shipped apphost is single-file, any runtime path that persists launch targets must resolve them from `Environment.ProcessPath` rather than `AppContext.BaseDirectory`; otherwise Windows startup can capture a temporary extraction path under `%TEMP%\.net\...` that disappears on the next launch.
+For self-contained release bundles, `MeetingRecorder.App` is now published as a loose apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
+Runtime paths that persist launch targets resolve them from `Environment.ProcessPath` so launch-on-login, worker startup, and updater handoff stay rooted at the canonical managed install under `%USERPROFILE%\Documents\MeetingRecorder`.
 
 ## 3. Windows Deployment Constraints
 
@@ -238,7 +238,7 @@ The durable session lifecycle uses these states:
 3. On stop, the manifest is updated with chunk paths and moved to `Queued`.
 4. Any optional attendee enrichment is attempted in the background queue, not in the foreground stop path.
 5. The UI launches the worker with the manifest path and config path.
-   For single-file app installs, worker discovery prefers the installed app directory derived from `Environment.ProcessPath` instead of the transient `.net` extraction directory behind `AppContext.BaseDirectory`.
+   Worker discovery prefers the installed app directory derived from `Environment.ProcessPath` so background processing stays rooted at the managed install bundle.
 6. The worker loads the manifest, merges audio, and publishes the final WAV.
 7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
 8. If speaker labeling succeeds, the worker can compute local speaker-cluster embeddings, match them against user-confirmed voice profiles, auto-apply only high-confidence names, and render transcript artifacts from the labeled segments.
@@ -520,8 +520,10 @@ That bootstrap path:
 - downloads the latest versioned app ZIP from GitHub Releases
 - extracts it to a temporary folder
 - runs `AppPlatform.Deployment.Cli` from the downloaded bundle
-- expects the WPF shell itself to be present as a single-file `MeetingRecorder.App.exe` rather than a loose `MeetingRecorder.App.dll/.deps.json/.runtimeconfig.json` trio
-- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so a single-file app launch does not look for `AppPlatform.Deployment.Cli.exe` under the transient `.net` extraction directory
+- expects the WPF shell itself to be present as a loose apphost layout with `MeetingRecorder.App.exe`, `MeetingRecorder.App.dll`, `.deps.json`, `.runtimeconfig.json`, and `bundle-layout.json`
+- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so helpers stay anchored in `%USERPROFILE%\Documents\MeetingRecorder`
+- preserves installed stable apphosts during v2 in-app updates and replaces only mutable DLLs, scripts, assets, and manifests
+- requires a one-time MSI or bootstrapper reset for legacy single-file installs that do not have the v2 layout marker
 - only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt when explicitly launched
 - only auto-installs or auto-retries pending updates when the release is newer by semantic version, so republished same-version builds cannot create a self-update loop after an installer relaunch
 - validates `bundle-integrity.json` before the managed install root is changed

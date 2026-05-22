@@ -16,6 +16,15 @@ internal static class BundleIntegrityValidator
 
     public static void ValidateBundle(string bundleRoot)
     {
+        ValidateBundle(
+            bundleRoot,
+            skippedRelativePaths: new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    public static void ValidateBundle(
+        string bundleRoot,
+        IReadOnlySet<string> skippedRelativePaths)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(bundleRoot);
 
         var resolvedBundleRoot = Path.GetFullPath(bundleRoot);
@@ -49,6 +58,11 @@ internal static class BundleIntegrityValidator
 
         foreach (var entry in manifest.RequiredFiles)
         {
+            if (skippedRelativePaths.Contains(entry.RelativePath))
+            {
+                continue;
+            }
+
             ValidateEntry(resolvedBundleRoot, entry);
         }
     }

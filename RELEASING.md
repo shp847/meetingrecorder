@@ -52,7 +52,7 @@ What it does:
 
 - runs the safe serial build/test flow through `scripts\Test-All.ps1`
 - builds the installer assets through `scripts\Build-Installer.ps1`
-- publishes the WPF shell as a single-file self-contained `MeetingRecorder.App.exe` when the release is self-contained, while leaving `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` as external bundle assets
+- publishes the WPF shell as a loose self-contained apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json` when the release is self-contained, while leaving `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` as external bundle assets
 - copies the full `MeetingRecorder.ProcessingWorker` publish output into the portable bundle, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so the worker can still publish queued sessions after install/update
 - stages `AppPlatform.Deployment.Cli` into the portable bundle so the script wrappers and in-app updater can delegate install/apply work to one canonical executable
 - emits `bundle-integrity.json` into the portable bundle so the shared deployment CLI can validate required files before promoting a bundle
@@ -93,8 +93,10 @@ Packaging validation notes:
 - avoid cross-process inspection and control APIs in all installer paths so endpoint tools do not flag the flow as restricted process-memory access
 - silent in-app updates should not repair Desktop or Start Menu shortcuts during the CLI apply path unless that specific update flow explicitly requested shortcut changes, because shell shortcut COM traffic is more likely to trigger security prompts on managed Windows machines
 - the CLI relaunch path should prefer starting `MeetingRecorder.App.exe` directly instead of shell-executing `Run-MeetingRecorder.cmd`, reducing Explorer-coupled relaunch behavior during silent updates while still keeping the launcher script available as a fallback
-- after promoting an updated bundle into the managed install root, the CLI should revalidate the installed `bundle-integrity.json` contract and roll back if required executables disappear before launch, because some endpoint tools can quarantine freshly written unsigned executables immediately after update
-- the CLI should keep the already-validated update source bundle separate from mutable staging, restore any missing required executable payload files from that source before final validation, and materialize the top-level move list before mutating staging/install directories, so in-place updates cannot skip or lose `MeetingRecorder.App.exe` or other required siblings mid-promotion
+- after promoting an updated bundle into the managed install root, the CLI should revalidate the installed `bundle-integrity.json` contract and roll back if required files disappear before launch
+- v2 in-app updates should preserve installed stable apphosts (`MeetingRecorder.App.exe`, `AppPlatform.Deployment.Cli.exe`, and `MeetingRecorder.ProcessingWorker.exe`) and update the mutable DLLs, scripts, assets, and manifests around them, so routine updates do not rewrite unsigned EXE apphosts
+- legacy single-file installs without the v2 `bundle-layout.json` marker should require a one-time MSI or bootstrapper reset before in-app updates resume
+- update downloads and staging should use `%LOCALAPPDATA%\MeetingRecorder\updates`, not the user Downloads folder
 - in-app update selection and pending-update retry must only accept the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs must fail before the app is asked to shut down
 - keep non-MSI fallbacks thin; they should hand off into `Install-LatestFromGitHub.cmd/.ps1` and should not extract ZIPs, copy files into `Documents\MeetingRecorder`, launch the app, or create shortcuts themselves
 - keep install messaging explicit about the split between app files in `%USERPROFILE%\Documents\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
@@ -109,7 +111,7 @@ Packaging validation notes:
 - the EXE shell should keep the backup CMD action enabled even after a handoff, because the command window can still fail after the EXE has already stepped aside
 - `Install-LatestFromGitHub.cmd` should preserve the real exit code from the local `Install-LatestFromGitHub.ps1` handoff so a successful install does not print a stale generic failure prompt afterward
 - `Run-MeetingRecorder.cmd` and `Check-Dependencies.ps1` should fail clearly and pause if `MeetingRecorder.App.exe` is missing, rather than attempting an invalid WPF DLL fallback
-- self-contained WPF packaging should fail fast if the portable app publish regresses back to loose `MeetingRecorder.App.dll`, `.deps.json`, or `.runtimeconfig.json` outputs
+- self-contained WPF packaging should fail fast if the portable app publish no longer includes the loose apphost layout: `MeetingRecorder.App.exe`, `MeetingRecorder.App.dll`, `.deps.json`, `.runtimeconfig.json`, and `bundle-layout.json`
 - Apps & Features can keep showing the MSI's original version after later CLI-driven updates, so smoke tests should confirm the in-app installed-version display rather than relying only on ARP
 
 If you need a faster packaging-only run:
@@ -126,7 +128,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1 -Framewor
 
 Size notes:
 
-- the default release build is `self-contained`, so it bundles the .NET desktop runtime and now ships the WPF shell as a single-file `MeetingRecorder.App.exe` for easier first-time installs and safer startup behavior
+- the default release build is `self-contained`, so it bundles the .NET desktop runtime and now ships the WPF shell as a loose apphost plus managed payload files for safer routine in-app updates
 - `-FrameworkDependent` produces a smaller app bundle, but target machines must already have the .NET 8 Desktop Runtime
 - the portable publish step now copies the full worker publish output recursively into the bundle root, so the worker runtimes, `.deps.json`, `.runtimeconfig.json`, and `MeetingRecorder.Core.dll` stay aligned without a brittle whitelist or a nested `runtimes\runtimes` tree
 

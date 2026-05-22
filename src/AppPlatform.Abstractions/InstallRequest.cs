@@ -9,4 +9,5 @@ public sealed record InstallRequest(
     string? ReleaseVersion,
     DateTimeOffset? ReleasePublishedAtUtc,
     long? ReleaseAssetSizeBytes,
-    InstallChannel Channel = InstallChannel.Unknown);
+    InstallChannel Channel = InstallChannel.Unknown,
+    IReadOnlyList<string>? PreservedPayloadFiles = null);

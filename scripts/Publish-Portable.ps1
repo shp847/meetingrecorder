@@ -143,17 +143,17 @@ function New-BundleIntegrityEntry {
     }
 }
 
-function Assert-SingleFileWpfShellPublishLayout {
+function Assert-LooseFileWpfShellPublishLayout {
     param(
         [string]$PublishRoot
     )
 
     $requiredAppShellPath = Join-Path $PublishRoot "MeetingRecorder.App.exe"
     if (-not (Test-Path $requiredAppShellPath)) {
-        throw "Portable app publish is missing the single-file WPF shell '$requiredAppShellPath'."
+        throw "Portable app publish is missing the WPF apphost '$requiredAppShellPath'."
     }
 
-    $forbiddenAppPublishArtifacts = @(
+    $requiredAppPublishArtifacts = @(
         "MeetingRecorder.App.dll",
         "MeetingRecorder.App.deps.json",
         "MeetingRecorder.App.runtimeconfig.json",
@@ -169,49 +169,49 @@ function Assert-SingleFileWpfShellPublishLayout {
         "UIAutomationTypes.dll"
     )
 
-    $unexpectedArtifacts = @(
-        $forbiddenAppPublishArtifacts |
+    $missingArtifacts = @(
+        $requiredAppPublishArtifacts |
             ForEach-Object {
                 $candidatePath = Join-Path $PublishRoot $_
-                if (Test-Path $candidatePath) {
-                    $candidatePath
+                if (-not (Test-Path $candidatePath)) {
+                    $_
                 }
             }
     )
 
-    if ($unexpectedArtifacts.Count -gt 0) {
-        throw "Portable app publish regressed to a loose-file WPF shell layout. Unexpected app-shell artifacts: $($unexpectedArtifacts -join '; ')."
+    if ($missingArtifacts.Count -gt 0) {
+        throw "Portable app publish is missing loose-file WPF shell artifacts: $($missingArtifacts -join '; ')."
     }
 }
 
-function Assert-SingleFileWpfShellBundleLayout {
+function Assert-LooseFileWpfShellBundleLayout {
     param(
         [string]$BundleRoot
     )
 
     $requiredAppShellPath = Join-Path $BundleRoot "MeetingRecorder.App.exe"
     if (-not (Test-Path $requiredAppShellPath)) {
-        throw "Portable bundle is missing the single-file WPF shell '$requiredAppShellPath'."
+        throw "Portable bundle is missing the WPF apphost '$requiredAppShellPath'."
     }
 
-    $forbiddenBundleArtifacts = @(
+    $requiredBundleArtifacts = @(
         "MeetingRecorder.App.dll",
         "MeetingRecorder.App.deps.json",
         "MeetingRecorder.App.runtimeconfig.json"
     )
 
-    $unexpectedArtifacts = @(
-        $forbiddenBundleArtifacts |
+    $missingArtifacts = @(
+        $requiredBundleArtifacts |
             ForEach-Object {
                 $candidatePath = Join-Path $BundleRoot $_
-                if (Test-Path $candidatePath) {
-                    $candidatePath
+                if (-not (Test-Path $candidatePath)) {
+                    $_
                 }
             }
     )
 
-    if ($unexpectedArtifacts.Count -gt 0) {
-        throw "Portable bundle regressed to a loose-file WPF shell layout. Unexpected app-shell artifacts: $($unexpectedArtifacts -join '; ')."
+    if ($missingArtifacts.Count -gt 0) {
+        throw "Portable bundle is missing loose-file WPF shell artifacts: $($missingArtifacts -join '; ')."
     }
 }
 
@@ -221,7 +221,7 @@ Remove-Item -Recurse -Force $workerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $finalPath -ErrorAction SilentlyContinue
 
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.App\MeetingRecorder.App.csproj") -PublishOutput $appTemp
-Assert-SingleFileWpfShellPublishLayout -PublishRoot $appTemp
+Assert-LooseFileWpfShellPublishLayout -PublishRoot $appTemp
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\AppPlatform.Deployment.Cli\AppPlatform.Deployment.Cli.csproj") -PublishOutput $cliTemp
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj") -PublishOutput $workerTemp
 
@@ -248,12 +248,29 @@ if (Test-Path $appAssetPath) {
 
 Copy-Item -Path (Join-Path $workerTemp "*") -Destination $finalPath -Recurse -Force
 
-Assert-SingleFileWpfShellBundleLayout -BundleRoot $finalPath
+Assert-LooseFileWpfShellBundleLayout -BundleRoot $finalPath
+
+$bundleLayout = [ordered]@{
+    formatVersion          = 1
+    layoutVersion          = 2
+    stableExecutableFiles  = @(
+        "MeetingRecorder.App.exe",
+        "AppPlatform.Deployment.Cli.exe",
+        "MeetingRecorder.ProcessingWorker.exe"
+    )
+}
+$bundleLayout |
+    ConvertTo-Json -Depth 4 |
+    Set-Content -Path (Join-Path $finalPath "bundle-layout.json") -Encoding UTF8
 
 $bundleIntegrityManifest = [ordered]@{
     formatVersion = 1
     requiredFiles = @(
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "bundle-layout.json"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.App.exe"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.App.dll"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.App.deps.json"),
+        (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.App.runtimeconfig.json"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "AppPlatform.Deployment.Cli.exe"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.exe"),
         (New-BundleIntegrityEntry -BundleRoot $finalPath -RelativePath "MeetingRecorder.ProcessingWorker.dll"),

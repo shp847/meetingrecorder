@@ -52,21 +52,24 @@ public sealed class UpdatePackageInstaller
             _logger.Info($"Validating update package '{request.ZipPath}'.");
             ValidateUpdatePackage(request.ZipPath, request.ReleaseAssetSizeBytes);
 
-            _logger.Info($"Applying update from '{request.ZipPath}' into '{request.InstallRoot}'.");
-            await WaitForSourceProcessExitAsync(request.SourceProcessId, request.InstallRoot, cancellationToken);
-
             _logger.Info($"Using update workspace '{tempRoot}'.");
             Directory.CreateDirectory(extractPath);
+            var preservedPayloadFiles = ResolvePreservedPayloadFiles(request);
             _logger.Info($"Extracting update package into '{extractPath}'.");
             try
             {
-                ZipFile.ExtractToDirectory(request.ZipPath, extractPath, overwriteFiles: true);
+                ExtractUpdatePackageToDirectory(
+                    request.ZipPath,
+                    extractPath,
+                    preservedPayloadFiles,
+                    cancellationToken);
             }
             catch (InvalidDataException exception)
             {
                 throw CreateInvalidUpdatePackageException(request.ZipPath, exception);
             }
 
+            _logger.Info($"Applying update from '{request.ZipPath}' into '{request.InstallRoot}'.");
             var installResult = await _bundleInstaller.InstallAsync(
                 manifest,
                 new InstallRequest(
@@ -78,7 +81,8 @@ public sealed class UpdatePackageInstaller
                     ReleaseVersion: request.ReleaseVersion,
                     ReleasePublishedAtUtc: request.ReleasePublishedAtUtc,
                     ReleaseAssetSizeBytes: request.ReleaseAssetSizeBytes,
-                    Channel: request.Channel),
+                    Channel: request.Channel,
+                    PreservedPayloadFiles: preservedPayloadFiles.ToArray()),
                 cancellationToken);
 
             return new UpdateResult(
@@ -114,6 +118,82 @@ public sealed class UpdatePackageInstaller
         {
             throw CreateInvalidUpdatePackageException(zipPath, exception);
         }
+    }
+
+    private static IReadOnlySet<string> ResolvePreservedPayloadFiles(UpdateRequest request)
+    {
+        if (request.Channel != InstallChannel.AutoUpdate)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var installedLayout = BundleLayoutInfoStore.TryLoad(request.InstallRoot);
+        if (installedLayout?.SupportsStableAppHostUpdates != true ||
+            installedLayout.StableExecutableFiles.Any(fileName => !File.Exists(Path.Combine(request.InstallRoot, fileName))))
+        {
+            throw new InvalidOperationException(
+                "This installation uses the legacy single-file update layout or is missing stable apphost executables. Install the latest Meeting Recorder MSI or bootstrapper once to complete a one-time installer reset before using in-app updates again.");
+        }
+
+        return new HashSet<string>(
+            installedLayout.StableExecutableFiles,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void ExtractUpdatePackageToDirectory(
+        string zipPath,
+        string extractPath,
+        IReadOnlySet<string> skippedBundleRelativePaths,
+        CancellationToken cancellationToken)
+    {
+        using var archive = ZipFile.OpenRead(zipPath);
+        var resolvedExtractPath = Path.GetFullPath(extractPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+
+        foreach (var entry in archive.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var entryRelativePath = NormalizeArchiveEntryRelativePath(entry.FullName);
+            if (entryRelativePath.Length == 0)
+            {
+                continue;
+            }
+
+            if (skippedBundleRelativePaths.Contains(entryRelativePath))
+            {
+                continue;
+            }
+
+            var destinationPath = Path.GetFullPath(Path.Combine(extractPath, entry.FullName));
+            if (!destinationPath.StartsWith(resolvedExtractPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"The update package entry '{entry.FullName}' resolves outside the extraction directory.");
+            }
+
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Directory.CreateDirectory(destinationPath);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)
+                ?? throw new InvalidOperationException("Extracted update file must have a parent directory."));
+            entry.ExtractToFile(destinationPath, overwrite: true);
+        }
+    }
+
+    private static string NormalizeArchiveEntryRelativePath(string entryFullName)
+    {
+        var normalized = entryFullName.Replace('\\', '/').Trim('/');
+        const string bundlePrefix = "MeetingRecorder/";
+        if (normalized.StartsWith(bundlePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[bundlePrefix.Length..];
+        }
+
+        return normalized.Replace('/', Path.DirectorySeparatorChar);
     }
 
     private static InvalidOperationException CreateInvalidUpdatePackageException(

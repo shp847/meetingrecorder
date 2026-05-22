@@ -38,6 +38,38 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
+    public async Task CheckForUpdateAsync_Returns_RequiresInstallerReset_For_LegacyInstall_When_UpdateAvailable()
+    {
+        var service = new AppUpdateService(new FakeUpdateFeedClient("""
+            {
+              "tag_name": "v0.4",
+              "html_url": "https://github.com/shp847/meetingrecorder/releases/tag/v0.4",
+              "assets": [
+                {
+                  "name": "MeetingRecorder-v0.4-win-x64.zip",
+                  "browser_download_url": "https://github.com/shp847/meetingrecorder/releases/download/v0.4/MeetingRecorder-v0.4-win-x64.zip"
+                }
+              ]
+            }
+            """));
+
+        var result = await service.CheckForUpdateAsync(
+            new AppUpdateLocalState(
+                "0.3",
+                "0.3",
+                null,
+                null,
+                SupportsSafeInAppUpdates: false),
+            "https://api.github.com/repos/shp847/meetingrecorder/releases/latest",
+            enabled: true);
+
+        Assert.Equal(AppUpdateStatusKind.RequiresInstallerReset, result.Status);
+        Assert.Null(result.DownloadUrl);
+        Assert.Equal("https://github.com/shp847/meetingrecorder/releases/tag/v0.4", result.ReleasePageUrl);
+        Assert.Contains("one-time installer reset", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CheckForUpdateAsync_Uses_Release_Name_Version_When_GitHub_Tag_Is_Not_Semver()
     {
         var service = new AppUpdateService(new FakeUpdateFeedClient("""
@@ -429,6 +461,43 @@ public sealed class AppUpdateServiceTests
         Assert.Contains("Meeting Recorder app ZIP", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(client.DownloadWasCalled);
         Assert.False(Directory.Exists(updatesDirectory));
+    }
+
+    [Fact]
+    public async Task DownloadUpdateAsync_Defaults_To_LocalAppData_Update_Cache()
+    {
+        var payload = CreateZipBytes(("MeetingRecorder.App.exe", "app"));
+        var client = new FakeUpdateFeedClient(
+            "{}",
+            async (_, destinationPath, cancellationToken) => await File.WriteAllBytesAsync(destinationPath, payload, cancellationToken));
+        var service = new AppUpdateService(client);
+
+        var downloadedPath = await service.DownloadUpdateAsync(
+            "https://example.com/releases/download/v0.3/MeetingRecorder-v0.3-win-x64.zip",
+            "0.3",
+            payload.Length,
+            CancellationToken.None);
+
+        try
+        {
+            var expectedRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MeetingRecorder",
+                "updates");
+            Assert.StartsWith(expectedRoot, downloadedPath, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(downloadedPath));
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(downloadedPath);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]

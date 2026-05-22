@@ -106,6 +106,22 @@ public sealed class AppUpdateService
             var status = isNewerByVersion || isNewerByPublishedAt || isNewerByAssetSize
                 ? AppUpdateStatusKind.UpdateAvailable
                 : AppUpdateStatusKind.UpToDate;
+            if (status == AppUpdateStatusKind.UpdateAvailable && !localState.SupportsSafeInAppUpdates)
+            {
+                return new AppUpdateCheckResult(
+                    AppUpdateStatusKind.RequiresInstallerReset,
+                    localState.CurrentVersion,
+                    release.Version,
+                    null,
+                    release.ReleasePageUrl,
+                    release.PublishedAtUtc,
+                    release.AssetSizeBytes,
+                    isNewerByVersion,
+                    isNewerByPublishedAt,
+                    isNewerByAssetSize,
+                    $"Version {release.Version} is available, but this installation uses the legacy update layout. Install the latest Meeting Recorder MSI or bootstrapper once to complete a one-time installer reset before using in-app updates again.");
+            }
+
             var message = status == AppUpdateStatusKind.UpdateAvailable
                 ? BuildUpdateAvailableMessage(release.Version, isNewerByVersion, isNewerByPublishedAt, isNewerByAssetSize)
                 : $"You are already on version {localState.CurrentVersion}.";
@@ -167,9 +183,9 @@ public sealed class AppUpdateService
         }
 
         var updatesDirectory = _updatesDirectoryOverride ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads",
-            "MeetingRecorder Updates");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MeetingRecorder",
+            "updates");
         Directory.CreateDirectory(updatesDirectory);
 
         var destinationPath = Path.Combine(updatesDirectory, fileName);
@@ -444,7 +460,8 @@ public sealed record AppUpdateLocalState(
     string CurrentVersion,
     string InstalledReleaseVersion,
     DateTimeOffset? InstalledReleasePublishedAtUtc,
-    long? InstalledReleaseAssetSizeBytes);
+    long? InstalledReleaseAssetSizeBytes,
+    bool SupportsSafeInAppUpdates = true);
 
 public interface IAppUpdateFeedClient
 {
@@ -523,6 +540,7 @@ public enum AppUpdateStatusKind
     UpToDate = 2,
     UpdateAvailable = 3,
     Error = 4,
+    RequiresInstallerReset = 5,
 }
 
 public sealed record AppUpdateCheckResult(

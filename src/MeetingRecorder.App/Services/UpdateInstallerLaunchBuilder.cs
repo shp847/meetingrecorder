@@ -1,6 +1,8 @@
+using AppPlatform.Abstractions;
 using MeetingRecorder.Core.Services;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 
 namespace MeetingRecorder.App.Services;
 
@@ -35,6 +37,33 @@ internal static class UpdateInstallerLaunchBuilder
 
         var installRoot = ResolveInstalledAppRoot(processPath, appContextBaseDirectory);
         return Path.Combine(installRoot, executableName);
+    }
+
+    public static bool SupportsStableAppHostInAppUpdates(string installRoot)
+    {
+        if (string.IsNullOrWhiteSpace(installRoot))
+        {
+            return false;
+        }
+
+        var layoutPath = Path.Combine(installRoot, BundleLayoutInfo.FileName);
+        if (!File.Exists(layoutPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var layout = JsonSerializer.Deserialize<BundleLayoutInfo>(
+                File.ReadAllText(layoutPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return layout?.SupportsStableAppHostUpdates == true &&
+                layout.StableExecutableFiles.All(fileName => File.Exists(Path.Combine(installRoot, fileName)));
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     public static ProcessStartInfo Build(

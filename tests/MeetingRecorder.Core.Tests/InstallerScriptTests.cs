@@ -430,7 +430,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void PublishPortableScript_Publishes_The_Wpf_App_As_A_Single_File_SelfContained_Bundle()
+    public void PublishPortableScript_Publishes_The_Wpf_App_As_A_Loose_File_SelfContained_Bundle()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -445,9 +445,13 @@ public sealed class InstallerScriptTests
         var appProjectContents = File.ReadAllText(appProjectPath);
 
         Assert.Contains("MeetingRecorder.App\\MeetingRecorder.App.csproj", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("<PublishSingleFile", appProjectContents, StringComparison.Ordinal);
-        Assert.Contains("<IncludeAllContentForSelfExtract", appProjectContents, StringComparison.Ordinal);
-        Assert.Contains("<IncludeNativeLibrariesForSelfExtract", appProjectContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("<PublishSingleFile", appProjectContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("<IncludeAllContentForSelfExtract", appProjectContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("<IncludeNativeLibrariesForSelfExtract", appProjectContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.App.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.App.deps.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MeetingRecorder.App.runtimeconfig.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("bundle-layout.json", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
