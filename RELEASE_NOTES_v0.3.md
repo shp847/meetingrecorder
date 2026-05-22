@@ -176,7 +176,7 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - curated Standard vs Higher Accuracy setup flow
 - downloadable or imported local models
 - optional local speaker labeling through a separate diarization bundle
-- optional DirectML GPU preference for speaker labeling, defaulted off, with `Test GPU`, bundled-runtime validation, and automatic CPU fallback; Meeting Recorder release engineering now owns the pinned DirectML-enabled Sherpa runtime artifact instead of requiring any user-side Sherpa setup
+- optional DirectML GPU preference for speaker labeling, defaulted off, with `Test GPU`, bundled-runtime validation, and automatic CPU fallback; Meeting Recorder now ships the pinned DirectML-enabled Sherpa runtime instead of requiring any user-side Sherpa setup
 - clustering quality gates that skip unusable over-segmented labels while still publishing the transcript
 - fallback behavior that prioritizes publishing transcripts even when speaker labeling is unavailable
 

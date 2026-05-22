@@ -1,0 +1,31 @@
+﻿{
+    "formatVersion":  1,
+    "builtAtUtc":  "2026-05-22T17:24:12.4429926+00:00",
+    "sherpaRepository":  "https://github.com/k2-fsa/sherpa-onnx.git",
+    "sherpaRef":  "v1.13.0",
+    "onnxRuntimeDependencyMode":  "sherpa-managed",
+    "onnxRuntimeDirectMlVersion":  "1.17.1",
+    "runtime":  "win-x64",
+    "files":  [
+                  {
+                      "name":  "DirectML.dll",
+                      "lengthBytes":  18545584,
+                      "sha256":  "913b6e436b7292f0b3af6d0c37d2201ab3435cb5f0a7c08c0beaa644602f5312"
+                  },
+                  {
+                      "name":  "onnxruntime.dll",
+                      "lengthBytes":  11324824,
+                      "sha256":  "6ed5853e37d8c7b1f27cfb99cafd0006eccee7c97cefdc701ddcde962460ae87"
+                  },
+                  {
+                      "name":  "sherpa-onnx-c-api.dll",
+                      "lengthBytes":  3108352,
+                      "sha256":  "99c431a05a30458a6494dca22ecd920815aa2c20313af99954f8885d74aa6369"
+                  },
+                  {
+                      "name":  "sherpa-onnx-cxx-api.dll",
+                      "lengthBytes":  237056,
+                      "sha256":  "15cdd3c73ab23e3b46b0c6d00f282790dc81484d17d39ff70d2d9155c9e963e1"
+                  }
+              ]
+}

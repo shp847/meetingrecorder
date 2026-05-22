@@ -233,6 +233,11 @@ function Copy-SherpaDirectMlRuntimeIfAvailable {
         "DirectML.dll"
     )
 
+    $manifestPath = Join-Path $SourceRoot "sherpa-directml-runtime.json"
+    if (-not (Test-Path $manifestPath)) {
+        throw "Bundled DirectML speaker-labeling runtime at '$SourceRoot' is missing sherpa-directml-runtime.json."
+    }
+
     $missingRuntimeFiles = @(
         $requiredRuntimeFiles |
             Where-Object { -not (Test-Path (Join-Path $SourceRoot $_)) }
@@ -242,12 +247,32 @@ function Copy-SherpaDirectMlRuntimeIfAvailable {
         throw "Bundled DirectML speaker-labeling runtime at '$SourceRoot' is incomplete. Missing: $($missingRuntimeFiles -join '; ')."
     }
 
-    Copy-Item -Path (Join-Path $SourceRoot "*.dll") -Destination $DestinationRoot -Force
+    $runtimeManifest = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+    foreach ($runtimeFile in $requiredRuntimeFiles) {
+        $runtimeFilePath = Join-Path $SourceRoot $runtimeFile
+        $manifestEntry = @(
+            $runtimeManifest.files |
+                Where-Object { $_.name -eq $runtimeFile } |
+                Select-Object -First 1
+        )
 
-    $manifestPath = Join-Path $SourceRoot "sherpa-directml-runtime.json"
-    if (Test-Path $manifestPath) {
-        Copy-Item -Path $manifestPath -Destination (Join-Path $DestinationRoot "sherpa-directml-runtime.json") -Force
+        if ($manifestEntry.Count -eq 0) {
+            throw "Bundled DirectML speaker-labeling runtime manifest does not list required file '$runtimeFile'."
+        }
+
+        $runtimeFileItem = Get-Item -Path $runtimeFilePath
+        if ([int64]$manifestEntry[0].lengthBytes -ne [int64]$runtimeFileItem.Length) {
+            throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' length does not match sherpa-directml-runtime.json. Git LFS may not have fetched the runtime binaries."
+        }
+
+        $runtimeFileSha256 = ((Get-FileHash -Path $runtimeFilePath -Algorithm SHA256).Hash).ToLowerInvariant()
+        if ($runtimeFileSha256 -ne [string]$manifestEntry[0].sha256) {
+            throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' hash does not match sherpa-directml-runtime.json."
+        }
     }
+
+    Copy-Item -Path (Join-Path $SourceRoot "*.dll") -Destination $DestinationRoot -Force
+    Copy-Item -Path $manifestPath -Destination (Join-Path $DestinationRoot "sherpa-directml-runtime.json") -Force
 
     Write-Host "Bundled DirectML speaker-labeling runtime from '$SourceRoot'."
 }

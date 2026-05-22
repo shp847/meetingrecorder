@@ -546,7 +546,38 @@ public sealed class AppPlatformDeploymentTests
         Assert.Contains("sherpa-onnx-c-api.dll", script, StringComparison.Ordinal);
         Assert.Contains("onnxruntime.dll", script, StringComparison.Ordinal);
         Assert.Contains("DirectML.dll", script, StringComparison.Ordinal);
+        Assert.Contains("Get-FileHash", script, StringComparison.Ordinal);
+        Assert.Contains("length does not match sherpa-directml-runtime.json", script, StringComparison.Ordinal);
         Assert.Contains("Bundled DirectML speaker-labeling runtime", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BundledDirectMlSherpaRuntimeManifest_Lists_Required_Shipping_Files()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var manifestPath = Path.Combine(repoRoot, "assets", "native", "sherpa-onnx-directml", "win-x64", "sherpa-directml-runtime.json");
+        var gitAttributesPath = Path.Combine(repoRoot, ".gitattributes");
+
+        Assert.True(File.Exists(manifestPath), $"Expected bundled DirectML runtime manifest at '{manifestPath}'.");
+
+        using var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        Assert.Equal("win-x64", manifest.RootElement.GetProperty("runtime").GetString());
+        Assert.Equal("sherpa-managed", manifest.RootElement.GetProperty("onnxRuntimeDependencyMode").GetString());
+
+        var runtimeFiles = manifest.RootElement
+            .GetProperty("files")
+            .EnumerateArray()
+            .Select(file => file.GetProperty("name").GetString())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains("sherpa-onnx-c-api.dll", runtimeFiles);
+        Assert.Contains("onnxruntime.dll", runtimeFiles);
+        Assert.Contains("DirectML.dll", runtimeFiles);
+
+        var gitAttributes = File.ReadAllText(gitAttributesPath);
+        Assert.Contains("assets/native/sherpa-onnx-directml/win-x64/*.dll filter=lfs", gitAttributes, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -573,6 +604,7 @@ public sealed class AppPlatformDeploymentTests
         Assert.DoesNotContain(".Contains(\"Failed to enable DirectML\", [StringComparison]::Ordinal)", script, StringComparison.Ordinal);
         Assert.Contains("sherpa-directml-runtime.json", script, StringComparison.Ordinal);
         Assert.Contains("Build-SherpaDirectMlRuntime.ps1", workflow, StringComparison.Ordinal);
+        Assert.Contains("FORCE_JAVASCRIPT_ACTIONS_TO_NODE24", workflow, StringComparison.Ordinal);
         Assert.Contains("actions/upload-artifact", workflow, StringComparison.Ordinal);
     }
 

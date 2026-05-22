@@ -451,7 +451,7 @@ GPU acceleration:
 
 - `Settings > General` exposes `Try GPU acceleration for speaker labeling (DirectML)` as an explicit opt-in
 - new installs stay CPU-only by default, and legacy `Auto` configs are migrated to CPU-only once; after that, saving the GPU checkbox preserves the user opt-in
-- users do not install or build Sherpa themselves; release engineering builds the pinned DirectML-enabled Sherpa runtime with `scripts/Build-SherpaDirectMlRuntime.ps1`, and `scripts/Publish-Portable.ps1` bundles files from `assets\native\sherpa-onnx-directml\win-x64` when that release artifact is present
+- users do not install or build Sherpa themselves; Meeting Recorder ships the pinned DirectML-enabled Sherpa runtime under `assets\native\sherpa-onnx-directml\win-x64`, and `scripts\Publish-Portable.ps1` bundles those files into the app payload
 - the processing worker refuses to mark DirectML available when the bundled native runtime only exposes CPU fallback, and automatically retries or stays on CPU without blocking transcript publishing
 - `Test GPU` validates whether the bundled speaker-labeling runtime can initialize DirectML with the installed assets only; it does not send transcript or meeting content
 - the diarization `Advanced` panel records the last effective provider and any safe GPU fallback message reported by the worker
