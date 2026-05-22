@@ -529,6 +529,11 @@ internal static class Program
 
     private static TranscriptionModelProfilePreference ParseTranscriptionProfile(string value)
     {
+        if (string.Equals(value, "highAccuracy", StringComparison.OrdinalIgnoreCase))
+        {
+            return TranscriptionModelProfilePreference.HighAccuracyDownloaded;
+        }
+
         if (!Enum.TryParse<TranscriptionModelProfilePreference>(value, ignoreCase: true, out var parsed))
         {
             throw new InvalidOperationException($"Unknown transcription profile '{value}'.");
@@ -539,6 +544,11 @@ internal static class Program
 
     private static SpeakerLabelingModelProfilePreference ParseSpeakerLabelingProfile(string value)
     {
+        if (string.Equals(value, "highAccuracy", StringComparison.OrdinalIgnoreCase))
+        {
+            return SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded;
+        }
+
         if (!Enum.TryParse<SpeakerLabelingModelProfilePreference>(value, ignoreCase: true, out var parsed))
         {
             throw new InvalidOperationException($"Unknown speaker-labeling profile '{value}'.");

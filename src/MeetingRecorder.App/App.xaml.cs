@@ -3,6 +3,7 @@ using MeetingRecorder.Core.Branding;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Services;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 
 namespace MeetingRecorder.App;
@@ -13,6 +14,7 @@ public partial class App : Application
 
     private FileLogWriter? _logger;
     private bool _hasShownUnhandledExceptionMessage;
+    private bool _fatalUiShutdownRequested;
     private AppInstanceCoordinator? _instanceCoordinator;
     private AppActivationSignal? _activationSignal;
     private CancellationTokenSource? _activationMonitorCts;
@@ -24,6 +26,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        var repairedWpfFontEnvironment = AppStartupEnvironmentRepairService.EnsureWpfFontEnvironment();
         base.OnStartup(e);
 
         _instanceCoordinator = new AppInstanceCoordinator(AppInstanceCoordinator.DefaultInstanceName);
@@ -111,6 +114,11 @@ public partial class App : Application
                 _logger.Log("Recovered the primary app instance after an installer relaunch request.");
             }
 
+            if (repairedWpfFontEnvironment)
+            {
+                _logger.Log("Repaired the WPF font startup environment before creating the main window.");
+            }
+
             if (migratedLegacyData)
             {
                 _logger.Log("Migrated legacy portable Meeting Recorder data into the managed app data folder.");
@@ -149,8 +157,7 @@ public partial class App : Application
             mainWindow.Show();
             if (_pendingActivationRequest)
             {
-                _pendingActivationRequest = false;
-                BringMainWindowToFront();
+                TryAcknowledgeActivationRequest(_activationSignal);
             }
             StartInstallerShutdownMonitor();
             _ = RunPostWindowStartupMaintenanceAsync(config);
@@ -330,18 +337,17 @@ public partial class App : Application
             }
 
             _logger?.Log("Received activation request from a second app launch.");
-            activationSignal.TryAcknowledge();
 
             if (MainWindow is null)
             {
                 _pendingActivationRequest = true;
+                _logger?.Log("Deferring activation acknowledgement until the main window is visible.");
                 continue;
             }
 
             await Dispatcher.InvokeAsync(() =>
             {
-                BringMainWindowToFront();
-                _pendingActivationRequest = false;
+                TryAcknowledgeActivationRequest(activationSignal);
             });
         }
     }
@@ -391,11 +397,31 @@ public partial class App : Application
         }
     }
 
-    private void BringMainWindowToFront()
+    private bool TryAcknowledgeActivationRequest(AppActivationSignal? activationSignal)
+    {
+        if (activationSignal is null)
+        {
+            return false;
+        }
+
+        if (BringMainWindowToFront())
+        {
+            activationSignal.TryAcknowledge();
+            _pendingActivationRequest = false;
+            return true;
+        }
+
+        _pendingActivationRequest = true;
+        _logger?.Log("Activation request could not be acknowledged because no visible main window is available.");
+        RequestFatalUiShutdown();
+        return false;
+    }
+
+    private bool BringMainWindowToFront()
     {
         if (MainWindow is not Window window)
         {
-            return;
+            return false;
         }
 
         if (!window.IsVisible)
@@ -403,15 +429,27 @@ public partial class App : Application
             window.Show();
         }
 
+        if (!window.IsVisible)
+        {
+            return false;
+        }
+
         if (window.WindowState == WindowState.Minimized)
         {
             window.WindowState = WindowState.Normal;
+        }
+
+        var windowHandle = new WindowInteropHelper(window).Handle;
+        if (windowHandle == nint.Zero)
+        {
+            return false;
         }
 
         window.Topmost = true;
         window.Activate();
         window.Topmost = false;
         window.Focus();
+        return true;
     }
 
     private void App_OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -421,13 +459,41 @@ public partial class App : Application
         {
             _hasShownUnhandledExceptionMessage = true;
             MessageBox.Show(
-                $"{AppBranding.ProductName} hit an unexpected UI error. Details were written to the log file.",
+                $"{AppBranding.ProductName} hit an unexpected UI error and will close. Details were written to the log file.",
                 AppBranding.DisplayNameWithVersion,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
 
         e.Handled = true;
+        RequestFatalUiShutdown();
+    }
+
+    private void RequestFatalUiShutdown()
+    {
+        if (_fatalUiShutdownRequested)
+        {
+            return;
+        }
+
+        _fatalUiShutdownRequested = true;
+        try
+        {
+            if (MainWindow is MainWindow meetingRecorderWindow)
+            {
+                _logger?.Log("Closing app after fatal UI error through the main-window shutdown path.");
+                meetingRecorderWindow.RequestFatalUiShutdown();
+                return;
+            }
+
+            _logger?.Log("Closing app after fatal UI error before the main window was available.");
+            Shutdown();
+        }
+        catch (Exception exception)
+        {
+            _logger?.Log($"Fatal UI shutdown request failed: {exception}");
+            Shutdown();
+        }
     }
 
     private void CurrentDomain_OnUnhandledException(object sender, UnhandledExceptionEventArgs e)

@@ -392,6 +392,36 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void App_Startup_Repairs_Wpf_Font_Environment_Before_Base_Startup()
+    {
+        var appPath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var appSource = File.ReadAllText(appPath);
+        var repairIndex = appSource.IndexOf(
+            "AppStartupEnvironmentRepairService.EnsureWpfFontEnvironment()",
+            StringComparison.Ordinal);
+        var baseStartupIndex = appSource.IndexOf("base.OnStartup(e);", StringComparison.Ordinal);
+
+        Assert.True(repairIndex >= 0, "Expected startup to repair the WPF font environment.");
+        Assert.True(baseStartupIndex >= 0, "Expected startup to call base.OnStartup.");
+        Assert.True(repairIndex < baseStartupIndex, "The WPF font environment must be repaired before base startup.");
+    }
+
+    [Fact]
+    public void App_Window_Activation_Helper_Returns_False_When_No_Window_Handle_Is_Available()
+    {
+        var appPath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var appSource = File.ReadAllText(appPath);
+        var helperStart = appSource.IndexOf("private bool BringMainWindowToFront()", StringComparison.Ordinal);
+        var helperEnd = appSource.IndexOf("private void App_OnDispatcherUnhandledException", helperStart, StringComparison.Ordinal);
+        var helperBlock = appSource[helperStart..helperEnd];
+
+        Assert.Contains("return false;", helperBlock, StringComparison.Ordinal);
+        Assert.Contains("new WindowInteropHelper(window).Handle", helperBlock, StringComparison.Ordinal);
+        Assert.Contains("windowHandle == nint.Zero", helperBlock, StringComparison.Ordinal);
+        Assert.Contains("return true;", helperBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Stop_Recording_Path_Offloads_Recorder_Shutdown_Work_From_The_Ui_Thread()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

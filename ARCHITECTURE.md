@@ -567,8 +567,10 @@ That MSI path:
 - invokes the installed `AppPlatform.Deployment.Cli provision-models` step after `InstallFinalize` so provisioning and later update repair share one model-management path without depending on pre-commit file visibility
 - keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%USERPROFILE%\Documents\MeetingRecorder`
 - treats `MeetingRecorder-v<version>-win-x64.zip` as the only valid in-app update package shape; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs are rejected before update apply asks the app process to exit
-- keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow
+- keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, including `highAccuracy` for Higher Accuracy setup options, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow
 - keeps the install successful when optional Higher Accuracy downloads fail, records a one-time retry-needed result, and leaves Standard active
+- repairs a missing or malformed inherited `windir` process environment variable before WPF window creation, preventing installer/update relaunches from failing inside WPF font initialization
+- treats dispatcher UI exceptions as fatal after logging and only acknowledges second-launch activation after a visible main window is restored, so a hidden primary instance cannot strand the app behind the single-instance mutex
 - enables verbose Windows Installer logging by default for direct MSI troubleshooting
 - replaces raw Windows Installer progress field templates with plain-language status messages for application file copy, registration, and shortcut creation
 - schedules `ARPINSTALLLOCATION` through WiX property-setting instead of a raw property literal reference

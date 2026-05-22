@@ -59,11 +59,14 @@ User-facing installer and updater rule:
 - do not wait forever on app shutdown during update apply; if the running app does not exit promptly, the updater should escalate the release sequence and then fail with a clear message instead of hanging indefinitely
 - do not enumerate, close, or kill Meeting Recorder processes from installer flows; the installer should only request cooperative shutdown and then rely on normal file replacement or a clear retry message
 - all actual install and update writes flow through `AppPlatform.Deployment.Cli`
-- the MSI post-finalize `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
+- the MSI post-finalize `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, including `highAccuracy` for the Higher Accuracy options, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
 - that MSI handoff now also passes the install root as `INSTALLFOLDER.` instead of a raw quoted trailing-backslash directory, so Windows command-line parsing cannot break the custom-action launch with `0x80070002`
 - that MSI handoff now runs after `InstallFinalize` and is best-effort, so a provisioning launch or download failure no longer aborts the installer itself
 - the MSI progress page uses plain-language action text for application file copy, registration, and shortcut creation so users do not see raw Windows Installer field placeholders such as `File: [1], Directory: [9], Size: [6]`
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
+- app startup repairs a missing or malformed process `windir` before WPF creates the main window, so installer/update relaunches cannot fail inside WPF font initialization when the inherited environment is incomplete
+- unexpected dispatcher UI errors close Meeting Recorder after logging instead of leaving a hidden primary instance that blocks future launches
+- second launches are acknowledged only after the existing instance has surfaced a real main window; if no window can be surfaced, the hidden primary instance shuts down so the new launch can take over
 
 For newer managed installs:
 
@@ -243,6 +246,8 @@ For the default self-contained portable bundle, the .NET download is usually not
 
 The MSI welcome flow now skips the license-agreement screen entirely and goes straight from welcome to ready-to-install.
 If the MSI launches the app immediately after an install or update while the previous app instance is still open, it now launches through `Launch-MeetingRecorder-AfterInstall.vbs`. That wrapper writes a short-lived relaunch marker under `%LOCALAPPDATA%\MeetingRecorder`, lets the app request a cooperative installer shutdown of the running instance, waits for the primary-instance lock to clear, and then starts the fresh app instance. If the app is still busy recording or processing, the restart request is deferred and the current instance stays alive.
+On first app startup after any installer or updater relaunch, Meeting Recorder also verifies the inherited Windows font environment and restores `windir` from `SystemRoot` or the Windows system folder before WPF window creation.
+If a startup or dispatcher UI error still occurs, Meeting Recorder logs the error and closes instead of staying alive without a window. A later launch is only acknowledged by the running app after its main window is visible.
 
 Examples:
 

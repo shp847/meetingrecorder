@@ -107,6 +107,7 @@ public partial class MainWindow : Window
     private ManualStopSuppressionContext? _manualStopSuppressionContext;
     private bool _allowClose;
     private bool _shutdownInProgress;
+    private bool _skipShutdownUpdateCheck;
     private bool _isRecordingTransitionInProgress;
     private bool _isAutoStopTransitionInProgress;
     private int? _autoStopCountdownSecondsRemaining;
@@ -1943,14 +1944,33 @@ public partial class MainWindow : Window
         return true;
     }
 
+    internal void RequestFatalUiShutdown()
+    {
+        _skipShutdownUpdateCheck = true;
+        AppendActivity("Fatal UI error requested application shutdown.");
+        if (_shutdownInProgress)
+        {
+            return;
+        }
+
+        Close();
+    }
+
     private async Task ShutdownAsync()
     {
         try
         {
             AppendActivity("Application shutdown requested.");
 
-            using var shutdownUpdateCheckCts = new CancellationTokenSource(ShutdownUpdateCheckTimeout);
-            await RunAutomaticUpdateCycleAsync("shutdown", AppUpdateCheckTrigger.Shutdown, shutdownUpdateCheckCts.Token);
+            if (!_skipShutdownUpdateCheck)
+            {
+                using var shutdownUpdateCheckCts = new CancellationTokenSource(ShutdownUpdateCheckTimeout);
+                await RunAutomaticUpdateCycleAsync("shutdown", AppUpdateCheckTrigger.Shutdown, shutdownUpdateCheckCts.Token);
+            }
+            else
+            {
+                AppendActivity("Skipped shutdown update check after fatal UI error.");
+            }
 
             if (_recordingCoordinator.IsRecording)
             {

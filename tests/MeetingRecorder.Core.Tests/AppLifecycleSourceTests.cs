@@ -34,6 +34,65 @@ public sealed class AppLifecycleSourceTests
     }
 
     [Fact]
+    public void Dispatcher_Unhandled_Exception_Path_Requests_Fatal_Shutdown()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var handlerStart = source.IndexOf("private void App_OnDispatcherUnhandledException", StringComparison.Ordinal);
+        var handlerEnd = source.IndexOf("private void CurrentDomain_OnUnhandledException", handlerStart, StringComparison.Ordinal);
+        var handlerBlock = source[handlerStart..handlerEnd];
+
+        Assert.Contains("_fatalUiShutdownRequested", source);
+        Assert.Contains("will close", handlerBlock, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RequestFatalUiShutdown();", handlerBlock, StringComparison.Ordinal);
+        Assert.Contains("e.Handled = true;", handlerBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Activation_Monitor_Acknowledges_Only_After_A_Window_Is_Surfaced()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var monitorStart = source.IndexOf("private async Task MonitorActivationRequestsAsync", StringComparison.Ordinal);
+        var monitorEnd = source.IndexOf("private async Task MonitorInstallerShutdownAsync", monitorStart, StringComparison.Ordinal);
+        var monitorBlock = source[monitorStart..monitorEnd];
+        var pendingIndex = monitorBlock.IndexOf("if (MainWindow is null)", StringComparison.Ordinal);
+        var acknowledgeIndex = monitorBlock.IndexOf("TryAcknowledgeActivationRequest(activationSignal)", StringComparison.Ordinal);
+
+        Assert.True(pendingIndex >= 0, "Expected activation to defer while no main window exists.");
+        Assert.True(acknowledgeIndex >= 0, "Expected activation acknowledgement to use the visibility-backed helper.");
+        Assert.True(pendingIndex < acknowledgeIndex, "Activation must defer before attempting acknowledgement.");
+        Assert.DoesNotContain("activationSignal.TryAcknowledge();", monitorBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pending_Startup_Activation_Is_Acknowledged_After_Main_Window_Show()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var showIndex = source.IndexOf("mainWindow.Show();", StringComparison.Ordinal);
+        var acknowledgeIndex = source.IndexOf("TryAcknowledgeActivationRequest(_activationSignal)", showIndex, StringComparison.Ordinal);
+        var installerMonitorIndex = source.IndexOf("StartInstallerShutdownMonitor();", showIndex, StringComparison.Ordinal);
+
+        Assert.True(showIndex >= 0, "Expected startup to show the main window.");
+        Assert.True(acknowledgeIndex > showIndex, "Expected pending activation acknowledgement after showing the window.");
+        Assert.True(
+            acknowledgeIndex < installerMonitorIndex,
+            "Pending activation should be acknowledged before startup continues with installer shutdown monitoring.");
+    }
+
+    [Fact]
+    public void Main_Window_Fatal_Ui_Shutdown_Skips_Shutdown_Update_Check()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("internal void RequestFatalUiShutdown()", source, StringComparison.Ordinal);
+        Assert.Contains("_skipShutdownUpdateCheck = true;", source, StringComparison.Ordinal);
+        Assert.Contains("if (!_skipShutdownUpdateCheck)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void App_Startup_Runs_The_Versioned_Published_Meeting_Repair_Against_The_App_Data_Root()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");

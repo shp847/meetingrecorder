@@ -1,4 +1,5 @@
 using System.Reflection;
+using MeetingRecorder.Core.Configuration;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -45,6 +46,28 @@ public sealed class DeploymentCliTests
 
         Assert.Contains("InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(", methodBlock);
         Assert.Contains("Repaired missing install provenance during MSI post-install provisioning.", methodBlock);
+    }
+
+    [Fact]
+    public void DeploymentCli_ProvisionModels_Accepts_Msi_HighAccuracy_Aliases()
+    {
+        var cliAssembly = Assembly.Load("AppPlatform.Deployment.Cli");
+        var programType = cliAssembly.GetType("AppPlatform.Deployment.Cli.Program", throwOnError: true)!;
+        var transcriptionMethod = programType.GetMethod(
+            "ParseTranscriptionProfile",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        var speakerLabelingMethod = programType.GetMethod(
+            "ParseSpeakerLabelingProfile",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(transcriptionMethod);
+        Assert.NotNull(speakerLabelingMethod);
+
+        var transcriptionProfile = transcriptionMethod!.Invoke(null, ["highAccuracy"]);
+        var speakerLabelingProfile = speakerLabelingMethod!.Invoke(null, ["highAccuracy"]);
+
+        Assert.Equal(TranscriptionModelProfilePreference.HighAccuracyDownloaded, transcriptionProfile);
+        Assert.Equal(SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded, speakerLabelingProfile);
     }
 
     [Fact]
