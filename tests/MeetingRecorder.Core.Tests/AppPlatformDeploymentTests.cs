@@ -513,7 +513,7 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
-    public void ProcessingWorkerProject_Packages_DirectMl_Runtime_For_OptIn_Gpu_Labeling()
+    public void ProcessingWorkerProject_Does_Not_Ship_A_Standalone_DirectMl_Redist_Without_A_DirectMl_Sherpa_Runtime()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -525,9 +525,52 @@ public sealed class AppPlatformDeploymentTests
         var projectXml = File.ReadAllText(projectPath);
 
         Assert.Contains("org.k2fsa.sherpa.onnx", projectXml, StringComparison.Ordinal);
-        Assert.Contains("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
-        Assert.Contains("DirectML.dll", projectXml, StringComparison.Ordinal);
-        Assert.Contains("CopyToPublishDirectory", projectXml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
+        Assert.DoesNotContain("DirectML.dll", projectXml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PublishPortable_Bundles_DirectMl_Sherpa_Runtime_When_Release_Asset_Is_Present()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var publishScriptPath = Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1");
+
+        Assert.True(File.Exists(publishScriptPath), $"Expected portable publish script at '{publishScriptPath}'.");
+
+        var script = File.ReadAllText(publishScriptPath);
+
+        Assert.Contains("assets\\native\\sherpa-onnx-directml\\$Runtime", script, StringComparison.Ordinal);
+        Assert.Contains("Copy-SherpaDirectMlRuntimeIfAvailable", script, StringComparison.Ordinal);
+        Assert.Contains("sherpa-onnx-c-api.dll", script, StringComparison.Ordinal);
+        Assert.Contains("onnxruntime.dll", script, StringComparison.Ordinal);
+        Assert.Contains("DirectML.dll", script, StringComparison.Ordinal);
+        Assert.Contains("Bundled DirectML speaker-labeling runtime", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildSherpaDirectMlRuntimeScript_Pins_And_Validates_A_DirectMl_Enabled_Sherpa_Runtime()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Build-SherpaDirectMlRuntime.ps1");
+        var workflowPath = Path.Combine(repoRoot, ".github", "workflows", "build-sherpa-directml-runtime.yml");
+
+        Assert.True(File.Exists(scriptPath), $"Expected DirectML runtime build script at '{scriptPath}'.");
+        Assert.True(File.Exists(workflowPath), $"Expected DirectML runtime workflow at '{workflowPath}'.");
+
+        var script = File.ReadAllText(scriptPath);
+        var workflow = File.ReadAllText(workflowPath);
+
+        Assert.Contains("SHERPA_ONNX_ENABLE_DIRECTML=ON", script, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.ML.OnnxRuntime.DirectML", script, StringComparison.Ordinal);
+        Assert.Contains("Failed to enable DirectML", script, StringComparison.Ordinal);
+        Assert.Contains("DirectML is for Windows only", script, StringComparison.Ordinal);
+        Assert.Contains("sherpa-directml-runtime.json", script, StringComparison.Ordinal);
+        Assert.Contains("Build-SherpaDirectMlRuntime.ps1", workflow, StringComparison.Ordinal);
+        Assert.Contains("actions/upload-artifact", workflow, StringComparison.Ordinal);
     }
 
     [Fact]

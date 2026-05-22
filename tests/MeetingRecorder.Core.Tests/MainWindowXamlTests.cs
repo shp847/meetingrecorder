@@ -139,6 +139,7 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"ConfigDiarizationGpuAccelerationCheckBox\"", xaml);
         Assert.Contains("Content=\"Try GPU acceleration for speaker labeling (DirectML)\"", xaml);
+        Assert.Contains("No separate user setup is required", xaml);
         Assert.DoesNotContain("Content=\"GPU acceleration unavailable for speaker labeling\"", xaml);
         Assert.DoesNotContain("Unavailable in this managed build", xaml);
         Assert.Contains("x:Name=\"TestDiarizationGpuAccelerationButton\"", xaml);
@@ -147,6 +148,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("ConfigDiarizationGpuAccelerationCheckBox.IsChecked = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;", code);
         Assert.Contains("DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true", code);
         Assert.Contains("TestDiarizationGpuAccelerationButton_OnClick", code);
+        Assert.Contains("DirectML-enabled speaker-labeling runtime", code);
         Assert.DoesNotContain("last GPU probe fell back to CPU", code, StringComparison.OrdinalIgnoreCase);
     }
 

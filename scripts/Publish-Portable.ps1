@@ -16,6 +16,7 @@ $finalPath = Join-Path $outputPath "MeetingRecorder"
 $appAssetPath = Join-Path $repoRoot "src\MeetingRecorder.App\Assets\MeetingRecorder.ico"
 $productManifestPath = Join-Path $repoRoot "src\MeetingRecorder.Product\MeetingRecorder.product.json"
 $modelCatalogSourcePath = Join-Path $repoRoot "src\MeetingRecorder.Core\Assets\model-catalog.json"
+$directMlSherpaRuntimePath = Join-Path $repoRoot "assets\native\sherpa-onnx-directml\$Runtime"
 $selfContained = -not $FrameworkDependent.IsPresent
 $selfContainedValue = if ($selfContained) { "true" } else { "false" }
 $bundleMode = if ($selfContained) { "self-contained" } else { "framework-dependent" }
@@ -215,6 +216,42 @@ function Assert-LooseFileWpfShellBundleLayout {
     }
 }
 
+function Copy-SherpaDirectMlRuntimeIfAvailable {
+    param(
+        [string]$SourceRoot,
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path $SourceRoot)) {
+        Write-Host "No bundled DirectML speaker-labeling runtime found at '$SourceRoot'; speaker labeling will use the default packaged runtime."
+        return
+    }
+
+    $requiredRuntimeFiles = @(
+        "sherpa-onnx-c-api.dll",
+        "onnxruntime.dll",
+        "DirectML.dll"
+    )
+
+    $missingRuntimeFiles = @(
+        $requiredRuntimeFiles |
+            Where-Object { -not (Test-Path (Join-Path $SourceRoot $_)) }
+    )
+
+    if ($missingRuntimeFiles.Count -gt 0) {
+        throw "Bundled DirectML speaker-labeling runtime at '$SourceRoot' is incomplete. Missing: $($missingRuntimeFiles -join '; ')."
+    }
+
+    Copy-Item -Path (Join-Path $SourceRoot "*.dll") -Destination $DestinationRoot -Force
+
+    $manifestPath = Join-Path $SourceRoot "sherpa-directml-runtime.json"
+    if (Test-Path $manifestPath) {
+        Copy-Item -Path $manifestPath -Destination (Join-Path $DestinationRoot "sherpa-directml-runtime.json") -Force
+    }
+
+    Write-Host "Bundled DirectML speaker-labeling runtime from '$SourceRoot'."
+}
+
 Remove-Item -Recurse -Force $appTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $cliTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $workerTemp -ErrorAction SilentlyContinue
@@ -247,6 +284,7 @@ if (Test-Path $appAssetPath) {
 }
 
 Copy-Item -Path (Join-Path $workerTemp "*") -Destination $finalPath -Recurse -Force
+Copy-SherpaDirectMlRuntimeIfAvailable -SourceRoot $directMlSherpaRuntimePath -DestinationRoot $finalPath
 
 Assert-LooseFileWpfShellBundleLayout -BundleRoot $finalPath
 

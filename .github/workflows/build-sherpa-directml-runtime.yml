@@ -1,0 +1,27 @@
+name: Build Sherpa DirectML Runtime
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build DirectML runtime
+    runs-on: windows-latest
+    steps:
+      - name: Check out Meeting Recorder
+        uses: actions/checkout@v4
+
+      - name: Build DirectML-enabled Sherpa runtime
+        shell: pwsh
+        run: >
+          powershell -ExecutionPolicy Bypass
+          -File .\scripts\Build-SherpaDirectMlRuntime.ps1
+          -OutputRoot .artifacts\sherpa-directml-runtime\win-x64
+          -Clean
+
+      - name: Upload runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sherpa-onnx-directml-runtime-win-x64
+          path: .artifacts/sherpa-directml-runtime/win-x64/*
+          if-no-files-found: error

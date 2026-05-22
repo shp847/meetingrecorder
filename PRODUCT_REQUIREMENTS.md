@@ -179,7 +179,7 @@ The product family also includes installer and update surfaces:
 - Speaker labeling is optional and best-effort.
 - When available, speaker labeling must produce generic transcript labels such as `Speaker 1`, `Speaker 2`, and so on.
 - Diarization failure or missing diarization assets must not block transcript output.
-- The diarization runtime must allow a user-controlled GPU acceleration preference and fall back safely when acceleration is unavailable.
+- The diarization runtime must allow a user-controlled GPU acceleration preference, must make Meeting Recorder's installer own any DirectML-enabled native runtime, must not imply an end-user Sherpa install/build step can enable GPU, and must fall back safely when acceleration is unavailable.
 - Automatic speaker clustering must reject unsupported speaker counts instead of publishing unusable labels.
 
 ## 6.6 Model and Asset Management

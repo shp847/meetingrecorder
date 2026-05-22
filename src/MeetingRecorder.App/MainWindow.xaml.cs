@@ -6234,8 +6234,9 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             _logger.Log($"DirectML speaker-labeling probe failed safely: {exception.GetType().Name}");
-            ConfigDiarizationAccelerationStatusTextBlock.Text =
-                "DirectML GPU test failed safely. Speaker labeling will continue to use CPU fallback unless a later test succeeds.";
+            ConfigDiarizationAccelerationStatusTextBlock.Text = IsSafeDirectMlRuntimeUnavailableMessage(exception.Message)
+                ? exception.Message
+                : "DirectML GPU test failed safely. Speaker labeling will continue to use CPU fallback unless a later test succeeds.";
             SetConfigSaveStatus("Speaker-labeling GPU test failed safely.");
         }
         finally
@@ -6271,7 +6272,7 @@ public partial class MainWindow : Window
         var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         var standardOutput = await standardOutputTask;
-        _ = await standardErrorTask;
+        var standardError = await standardErrorTask;
 
         if (process.ExitCode == 0)
         {
@@ -6279,6 +6280,12 @@ public partial class MainWindow : Window
                 ? "DirectML probe succeeded."
                 : standardOutput.Trim();
             return $"{workerMessage} Speaker labeling will try GPU first when the setting is enabled and will fall back to CPU if a run fails.";
+        }
+
+        var workerError = standardError.Trim();
+        if (IsSafeDirectMlRuntimeUnavailableMessage(workerError))
+        {
+            throw new InvalidOperationException(workerError);
         }
 
         throw new InvalidOperationException("DirectML probe failed.");
@@ -9136,15 +9143,16 @@ public partial class MainWindow : Window
     private void UpdateDiarizationAccelerationStatusText(AppConfig config, DiarizationAssetInstallStatus? status)
     {
         var preferenceText = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
-            ? "GPU acceleration is enabled. Speaker labeling tries DirectML first and falls back to CPU if GPU initialization fails."
+            ? "GPU acceleration is enabled. Speaker labeling tries DirectML only when the bundled runtime supports it, then falls back to CPU if GPU initialization fails."
             : "GPU acceleration is off. Speaker labeling uses CPU unless you opt into DirectML.";
+        var accelerationDiagnostic = GetSafeAccelerationDiagnostic(status?.DiagnosticMessage);
 
         var availabilityText = status?.EffectiveExecutionProvider switch
         {
             DiarizationExecutionProvider.Directml => "The last speaker-labeling run used DirectML.",
             DiarizationExecutionProvider.Cpu when status.GpuAccelerationAvailable == false &&
-                !string.IsNullOrWhiteSpace(status.DiagnosticMessage)
-                    => $"DirectML was unavailable during the last GPU attempt; CPU fallback was used. {status.DiagnosticMessage}",
+                !string.IsNullOrWhiteSpace(accelerationDiagnostic)
+                    => $"{accelerationDiagnostic} CPU fallback was used.",
             DiarizationExecutionProvider.Cpu => "The last speaker-labeling run used CPU.",
             _ => config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
                 ? "Use Test GPU to check DirectML before the next speaker-labeling run."
@@ -9152,6 +9160,26 @@ public partial class MainWindow : Window
         };
 
         ConfigDiarizationAccelerationStatusTextBlock.Text = $"{preferenceText} {availabilityText}";
+    }
+
+    private static string? GetSafeAccelerationDiagnostic(string? diagnosticMessage)
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticMessage))
+        {
+            return null;
+        }
+
+        var trimmed = diagnosticMessage.Trim();
+        return trimmed.Contains("DirectML", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("GPU", StringComparison.OrdinalIgnoreCase)
+            ? trimmed
+            : null;
+    }
+
+    private static bool IsSafeDirectMlRuntimeUnavailableMessage(string? message)
+    {
+        return !string.IsNullOrWhiteSpace(message) &&
+            message.Contains("DirectML-enabled speaker-labeling runtime", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildDiarizationAccelerationDetails(DiarizationAssetInstallStatus status)

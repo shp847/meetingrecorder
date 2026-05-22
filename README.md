@@ -315,7 +315,7 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
 - Speaker diarization automatically estimates anonymous speakers from voice embeddings. It starts with the default clustering threshold, retries lower thresholds when voices collapse below two supported speakers, retries higher thresholds when clustering over-segments above the supported automatic range, and skips bad labels instead of publishing unusable speaker catalogs.
 - Optional local voice-profile memory can learn names from user-confirmed speaker-label corrections, store embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles`, auto-apply high-confidence future matches, and show lower-confidence suggestions without exporting voice-profile embeddings in transcript JSON.
-- GPU acceleration for speaker labeling is available as an explicit DirectML opt-in. New installs stay CPU-only by default, legacy `Auto` configs are migrated to CPU once, and later user-saved `Auto` choices try DirectML first with automatic CPU fallback.
+- GPU acceleration for speaker labeling is modeled as an explicit DirectML opt-in. Meeting Recorder owns the native dependency: release engineering builds a pinned DirectML-enabled Sherpa runtime with `scripts/Build-SherpaDirectMlRuntime.ps1`, `scripts/Publish-Portable.ps1` bundles it from `assets\native\sherpa-onnx-directml\win-x64` when present, and the app falls back to CPU with a clear status if a build does not include that runtime or the device blocks DirectML.
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
 - If the packaged `model-catalog.json` file is missing at runtime, curated Setup falls back to the built-in default catalog so `Use Standard` and `Use Higher Accuracy` still work
 - `Standard` transcription (`ggml-base.en-q8_0.bin`) and `Standard` speaker labeling (`meeting-recorder-diarization-bundle-standard-win-x64.zip`) are bundled into the main app payload for offline-first installs
@@ -339,7 +339,7 @@ The app exposes settings in the header-level `Settings` surface for:
 - output locations
 - work folder
 - curated transcription and speaker-labeling profile selection
-- diarization DirectML opt-in with CPU fallback
+- diarization DirectML preference with bundled-runtime validation and CPU fallback
 - microphone capture
 - launch on login
 - auto-detection behavior

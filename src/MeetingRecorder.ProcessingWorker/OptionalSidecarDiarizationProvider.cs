@@ -14,6 +14,10 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         "DirectML GPU initialization failed; speaker labeling retried on CPU.";
     private const string DirectMlUnsupportedClusterFallbackMessage =
         "DirectML speaker clustering was outside the supported automatic range; speaker labeling retried on CPU.";
+    private const string SherpaDirectMlUnavailableMessage =
+        "This Meeting Recorder build does not include a DirectML-enabled speaker-labeling runtime; speaker labeling used CPU.";
+    private const string SherpaDirectMlFallbackOnlyMarker = "DirectML is for Windows only";
+    private const string SherpaDirectMlEnabledMarker = "Failed to enable DirectML";
     private const string UnsupportedClusterMessagePrefix =
         "Speaker labeling skipped because clustering detected";
     private static readonly float[] CollapsedSpeakerClusteringThresholds = [0.45f, 0.4f, 0.35f, 0.3f, 0.25f];
@@ -143,6 +147,17 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     {
         if (_accelerationPreference == InferenceAccelerationPreference.Auto)
         {
+            if (!IsSherpaDirectMlRuntimeEnabled())
+            {
+                _logger.Log("DirectML speaker-labeling runtime is not enabled in the bundled Sherpa native library. Using CPU fallback.");
+                return await RunCpuFallbackAsync(
+                    preparedAudioPath,
+                    transcriptSegments,
+                    installedAssets,
+                    SherpaDirectMlUnavailableMessage,
+                    cancellationToken);
+            }
+
             var directMlDecision = DiarizationAccelerationPolicy.Resolve(
                 _accelerationPreference,
                 directMlAvailable: true);
@@ -440,6 +455,11 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         int threadCount,
         FileLogWriter logger)
     {
+        if (!IsSherpaDirectMlRuntimeEnabled())
+        {
+            throw new InvalidOperationException(SherpaDirectMlUnavailableMessage);
+        }
+
         var assetCatalogService = new DiarizationAssetCatalogService();
         var installedAssets = assetCatalogService.InspectInstalledAssets(diarizationAssetPath);
         if (!installedAssets.IsReady)
@@ -458,6 +478,19 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             "directml",
             Math.Max(1, threadCount),
             DefaultClusteringThreshold);
+    }
+
+    internal static bool IsSherpaDirectMlRuntimeEnabled()
+    {
+        var sherpaNativePath = Path.Combine(AppContext.BaseDirectory, "sherpa-onnx-c-api.dll");
+        if (!File.Exists(sherpaNativePath))
+        {
+            return false;
+        }
+
+        var nativeText = System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(sherpaNativePath));
+        return nativeText.Contains(SherpaDirectMlEnabledMarker, StringComparison.Ordinal) &&
+            !nativeText.Contains(SherpaDirectMlFallbackOnlyMarker, StringComparison.Ordinal);
     }
 
     private static bool IsUnsupportedClusterResult(DiarizationResult result)

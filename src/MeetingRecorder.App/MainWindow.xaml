@@ -2354,7 +2354,7 @@
                                             <CheckBox x:Name="ConfigDiarizationGpuAccelerationCheckBox"
                                                       Content="Try GPU acceleration for speaker labeling (DirectML)" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Optional. DirectML may be blocked by managed device controls; speaker labeling automatically falls back to CPU if GPU initialization fails." />
+                                                       Text="Optional when this Meeting Recorder build includes the DirectML speaker-labeling runtime. No separate user setup is required; CPU fallback is used if DirectML is not packaged, blocked by policy, or unavailable on the device." />
                                             <Button x:Name="TestDiarizationGpuAccelerationButton"
                                                     Margin="20,8,0,0"
                                                     HorizontalAlignment="Left"

@@ -13,8 +13,21 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.Contains("DiarizationExecutionProvider.Directml", source, StringComparison.Ordinal);
         Assert.Contains("DiarizationExecutionProvider.Cpu", source, StringComparison.Ordinal);
         Assert.Contains("catch (Exception exception) when (exception is not OperationCanceledException)", source, StringComparison.Ordinal);
+        Assert.Contains("IsSherpaDirectMlRuntimeEnabled", source, StringComparison.Ordinal);
         Assert.Contains("DirectML", source, StringComparison.Ordinal);
         Assert.Contains("fallback", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Worker_Detects_When_Bundled_Sherpa_Runtime_Cannot_Enable_DirectMl()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "OptionalSidecarDiarizationProvider.cs"));
+        var program = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "Program.cs"));
+
+        Assert.Contains("DirectML is for Windows only", source, StringComparison.Ordinal);
+        Assert.Contains("Failed to enable DirectML", source, StringComparison.Ordinal);
+        Assert.Contains("DirectML-enabled speaker-labeling runtime", source, StringComparison.Ordinal);
+        Assert.Contains("DirectML-enabled speaker-labeling runtime", program, StringComparison.Ordinal);
     }
 
     [Fact]

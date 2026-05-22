@@ -85,6 +85,12 @@ internal static class Program
             Console.WriteLine("DirectML probe succeeded.");
             return 0;
         }
+        catch (InvalidOperationException exception) when (exception.Message.Contains("DirectML-enabled speaker-labeling runtime", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.Log("DirectML probe unavailable: DirectML-enabled Sherpa runtime is not packaged.");
+            Console.Error.WriteLine(exception.Message);
+            return 2;
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             logger.Log($"DirectML probe failed safely: {exception.GetType().Name}");
