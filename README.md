@@ -373,7 +373,9 @@ The default provider path is local-first:
 
 - Try ModelProxy through its local OpenAI-compatible HTTP API.
 - Fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits hosted fallback.
-- Disable ModelProxy web search for summary requests so the model uses only the supplied transcript.
+- Disable ModelProxy web search for summary and validation requests with `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt, because ModelProxy enables public web search by default.
+- Read ModelProxy's safe routing headers on local responses, including request id, requested/effective backend, web-search backend, app-server search support, and fallback reason. If a future web-enabled request falls back to CLI search, the app must tolerate that route and use a timeout above ModelProxy's 45-second CLI search timeout.
+- Treat forced app-server web-search `400` responses as a capability issue and offer a retry path without web search.
 - Treat summary failures as supplemental failures; they must not block `.md`, `.json`, or `.ready` transcript output.
 - Reuse a matching `summary.snapshot.json` on repaired processing attempts instead of calling a provider again.
 - Allow explicit summary generation or retry from the meeting detail window for published meetings that have a structured transcript JSON sidecar, without re-running transcription or speaker labeling.
@@ -394,7 +396,7 @@ Defaults:
 - caller model: `gpt-5.4-mini`
 - summary requests must also send `X-ModelProxy-Web-Search: false`
 
-Use `MODELPROXY_MEETING_RECORDER_API_KEY` only if your local ModelProxy operator config uses a non-default local key. The script prints only the synthetic response string and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
+Use `MODELPROXY_MEETING_RECORDER_API_KEY` only if your local ModelProxy operator config uses a non-default local key. The script prints only the synthetic response string plus safe ModelProxy routing headers and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
 
 Settings includes summary provider configuration, DPAPI-protected OpenAI key storage under the app data root, and synthetic validation that asks providers to return `summary-provider-ok` without sending transcript, attendee, client, or meeting content. Automatic summary generation runs in the processing worker, and the meeting detail window can generate or retry summaries from existing transcript JSON artifacts. Credential clearing remains in Settings for hosted OpenAI.
 

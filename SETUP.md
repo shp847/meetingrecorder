@@ -102,7 +102,8 @@ Local-first setup uses ModelProxy:
 - ModelProxy should be running on `127.0.0.1:8645`.
 - Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
 - Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
-- Summary requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript.
+- Summary and validation requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. ModelProxy enables public web search by default for requests that do not opt out.
+- Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. A web-enabled request may route to CLI search when app-server search has not been proved safe.
 - The app uses non-streaming Chat Completions for automatic summary generation.
 
 Synthetic validation is allowed and should never use real meeting content:
@@ -111,7 +112,7 @@ Synthetic validation is allowed and should never use real meeting content:
 .\scripts\Test-ModelProxy.ps1
 ```
 
-The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key.
+The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script prints safe routing headers when ModelProxy returns them; it does not print prompt text, API keys, bearer headers, or raw response bodies.
 
 Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and hosted credential clearing.
 

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MeetingRecorder.Core.Services;
 
@@ -30,7 +31,18 @@ public sealed record SummaryChatMessage(SummaryChatRole Role, string Content);
 public sealed record SummaryChatRequest(
     string Model,
     IReadOnlyList<SummaryChatMessage> Messages,
-    TimeSpan Timeout);
+    TimeSpan Timeout)
+{
+    public bool Stream { get; init; }
+}
+
+public sealed record ModelProxyRoutingInfo(
+    string? RequestId,
+    string? RequestedBackend,
+    string? EffectiveBackend,
+    string? WebSearchBackend,
+    bool? AppServerWebSearchSupported,
+    string? FallbackReason);
 
 public sealed record SummaryChatResponse(
     string Content,
@@ -38,6 +50,8 @@ public sealed record SummaryChatResponse(
     string Model)
 {
     public SummaryChatProviderKind ProviderKind { get; init; }
+
+    public ModelProxyRoutingInfo? ModelProxyRouting { get; init; }
 }
 
 public sealed record SummaryChatProviderOptions(
@@ -48,13 +62,19 @@ public sealed record SummaryChatProviderOptions(
 {
     public static SummaryChatProviderOptions ForModelProxy(
         string apiKey = MeetingSummaryDefaults.ModelProxyLocalApiKey,
-        string baseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl)
+        string baseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl,
+        string? backend = null,
+        bool webSearchEnabled = false)
     {
         return new SummaryChatProviderOptions(
             SummaryChatProviderKind.ModelProxy,
             "ModelProxy",
             baseUrl,
-            apiKey);
+            apiKey)
+        {
+            ModelProxyBackend = string.IsNullOrWhiteSpace(backend) ? null : backend.Trim(),
+            ModelProxyWebSearchEnabled = webSearchEnabled,
+        };
     }
 
     public static SummaryChatProviderOptions ForOpenAi(
@@ -67,6 +87,10 @@ public sealed record SummaryChatProviderOptions(
             baseUrl,
             apiKey);
     }
+
+    public string? ModelProxyBackend { get; init; }
+
+    public bool ModelProxyWebSearchEnabled { get; init; }
 }
 
 public interface ISummarySecretStore
@@ -247,6 +271,7 @@ public sealed class FileSummarySecretStore : ISummarySecretStore
 public sealed class SummaryChatClient : ISummaryChatClient
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan MinimumModelProxyWebSearchTimeout = TimeSpan.FromSeconds(60);
 
     private readonly HttpClient _httpClient;
 
@@ -263,48 +288,71 @@ public sealed class SummaryChatClient : ISummaryChatClient
         ValidateProviderOptions(providerOptions);
         ValidateRequest(request);
 
+        var effectiveTimeout = GetEffectiveTimeout(providerOptions, request.Timeout);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(request.Timeout);
+        timeoutCts.CancelAfter(effectiveTimeout);
         var endpoint = new Uri(new Uri(NormalizeBaseUrl(providerOptions.BaseUrl)), "chat/completions");
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerOptions.ApiKey.Trim());
         if (providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy)
         {
-            httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search", "false");
+            httpRequest.Headers.TryAddWithoutValidation(
+                "X-ModelProxy-Web-Search",
+                providerOptions.ModelProxyWebSearchEnabled ? "true" : "false");
+            if (!string.IsNullOrWhiteSpace(providerOptions.ModelProxyBackend))
+            {
+                httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", providerOptions.ModelProxyBackend);
+            }
         }
 
-        var payload = new
+        var payload = new SummaryChatCompletionPayload(
+            request.Model.Trim(),
+            request.Messages.Select(message => new SummaryChatCompletionMessagePayload(
+                ConvertRole(message.Role),
+                message.Content)).ToArray())
         {
-            model = request.Model.Trim(),
-            messages = request.Messages.Select(message => new
-            {
-                role = ConvertRole(message.Role),
-                content = message.Content,
-            }).ToArray(),
+            Stream = request.Stream,
         };
         var json = JsonSerializer.Serialize(payload, SerializerOptions);
         httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
         try
         {
-            using var response = await _httpClient.SendAsync(httpRequest, timeoutCts.Token);
+            var completionOption = request.Stream
+                ? HttpCompletionOption.ResponseHeadersRead
+                : HttpCompletionOption.ResponseContentRead;
+            using var response = await _httpClient.SendAsync(httpRequest, completionOption, timeoutCts.Token);
             var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException(BuildHttpFailureMessage(providerOptions, response, responseBody));
             }
 
-            var content = ExtractAssistantContent(providerOptions.ProviderName, responseBody);
+            var content = request.Stream
+                ? ExtractStreamingAssistantContent(providerOptions.ProviderName, responseBody)
+                : ExtractAssistantContent(providerOptions.ProviderName, responseBody);
             return new SummaryChatResponse(content, providerOptions.ProviderName, request.Model.Trim())
             {
                 ProviderKind = providerOptions.ProviderKind,
+                ModelProxyRouting = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers),
             };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"{providerOptions.ProviderName} summary validation timed out after {request.Timeout.TotalSeconds:0} seconds.");
+                $"{providerOptions.ProviderName} summary validation timed out after {effectiveTimeout.TotalSeconds:0} seconds.");
         }
+    }
+
+    private static TimeSpan GetEffectiveTimeout(
+        SummaryChatProviderOptions providerOptions,
+        TimeSpan requestedTimeout)
+    {
+        return providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy &&
+               providerOptions.ModelProxyWebSearchEnabled &&
+               requestedTimeout < MinimumModelProxyWebSearchTimeout
+            ? MinimumModelProxyWebSearchTimeout
+            : requestedTimeout;
     }
 
     private static void ValidateProviderOptions(SummaryChatProviderOptions providerOptions)
@@ -376,6 +424,79 @@ public sealed class SummaryChatClient : ISummaryChatClient
         return content.GetString() ?? string.Empty;
     }
 
+    private static string ExtractStreamingAssistantContent(string providerName, string responseBody)
+    {
+        var builder = new StringBuilder();
+        using var reader = new StringReader(responseBody);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            var trimmedLine = line.TrimStart();
+            if (trimmedLine.Length == 0 ||
+                trimmedLine.StartsWith(":", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!trimmedLine.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var data = trimmedLine["data:".Length..].TrimStart();
+            if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            if (data.Length == 0)
+            {
+                continue;
+            }
+
+            builder.Append(ExtractStreamingChunkContent(providerName, data));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string ExtractStreamingChunkContent(string providerName, string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array ||
+                choices.GetArrayLength() == 0)
+            {
+                return string.Empty;
+            }
+
+            var firstChoice = choices[0];
+            if (firstChoice.TryGetProperty("delta", out var delta) &&
+                delta.ValueKind == JsonValueKind.Object &&
+                delta.TryGetProperty("content", out var deltaContent) &&
+                deltaContent.ValueKind == JsonValueKind.String)
+            {
+                return deltaContent.GetString() ?? string.Empty;
+            }
+
+            if (firstChoice.TryGetProperty("message", out var message) &&
+                message.ValueKind == JsonValueKind.Object &&
+                message.TryGetProperty("content", out var messageContent) &&
+                messageContent.ValueKind == JsonValueKind.String)
+            {
+                return messageContent.GetString() ?? string.Empty;
+            }
+
+            return string.Empty;
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException($"{providerName} streaming response included a malformed assistant chunk.", exception);
+        }
+    }
+
     private static string BuildHttpFailureMessage(
         SummaryChatProviderOptions providerOptions,
         HttpResponseMessage response,
@@ -386,9 +507,61 @@ public sealed class SummaryChatClient : ISummaryChatClient
             : response.ReasonPhrase;
         var message = $"{providerOptions.ProviderName} returned HTTP {(int)response.StatusCode} {reason}.";
         var safeDetails = TryExtractSafeErrorDetails(responseBody);
-        return string.IsNullOrWhiteSpace(safeDetails)
-            ? message
-            : $"{message} {safeDetails}";
+        var routingInfo = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers);
+        var routingDetails = BuildSafeRoutingDetails(routingInfo);
+        var capabilityMessage = BuildForcedAppServerSearchCapabilityMessage(providerOptions, response, routingInfo);
+        var parts = new[]
+            {
+                message,
+                capabilityMessage,
+                routingDetails,
+                safeDetails,
+            }
+            .Where(part => !string.IsNullOrWhiteSpace(part));
+        return string.Join(" ", parts);
+    }
+
+    private static string BuildSafeRoutingDetails(ModelProxyRoutingInfo? routingInfo)
+    {
+        if (routingInfo is null)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>();
+        AddSafePart(parts, "Request", routingInfo.RequestId);
+        AddSafePart(parts, "Requested backend", routingInfo.RequestedBackend);
+        AddSafePart(parts, "Effective backend", routingInfo.EffectiveBackend);
+        AddSafePart(parts, "Web search backend", routingInfo.WebSearchBackend);
+        if (routingInfo.AppServerWebSearchSupported is not null)
+        {
+            parts.Add($"App-server web search supported: {routingInfo.AppServerWebSearchSupported.Value.ToString().ToLowerInvariant()}.");
+        }
+
+        AddSafePart(parts, "Fallback reason", routingInfo.FallbackReason);
+        return string.Join(" ", parts);
+    }
+
+    private static string BuildForcedAppServerSearchCapabilityMessage(
+        SummaryChatProviderOptions providerOptions,
+        HttpResponseMessage response,
+        ModelProxyRoutingInfo? routingInfo)
+    {
+        if (providerOptions.ProviderKind != SummaryChatProviderKind.ModelProxy ||
+            response.StatusCode != System.Net.HttpStatusCode.BadRequest ||
+            !providerOptions.ModelProxyWebSearchEnabled ||
+            !string.Equals(providerOptions.ModelProxyBackend, "app-server", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        var appServerSearchUnsupported =
+            routingInfo is null ||
+            string.Equals(routingInfo?.WebSearchBackend, "unsupported", StringComparison.OrdinalIgnoreCase) ||
+            routingInfo?.AppServerWebSearchSupported == false;
+        return appServerSearchUnsupported
+            ? "App-server web search is not available in this ModelProxy instance; retry without web search or allow ModelProxy to route web search through CLI."
+            : string.Empty;
     }
 
     private static string TryExtractSafeErrorDetails(string responseBody)
@@ -443,6 +616,76 @@ public sealed class SummaryChatClient : ISummaryChatClient
             parts.Add($"{label}: {property.GetString()}.");
         }
     }
+
+    private static void AddSafePart(
+        ICollection<string> parts,
+        string label,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            parts.Add($"{label}: {value.Trim()}.");
+        }
+    }
+
+    private static ModelProxyRoutingInfo? ExtractModelProxyRoutingInfo(
+        SummaryChatProviderKind providerKind,
+        HttpResponseHeaders headers)
+    {
+        if (providerKind != SummaryChatProviderKind.ModelProxy)
+        {
+            return null;
+        }
+
+        var routingInfo = new ModelProxyRoutingInfo(
+            GetHeaderValue(headers, "X-ModelProxy-Request-Id"),
+            GetHeaderValue(headers, "X-ModelProxy-Requested-Backend"),
+            GetHeaderValue(headers, "X-ModelProxy-Effective-Backend"),
+            GetHeaderValue(headers, "X-ModelProxy-Web-Search-Backend"),
+            GetHeaderBoolean(headers, "X-ModelProxy-App-Server-Web-Search-Supported"),
+            GetHeaderValue(headers, "X-ModelProxy-Fallback-Reason"));
+
+        return routingInfo.RequestId is null &&
+               routingInfo.RequestedBackend is null &&
+               routingInfo.EffectiveBackend is null &&
+               routingInfo.WebSearchBackend is null &&
+               routingInfo.AppServerWebSearchSupported is null &&
+               routingInfo.FallbackReason is null
+            ? null
+            : routingInfo;
+    }
+
+    private static string? GetHeaderValue(
+        HttpResponseHeaders headers,
+        string headerName)
+    {
+        return headers.TryGetValues(headerName, out var values)
+            ? values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim()
+            : null;
+    }
+
+    private static bool? GetHeaderBoolean(
+        HttpResponseHeaders headers,
+        string headerName)
+    {
+        var value = GetHeaderValue(headers, headerName);
+        return bool.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private sealed record SummaryChatCompletionPayload(
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("messages")] IReadOnlyList<SummaryChatCompletionMessagePayload> Messages)
+    {
+        [JsonPropertyName("stream")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool Stream { get; init; }
+    }
+
+    private sealed record SummaryChatCompletionMessagePayload(
+        [property: JsonPropertyName("role")] string Role,
+        [property: JsonPropertyName("content")] string Content);
 }
 
 public sealed class SummaryProviderValidationService

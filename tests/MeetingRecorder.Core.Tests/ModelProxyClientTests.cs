@@ -1,5 +1,6 @@
 using MeetingRecorder.Core.Services;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 
 namespace MeetingRecorder.Core.Tests;
@@ -79,6 +80,193 @@ public sealed class ModelProxyClientTests
 
         Assert.Contains("HTTP 401 Unauthorized", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive upstream body", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Posts_No_Search_AppServer_ModelProxy_Request()
+    {
+        using var handler = new CapturingHandler(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "choices": [
+                        {
+                          "message": {
+                            "content": "summary-provider-ok"
+                          }
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+            "sk-modelproxy-test",
+            backend: "app-server",
+            webSearchEnabled: false);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
+            TimeSpan.FromSeconds(120));
+
+        var result = await client.CompleteAsync(providerOptions, request);
+
+        Assert.Equal("summary-provider-ok", result.Content);
+        Assert.NotNull(handler.Request);
+        Assert.Equal("app-server", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
+        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Captures_ModelProxy_Routing_Headers_For_Web_Search_Cli_Fallback()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "content": "summary-provider-ok"
+                      }
+                    }
+                  ]
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", "mp-test");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "codex");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-App-Server-Web-Search-Supported", "false");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Fallback-Reason", "app_server_search_unsupported");
+
+        using var handler = new CapturingHandler(response);
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+            "sk-modelproxy-test",
+            webSearchEnabled: true);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
+            TimeSpan.FromSeconds(30));
+
+        var result = await client.CompleteAsync(providerOptions, request);
+
+        Assert.NotNull(result.ModelProxyRouting);
+        Assert.Equal("mp-test", result.ModelProxyRouting!.RequestId);
+        Assert.Equal("codex", result.ModelProxyRouting.RequestedBackend);
+        Assert.Equal("cli", result.ModelProxyRouting.EffectiveBackend);
+        Assert.Equal("cli", result.ModelProxyRouting.WebSearchBackend);
+        Assert.False(result.ModelProxyRouting.AppServerWebSearchSupported);
+        Assert.Equal("app_server_search_unsupported", result.ModelProxyRouting.FallbackReason);
+        Assert.Equal("true", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Web-Search")));
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Ignores_Sse_Comment_Lines_When_Parsing_Stream()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """
+                : request_id=mp-test effective_backend=cli
+
+                data: {"choices":[{"delta":{"content":"summary"},"finish_reason":null}]}
+
+                : keepalive this is not assistant text
+
+                data: {"choices":[{"delta":{"content":"-provider-ok"},"finish_reason":null}]}
+
+                data: [DONE]
+
+                """,
+                Encoding.UTF8,
+                "text/event-stream"),
+        };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("text/event-stream");
+
+        using var handler = new CapturingHandler(response);
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
+            TimeSpan.FromSeconds(120))
+        {
+            Stream = true,
+        };
+
+        var result = await client.CompleteAsync(
+            SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"),
+            request);
+
+        Assert.Equal("summary-provider-ok", result.Content);
+        Assert.Contains("\"stream\":true", handler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("keepalive", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("request_id", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Forced_AppServer_WebSearch_400_Surfaces_Capability_Message_Without_Secrets()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            ReasonPhrase = "Bad Request",
+            Content = new StringContent(
+                """
+                {
+                  "detail": {
+                    "category": "unsupported_web_search_backend",
+                    "message": "raw prompt text should not leak",
+                    "request_id": "mp-test",
+                    "backend": "app-server"
+                  }
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", "mp-test");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "app-server");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "app-server");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search-Backend", "unsupported");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-App-Server-Web-Search-Supported", "false");
+
+        using var handler = new CapturingHandler(response);
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+            "sk-modelproxy-secret",
+            backend: "app-server",
+            webSearchEnabled: true);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
+            TimeSpan.FromSeconds(60));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.CompleteAsync(providerOptions, request));
+
+        Assert.Contains("HTTP 400", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("App-server web search is not available", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("retry without web search", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mp-test", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw prompt text should not leak", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("private prompt marker", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-modelproxy-secret", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("app-server", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("true", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
     }
 
     [Fact]
