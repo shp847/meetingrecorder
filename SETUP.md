@@ -101,7 +101,7 @@ Local-first setup uses ModelProxy:
 
 - ModelProxy should be running on `127.0.0.1:8645`.
 - Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
-- The ModelProxy local config should include a dedicated `meeting-recorder` key record.
+- Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
 - Summary requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript.
 - The app uses non-streaming Chat Completions for automatic summary generation.
 
@@ -111,9 +111,9 @@ Synthetic validation is allowed and should never use real meeting content:
 .\scripts\Test-ModelProxy.ps1
 ```
 
-The default local key is `sk-modelproxy-meeting-recorder`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` if your ignored ModelProxy config uses a different key.
+The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key.
 
-Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Summary provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and credential clearing.
+Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and hosted credential clearing.
 
 ## 2. Data Layout
 
@@ -221,8 +221,8 @@ That same responsiveness rule now applies to the shell: supported-call detection
 For one urgent meeting, use `Process ASAP` from the meeting detail window or `Process This ASAP...` from the context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
 
 When auto-detection is on, the app now also tries to attribute active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata. The compact summary appears on `Home`, and `Help` includes the current app/window/tab match plus confidence when attribution is available.
-For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, but an explicit active `Meet - ...` browser window can now auto-start from active browser-family audio even when browser session metadata is too weak to name the exact tab.
-For Google Meet recordings that are already active and tied to a specific Meet code, a brief switch to a Teams chat, calendar, or search surface no longer immediately ages the Meet into auto-stop while captured system audio is still active; the app uses a bounded grace period so short focus changes do not fragment the same call.
+For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, and an explicit active `Meet - ...` browser window can auto-start from active browser-family audio even when browser session metadata is too weak to name the exact tab. When that same explicit Meet evidence is silent, the app now waits for sustained specific Meet-code evidence before auto-starting so brief browser-title flashes do not create tiny fragments.
+For Google Meet recordings that are already active and tied to a specific Meet code, a brief switch to a Teams chat, calendar, or search surface no longer immediately ages the Meet into auto-stop while captured system audio is active or while the current audio probe is silent; the app uses a bounded grace period of up to three minutes so short focus changes do not fragment the same call.
 For Teams, an active auto-started call now stays alive through weak stray Google Meet browser detections during quiet patches, so an unrelated open Meet tab should not keep stopping and restarting the live Teams recording.
 When you run the Teams probe in `Settings > Setup`, the app records what the local Teams detector would do right now and whether the Teams third-party API candidate exposed anything beyond control actions. If the third-party path cannot prove readable meeting state, the local Teams detector remains the active fallback. No Microsoft Entra app registration or Graph sign-in is required for this flow.
 When an auto-started session loses strong meeting signals, `Home` now shows the auto-stop countdown directly in the recording console instead of only writing it to logs.
@@ -403,7 +403,7 @@ The app treats tiny files as invalid and will not accept an HTML or proxy error 
 
 Speaker labeling is the optional diarization model-bundle path. It can group transcript text under speaker labels such as `Speaker 1` and `Speaker 2`, but normal transcription still works without it.
 
-When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries stricter clustering thresholds before publishing labels.
+When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries lower thresholds. If clustering over-segments above the supported automatic range, it retries higher thresholds. If no valid range is found, the transcript still publishes without bad labels.
 
 Speaker names can also improve over time when `Settings > General > Learn speaker names from my corrections` is enabled. The app stores local voice-profile embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles\voice-profiles.json` (or the portable app `data\speaker-profiles` folder), compares future anonymous speaker clusters with those user-confirmed profiles, and auto-applies names only when the best match is above the high-confidence threshold and clearly ahead of the next profile. Lower-confidence matches stay anonymous and appear as suggestions in the speaker-name editor.
 
@@ -440,7 +440,7 @@ If GitHub is blocked or no recommended bundle is loaded:
 
 Advanced details:
 
-- `Advanced` shows the configured asset folder path, CPU-only acceleration status, and the raw readiness details
+- `Advanced` shows the configured asset folder path, DirectML/CPU acceleration status, and the raw readiness details
 - the recommended bundle is preferred because it installs the segmentation model, embedding model, and bundle manifest together
 - diarization labels begin as anonymous voice clusters; the app only predicts real names later from local profiles that you taught through speaker-name corrections
 - the app looks for the bundled local `SETUP.md` first and only falls back to GitHub help when the local guide cannot be found
@@ -449,10 +449,11 @@ Advanced details:
 
 GPU acceleration:
 
-- `Settings` shows the speaker-labeling GPU acceleration control as unavailable in managed builds
-- CPU-only speaker labeling is enforced, and existing `Auto` configs are normalized to CPU-only to avoid endpoint-protection memory-access prompts from DirectML initialization
-- the processing worker no longer packages the DirectML ONNX Runtime; diarization stays on CPU
-- the diarization `Advanced` panel records the last effective provider and any fallback message reported by the worker
+- `Settings > General` exposes `Try GPU acceleration for speaker labeling (DirectML)` as an explicit opt-in
+- new installs stay CPU-only by default, and legacy `Auto` configs are migrated to CPU-only once; after that, saving the GPU checkbox preserves the user opt-in
+- the processing worker packages the DirectML redistributable, tries DirectML first only when the setting is enabled, and automatically retries on CPU when GPU initialization or clustering is not usable
+- `Test GPU` validates DirectML initialization with the speaker-labeling assets only; it does not send transcript or meeting content
+- the diarization `Advanced` panel records the last effective provider and any safe GPU fallback message reported by the worker
 
 ## 6. Settings
 
@@ -489,7 +490,7 @@ Settings available there include:
 - model cache folder
 - Whisper model path
 - diarization asset path
-- speaker-labeling CPU-only acceleration policy
+- speaker-labeling DirectML opt-in and CPU fallback policy
 - update-check toggle
 - auto-install toggle
 - update feed URL

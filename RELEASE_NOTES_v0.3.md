@@ -176,6 +176,8 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - curated Standard vs Higher Accuracy setup flow
 - downloadable or imported local models
 - optional local speaker labeling through a separate diarization bundle
+- optional DirectML GPU acceleration for speaker labeling, defaulted off, with `Test GPU` and automatic CPU fallback
+- clustering quality gates that skip unusable over-segmented labels while still publishing the transcript
 - fallback behavior that prioritizes publishing transcripts even when speaker labeling is unavailable
 
 ### Meeting summaries

@@ -6,6 +6,11 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (HasArgument(args, "--probe-directml"))
+        {
+            return await RunDirectMlProbeAsync(args);
+        }
+
         if (!TryParseArguments(args, out var manifestPath, out var configPath, out var parseError))
         {
             Console.Error.WriteLine(parseError);
@@ -66,6 +71,28 @@ internal static class Program
         }
     }
 
+    private static async Task<int> RunDirectMlProbeAsync(IReadOnlyList<string> args)
+    {
+        var configPath = TryGetOption(args, "--config") ?? AppDataPaths.GetConfigPath();
+        var logger = new FileLogWriter(AppDataPaths.GetGlobalLogPath());
+
+        try
+        {
+            var configStore = new AppConfigStore(configPath);
+            var config = await configStore.LoadOrCreateAsync();
+            var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
+            LocalSpeakerDiarizationProvider.ProbeDirectMl(config.DiarizationAssetPath, diarizationThreadCount, logger);
+            Console.WriteLine("DirectML probe succeeded.");
+            return 0;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.Log($"DirectML probe failed safely: {exception.GetType().Name}");
+            Console.Error.WriteLine("DirectML probe failed.");
+            return 2;
+        }
+    }
+
     private static bool TryParseArguments(
         IReadOnlyList<string> args,
         out string manifestPath,
@@ -98,5 +125,23 @@ internal static class Program
         }
 
         return true;
+    }
+
+    private static bool HasArgument(IReadOnlyList<string> args, string name)
+    {
+        return args.Any(argument => string.Equals(argument, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? TryGetOption(IReadOnlyList<string> args, string name)
+    {
+        for (var index = 0; index < args.Count - 1; index++)
+        {
+            if (string.Equals(args[index], name, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[index + 1];
+            }
+        }
+
+        return null;
     }
 }

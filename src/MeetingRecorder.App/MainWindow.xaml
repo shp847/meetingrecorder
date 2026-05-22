@@ -2352,10 +2352,15 @@
 
                                         <StackPanel Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigDiarizationGpuAccelerationCheckBox"
-                                                      Content="GPU acceleration unavailable for speaker labeling"
-                                                      IsEnabled="False" />
+                                                      Content="Try GPU acceleration for speaker labeling (DirectML)" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Unavailable in this managed build. Speaker labeling stays on CPU to avoid managed endpoint-protection prompts during processing." />
+                                                       Text="Optional. DirectML may be blocked by managed device controls; speaker labeling automatically falls back to CPU if GPU initialization fails." />
+                                            <Button x:Name="TestDiarizationGpuAccelerationButton"
+                                                    Margin="20,8,0,0"
+                                                    HorizontalAlignment="Left"
+                                                    MinWidth="120"
+                                                    Click="TestDiarizationGpuAccelerationButton_OnClick"
+                                                    Content="Test GPU" />
                                             <TextBlock x:Name="ConfigDiarizationAccelerationStatusTextBlock"
                                                        Margin="0,8,0,0"
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
@@ -2505,42 +2510,10 @@
                                                      Height="32"
                                                      VerticalContentAlignment="Center" />
                                             <TextBlock Grid.Row="5"
-                                                       Margin="0,0,12,8"
-                                                       VerticalAlignment="Center"
-                                                       Text="Backend override" />
-                                            <TextBox x:Name="ConfigSummaryModelProxyBackendTextBox"
-                                                     Grid.Row="5"
-                                                     Grid.Column="1"
-                                                     Margin="0,0,0,8"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
-                                            <TextBlock Grid.Row="6"
-                                                       Margin="0,0,12,8"
-                                                       VerticalAlignment="Center"
-                                                       Text="Codex model" />
-                                            <TextBox x:Name="ConfigSummaryModelProxyCodexModelTextBox"
-                                                     Grid.Row="6"
-                                                     Grid.Column="1"
-                                                     Margin="0,0,0,8"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
-                                            <TextBlock Grid.Row="7"
-                                                       Margin="0,0,12,8"
-                                                       VerticalAlignment="Center"
-                                                       Text="Local key" />
-                                            <PasswordBox x:Name="ConfigSummaryModelProxyKeyPasswordBox"
-                                                         Grid.Row="7"
-                                                         Grid.Column="1"
-                                                         Margin="0,0,0,8"
-                                                         Height="32"
-                                                         VerticalContentAlignment="Center"
-                                                         PasswordChanged="ConfigSummaryProviderPasswordBox_OnPasswordChanged" />
-                                            <TextBlock x:Name="ConfigSummaryModelProxyKeyStatusTextBlock"
-                                                       Grid.Row="8"
                                                        Grid.Column="1"
                                                        Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="ModelProxy key: not saved." />
-                                            <WrapPanel Grid.Row="9"
+                                                       Text="Meeting Recorder uses ModelProxy local auth automatically; OpenAI is the only provider key saved here." />
+                                            <WrapPanel Grid.Row="6"
                                                        Grid.Column="1"
                                                        Margin="0,10,0,0">
                                                 <Button x:Name="ValidateModelProxySummaryProviderButton"
@@ -2549,11 +2522,6 @@
                                                         Margin="0,0,12,0"
                                                         Click="ValidateModelProxySummaryProviderButton_OnClick"
                                                         Content="Validate ModelProxy" />
-                                                <Button x:Name="ClearModelProxySummaryKeyButton"
-                                                        Width="130"
-                                                        Height="32"
-                                                        Click="ClearModelProxySummaryKeyButton_OnClick"
-                                                        Content="Clear Key" />
                                             </WrapPanel>
                                         </Grid>
 

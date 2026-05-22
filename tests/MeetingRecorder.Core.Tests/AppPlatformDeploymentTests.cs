@@ -513,7 +513,7 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
-    public void ProcessingWorkerProject_Does_Not_Package_DirectMl_OnnxRuntime()
+    public void ProcessingWorkerProject_Packages_DirectMl_Runtime_For_OptIn_Gpu_Labeling()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -525,8 +525,9 @@ public sealed class AppPlatformDeploymentTests
         var projectXml = File.ReadAllText(projectPath);
 
         Assert.Contains("org.k2fsa.sherpa.onnx", projectXml, StringComparison.Ordinal);
-        Assert.DoesNotContain("Microsoft.ML.OnnxRuntime.DirectML", projectXml, StringComparison.Ordinal);
-        Assert.DoesNotContain("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
+        Assert.Contains("DirectML.dll", projectXml, StringComparison.Ordinal);
+        Assert.Contains("CopyToPublishDirectory", projectXml, StringComparison.Ordinal);
     }
 
     [Fact]

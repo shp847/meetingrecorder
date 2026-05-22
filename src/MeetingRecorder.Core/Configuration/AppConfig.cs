@@ -132,9 +132,7 @@ public static class MeetingSummaryDefaults
 
     public const string ModelProxyModel = "gpt-5.4-mini";
 
-    public const string ModelProxyBackend = "codex";
-
-    public const string ModelProxyCodexModel = "gpt-5.4-mini";
+    public const string ModelProxyLocalApiKey = "sk-modelproxy";
 
     public const string OpenAiModel = "gpt-5-mini";
 
@@ -267,10 +265,6 @@ public sealed record AppConfig
     public string SummaryModelProxyBaseUrl { get; init; } = MeetingSummaryDefaults.ModelProxyBaseUrl;
 
     public string SummaryModelProxyModel { get; init; } = MeetingSummaryDefaults.ModelProxyModel;
-
-    public string SummaryModelProxyBackend { get; init; } = MeetingSummaryDefaults.ModelProxyBackend;
-
-    public string SummaryModelProxyCodexModel { get; init; } = MeetingSummaryDefaults.ModelProxyCodexModel;
 
     public string SummaryOpenAiModel { get; init; } = MeetingSummaryDefaults.OpenAiModel;
 

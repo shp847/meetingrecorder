@@ -26,13 +26,10 @@ internal sealed record ConfigEditorSnapshot(
     MeetingSummaryProviderPreference SummaryProviderPreference,
     string SummaryModelProxyBaseUrl,
     string SummaryModelProxyModel,
-    string SummaryModelProxyBackend,
-    string SummaryModelProxyCodexModel,
     string SummaryOpenAiModel,
     string SummaryRequestTimeoutSecondsText,
     string SummaryTranscriptChunkTokenTargetText,
     string SummaryTranscriptChunkOverlapTokensText,
-    bool HasPendingSummaryModelProxySecret,
     bool HasPendingSummaryOpenAiSecret);
 
 internal sealed record SpeakerLabelDraft(string OriginalLabel, string EditedLabel);
@@ -199,7 +196,6 @@ internal enum MeetingDetailSummaryStatus
 internal sealed record SummaryProviderConfigurationState(
     bool IsEnabled,
     MeetingSummaryProviderPreference Preference,
-    bool HasModelProxyKey,
     bool HasOpenAiKey);
 
 internal sealed record MeetingDetailSummaryState(
@@ -1482,7 +1478,6 @@ internal static class MainWindowInteractionLogic
                 summaryProviderConfiguration ?? new SummaryProviderConfigurationState(
                     false,
                     MeetingSummaryProviderPreference.LocalThenOpenAi,
-                    false,
                     false),
                 isGeneratingSummary,
                 culture,
@@ -1591,9 +1586,9 @@ internal static class MainWindowInteractionLogic
     {
         return providerConfiguration.Preference switch
         {
-            MeetingSummaryProviderPreference.LocalOnly => providerConfiguration.HasModelProxyKey,
+            MeetingSummaryProviderPreference.LocalOnly => true,
             MeetingSummaryProviderPreference.OpenAiOnly => providerConfiguration.HasOpenAiKey,
-            _ => providerConfiguration.HasModelProxyKey || providerConfiguration.HasOpenAiKey,
+            _ => true,
         };
     }
 
@@ -2141,13 +2136,10 @@ internal static class MainWindowInteractionLogic
             currentConfig.SummaryProviderPreference != editor.SummaryProviderPreference ||
             !string.Equals(NormalizeSummaryBaseUrl(currentConfig.SummaryModelProxyBaseUrl), NormalizeSummaryBaseUrl(editor.SummaryModelProxyBaseUrl), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.SummaryModelProxyModel, NormalizeText(editor.SummaryModelProxyModel), StringComparison.Ordinal) ||
-            !string.Equals(currentConfig.SummaryModelProxyBackend, NormalizeText(editor.SummaryModelProxyBackend), StringComparison.Ordinal) ||
-            !string.Equals(currentConfig.SummaryModelProxyCodexModel, NormalizeText(editor.SummaryModelProxyCodexModel), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryOpenAiModel, NormalizeText(editor.SummaryOpenAiModel), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryRequestTimeoutSecondsText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkTokenTargetText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkOverlapTokensText), StringComparison.Ordinal) ||
-            editor.HasPendingSummaryModelProxySecret ||
             editor.HasPendingSummaryOpenAiSecret;
     }
 

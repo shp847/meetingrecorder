@@ -44,23 +44,17 @@ public sealed record SummaryChatProviderOptions(
     SummaryChatProviderKind ProviderKind,
     string ProviderName,
     string BaseUrl,
-    string ApiKey,
-    string? ModelProxyBackend,
-    string? ModelProxyCodexModel)
+    string ApiKey)
 {
     public static SummaryChatProviderOptions ForModelProxy(
-        string apiKey,
-        string baseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl,
-        string backend = MeetingSummaryDefaults.ModelProxyBackend,
-        string codexModel = MeetingSummaryDefaults.ModelProxyCodexModel)
+        string apiKey = MeetingSummaryDefaults.ModelProxyLocalApiKey,
+        string baseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl)
     {
         return new SummaryChatProviderOptions(
             SummaryChatProviderKind.ModelProxy,
             "ModelProxy",
             baseUrl,
-            apiKey,
-            backend,
-            codexModel);
+            apiKey);
     }
 
     public static SummaryChatProviderOptions ForOpenAi(
@@ -71,9 +65,7 @@ public sealed record SummaryChatProviderOptions(
             SummaryChatProviderKind.OpenAi,
             "OpenAI",
             baseUrl,
-            apiKey,
-            null,
-            null);
+            apiKey);
     }
 }
 
@@ -278,16 +270,6 @@ public sealed class SummaryChatClient : ISummaryChatClient
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerOptions.ApiKey.Trim());
         if (providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy)
         {
-            if (!string.IsNullOrWhiteSpace(providerOptions.ModelProxyBackend))
-            {
-                httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", providerOptions.ModelProxyBackend.Trim());
-            }
-
-            if (!string.IsNullOrWhiteSpace(providerOptions.ModelProxyCodexModel))
-            {
-                httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Codex-Model", providerOptions.ModelProxyCodexModel.Trim());
-            }
-
             httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search", "false");
         }
 
@@ -476,21 +458,12 @@ public sealed class SummaryProviderValidationService
 
     public Task<SummaryProviderValidationResult> ValidateModelProxyAsync(
         AppConfig config,
-        string? apiKey,
+        string? apiKey = null,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return Task.FromResult(SummaryProviderValidationResult.NotConfigured(
-                SummaryChatProviderKind.ModelProxy,
-                "ModelProxy key is not saved."));
-        }
-
         var providerOptions = SummaryChatProviderOptions.ForModelProxy(
-            apiKey,
-            config.SummaryModelProxyBaseUrl,
-            config.SummaryModelProxyBackend,
-            config.SummaryModelProxyCodexModel);
+            string.IsNullOrWhiteSpace(apiKey) ? MeetingSummaryDefaults.ModelProxyLocalApiKey : apiKey,
+            config.SummaryModelProxyBaseUrl);
         var request = BuildSyntheticRequest(config.SummaryModelProxyModel, config.SummaryRequestTimeoutSeconds);
         return ValidateAsync(providerOptions, request, cancellationToken);
     }
@@ -601,9 +574,7 @@ public sealed class ModelProxyClient
             _options.Timeout);
         var providerOptions = SummaryChatProviderOptions.ForModelProxy(
             _options.ApiKey,
-            _options.BaseUrl,
-            _options.Backend,
-            _options.CodexModel);
+            _options.BaseUrl);
 
         var response = await _chatClient.CompleteAsync(providerOptions, request, cancellationToken);
         return new ModelProxyCompletionResult(response.Content);
@@ -614,13 +585,9 @@ public sealed record ModelProxyOptions
 {
     public string BaseUrl { get; init; } = MeetingSummaryDefaults.ModelProxyBaseUrl;
 
-    public string ApiKey { get; init; } = "sk-modelproxy-meeting-recorder";
+    public string ApiKey { get; init; } = MeetingSummaryDefaults.ModelProxyLocalApiKey;
 
     public string Model { get; init; } = MeetingSummaryDefaults.ModelProxyModel;
-
-    public string Backend { get; init; } = MeetingSummaryDefaults.ModelProxyBackend;
-
-    public string CodexModel { get; init; } = MeetingSummaryDefaults.ModelProxyCodexModel;
 
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(MeetingSummaryDefaults.RequestTimeoutSeconds);
 }

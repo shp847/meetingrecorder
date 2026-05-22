@@ -120,7 +120,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - When a live loopback or microphone capture client dies unexpectedly, the recorder now closes the orphaned segment at the actual stop time, reopens capture in place on the best available endpoint, and avoids running the old and new Windows audio clients at the same time during a swap
 - Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata, and uses that source as a strong tie-breaker instead of a single shared audio bonus
 - Google Meet auto-start now prefers Meet-specific browser-audio attribution when browser render-session metadata is available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
-- Google Meet auto-start can now also begin from a high-confidence explicit Meet window even before render audio becomes active, including `Meet - ...` browser surfaces and `meet.google.com is sharing ...` share surfaces; generic browser windows or tab-only Meet hints still wait for stronger evidence
+- Google Meet auto-start still begins immediately when active browser-family audio is present, but a silent explicit `Meet - ...` browser window now waits for sustained specific Meet-code evidence before starting so momentary browser-title flashes do not create tiny fragments; generic browser windows or tab-only Meet hints still wait for stronger evidence
 - Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session, including a quiet matched Teams session that is still present at `peak=0.000`; a stale remembered Teams window title on its own is no longer enough to start a recording
 - Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can still qualify for sustained quiet-meeting auto-start when Teams render-session evidence is present
 - Teams auto-detection now ignores unrelated browser pages that merely mention Microsoft Teams in the title, prefers a specific live call title over the generic `Sharing control bar` continuation shell, and no longer lets generic/search/sharing-control-bar live surfaces borrow a nearby Outlook calendar title during detection
@@ -129,7 +129,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - When a validated official Teams path is enabled, stale same-title Teams shells also stop refreshing continuity once the official lookup reports that no current meeting is active, but a current official match can still preserve the bounded quiet grace period during real low-audio patches
 - Google Meet continuity now normalizes title variants that share the same Meet code, so browser captions like `...and 1 more page`, `...Work - Microsoft Edge`, and `...Camera and microphone recording...` stay attached to one live call instead of being treated as separate meetings
 - Google Meet continuity now also treats browser share-surface titles such as `meet.google.com is sharing a window.` as part of the active call when the session is already pinned to a specific Meet meeting, which prevents screen sharing from prematurely aging an auto-started recording into auto-stop
-- Active Google Meet recordings now get a bounded auto-stop grace period when the Meet window is temporarily obscured and detection only sees a weak Teams chat or navigation surface while captured system audio is still active
+- Active Google Meet recordings tied to a specific Meet code now get a bounded auto-stop grace period when the Meet window is temporarily obscured and detection only sees a weak Teams chat or navigation surface, including up to three minutes when the current audio probe is silent, without resetting the positive-signal clock forever
 - When microphone capture is enabled, the publish pipeline now reduces low-level mic bleed, short-lag correlated speaker bleed, and longer `80-400 ms` speaker pickup that shows up as delayed room echo when the mic can hear meeting audio from speakers
 - When microphone capture is enabled, the app can now also hot-swap to a better default Windows microphone device during a live recording, preserving earlier mic chunks in the same session instead of requiring a manual stop/start restart after a headset or dock microphone change
 - If an auto-started recording is first classified from stale Google Meet browser evidence and a stronger Teams in-call window appears afterward, the app now reclassifies that live session in place instead of stopping and starting a second recording
@@ -313,9 +313,9 @@ The Meetings tab also exposes a separate manual `Delete Permanently` action from
 - A valid local Whisper model is required for transcript generation
 - Diarization is optional and remains best-effort
 - Speaker diarization now runs inside the local worker through `sherpa-onnx` using an optional diarization model bundle
-- Speaker diarization automatically estimates anonymous speakers from voice embeddings. It starts with the default clustering threshold and, when that pass collapses voices into fewer than two supported speakers, retries stricter thresholds before assigning transcript segments by time overlap.
+- Speaker diarization automatically estimates anonymous speakers from voice embeddings. It starts with the default clustering threshold, retries lower thresholds when voices collapse below two supported speakers, retries higher thresholds when clustering over-segments above the supported automatic range, and skips bad labels instead of publishing unusable speaker catalogs.
 - Optional local voice-profile memory can learn names from user-confirmed speaker-label corrections, store embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles`, auto-apply high-confidence future matches, and show lower-confidence suggestions without exporting voice-profile embeddings in transcript JSON.
-- GPU acceleration for diarization is disabled in managed builds; existing `Auto` configs are normalized to CPU-only and the worker no longer packages the DirectML ONNX Runtime that can trigger endpoint-protection process-memory prompts
+- GPU acceleration for speaker labeling is available as an explicit DirectML opt-in. New installs stay CPU-only by default, legacy `Auto` configs are migrated to CPU once, and later user-saved `Auto` choices try DirectML first with automatic CPU fallback.
 - The shipped model catalog now defines two curated profiles for each capability: `Standard` and `Higher Accuracy`
 - If the packaged `model-catalog.json` file is missing at runtime, curated Setup falls back to the built-in default catalog so `Use Standard` and `Use Higher Accuracy` still work
 - `Standard` transcription (`ggml-base.en-q8_0.bin`) and `Standard` speaker labeling (`meeting-recorder-diarization-bundle-standard-win-x64.zip`) are bundled into the main app payload for offline-first installs
@@ -339,7 +339,7 @@ The app exposes settings in the header-level `Settings` surface for:
 - output locations
 - work folder
 - curated transcription and speaker-labeling profile selection
-- diarization CPU-only acceleration policy
+- diarization DirectML opt-in with CPU fallback
 - microphone capture
 - launch on login
 - auto-detection behavior
@@ -380,7 +380,7 @@ The default provider path is local-first:
 
 Meeting Recorder includes an opt-in ModelProxy validation path. It is deliberately separate from recording and publishing: validation must use synthetic prompts and must not send meeting audio, transcript text, attendee lists, or client metadata.
 
-The validation client lives in `MeetingRecorder.Core` and posts a synthetic text-only Chat Completions request to `http://127.0.0.1:8645/v1/chat/completions` with the local key ID configured in ModelProxy as `meeting-recorder`.
+The validation client lives in `MeetingRecorder.Core` and posts a synthetic text-only Chat Completions request to `http://127.0.0.1:8645/v1/chat/completions` using ModelProxy's local authentication default.
 
 Run the live smoke only after ModelProxy is already running:
 
@@ -390,15 +390,13 @@ Run the live smoke only after ModelProxy is already running:
 
 Defaults:
 
-- local API key: `sk-modelproxy-meeting-recorder`
+- ModelProxy auth default: `sk-modelproxy`
 - caller model: `gpt-5.4-mini`
-- backend override: `X-ModelProxy-Backend: codex`
-- Codex model override: `X-ModelProxy-Codex-Model: gpt-5.4-mini`
 - summary requests must also send `X-ModelProxy-Web-Search: false`
 
-Use `MODELPROXY_MEETING_RECORDER_API_KEY` to override the local key for your machine. The script prints only the synthetic response string and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
+Use `MODELPROXY_MEETING_RECORDER_API_KEY` only if your local ModelProxy operator config uses a non-default local key. The script prints only the synthetic response string and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
 
-Settings includes summary provider configuration, DPAPI-protected local key storage under the app data root, and synthetic validation that asks providers to return `summary-provider-ok` without sending transcript, attendee, client, or meeting content. Automatic summary generation runs in the processing worker, and the meeting detail window can generate or retry summaries from existing transcript JSON artifacts. Credential clearing remains in Settings.
+Settings includes summary provider configuration, DPAPI-protected OpenAI key storage under the app data root, and synthetic validation that asks providers to return `summary-provider-ok` without sending transcript, attendee, client, or meeting content. Automatic summary generation runs in the processing worker, and the meeting detail window can generate or retry summaries from existing transcript JSON artifacts. Credential clearing remains in Settings for hosted OpenAI.
 
 ## Designed for Practical Windows Use
 

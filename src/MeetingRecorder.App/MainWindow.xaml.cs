@@ -130,6 +130,7 @@ public partial class MainWindow : Window
     private bool _isUpdatingRushProcessing;
     private bool _isRushingBacklog;
     private bool _isSavingConfig;
+    private bool _isTestingDiarizationGpuAcceleration;
     private bool _isRunningTeamsIntegrationProbe;
     private bool _isValidatingModelProxySummaryProvider;
     private bool _isValidatingOpenAiSummaryProvider;
@@ -172,6 +173,8 @@ public partial class MainWindow : Window
     private string? _splitMeetingSuggestionStem;
     private string? _quietTeamsAutoStartFingerprint;
     private DateTimeOffset? _quietTeamsAutoStartFirstObservedUtc;
+    private string? _quietGoogleMeetAutoStartFingerprint;
+    private DateTimeOffset? _quietGoogleMeetAutoStartFirstObservedUtc;
     private string? _lastTeamsProbeBaselineSummary;
     private string? _pendingMeetingsRefreshSelectedStem;
     private AppUpdateCheckResult? _lastUpdateCheckResult;
@@ -1454,6 +1457,7 @@ public partial class MainWindow : Window
                 decision is not null)
             {
                 var shouldAutoStartQuietTeamsMeeting = ShouldAutoStartQuietTeamsMeeting(decision, nowUtc);
+                var shouldAutoStartQuietGoogleMeet = ShouldAutoStartQuietGoogleMeet(decision, nowUtc);
                 var shouldRecoverFromRecentAutoStop = _autoRecordingContinuityPolicy.ShouldRecoverFromRecentAutoStop(
                     decision,
                     _recentAutoStopContext,
@@ -1468,7 +1472,7 @@ public partial class MainWindow : Window
 
                 var shouldSuppressManualRestart = manualStopSuppressionDisposition == ManualStopSuppressionDisposition.SuppressAutoStart;
                 if (!shouldSuppressManualRestart &&
-                    (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldRecoverFromRecentAutoStop))
+                    (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))
                 {
                     ClearAutoStopVisualState();
                     await _recordingCoordinator.StartAsync(
@@ -1488,12 +1492,15 @@ public partial class MainWindow : Window
                             ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
                             : shouldAutoStartQuietTeamsMeeting
                                 ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
-                            : $"Auto-started recording for '{decision.SessionTitle}'.");
+                                : shouldAutoStartQuietGoogleMeet
+                                    ? $"Auto-started recording for quiet Google Meet '{decision.SessionTitle}' after sustained Meet detection."
+                                    : $"Auto-started recording for '{decision.SessionTitle}'.");
                 }
             }
             else
             {
                 ResetQuietTeamsAutoStartCandidate();
+                ResetQuietGoogleMeetAutoStartCandidate();
             }
 
             var activeSession = _recordingCoordinator.ActiveSession;
@@ -1684,6 +1691,54 @@ public partial class MainWindow : Window
     {
         _quietTeamsAutoStartFingerprint = null;
         _quietTeamsAutoStartFirstObservedUtc = null;
+    }
+
+    private bool ShouldAutoStartQuietGoogleMeet(DetectionDecision? decision, DateTimeOffset nowUtc)
+    {
+        if (decision is null ||
+            !_autoRecordingContinuityPolicy.IsQuietSpecificGoogleMeetCandidate(decision))
+        {
+            ResetQuietGoogleMeetAutoStartCandidate();
+            return false;
+        }
+
+        var quietCandidate = decision;
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(quietCandidate.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            ResetQuietGoogleMeetAutoStartCandidate();
+            return false;
+        }
+
+        var fingerprint = $"{quietCandidate.Platform}|{normalizedTitle}";
+        if (!string.Equals(_quietGoogleMeetAutoStartFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _quietGoogleMeetAutoStartFingerprint = fingerprint;
+            _quietGoogleMeetAutoStartFirstObservedUtc = nowUtc;
+        }
+
+        if (!_quietGoogleMeetAutoStartFirstObservedUtc.HasValue)
+        {
+            _quietGoogleMeetAutoStartFirstObservedUtc = nowUtc;
+            return false;
+        }
+
+        if (!_autoRecordingContinuityPolicy.ShouldAutoStartQuietSpecificGoogleMeet(
+                quietCandidate,
+                _quietGoogleMeetAutoStartFirstObservedUtc.Value,
+                nowUtc))
+        {
+            return false;
+        }
+
+        ResetQuietGoogleMeetAutoStartCandidate();
+        return true;
+    }
+
+    private void ResetQuietGoogleMeetAutoStartCandidate()
+    {
+        _quietGoogleMeetAutoStartFingerprint = null;
+        _quietGoogleMeetAutoStartFirstObservedUtc = null;
     }
 
     private async Task<bool> TryRollOverManagedSessionAsync(
@@ -3039,7 +3094,9 @@ public partial class MainWindow : Window
                 TranscriptionModelProfilePreference = currentConfig.TranscriptionModelProfilePreference,
                 DiarizationAssetPath = currentConfig.DiarizationAssetPath,
                 SpeakerLabelingModelProfilePreference = currentConfig.SpeakerLabelingModelProfilePreference,
-                DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
+                DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true
+                    ? InferenceAccelerationPreference.Auto
+                    : InferenceAccelerationPreference.CpuOnly,
                 DiarizationAccelerationSecurityPromptMigrationApplied = true,
                 MicCaptureEnabled = ConfigMicCaptureCheckBox.IsChecked == true,
                 LaunchOnLoginEnabled = ConfigLaunchOnLoginCheckBox.IsChecked == true,
@@ -3070,8 +3127,6 @@ public partial class MainWindow : Window
                     : currentConfig.SummaryProviderPreference,
                 SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
                 SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
-                SummaryModelProxyBackend = ConfigSummaryModelProxyBackendTextBox.Text.Trim(),
-                SummaryModelProxyCodexModel = ConfigSummaryModelProxyCodexModelTextBox.Text.Trim(),
                 SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
                 SummaryRequestTimeoutSeconds = summaryRequestTimeoutSeconds,
                 SummaryTranscriptChunkTokenTarget = summaryTranscriptChunkTarget,
@@ -5002,12 +5057,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var hasModelProxyKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.ModelProxy, cancellationToken);
             var hasOpenAiKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.OpenAi, cancellationToken);
             return new SummaryProviderConfigurationState(
                 _liveConfig.Current.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled,
                 _liveConfig.Current.SummaryProviderPreference,
-                hasModelProxyKey,
                 hasOpenAiKey);
         }
         catch
@@ -5015,7 +5068,6 @@ public partial class MainWindow : Window
             return new SummaryProviderConfigurationState(
                 _liveConfig.Current.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled,
                 _liveConfig.Current.SummaryProviderPreference,
-                HasModelProxyKey: false,
                 HasOpenAiKey: false);
         }
     }
@@ -5950,7 +6002,7 @@ public partial class MainWindow : Window
         ConfigModelStorageSummaryTextBlock.Text = config.ModelCacheDir;
         ConfigTranscriptionStorageTextBlock.Text = config.TranscriptionModelPath;
         ConfigSpeakerLabelingStorageTextBlock.Text = config.DiarizationAssetPath;
-        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
+        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
         ConfigMeetingStopTimeoutTextBox.Text = config.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigMicCaptureCheckBox.IsChecked = config.MicCaptureEnabled;
@@ -5967,8 +6019,6 @@ public partial class MainWindow : Window
         ConfigSummaryProviderPreferenceComboBox.SelectedValue = config.SummaryProviderPreference;
         ConfigSummaryModelProxyBaseUrlTextBox.Text = config.SummaryModelProxyBaseUrl;
         ConfigSummaryModelProxyModelTextBox.Text = config.SummaryModelProxyModel;
-        ConfigSummaryModelProxyBackendTextBox.Text = config.SummaryModelProxyBackend;
-        ConfigSummaryModelProxyCodexModelTextBox.Text = config.SummaryModelProxyCodexModel;
         ConfigSummaryOpenAiModelTextBox.Text = config.SummaryOpenAiModel;
         ConfigSummaryRequestTimeoutTextBox.Text = config.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigSummaryTranscriptChunkTargetTextBox.Text = config.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture);
@@ -6033,8 +6083,6 @@ public partial class MainWindow : Window
                      ConfigUpdateFeedUrlTextBox,
                      ConfigSummaryModelProxyBaseUrlTextBox,
                      ConfigSummaryModelProxyModelTextBox,
-                     ConfigSummaryModelProxyBackendTextBox,
-                     ConfigSummaryModelProxyCodexModelTextBox,
                      ConfigSummaryOpenAiModelTextBox,
                      ConfigSummaryRequestTimeoutTextBox,
                      ConfigSummaryTranscriptChunkTargetTextBox,
@@ -6095,7 +6143,18 @@ public partial class MainWindow : Window
             _isSavingConfig ? "Saving..." : "Save Changes",
             !_isSavingConfig && hasPendingChanges);
         UpdateTeamsIntegrationProbeActionState();
+        UpdateDiarizationGpuTestActionState();
         UpdateSummaryProviderValidationActionState();
+    }
+
+    private void UpdateDiarizationGpuTestActionState()
+    {
+        var isReady = _currentDiarizationAssetStatus?.IsReady ??
+            _diarizationAssetCatalogService.InspectInstalledAssets(_liveConfig.Current.DiarizationAssetPath).IsReady;
+        TestDiarizationGpuAccelerationButton.Content = _isTestingDiarizationGpuAcceleration
+            ? "Testing GPU..."
+            : "Test GPU";
+        TestDiarizationGpuAccelerationButton.IsEnabled = !_isTestingDiarizationGpuAcceleration && isReady;
     }
 
     private void SetConfigSaveStatus(string statusText)
@@ -6106,13 +6165,6 @@ public partial class MainWindow : Window
 
     private async Task SavePendingSummaryProviderSecretsAsync(CancellationToken cancellationToken)
     {
-        var modelProxySecret = ConfigSummaryModelProxyKeyPasswordBox.Password;
-        if (!string.IsNullOrWhiteSpace(modelProxySecret))
-        {
-            await _summarySecretStore.SaveAsync(SummarySecretKind.ModelProxy, modelProxySecret, cancellationToken);
-            ConfigSummaryModelProxyKeyPasswordBox.Clear();
-        }
-
         var openAiSecret = ConfigSummaryOpenAiKeyPasswordBox.Password;
         if (!string.IsNullOrWhiteSpace(openAiSecret))
         {
@@ -6127,11 +6179,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var hasModelProxyKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.ModelProxy, _lifetimeCts.Token);
             var hasOpenAiKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.OpenAi, _lifetimeCts.Token);
-            ConfigSummaryModelProxyKeyStatusTextBlock.Text = hasModelProxyKey
-                ? "ModelProxy key: saved."
-                : "ModelProxy key: not saved.";
             ConfigSummaryOpenAiKeyStatusTextBlock.Text = hasOpenAiKey
                 ? "OpenAI key: saved."
                 : "OpenAI key: not saved.";
@@ -6148,14 +6196,7 @@ public partial class MainWindow : Window
 
     private void ConfigSummaryProviderPasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
     {
-        if (ReferenceEquals(sender, ConfigSummaryModelProxyKeyPasswordBox))
-        {
-            ConfigSummaryModelProxyKeyStatusTextBlock.Text =
-                string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password)
-                    ? ConfigSummaryModelProxyKeyStatusTextBlock.Text
-                    : "ModelProxy key: new key pending save.";
-        }
-        else if (ReferenceEquals(sender, ConfigSummaryOpenAiKeyPasswordBox))
+        if (ReferenceEquals(sender, ConfigSummaryOpenAiKeyPasswordBox))
         {
             ConfigSummaryOpenAiKeyStatusTextBlock.Text =
                 string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password)
@@ -6164,6 +6205,83 @@ public partial class MainWindow : Window
         }
 
         UpdateConfigActionState();
+    }
+
+    private async void TestDiarizationGpuAccelerationButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isTestingDiarizationGpuAcceleration)
+        {
+            return;
+        }
+
+        _isTestingDiarizationGpuAcceleration = true;
+        UpdateConfigActionState();
+        ConfigDiarizationAccelerationStatusTextBlock.Text = "Testing DirectML GPU initialization with speaker-labeling assets. No transcript or meeting content is sent.";
+        SetConfigSaveStatus("Testing speaker-labeling GPU acceleration...");
+
+        try
+        {
+            var probeMessage = await RunDiarizationDirectMlProbeAsync(_lifetimeCts.Token);
+            ConfigDiarizationAccelerationStatusTextBlock.Text = probeMessage;
+            SetConfigSaveStatus("Speaker-labeling GPU test finished.");
+            var status = _diarizationAssetCatalogService.InspectInstalledAssets(_liveConfig.Current.DiarizationAssetPath);
+            ApplyDiarizationAssetStatus(status);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Ignore shutdown.
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"DirectML speaker-labeling probe failed safely: {exception.GetType().Name}");
+            ConfigDiarizationAccelerationStatusTextBlock.Text =
+                "DirectML GPU test failed safely. Speaker labeling will continue to use CPU fallback unless a later test succeeds.";
+            SetConfigSaveStatus("Speaker-labeling GPU test failed safely.");
+        }
+        finally
+        {
+            _isTestingDiarizationGpuAcceleration = false;
+            UpdateConfigActionState();
+        }
+    }
+
+    private async Task<string> RunDiarizationDirectMlProbeAsync(CancellationToken cancellationToken)
+    {
+        var status = _diarizationAssetCatalogService.InspectInstalledAssets(_liveConfig.Current.DiarizationAssetPath);
+        if (!status.IsReady)
+        {
+            throw new InvalidOperationException("Install speaker-labeling assets before testing GPU acceleration.");
+        }
+
+        var launch = WorkerLocator.Resolve();
+        var arguments = $"{launch.ArgumentPrefix} --probe-directml --config \"{_liveConfig.ConfigPath}\"".Trim();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = launch.FileName,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Unable to start the processing worker for the GPU test.");
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var standardOutput = await standardOutputTask;
+        _ = await standardErrorTask;
+
+        if (process.ExitCode == 0)
+        {
+            var workerMessage = string.IsNullOrWhiteSpace(standardOutput)
+                ? "DirectML probe succeeded."
+                : standardOutput.Trim();
+            return $"{workerMessage} Speaker labeling will try GPU first when the setting is enabled and will fall back to CPU if a run fails.";
+        }
+
+        throw new InvalidOperationException("DirectML probe failed.");
     }
 
     private async void ValidateModelProxySummaryProviderButton_OnClick(object sender, RoutedEventArgs e)
@@ -6180,12 +6298,10 @@ public partial class MainWindow : Window
         try
         {
             var config = BuildSummaryValidationConfigFromEditor(_liveConfig.Current);
-            var apiKey = !string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password)
-                ? ConfigSummaryModelProxyKeyPasswordBox.Password
-                : await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, _lifetimeCts.Token);
+            var legacyApiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, _lifetimeCts.Token);
             var result = await _summaryProviderValidationService.ValidateModelProxyAsync(
                 config,
-                apiKey,
+                legacyApiKey,
                 _lifetimeCts.Token);
             ConfigSummaryProviderStatusTextBlock.Text = result.StatusText;
             AppendActivity($"ModelProxy summary provider validation: {result.StatusText}");
@@ -6246,14 +6362,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void ClearModelProxySummaryKeyButton_OnClick(object sender, RoutedEventArgs e)
-    {
-        await ClearSummaryProviderSecretAsync(
-            SummarySecretKind.ModelProxy,
-            ConfigSummaryModelProxyKeyPasswordBox,
-            "ModelProxy key cleared.");
-    }
-
     private async void ClearOpenAiSummaryKeyButton_OnClick(object sender, RoutedEventArgs e)
     {
         await ClearSummaryProviderSecretAsync(
@@ -6297,7 +6405,6 @@ public partial class MainWindow : Window
             : "Validate OpenAI";
         ValidateModelProxySummaryProviderButton.IsEnabled = !_isValidatingModelProxySummaryProvider;
         ValidateOpenAiSummaryProviderButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
-        ClearModelProxySummaryKeyButton.IsEnabled = !_isValidatingModelProxySummaryProvider;
         ClearOpenAiSummaryKeyButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
     }
 
@@ -6315,8 +6422,6 @@ public partial class MainWindow : Window
         {
             SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
             SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
-            SummaryModelProxyBackend = ConfigSummaryModelProxyBackendTextBox.Text.Trim(),
-            SummaryModelProxyCodexModel = ConfigSummaryModelProxyCodexModelTextBox.Text.Trim(),
             SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
             SummaryRequestTimeoutSeconds = timeoutSeconds,
         };
@@ -6328,7 +6433,7 @@ public partial class MainWindow : Window
             ConfigAudioOutputDirTextBox.Text,
             ConfigTranscriptOutputDirTextBox.Text,
             ConfigWorkDirTextBox.Text,
-            false,
+            ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true,
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
             ConfigMicCaptureCheckBox.IsChecked == true,
@@ -6356,13 +6461,10 @@ public partial class MainWindow : Window
                 : _liveConfig.Current.SummaryProviderPreference,
             ConfigSummaryModelProxyBaseUrlTextBox.Text,
             ConfigSummaryModelProxyModelTextBox.Text,
-            ConfigSummaryModelProxyBackendTextBox.Text,
-            ConfigSummaryModelProxyCodexModelTextBox.Text,
             ConfigSummaryOpenAiModelTextBox.Text,
             ConfigSummaryRequestTimeoutTextBox.Text,
             ConfigSummaryTranscriptChunkTargetTextBox.Text,
             ConfigSummaryTranscriptChunkOverlapTextBox.Text,
-            !string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password),
             !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password));
     }
 
@@ -6371,7 +6473,7 @@ public partial class MainWindow : Window
         ConfigAudioOutputDirTextBox.Text = snapshot.AudioOutputDir;
         ConfigTranscriptOutputDirTextBox.Text = snapshot.TranscriptOutputDir;
         ConfigWorkDirTextBox.Text = snapshot.WorkDir;
-        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = false;
+        ConfigDiarizationGpuAccelerationCheckBox.IsChecked = snapshot.UseGpuAcceleration;
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
         ConfigMicCaptureCheckBox.IsChecked = snapshot.MicCaptureEnabled;
@@ -6389,8 +6491,6 @@ public partial class MainWindow : Window
         ConfigSummaryProviderPreferenceComboBox.SelectedValue = snapshot.SummaryProviderPreference;
         ConfigSummaryModelProxyBaseUrlTextBox.Text = snapshot.SummaryModelProxyBaseUrl;
         ConfigSummaryModelProxyModelTextBox.Text = snapshot.SummaryModelProxyModel;
-        ConfigSummaryModelProxyBackendTextBox.Text = snapshot.SummaryModelProxyBackend;
-        ConfigSummaryModelProxyCodexModelTextBox.Text = snapshot.SummaryModelProxyCodexModel;
         ConfigSummaryOpenAiModelTextBox.Text = snapshot.SummaryOpenAiModel;
         ConfigSummaryRequestTimeoutTextBox.Text = snapshot.SummaryRequestTimeoutSecondsText;
         ConfigSummaryTranscriptChunkTargetTextBox.Text = snapshot.SummaryTranscriptChunkTokenTargetText;
@@ -9035,15 +9135,20 @@ public partial class MainWindow : Window
 
     private void UpdateDiarizationAccelerationStatusText(AppConfig config, DiarizationAssetInstallStatus? status)
     {
-        var preferenceText = "GPU acceleration is unavailable in this managed build to avoid managed endpoint protection prompts. Speaker labeling stays on CPU.";
+        var preferenceText = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
+            ? "GPU acceleration is enabled. Speaker labeling tries DirectML first and falls back to CPU if GPU initialization fails."
+            : "GPU acceleration is off. Speaker labeling uses CPU unless you opt into DirectML.";
 
-        var availabilityText = status?.GpuAccelerationAvailable switch
+        var availabilityText = status?.EffectiveExecutionProvider switch
         {
-            true => "A previous build detected a DirectML-compatible GPU path; this build still keeps speaker labeling on CPU.",
-            false when !string.IsNullOrWhiteSpace(status?.DiagnosticMessage)
-                => $"The last GPU probe fell back to CPU: {status.DiagnosticMessage}",
-            false => "The last speaker-labeling run used CPU because no compatible GPU path was detected.",
-            _ => "GPU capability is not probed while CPU-only speaker labeling is selected.",
+            DiarizationExecutionProvider.Directml => "The last speaker-labeling run used DirectML.",
+            DiarizationExecutionProvider.Cpu when status.GpuAccelerationAvailable == false &&
+                !string.IsNullOrWhiteSpace(status.DiagnosticMessage)
+                    => $"DirectML was unavailable during the last GPU attempt; CPU fallback was used. {status.DiagnosticMessage}",
+            DiarizationExecutionProvider.Cpu => "The last speaker-labeling run used CPU.",
+            _ => config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto
+                ? "Use Test GPU to check DirectML before the next speaker-labeling run."
+                : "DirectML is not tested while GPU acceleration is off.",
         };
 
         ConfigDiarizationAccelerationStatusTextBlock.Text = $"{preferenceText} {availabilityText}";
@@ -9053,16 +9158,16 @@ public partial class MainWindow : Window
     {
         var providerText = status.EffectiveExecutionProvider switch
         {
-            DiarizationExecutionProvider.Directml => "Last effective diarization provider: DirectML in a previous build.",
+            DiarizationExecutionProvider.Directml => "Last effective diarization provider: DirectML.",
             DiarizationExecutionProvider.Cpu => "Last effective diarization provider: CPU.",
             _ => "No diarization run has reported an effective provider yet.",
         };
 
         var availabilityText = status.GpuAccelerationAvailable switch
         {
-            true => "Historical DirectML probe: available.",
-            false => "Historical DirectML probe: unavailable, so CPU fallback was expected.",
-            _ => "DirectML probe: not packaged in this managed build.",
+            true => "DirectML probe: available.",
+            false => "DirectML probe: unavailable or not requested; CPU fallback is available.",
+            _ => "DirectML probe: not run yet.",
         };
 
         if (string.IsNullOrWhiteSpace(status.DiagnosticMessage))

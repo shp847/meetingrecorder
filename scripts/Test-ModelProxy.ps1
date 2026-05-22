@@ -1,22 +1,18 @@
 param(
     [string]$BaseUrl = "http://127.0.0.1:8645/v1",
     [string]$ApiKey = $env:MODELPROXY_MEETING_RECORDER_API_KEY,
-    [string]$Model = "gpt-5.4-mini",
-    [string]$Backend = "codex",
-    [string]$CodexModel = "gpt-5.4-mini"
+    [string]$Model = "gpt-5.4-mini"
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not $ApiKey) {
-    $ApiKey = "sk-modelproxy-meeting-recorder"
+    $ApiKey = "sk-modelproxy"
 }
 
 $headers = @{
     Authorization = "Bearer $ApiKey"
     "Content-Type" = "application/json"
-    "X-ModelProxy-Backend" = $Backend
-    "X-ModelProxy-Codex-Model" = $CodexModel
     "X-ModelProxy-Web-Search" = "false"
 }
 $body = @{

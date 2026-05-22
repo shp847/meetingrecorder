@@ -1355,13 +1355,10 @@ public sealed class MainWindowInteractionLogicTests
             MeetingSummaryProviderPreference.LocalThenOpenAi,
             " http://127.0.0.1:8645/v1 ",
             " gpt-5.4-mini ",
-            " codex ",
-            " gpt-5.4-mini ",
             " gpt-5-mini ",
             "120",
             "6000",
             "250",
-            false,
             false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
@@ -1412,13 +1409,10 @@ public sealed class MainWindowInteractionLogicTests
             MeetingSummaryProviderPreference.OpenAiOnly,
             "http://127.0.0.1:8645/v1",
             "gpt-5.4-mini",
-            "codex",
-            "gpt-5.4-mini",
             "gpt-5-mini",
             "120",
             "6000",
             "250",
-            false,
             false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
@@ -1455,13 +1449,10 @@ public sealed class MainWindowInteractionLogicTests
             MeetingSummaryProviderPreference.LocalThenOpenAi,
             "http://127.0.0.1:8645/v1",
             "gpt-5.4-mini",
-            "codex",
-            "gpt-5.4-mini",
             "gpt-5-mini",
             "120",
             "6000",
             "250",
-            false,
             false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
@@ -1470,7 +1461,7 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void HasPendingConfigChanges_Tracks_Summary_Settings_And_Pending_Secret_Entry()
+    public void HasPendingConfigChanges_Tracks_Summary_Settings_And_Pending_OpenAi_Secret_Entry()
     {
         var config = new AppConfig
         {
@@ -1478,8 +1469,6 @@ public sealed class MainWindowInteractionLogicTests
             SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
             SummaryModelProxyBaseUrl = "http://127.0.0.1:8645/v1",
             SummaryModelProxyModel = "gpt-5.4-mini",
-            SummaryModelProxyBackend = "codex",
-            SummaryModelProxyCodexModel = "gpt-5.4-mini",
             SummaryOpenAiModel = "gpt-5-mini",
             SummaryRequestTimeoutSeconds = 120,
             SummaryTranscriptChunkTokenTarget = 6000,
@@ -1507,13 +1496,10 @@ public sealed class MainWindowInteractionLogicTests
             MeetingSummaryProviderPreference.LocalThenOpenAi,
             " http://127.0.0.1:8645/v1/ ",
             " gpt-5.4-mini ",
-            " codex ",
-            " gpt-5.4-mini ",
             " gpt-5-mini ",
             "120",
             "6000",
             "250",
-            false,
             false);
         var changedEditor = matchingEditor with
         {
@@ -2141,7 +2127,6 @@ public sealed class MainWindowInteractionLogicTests
             new SummaryProviderConfigurationState(
                 IsEnabled: false,
                 MeetingSummaryProviderPreference.LocalThenOpenAi,
-                HasModelProxyKey: false,
                 HasOpenAiKey: false),
             isGeneratingSummary: false);
 
@@ -2190,7 +2175,7 @@ public sealed class MainWindowInteractionLogicTests
             canAddSpeakerLabels: false,
             canProcessAsap: true,
             isSelectedMeetingAsap: false,
-            summaryProviderConfiguration: new SummaryProviderConfigurationState(false, MeetingSummaryProviderPreference.LocalThenOpenAi, false, false));
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(false, MeetingSummaryProviderPreference.LocalThenOpenAi, false));
         var unconfigured = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
             meeting,
             Array.Empty<MeetingCleanupRecommendation>(),
@@ -2201,7 +2186,7 @@ public sealed class MainWindowInteractionLogicTests
             canAddSpeakerLabels: false,
             canProcessAsap: true,
             isSelectedMeetingAsap: false,
-            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.OpenAiOnly, false, false));
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.OpenAiOnly, false));
         var unavailable = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
             meeting,
             Array.Empty<MeetingCleanupRecommendation>(),
@@ -2212,7 +2197,7 @@ public sealed class MainWindowInteractionLogicTests
             canAddSpeakerLabels: false,
             canProcessAsap: true,
             isSelectedMeetingAsap: false,
-            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.LocalThenOpenAi, true, false));
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.LocalThenOpenAi, false));
 
         Assert.Equal(MeetingDetailSummaryStatus.Disabled, disabled.Summary.Status);
         Assert.True(disabled.Summary.CanConfigure);
@@ -2252,7 +2237,6 @@ public sealed class MainWindowInteractionLogicTests
         var configured = new SummaryProviderConfigurationState(
             true,
             MeetingSummaryProviderPreference.LocalThenOpenAi,
-            HasModelProxyKey: true,
             HasOpenAiKey: false);
 
         var generateReady = MainWindowInteractionLogic.BuildMeetingDetailWindowState(

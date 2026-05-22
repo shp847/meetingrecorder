@@ -129,6 +129,28 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Settings_Speaker_Labeling_Gpu_Control_Is_OptIn_With_Test_Action()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
+
+        Assert.Contains("x:Name=\"ConfigDiarizationGpuAccelerationCheckBox\"", xaml);
+        Assert.Contains("Content=\"Try GPU acceleration for speaker labeling (DirectML)\"", xaml);
+        Assert.DoesNotContain("Content=\"GPU acceleration unavailable for speaker labeling\"", xaml);
+        Assert.DoesNotContain("Unavailable in this managed build", xaml);
+        Assert.Contains("x:Name=\"TestDiarizationGpuAccelerationButton\"", xaml);
+        Assert.Contains("Click=\"TestDiarizationGpuAccelerationButton_OnClick\"", xaml);
+
+        Assert.Contains("ConfigDiarizationGpuAccelerationCheckBox.IsChecked = config.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto;", code);
+        Assert.Contains("DiarizationAccelerationPreference = ConfigDiarizationGpuAccelerationCheckBox.IsChecked == true", code);
+        Assert.Contains("TestDiarizationGpuAccelerationButton_OnClick", code);
+        Assert.DoesNotContain("last GPU probe fell back to CPU", code, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void App_Shell_Uses_A_Global_Status_Surface_Outside_The_Home_Body()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
@@ -274,12 +296,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"ConfigSummaryProviderPreferenceComboBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryModelProxyBaseUrlTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryModelProxyModelTextBox\"", xaml);
-        Assert.Contains("x:Name=\"ConfigSummaryModelProxyBackendTextBox\"", xaml);
-        Assert.Contains("x:Name=\"ConfigSummaryModelProxyCodexModelTextBox\"", xaml);
-        Assert.Contains("x:Name=\"ConfigSummaryModelProxyKeyPasswordBox\"", xaml);
-        Assert.Contains("x:Name=\"ConfigSummaryModelProxyKeyStatusTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ValidateModelProxySummaryProviderButton\"", xaml);
-        Assert.Contains("x:Name=\"ClearModelProxySummaryKeyButton\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiModelTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyPasswordBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyStatusTextBlock\"", xaml);
@@ -289,6 +306,15 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"ConfigSummaryTranscriptChunkTargetTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryTranscriptChunkOverlapTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryProviderStatusTextBlock\"", xaml);
+        Assert.DoesNotContain("Backend override", xaml);
+        Assert.DoesNotContain("Codex model", xaml);
+        Assert.DoesNotContain("Local key", xaml);
+        Assert.DoesNotContain("ModelProxy key:", xaml);
+        Assert.DoesNotContain("x:Name=\"ConfigSummaryModelProxyBackendTextBox\"", xaml);
+        Assert.DoesNotContain("x:Name=\"ConfigSummaryModelProxyCodexModelTextBox\"", xaml);
+        Assert.DoesNotContain("x:Name=\"ConfigSummaryModelProxyKeyPasswordBox\"", xaml);
+        Assert.DoesNotContain("x:Name=\"ConfigSummaryModelProxyKeyStatusTextBlock\"", xaml);
+        Assert.DoesNotContain("x:Name=\"ClearModelProxySummaryKeyButton\"", xaml);
         Assert.DoesNotContain("Summary generation starts in the processing stage in a later sprint.", xaml);
     }
 

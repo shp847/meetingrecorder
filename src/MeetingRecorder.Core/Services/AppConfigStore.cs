@@ -176,8 +176,6 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
             SummaryModelProxyBaseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl,
             SummaryModelProxyModel = MeetingSummaryDefaults.ModelProxyModel,
-            SummaryModelProxyBackend = MeetingSummaryDefaults.ModelProxyBackend,
-            SummaryModelProxyCodexModel = MeetingSummaryDefaults.ModelProxyCodexModel,
             SummaryOpenAiModel = MeetingSummaryDefaults.OpenAiModel,
             SummaryRequestTimeoutSeconds = MeetingSummaryDefaults.RequestTimeoutSeconds,
             SummaryTranscriptChunkTokenTarget = MeetingSummaryDefaults.TranscriptChunkTokenTarget,
@@ -257,13 +255,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var diarizationAccelerationPreference = NormalizeEnum(
             config.DiarizationAccelerationPreference,
             defaults.DiarizationAccelerationPreference);
-        if (diarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
-        {
-            diarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly;
-        }
-
         if (!diarizationAccelerationSecurityPromptMigrationApplied)
         {
+            if (diarizationAccelerationPreference == InferenceAccelerationPreference.Auto)
+            {
+                diarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly;
+            }
+
             diarizationAccelerationSecurityPromptMigrationApplied = true;
         }
 
@@ -328,8 +326,6 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             SummaryProviderPreference = NormalizeEnum(config.SummaryProviderPreference, defaults.SummaryProviderPreference),
             SummaryModelProxyBaseUrl = NormalizeOptionalSummaryText(config.SummaryModelProxyBaseUrl, defaults.SummaryModelProxyBaseUrl).TrimEnd('/'),
             SummaryModelProxyModel = NormalizeOptionalSummaryText(config.SummaryModelProxyModel, defaults.SummaryModelProxyModel),
-            SummaryModelProxyBackend = NormalizeOptionalSummaryText(config.SummaryModelProxyBackend, defaults.SummaryModelProxyBackend),
-            SummaryModelProxyCodexModel = NormalizeOptionalSummaryText(config.SummaryModelProxyCodexModel, defaults.SummaryModelProxyCodexModel),
             SummaryOpenAiModel = NormalizeOptionalSummaryText(config.SummaryOpenAiModel, defaults.SummaryOpenAiModel),
             SummaryRequestTimeoutSeconds = config.SummaryRequestTimeoutSeconds <= 0
                 ? defaults.SummaryRequestTimeoutSeconds

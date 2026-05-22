@@ -76,8 +76,6 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, config.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", config.SummaryModelProxyBaseUrl);
         Assert.Equal("gpt-5.4-mini", config.SummaryModelProxyModel);
-        Assert.Equal("codex", config.SummaryModelProxyBackend);
-        Assert.Equal("gpt-5.4-mini", config.SummaryModelProxyCodexModel);
         Assert.Equal("gpt-5-mini", config.SummaryOpenAiModel);
         Assert.Equal(120, config.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, config.SummaryTranscriptChunkTokenTarget);
@@ -170,8 +168,6 @@ public sealed class AppConfigStoreTests
             SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
             SummaryModelProxyBaseUrl = " http://127.0.0.1:8645/v1/ ",
             SummaryModelProxyModel = " gpt-5.4-mini ",
-            SummaryModelProxyBackend = " codex ",
-            SummaryModelProxyCodexModel = " gpt-5.4-mini ",
             SummaryOpenAiModel = " gpt-5-mini ",
             SummaryRequestTimeoutSeconds = 180,
             SummaryTranscriptChunkTokenTarget = 5000,
@@ -221,8 +217,6 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingSummaryProviderPreference.OpenAiOnly, reloaded.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", reloaded.SummaryModelProxyBaseUrl);
         Assert.Equal("gpt-5.4-mini", reloaded.SummaryModelProxyModel);
-        Assert.Equal("codex", reloaded.SummaryModelProxyBackend);
-        Assert.Equal("gpt-5.4-mini", reloaded.SummaryModelProxyCodexModel);
         Assert.Equal("gpt-5-mini", reloaded.SummaryOpenAiModel);
         Assert.Equal(180, reloaded.SummaryRequestTimeoutSeconds);
         Assert.Equal(5000, reloaded.SummaryTranscriptChunkTokenTarget);
@@ -311,7 +305,7 @@ public sealed class AppConfigStoreTests
     }
 
     [Fact]
-    public async Task LoadOrCreateAsync_Disables_DirectMl_To_Avoid_Endpoint_Prompts()
+    public async Task LoadOrCreateAsync_Migrates_Legacy_DirectMl_OptIn_Once()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var documentsRoot = Path.Combine(root, "documents");
@@ -356,9 +350,9 @@ public sealed class AppConfigStoreTests
         });
         var reloaded = await store.LoadOrCreateAsync();
 
-        Assert.Equal(InferenceAccelerationPreference.CpuOnly, reenabled.DiarizationAccelerationPreference);
+        Assert.Equal(InferenceAccelerationPreference.Auto, reenabled.DiarizationAccelerationPreference);
         Assert.True(reenabled.DiarizationAccelerationSecurityPromptMigrationApplied);
-        Assert.Equal(InferenceAccelerationPreference.CpuOnly, reloaded.DiarizationAccelerationPreference);
+        Assert.Equal(InferenceAccelerationPreference.Auto, reloaded.DiarizationAccelerationPreference);
         Assert.True(reloaded.DiarizationAccelerationSecurityPromptMigrationApplied);
     }
 
@@ -615,8 +609,6 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, migrated.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", migrated.SummaryModelProxyBaseUrl);
         Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyModel);
-        Assert.Equal("codex", migrated.SummaryModelProxyBackend);
-        Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyCodexModel);
         Assert.Equal("gpt-5-mini", migrated.SummaryOpenAiModel);
         Assert.Equal(120, migrated.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, migrated.SummaryTranscriptChunkTokenTarget);
@@ -642,6 +634,9 @@ public sealed class AppConfigStoreTests
 
         Assert.Contains("\"summaryGenerationMode\"", json, StringComparison.Ordinal);
         Assert.Contains("\"summaryProviderPreference\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"summaryModelProxyModel\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("summaryModelProxyBackend", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("summaryModelProxyCodexModel", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sk-modelproxy", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sk-openai", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("summary:modelproxy", json, StringComparison.OrdinalIgnoreCase);

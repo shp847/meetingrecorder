@@ -9,9 +9,15 @@ namespace MeetingRecorder.ProcessingWorker;
 
 internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
-    private const string DirectMlUnavailableMessage =
-        "DirectML acceleration is not packaged in this managed build to avoid endpoint-protection process-memory prompts.";
-    private static readonly float[] AdaptiveClusteringThresholds = [0.5f, 0.45f, 0.4f, 0.35f, 0.3f, 0.25f];
+    private const float DefaultClusteringThreshold = 0.5f;
+    private const string DirectMlFallbackMessage =
+        "DirectML GPU initialization failed; speaker labeling retried on CPU.";
+    private const string DirectMlUnsupportedClusterFallbackMessage =
+        "DirectML speaker clustering was outside the supported automatic range; speaker labeling retried on CPU.";
+    private const string UnsupportedClusterMessagePrefix =
+        "Speaker labeling skipped because clustering detected";
+    private static readonly float[] CollapsedSpeakerClusteringThresholds = [0.45f, 0.4f, 0.35f, 0.3f, 0.25f];
+    private static readonly float[] OverSegmentedSpeakerClusteringThresholds = [0.55f, 0.6f, 0.65f, 0.7f, 0.75f, 0.8f];
 
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
@@ -102,25 +108,23 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         try
         {
             await _audioPreparer.PrepareAsync(audioPath, preparedAudioPath, cancellationToken);
-            var accelerationDecision = ResolveAccelerationDecision();
 
-            var diarizationOutcome = await RunDiarizationAsync(
+            var diarizationRun = await RunDiarizationAsync(
                 preparedAudioPath,
                 transcriptSegments,
                 installedAssets,
-                accelerationDecision,
                 cancellationToken);
 
             await _assetCatalogService.WriteRuntimeStatusAsync(
                 _diarizationAssetPath,
                 new DiarizationRuntimeStatus(
-                    accelerationDecision.GpuAccelerationAvailable,
-                    diarizationOutcome.Metadata!.ExecutionProvider,
-                    diarizationOutcome.Metadata.DiagnosticMessage,
+                    diarizationRun.GpuAccelerationAvailable,
+                    diarizationRun.EffectiveExecutionProvider,
+                    diarizationRun.AccelerationDiagnosticMessage,
                     DateTimeOffset.UtcNow),
                 cancellationToken);
 
-            return diarizationOutcome;
+            return diarizationRun.Result;
         }
         finally
         {
@@ -131,34 +135,105 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         }
     }
 
-    private async Task<DiarizationResult> RunDiarizationAsync(
+    private async Task<DiarizationProviderRun> RunDiarizationAsync(
         string preparedAudioPath,
         IReadOnlyList<TranscriptSegment> transcriptSegments,
         DiarizationAssetInstallStatus installedAssets,
-        DiarizationAccelerationDecision accelerationDecision,
         CancellationToken cancellationToken)
     {
-        return await RunWithProviderAsync(
+        if (_accelerationPreference == InferenceAccelerationPreference.Auto)
+        {
+            var directMlDecision = DiarizationAccelerationPolicy.Resolve(
+                _accelerationPreference,
+                directMlAvailable: true);
+
+            try
+            {
+                var directMlResult = await RunWithProviderAsync(
+                    preparedAudioPath,
+                    transcriptSegments,
+                    installedAssets,
+                    DiarizationExecutionProvider.Directml,
+                    directMlDecision.GpuAccelerationRequested,
+                    directMlDecision.GpuAccelerationAvailable,
+                    directMlDecision.DiagnosticMessage,
+                    cancellationToken);
+
+                if (!IsUnsupportedClusterResult(directMlResult))
+                {
+                    return new DiarizationProviderRun(
+                        directMlResult,
+                        GpuAccelerationAvailable: true,
+                        EffectiveExecutionProvider: DiarizationExecutionProvider.Directml,
+                        AccelerationDiagnosticMessage: null);
+                }
+
+                _logger.Log("DirectML speaker clustering was outside the supported automatic range. Retrying speaker labeling on CPU.");
+                return await RunCpuFallbackAsync(
+                    preparedAudioPath,
+                    transcriptSegments,
+                    installedAssets,
+                    DirectMlUnsupportedClusterFallbackMessage,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.Log($"DirectML speaker-labeling attempt failed safely with {exception.GetType().Name}. Retrying on CPU.");
+                return await RunCpuFallbackAsync(
+                    preparedAudioPath,
+                    transcriptSegments,
+                    installedAssets,
+                    DirectMlFallbackMessage,
+                    cancellationToken);
+            }
+        }
+
+        var cpuDecision = DiarizationAccelerationPolicy.Resolve(
+            _accelerationPreference,
+            directMlAvailable: false);
+        var cpuResult = await RunWithProviderAsync(
             preparedAudioPath,
             transcriptSegments,
             installedAssets,
             DiarizationExecutionProvider.Cpu,
-            accelerationDecision.GpuAccelerationRequested,
-            accelerationDecision.GpuAccelerationAvailable,
-            accelerationDecision.DiagnosticMessage,
+            cpuDecision.GpuAccelerationRequested,
+            cpuDecision.GpuAccelerationAvailable,
+            cpuDecision.DiagnosticMessage,
             cancellationToken);
+
+        return new DiarizationProviderRun(
+            cpuResult,
+            cpuDecision.GpuAccelerationAvailable,
+            DiarizationExecutionProvider.Cpu,
+            cpuDecision.DiagnosticMessage);
     }
 
-    private DiarizationAccelerationDecision ResolveAccelerationDecision()
+    private async Task<DiarizationProviderRun> RunCpuFallbackAsync(
+        string preparedAudioPath,
+        IReadOnlyList<TranscriptSegment> transcriptSegments,
+        DiarizationAssetInstallStatus installedAssets,
+        string fallbackMessage,
+        CancellationToken cancellationToken)
     {
-        return _accelerationPreference == InferenceAccelerationPreference.Auto
-            ? DiarizationAccelerationPolicy.Resolve(
-                _accelerationPreference,
-                directMlAvailable: false,
-                DirectMlUnavailableMessage)
-            : DiarizationAccelerationPolicy.Resolve(
-                _accelerationPreference,
-                directMlAvailable: false);
+        var fallbackDecision = DiarizationAccelerationPolicy.Resolve(
+            InferenceAccelerationPreference.Auto,
+            directMlAvailable: false,
+            fallbackMessage);
+        var fallbackResult = await RunWithProviderAsync(
+            preparedAudioPath,
+            transcriptSegments,
+            installedAssets,
+            DiarizationExecutionProvider.Cpu,
+            fallbackDecision.GpuAccelerationRequested,
+            fallbackDecision.GpuAccelerationAvailable,
+            fallbackDecision.DiagnosticMessage,
+            cancellationToken);
+
+        return new DiarizationProviderRun(
+            fallbackResult,
+            fallbackDecision.GpuAccelerationAvailable,
+            DiarizationExecutionProvider.Cpu,
+            fallbackDecision.DiagnosticMessage);
     }
 
     private async Task<DiarizationResult> RunWithProviderAsync(
@@ -185,6 +260,37 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             _threadCount,
             _clusterSelectionService,
             cancellationToken);
+        var baseDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage);
+        if (!clusterSelection.IsAutomaticSpeakerCountSupported)
+        {
+            var skippedMetadata = new DiarizationMetadata(
+                provider: "sherpa-onnx",
+                segmentationModelFileName: segmentationModelFileName,
+                embeddingModelFileName: embeddingModelFileName,
+                bundleVersion: installedAssets.BundleVersion ?? "unknown",
+                attributionMode: DiarizationAttributionMode.SegmentOverlap,
+                executionProvider: executionProvider,
+                gpuAccelerationRequested: gpuAccelerationRequested,
+                gpuAccelerationAvailable: gpuAccelerationAvailable,
+                diagnosticMessage: baseDiagnosticMessage);
+            var skippedMessage =
+                $"{UnsupportedClusterMessagePrefix} {clusterSelection.SupportedSpeakerCount} supported speakers, outside the supported automatic range of " +
+                $"{DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount}-{DiarizationClusterSelectionService.MaximumAutomaticSpeakerCount}.";
+
+            _logger.Log(
+                $"Speaker labeling skipped. Provider={executionProvider}. SupportedSpeakers={clusterSelection.SupportedSpeakerCount}. " +
+                $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{baseDiagnosticMessage ?? "<none>"}'.");
+
+            return new DiarizationResult(
+                transcriptSegments,
+                false,
+                skippedMessage,
+                Array.Empty<SpeakerIdentity>(),
+                Array.Empty<SpeakerTurn>(),
+                skippedMetadata,
+                Array.Empty<SpeakerVoiceSample>());
+        }
+
         var speakerTurns = clusterSelection.Candidate.SpeakerTurns;
         var speakers = _speakerAttributionService.BuildSpeakerCatalog(speakerTurns);
         IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
@@ -228,7 +334,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             transcriptSegments,
             speakerTurns,
             displayNamesBySpeakerId);
-        var combinedDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage, voiceProfileDiagnosticMessage);
+        var combinedDiagnosticMessage = CombineDiagnosticMessages(baseDiagnosticMessage, voiceProfileDiagnosticMessage);
 
         var metadata = new DiarizationMetadata(
             provider: "sherpa-onnx",
@@ -276,28 +382,88 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         var samples = ReadSamples(reader, cancellationToken);
         var candidates = new List<DiarizationClusterCandidate>();
 
-        foreach (var threshold in AdaptiveClusteringThresholds)
+        var defaultCandidate = BuildClusterCandidate(
+            samples,
+            reader.WaveFormat.SampleRate,
+            installedAssets,
+            provider,
+            threadCount,
+            DefaultClusteringThreshold);
+        candidates.Add(defaultCandidate);
+        var defaultSelection = clusterSelectionService.SelectBestCandidate(candidates);
+        if (defaultSelection.IsAutomaticSpeakerCountSupported)
+        {
+            return defaultSelection;
+        }
+
+        var thresholds = defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount
+            ? CollapsedSpeakerClusteringThresholds
+            : OverSegmentedSpeakerClusteringThresholds;
+        foreach (var threshold in thresholds)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var speakerTurns = ProcessSpeakerTurnsAtThreshold(
-                samples,
-                reader.WaveFormat.SampleRate,
-                installedAssets,
-                provider,
-                threadCount,
-                threshold);
-            var candidate = new DiarizationClusterCandidate(threshold, speakerTurns);
+            var candidate = BuildClusterCandidate(samples, reader.WaveFormat.SampleRate, installedAssets, provider, threadCount, threshold);
             candidates.Add(candidate);
 
             var currentSelection = clusterSelectionService.SelectBestCandidate(candidates);
             if (ReferenceEquals(currentSelection.Candidate, candidate) &&
-                currentSelection.SupportedSpeakerCount >= 2)
+                currentSelection.IsAutomaticSpeakerCountSupported)
             {
                 return currentSelection;
             }
         }
 
         return clusterSelectionService.SelectBestCandidate(candidates);
+    }
+
+    private static DiarizationClusterCandidate BuildClusterCandidate(
+        float[] samples,
+        int preparedAudioSampleRate,
+        DiarizationAssetInstallStatus installedAssets,
+        string provider,
+        int threadCount,
+        float threshold)
+    {
+        return new DiarizationClusterCandidate(
+            threshold,
+            ProcessSpeakerTurnsAtThreshold(
+                samples,
+                preparedAudioSampleRate,
+                installedAssets,
+                provider,
+                threadCount,
+                threshold));
+    }
+
+    internal static void ProbeDirectMl(
+        string diarizationAssetPath,
+        int threadCount,
+        FileLogWriter logger)
+    {
+        var assetCatalogService = new DiarizationAssetCatalogService();
+        var installedAssets = assetCatalogService.InspectInstalledAssets(diarizationAssetPath);
+        if (!installedAssets.IsReady)
+        {
+            throw new InvalidOperationException("Speaker-labeling assets are not ready.");
+        }
+
+        ProbeDirectMl(installedAssets, threadCount);
+        logger.Log("DirectML speaker-labeling probe completed successfully.");
+    }
+
+    internal static void ProbeDirectMl(DiarizationAssetInstallStatus installedAssets, int threadCount)
+    {
+        using var diarizer = CreateDiarizer(
+            installedAssets,
+            "directml",
+            Math.Max(1, threadCount),
+            DefaultClusteringThreshold);
+    }
+
+    private static bool IsUnsupportedClusterResult(DiarizationResult result)
+    {
+        return !result.AppliedSpeakerLabels &&
+            result.Message?.StartsWith(UnsupportedClusterMessagePrefix, StringComparison.Ordinal) == true;
     }
 
     private static SpeakerTurn[] ProcessSpeakerTurnsAtThreshold(
@@ -385,3 +551,9 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     }
 
 }
+
+internal sealed record DiarizationProviderRun(
+    DiarizationResult Result,
+    bool GpuAccelerationAvailable,
+    DiarizationExecutionProvider EffectiveExecutionProvider,
+    string? AccelerationDiagnosticMessage);

@@ -40,9 +40,9 @@ public sealed class ModelProxyClientTests
         Assert.Equal(HttpMethod.Post, handler.Request!.Method);
         Assert.Equal("http://127.0.0.1:8645/v1/chat/completions", handler.Request.RequestUri!.ToString());
         Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
-        Assert.Equal("sk-modelproxy-meeting-recorder", handler.Request.Headers.Authorization.Parameter);
-        Assert.Equal("codex", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
-        Assert.Equal("gpt-5.4-mini", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Codex-Model")));
+        Assert.Equal("sk-modelproxy", handler.Request.Headers.Authorization.Parameter);
+        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Backend"));
+        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
         Assert.Contains("\"model\":\"gpt-5.4-mini\"", handler.Body, StringComparison.Ordinal);
         Assert.Contains("\"role\":\"user\"", handler.Body, StringComparison.Ordinal);
@@ -154,13 +154,14 @@ public sealed class ModelProxyClientTests
         using var httpClient = new HttpClient(handler);
         var service = new SummaryProviderValidationService(new SummaryChatClient(httpClient));
 
-        var result = await service.ValidateModelProxyAsync(
-            new MeetingRecorder.Core.Configuration.AppConfig(),
-            "sk-modelproxy-test");
+        var result = await service.ValidateModelProxyAsync(new MeetingRecorder.Core.Configuration.AppConfig());
 
         Assert.True(result.Success);
         Assert.Equal(SummaryChatProviderKind.ModelProxy, result.ProviderKind);
         Assert.NotNull(handler.Request);
+        Assert.Equal("sk-modelproxy", handler.Request!.Headers.Authorization!.Parameter);
+        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Backend"));
+        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Contains("summary-provider-ok", handler.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("transcript", handler.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("attendee", handler.Body, StringComparison.OrdinalIgnoreCase);

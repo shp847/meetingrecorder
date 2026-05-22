@@ -148,17 +148,14 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         async Task AddModelProxyAsync()
         {
             var secret = await _secretStore.LoadAsync(SummarySecretKind.ModelProxy, cancellationToken);
-            if (string.IsNullOrWhiteSpace(secret))
-            {
-                return;
-            }
+            var apiKey = string.IsNullOrWhiteSpace(secret)
+                ? MeetingSummaryDefaults.ModelProxyLocalApiKey
+                : secret;
 
             candidates.Add(new ProviderCandidate(
                 SummaryChatProviderOptions.ForModelProxy(
-                    secret,
-                    config.SummaryModelProxyBaseUrl,
-                    config.SummaryModelProxyBackend,
-                    config.SummaryModelProxyCodexModel),
+                    apiKey,
+                    config.SummaryModelProxyBaseUrl),
                 config.SummaryModelProxyModel,
                 FallbackUsed: false));
         }

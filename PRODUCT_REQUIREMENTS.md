@@ -180,6 +180,7 @@ The product family also includes installer and update surfaces:
 - When available, speaker labeling must produce generic transcript labels such as `Speaker 1`, `Speaker 2`, and so on.
 - Diarization failure or missing diarization assets must not block transcript output.
 - The diarization runtime must allow a user-controlled GPU acceleration preference and fall back safely when acceleration is unavailable.
+- Automatic speaker clustering must reject unsupported speaker counts instead of publishing unusable labels.
 
 ## 6.6 Model and Asset Management
 
@@ -272,13 +273,13 @@ The app must allow configuration of:
 - diarization GPU acceleration preference
 - summary generation on or off
 - summary provider preference
-- local ModelProxy base URL, model, backend override, Codex model override, and local key reference
+- local ModelProxy base URL and model
 - hosted OpenAI model and API-key credential
 
 Configuration requirements:
 
 - config must be stored in a user-writable location
-- secrets such as OpenAI API keys and local bearer keys must be stored outside plaintext app config
+- hosted provider secrets such as OpenAI API keys must be stored outside plaintext app config
 - supported settings must hot reload without restart
 - the UI must indicate whether a setting applies immediately, on the next recording, or on the next processing run
 - `Setup` must remain focused on capability readiness, while `Settings` owns behavior, storage, updates, and troubleshooting
