@@ -25,6 +25,9 @@ public partial class MeetingDetailWindow : Window
 {
     private MeetingTranscriptSegmentRow[] _allTranscriptSegments = Array.Empty<MeetingTranscriptSegmentRow>();
     private bool _isMaintenanceBusy;
+    private bool _canConfigureSummaries;
+    private bool _canGenerateSummary;
+    private bool _canRetrySummary;
     private bool _canRetryTranscript;
     private bool _canReTranscribe;
     private bool _canAddSpeakerLabels;
@@ -57,6 +60,12 @@ public partial class MeetingDetailWindow : Window
 
     internal event EventHandler? ReTranscribeRequested;
 
+    internal event EventHandler? ConfigureSummariesRequested;
+
+    internal event EventHandler? GenerateSummaryRequested;
+
+    internal event EventHandler? RetrySummaryRequested;
+
     internal event EventHandler? AddSpeakerLabelsRequested;
 
     internal event EventHandler? ProcessAsapRequested;
@@ -77,7 +86,7 @@ public partial class MeetingDetailWindow : Window
         Title = $"Meeting Details - {state.Title}";
         MeetingTitleTextBlock.Text = state.Title;
         MeetingSubtitleTextBlock.Text = state.Subtitle;
-        AiSummaryPlaceholderTextBlock.Text = state.AiSummaryPlaceholderText;
+        ApplySummaryState(state.Summary);
         ProjectTextBlock.Text = state.ProjectName;
         StatusTextBlock.Text = state.Status;
         TranscriptModelTextBlock.Text = state.TranscriptionModelFileName;
@@ -118,6 +127,38 @@ public partial class MeetingDetailWindow : Window
         _allTranscriptSegments = state.Transcript.Segments.ToArray();
         FooterStatusTextBlock.Text = state.Transcript.StatusText;
         ApplyTranscriptFilter();
+    }
+
+    private void ApplySummaryState(MeetingDetailSummaryState summary)
+    {
+        AiSummaryStatusTextBlock.Text = summary.StatusText;
+        AiSummaryGeneratedContentPanel.Visibility = summary.ShowGeneratedContent ? Visibility.Visible : Visibility.Collapsed;
+        AiSummaryOverviewTextBlock.Text = summary.Overview ?? string.Empty;
+        AiSummaryKeyPointsItemsControl.ItemsSource = summary.KeyPoints;
+        AiSummaryDecisionsItemsControl.ItemsSource = summary.Decisions;
+        AiSummaryActionItemsControl.ItemsSource = summary.ActionItems;
+        AiSummaryRisksItemsControl.ItemsSource = summary.RisksAndOpenQuestions;
+        AiSummaryProviderTextBlock.Text = string.IsNullOrWhiteSpace(summary.ProviderText)
+            ? string.Empty
+            : $"Provider: {summary.ProviderText}";
+        AiSummaryGeneratedAtTextBlock.Text = string.IsNullOrWhiteSpace(summary.GeneratedAtText)
+            ? string.Empty
+            : $"Generated: {summary.GeneratedAtText}";
+        AiSummaryWarningTextBlock.Text = summary.WarningText;
+        AiSummaryWarningTextBlock.Visibility = string.IsNullOrWhiteSpace(summary.WarningText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        AiSummaryKeyPointsHeaderTextBlock.Visibility = summary.KeyPoints.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryKeyPointsItemsControl.Visibility = summary.KeyPoints.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryDecisionsHeaderTextBlock.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryDecisionsItemsControl.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryActionItemsHeaderTextBlock.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryActionItemsControl.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryRisksHeaderTextBlock.Visibility = summary.RisksAndOpenQuestions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryRisksItemsControl.Visibility = summary.RisksAndOpenQuestions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _canConfigureSummaries = summary.CanConfigure;
+        _canGenerateSummary = summary.CanGenerate;
+        _canRetrySummary = summary.CanRetry;
     }
 
     internal void SetMaintenanceBusy(bool isBusy)
@@ -164,6 +205,9 @@ public partial class MeetingDetailWindow : Window
         var canUseMaintenance = !_isMaintenanceBusy;
         RenameButton.IsEnabled = canUseMaintenance;
         SuggestTitleButton.IsEnabled = canUseMaintenance;
+        ConfigureSummariesButton.IsEnabled = canUseMaintenance && _canConfigureSummaries;
+        GenerateSummaryButton.IsEnabled = canUseMaintenance && _canGenerateSummary;
+        RetrySummaryButton.IsEnabled = canUseMaintenance && _canRetrySummary;
         ApplyProjectButton.IsEnabled = canUseMaintenance;
         ClearProjectButton.IsEnabled = canUseMaintenance;
         RetryTranscriptButton.IsEnabled = canUseMaintenance && _canRetryTranscript;
@@ -224,6 +268,21 @@ public partial class MeetingDetailWindow : Window
     private void ReTranscribeButton_OnClick(object sender, RoutedEventArgs e)
     {
         ReTranscribeRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ConfigureSummariesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        ConfigureSummariesRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void GenerateSummaryButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        GenerateSummaryRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RetrySummaryButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RetrySummaryRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void AddSpeakerLabelsButton_OnClick(object sender, RoutedEventArgs e)

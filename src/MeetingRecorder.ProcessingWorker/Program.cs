@@ -29,6 +29,10 @@ internal static class Program
             var manifestStore = new SessionManifestStore(pathBuilder);
             var transcriptionThreadCount = BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, Environment.ProcessorCount);
             var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
+            using var summaryHttpClient = new HttpClient();
+            var summarizationProvider = new MeetingSummarizationProvider(
+                FileSummarySecretStore.CreateDefault(),
+                new SummaryChatClient(summaryHttpClient));
             var processor = new SessionProcessor(
                 manifestStore,
                 pathBuilder,
@@ -46,7 +50,8 @@ internal static class Program
                         config.SpeakerNameMatchMarginThreshold),
                     AppDataPaths.GetVoiceProfileStorePath()),
                 new TranscriptRenderer(),
-                new FilePublishService());
+                new FilePublishService(),
+                summarizationProvider);
 
             var published = await processor.ProcessAsync(manifestPath, config);
             logger.Log($"Processing completed successfully. Ready marker: '{published.ReadyMarkerPath}'.");

@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -76,6 +77,10 @@ public partial class MainWindow : Window
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
     private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
     private readonly TeamsDetectionArbitrator _teamsDetectionArbitrator;
+    private readonly ISummarySecretStore _summarySecretStore;
+    private readonly SummaryProviderValidationService _summaryProviderValidationService;
+    private readonly PublishedMeetingSummaryService _publishedMeetingSummaryService;
+    private readonly HttpClient _summaryProviderHttpClient;
     private readonly SessionTitleDraftTracker _sessionTitleDraftTracker;
     private readonly SessionTitleDraftTracker _sessionProjectDraftTracker;
     private readonly SessionTitleDraftTracker _sessionKeyAttendeesDraftTracker;
@@ -125,6 +130,9 @@ public partial class MainWindow : Window
     private bool _isRushingBacklog;
     private bool _isSavingConfig;
     private bool _isRunningTeamsIntegrationProbe;
+    private bool _isValidatingModelProxySummaryProvider;
+    private bool _isValidatingOpenAiSummaryProvider;
+    private bool _isGeneratingMeetingSummary;
     private int _updateCheckOperations;
     private bool _isPreparingUpdateInstall;
     private bool _isDownloadingUpdate;
@@ -259,6 +267,14 @@ public partial class MainWindow : Window
             teamsThirdPartyApiAdapter);
         _teamsDetectionArbitrator = new TeamsDetectionArbitrator(
             teamsThirdPartyApiAdapter);
+        _summarySecretStore = FileSummarySecretStore.CreateDefault();
+        _summaryProviderHttpClient = new HttpClient();
+        var summaryChatClient = new SummaryChatClient(_summaryProviderHttpClient);
+        _summaryProviderValidationService = new SummaryProviderValidationService(
+            summaryChatClient);
+        _publishedMeetingSummaryService = new PublishedMeetingSummaryService(
+            new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient),
+            _manifestStore);
         _sessionTitleDraftTracker = new SessionTitleDraftTracker();
         _sessionProjectDraftTracker = new SessionTitleDraftTracker();
         _sessionKeyAttendeesDraftTracker = new SessionTitleDraftTracker();
@@ -619,6 +635,7 @@ public partial class MainWindow : Window
         _processingQueueStatusTimer.Stop();
         _liveConfig.Changed -= LiveConfig_OnChanged;
         _processingQueue.StatusChanged -= ProcessingQueue_OnStatusChanged;
+        _summaryProviderHttpClient.Dispose();
         CancelMeetingBackgroundWork();
         if (!_lifetimeCts.IsCancellationRequested)
         {
@@ -2977,6 +2994,21 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Meeting stop timeout must be a whole number of seconds.");
             }
 
+            if (!int.TryParse(ConfigSummaryRequestTimeoutTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var summaryRequestTimeoutSeconds))
+            {
+                throw new InvalidOperationException("Summary request timeout must be a whole number of seconds.");
+            }
+
+            if (!int.TryParse(ConfigSummaryTranscriptChunkTargetTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var summaryTranscriptChunkTarget))
+            {
+                throw new InvalidOperationException("Summary chunk token target must be a whole number.");
+            }
+
+            if (!int.TryParse(ConfigSummaryTranscriptChunkOverlapTextBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var summaryTranscriptChunkOverlap))
+            {
+                throw new InvalidOperationException("Summary chunk overlap must be a whole number.");
+            }
+
             var nextConfig = new AppConfig
             {
                 AudioOutputDir = ConfigAudioOutputDirTextBox.Text.Trim(),
@@ -3010,6 +3042,20 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
+                SummaryGenerationMode = ConfigSummaryGenerationEnabledCheckBox.IsChecked == true
+                    ? MeetingSummaryGenerationMode.Enabled
+                    : MeetingSummaryGenerationMode.Disabled,
+                SummaryProviderPreference = ConfigSummaryProviderPreferenceComboBox.SelectedValue is MeetingSummaryProviderPreference summaryProviderPreference
+                    ? summaryProviderPreference
+                    : currentConfig.SummaryProviderPreference,
+                SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
+                SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
+                SummaryModelProxyBackend = ConfigSummaryModelProxyBackendTextBox.Text.Trim(),
+                SummaryModelProxyCodexModel = ConfigSummaryModelProxyCodexModelTextBox.Text.Trim(),
+                SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
+                SummaryRequestTimeoutSeconds = summaryRequestTimeoutSeconds,
+                SummaryTranscriptChunkTokenTarget = summaryTranscriptChunkTarget,
+                SummaryTranscriptChunkOverlapTokens = summaryTranscriptChunkOverlap,
                 SpeakerLabelingSecurityPromptMigrationApplied = currentConfig.SpeakerLabelingSecurityPromptMigrationApplied,
                 LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
                 InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
@@ -3030,6 +3076,7 @@ public partial class MainWindow : Window
             };
 
             await _liveConfig.SaveAsync(nextConfig, _lifetimeCts.Token);
+            await SavePendingSummaryProviderSecretsAsync(_lifetimeCts.Token);
 
             _pendingConfigEditorSnapshotRestore = null;
             var liveMicCaptureUpdated = true;
@@ -4849,6 +4896,9 @@ public partial class MainWindow : Window
             _meetingDetailWindow.ClearProjectRequested += async (_, _) => await UpdateOpenMeetingDetailProjectAsync(projectName: null, clearProject: true);
             _meetingDetailWindow.RetryTranscriptRequested += async (_, _) => await RetryOpenMeetingDetailTranscriptAsync();
             _meetingDetailWindow.ReTranscribeRequested += (_, _) => OpenMeetingDetailTranscriptionSetup();
+            _meetingDetailWindow.ConfigureSummariesRequested += (_, _) => OpenMeetingDetailSummarySettings();
+            _meetingDetailWindow.GenerateSummaryRequested += async (_, _) => await GenerateOpenMeetingDetailSummaryAsync();
+            _meetingDetailWindow.RetrySummaryRequested += async (_, _) => await GenerateOpenMeetingDetailSummaryAsync();
             _meetingDetailWindow.AddSpeakerLabelsRequested += async (_, _) => await AddSpeakerLabelsForOpenMeetingDetailAsync();
             _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
@@ -4857,12 +4907,17 @@ public partial class MainWindow : Window
             _meetingDetailWindow.DeleteRequested += async (_, _) => await DeleteOpenMeetingDetailAsync();
         }
 
-        ApplyMeetingDetailWindowState(row);
+        _ = ApplyMeetingDetailWindowStateAsync(row);
         _meetingDetailWindow.Show();
         _meetingDetailWindow.Activate();
     }
 
     private void RefreshOpenMeetingDetailWindow()
+    {
+        _ = RefreshOpenMeetingDetailWindowAsync();
+    }
+
+    private async Task RefreshOpenMeetingDetailWindowAsync()
     {
         if (_meetingDetailWindow is null || string.IsNullOrWhiteSpace(_openMeetingDetailStem))
         {
@@ -4876,34 +4931,73 @@ public partial class MainWindow : Window
             return;
         }
 
-        ApplyMeetingDetailWindowState(row);
+        await ApplyMeetingDetailWindowStateAsync(row);
     }
 
-    private void ApplyMeetingDetailWindowState(MeetingListRow row)
+    private async Task ApplyMeetingDetailWindowStateAsync(MeetingListRow row)
     {
         if (_meetingDetailWindow is null)
         {
             return;
         }
 
-        var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
-        var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
-            row.Source,
-            row.Recommendations,
-            transcript,
-            row.CanOpenAudioArtifact,
-            row.CanOpenTranscriptArtifact,
-            row.CanRegenerateTranscript,
-            CanQueueSpeakerLabelsForMeeting(row),
-            CanChangeRushProcessing(row),
-            IsMeetingMarkedAsap(row));
-        var speakerRows = _meetingOutputCatalogService
-            .ListSpeakerLabels(row.Source)
-            .Select(label => new MeetingDetailSpeakerLabelEditorRow(label))
-            .ToArray();
+        try
+        {
+            var targetStem = row.Source.Stem;
+            var summaryProviderConfiguration = await BuildSummaryProviderConfigurationStateAsync(_lifetimeCts.Token);
+            if (_meetingDetailWindow is null ||
+                !string.Equals(_openMeetingDetailStem, targetStem, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
 
-        _meetingDetailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
-        _meetingDetailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
+            var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
+            var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+                row.Source,
+                row.Recommendations,
+                transcript,
+                row.CanOpenAudioArtifact,
+                row.CanOpenTranscriptArtifact,
+                row.CanRegenerateTranscript,
+                CanQueueSpeakerLabelsForMeeting(row),
+                CanChangeRushProcessing(row),
+                IsMeetingMarkedAsap(row),
+                summaryProviderConfiguration: summaryProviderConfiguration,
+                isGeneratingSummary: _isGeneratingMeetingSummary);
+            var speakerRows = _meetingOutputCatalogService
+                .ListSpeakerLabels(row.Source)
+                .Select(label => new MeetingDetailSpeakerLabelEditorRow(label))
+                .ToArray();
+
+            _meetingDetailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+            _meetingDetailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Unable to refresh meeting details: {exception.Message}");
+        }
+    }
+
+    private async Task<SummaryProviderConfigurationState> BuildSummaryProviderConfigurationStateAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var hasModelProxyKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.ModelProxy, cancellationToken);
+            var hasOpenAiKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.OpenAi, cancellationToken);
+            return new SummaryProviderConfigurationState(
+                _liveConfig.Current.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled,
+                _liveConfig.Current.SummaryProviderPreference,
+                hasModelProxyKey,
+                hasOpenAiKey);
+        }
+        catch
+        {
+            return new SummaryProviderConfigurationState(
+                _liveConfig.Current.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled,
+                _liveConfig.Current.SummaryProviderPreference,
+                HasModelProxyKey: false,
+                HasOpenAiKey: false);
+        }
     }
 
     private MeetingListRow? GetOpenMeetingDetailRow()
@@ -5120,6 +5214,76 @@ public partial class MainWindow : Window
             _currentTranscriptionSetupState,
             ModelActionStatusTextBlock);
         AppendActivity("Open Setup to choose a different Whisper model, then re-generate the transcript for the focused meeting.");
+    }
+
+    private void OpenMeetingDetailSummarySettings()
+    {
+        OpenSettingsSurface(SettingsWindowSection.General);
+        ConfigSummaryGenerationEnabledCheckBox.Focus();
+        AppendActivity("Opened Settings > General for AI summary configuration.");
+    }
+
+    private async Task GenerateOpenMeetingDetailSummaryAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        _isGeneratingMeetingSummary = true;
+        UpdateMeetingActionState();
+        RefreshOpenMeetingDetailWindow();
+        _meetingDetailWindow?.SetMaintenanceStatus($"Generating summary for '{row.Title}' from the published transcript...");
+        string? completionStatusText = null;
+        try
+        {
+            var result = await _publishedMeetingSummaryService.GenerateAsync(
+                row.Source,
+                _liveConfig.Current,
+                _lifetimeCts.Token);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            completionStatusText = BuildSummaryGenerationStatusText(result);
+            _meetingDetailWindow?.SetMaintenanceStatus(completionStatusText);
+            AppendActivity($"Summary generation for '{row.Title}' finished: {completionStatusText}");
+        }
+        catch (OperationCanceledException)
+        {
+            completionStatusText = "Summary generation canceled.";
+            _meetingDetailWindow?.SetMaintenanceStatus(completionStatusText);
+        }
+        catch (Exception exception)
+        {
+            var safeMessage = exception is HttpRequestException or TimeoutException
+                ? exception.Message
+                : "Summary generation failed before a usable summary was returned.";
+            completionStatusText = $"Summary generation failed: {safeMessage}";
+            _meetingDetailWindow?.SetMaintenanceStatus(completionStatusText);
+            AppendActivity($"Summary generation failed for '{row.Title}': {safeMessage}");
+        }
+        finally
+        {
+            _isGeneratingMeetingSummary = false;
+            UpdateMeetingActionState();
+            await RefreshOpenMeetingDetailWindowAsync();
+            if (!string.IsNullOrWhiteSpace(completionStatusText))
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(completionStatusText);
+            }
+        }
+    }
+
+    private static string BuildSummaryGenerationStatusText(PublishedMeetingSummaryUpdateResult result)
+    {
+        return result.Status.State switch
+        {
+            StageExecutionState.Succeeded => "Summary generated and saved to the published transcript artifacts.",
+            StageExecutionState.Skipped => result.Status.Message ?? "Summary generation skipped.",
+            StageExecutionState.Failed => result.Status.Message is { Length: > 0 } message
+                ? $"Summary generation failed: {message}"
+                : "Summary generation failed.",
+            _ => result.Status.Message ?? "Summary generation finished.",
+        };
     }
 
     private async Task AddSpeakerLabelsForOpenMeetingDetailAsync()
@@ -5687,6 +5851,7 @@ public partial class MainWindow : Window
                _isApplyingSuggestedMeetingTitles ||
                _isUpdatingMeetingProject ||
                _isApplyingSpeakerNames ||
+               _isGeneratingMeetingSummary ||
                _isMergingMeetings ||
                _isSplittingMeeting ||
                _isArchivingMeetings ||
@@ -5778,10 +5943,21 @@ public partial class MainWindow : Window
         ConfigUpdateFeedUrlTextBox.Text = config.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
+        ConfigSummaryGenerationEnabledCheckBox.IsChecked = config.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled;
+        ConfigSummaryProviderPreferenceComboBox.SelectedValue = config.SummaryProviderPreference;
+        ConfigSummaryModelProxyBaseUrlTextBox.Text = config.SummaryModelProxyBaseUrl;
+        ConfigSummaryModelProxyModelTextBox.Text = config.SummaryModelProxyModel;
+        ConfigSummaryModelProxyBackendTextBox.Text = config.SummaryModelProxyBackend;
+        ConfigSummaryModelProxyCodexModelTextBox.Text = config.SummaryModelProxyCodexModel;
+        ConfigSummaryOpenAiModelTextBox.Text = config.SummaryOpenAiModel;
+        ConfigSummaryRequestTimeoutTextBox.Text = config.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
+        ConfigSummaryTranscriptChunkTargetTextBox.Text = config.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture);
+        ConfigSummaryTranscriptChunkOverlapTextBox.Text = config.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture);
         SetSpeakerLabelingModeSelectors(config.BackgroundSpeakerLabelingMode);
         UpdateBackgroundProcessingModeHelpText(config.BackgroundProcessingMode);
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
         UpdateTeamsIntegrationProbePresentation(config);
+        _ = RefreshSummaryProviderSecretStatusAsync();
     }
 
     private void InitializeConfigEditorSelectionControls()
@@ -5814,6 +5990,15 @@ public partial class MainWindow : Window
         SetupSpeakerLabelingRunModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
         SetupSpeakerLabelingRunModeComboBox.SelectedValuePath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Value);
         SetupSpeakerLabelingRunModeComboBox.ItemsSource = speakerLabelingModeOptions;
+
+        ConfigSummaryProviderPreferenceComboBox.DisplayMemberPath = nameof(SelectionOption<MeetingSummaryProviderPreference>.Label);
+        ConfigSummaryProviderPreferenceComboBox.SelectedValuePath = nameof(SelectionOption<MeetingSummaryProviderPreference>.Value);
+        ConfigSummaryProviderPreferenceComboBox.ItemsSource = new[]
+        {
+            new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.LocalThenOpenAi, "Local then OpenAI"),
+            new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.LocalOnly, "Local only"),
+            new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.OpenAiOnly, "OpenAI only"),
+        };
     }
 
     private void RegisterConfigEditorChangeHandlers()
@@ -5826,6 +6011,14 @@ public partial class MainWindow : Window
                      ConfigAutoDetectThresholdTextBox,
                      ConfigMeetingStopTimeoutTextBox,
                      ConfigUpdateFeedUrlTextBox,
+                     ConfigSummaryModelProxyBaseUrlTextBox,
+                     ConfigSummaryModelProxyModelTextBox,
+                     ConfigSummaryModelProxyBackendTextBox,
+                     ConfigSummaryModelProxyCodexModelTextBox,
+                     ConfigSummaryOpenAiModelTextBox,
+                     ConfigSummaryRequestTimeoutTextBox,
+                     ConfigSummaryTranscriptChunkTargetTextBox,
+                     ConfigSummaryTranscriptChunkOverlapTextBox,
                  })
         {
             textBox.TextChanged += ConfigEditorValueChanged;
@@ -5841,6 +6034,7 @@ public partial class MainWindow : Window
                      ConfigMeetingAttendeeEnrichmentCheckBox,
                      ConfigUpdateCheckEnabledCheckBox,
                      ConfigAutoInstallUpdatesCheckBox,
+                     ConfigSummaryGenerationEnabledCheckBox,
                  })
         {
             checkBox.Checked += ConfigEditorValueChanged;
@@ -5850,6 +6044,7 @@ public partial class MainWindow : Window
         ConfigPreferredTeamsIntegrationModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundProcessingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundSpeakerLabelingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigSummaryProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
     }
 
     private void ConfigEditorValueChanged(object sender, RoutedEventArgs e)
@@ -5880,12 +6075,231 @@ public partial class MainWindow : Window
             _isSavingConfig ? "Saving..." : "Save Changes",
             !_isSavingConfig && hasPendingChanges);
         UpdateTeamsIntegrationProbeActionState();
+        UpdateSummaryProviderValidationActionState();
     }
 
     private void SetConfigSaveStatus(string statusText)
     {
         ConfigSaveStatusTextBlock.Text = statusText;
         _settingsWindow?.SetFooterStatus(statusText);
+    }
+
+    private async Task SavePendingSummaryProviderSecretsAsync(CancellationToken cancellationToken)
+    {
+        var modelProxySecret = ConfigSummaryModelProxyKeyPasswordBox.Password;
+        if (!string.IsNullOrWhiteSpace(modelProxySecret))
+        {
+            await _summarySecretStore.SaveAsync(SummarySecretKind.ModelProxy, modelProxySecret, cancellationToken);
+            ConfigSummaryModelProxyKeyPasswordBox.Clear();
+        }
+
+        var openAiSecret = ConfigSummaryOpenAiKeyPasswordBox.Password;
+        if (!string.IsNullOrWhiteSpace(openAiSecret))
+        {
+            await _summarySecretStore.SaveAsync(SummarySecretKind.OpenAi, openAiSecret, cancellationToken);
+            ConfigSummaryOpenAiKeyPasswordBox.Clear();
+        }
+
+        await RefreshSummaryProviderSecretStatusAsync();
+    }
+
+    private async Task RefreshSummaryProviderSecretStatusAsync()
+    {
+        try
+        {
+            var hasModelProxyKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.ModelProxy, _lifetimeCts.Token);
+            var hasOpenAiKey = await _summarySecretStore.HasSecretAsync(SummarySecretKind.OpenAi, _lifetimeCts.Token);
+            ConfigSummaryModelProxyKeyStatusTextBlock.Text = hasModelProxyKey
+                ? "ModelProxy key: saved."
+                : "ModelProxy key: not saved.";
+            ConfigSummaryOpenAiKeyStatusTextBlock.Text = hasOpenAiKey
+                ? "OpenAI key: saved."
+                : "OpenAI key: not saved.";
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Ignore shutdown.
+        }
+        catch (Exception exception)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = $"Summary credential status unavailable: {exception.Message}";
+        }
+    }
+
+    private void ConfigSummaryProviderPasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (ReferenceEquals(sender, ConfigSummaryModelProxyKeyPasswordBox))
+        {
+            ConfigSummaryModelProxyKeyStatusTextBlock.Text =
+                string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password)
+                    ? ConfigSummaryModelProxyKeyStatusTextBlock.Text
+                    : "ModelProxy key: new key pending save.";
+        }
+        else if (ReferenceEquals(sender, ConfigSummaryOpenAiKeyPasswordBox))
+        {
+            ConfigSummaryOpenAiKeyStatusTextBlock.Text =
+                string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password)
+                    ? ConfigSummaryOpenAiKeyStatusTextBlock.Text
+                    : "OpenAI key: new key pending save.";
+        }
+
+        UpdateConfigActionState();
+    }
+
+    private async void ValidateModelProxySummaryProviderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isValidatingModelProxySummaryProvider)
+        {
+            return;
+        }
+
+        _isValidatingModelProxySummaryProvider = true;
+        UpdateSummaryProviderValidationActionState();
+        ConfigSummaryProviderStatusTextBlock.Text = "Validating ModelProxy with a synthetic prompt...";
+
+        try
+        {
+            var config = BuildSummaryValidationConfigFromEditor(_liveConfig.Current);
+            var apiKey = !string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password)
+                ? ConfigSummaryModelProxyKeyPasswordBox.Password
+                : await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, _lifetimeCts.Token);
+            var result = await _summaryProviderValidationService.ValidateModelProxyAsync(
+                config,
+                apiKey,
+                _lifetimeCts.Token);
+            ConfigSummaryProviderStatusTextBlock.Text = result.StatusText;
+            AppendActivity($"ModelProxy summary provider validation: {result.StatusText}");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = "ModelProxy validation canceled.";
+        }
+        catch (Exception exception)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = $"ModelProxy validation failed: {exception.Message}";
+            AppendActivity($"ModelProxy summary provider validation failed: {exception.Message}");
+        }
+        finally
+        {
+            _isValidatingModelProxySummaryProvider = false;
+            UpdateSummaryProviderValidationActionState();
+        }
+    }
+
+    private async void ValidateOpenAiSummaryProviderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isValidatingOpenAiSummaryProvider)
+        {
+            return;
+        }
+
+        _isValidatingOpenAiSummaryProvider = true;
+        UpdateSummaryProviderValidationActionState();
+        ConfigSummaryProviderStatusTextBlock.Text = "Validating OpenAI with a synthetic prompt...";
+
+        try
+        {
+            var config = BuildSummaryValidationConfigFromEditor(_liveConfig.Current);
+            var apiKey = !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password)
+                ? ConfigSummaryOpenAiKeyPasswordBox.Password
+                : await _summarySecretStore.LoadAsync(SummarySecretKind.OpenAi, _lifetimeCts.Token);
+            var result = await _summaryProviderValidationService.ValidateOpenAiAsync(
+                config,
+                apiKey,
+                _lifetimeCts.Token);
+            ConfigSummaryProviderStatusTextBlock.Text = result.StatusText;
+            AppendActivity($"OpenAI summary provider validation: {result.StatusText}");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = "OpenAI validation canceled.";
+        }
+        catch (Exception exception)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = $"OpenAI validation failed: {exception.Message}";
+            AppendActivity($"OpenAI summary provider validation failed: {exception.Message}");
+        }
+        finally
+        {
+            _isValidatingOpenAiSummaryProvider = false;
+            UpdateSummaryProviderValidationActionState();
+        }
+    }
+
+    private async void ClearModelProxySummaryKeyButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ClearSummaryProviderSecretAsync(
+            SummarySecretKind.ModelProxy,
+            ConfigSummaryModelProxyKeyPasswordBox,
+            "ModelProxy key cleared.");
+    }
+
+    private async void ClearOpenAiSummaryKeyButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await ClearSummaryProviderSecretAsync(
+            SummarySecretKind.OpenAi,
+            ConfigSummaryOpenAiKeyPasswordBox,
+            "OpenAI key cleared.");
+    }
+
+    private async Task ClearSummaryProviderSecretAsync(
+        SummarySecretKind kind,
+        PasswordBox passwordBox,
+        string statusText)
+    {
+        try
+        {
+            await _summarySecretStore.DeleteAsync(kind, _lifetimeCts.Token);
+            passwordBox.Clear();
+            await RefreshSummaryProviderSecretStatusAsync();
+            ConfigSummaryProviderStatusTextBlock.Text = statusText;
+            AppendActivity(statusText);
+            UpdateConfigActionState();
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Ignore shutdown.
+        }
+        catch (Exception exception)
+        {
+            ConfigSummaryProviderStatusTextBlock.Text = $"Clear key failed: {exception.Message}";
+            AppendActivity($"Summary provider key clear failed: {exception.Message}");
+        }
+    }
+
+    private void UpdateSummaryProviderValidationActionState()
+    {
+        ValidateModelProxySummaryProviderButton.Content = _isValidatingModelProxySummaryProvider
+            ? "Validating..."
+            : "Validate ModelProxy";
+        ValidateOpenAiSummaryProviderButton.Content = _isValidatingOpenAiSummaryProvider
+            ? "Validating..."
+            : "Validate OpenAI";
+        ValidateModelProxySummaryProviderButton.IsEnabled = !_isValidatingModelProxySummaryProvider;
+        ValidateOpenAiSummaryProviderButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
+        ClearModelProxySummaryKeyButton.IsEnabled = !_isValidatingModelProxySummaryProvider;
+        ClearOpenAiSummaryKeyButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
+    }
+
+    private AppConfig BuildSummaryValidationConfigFromEditor(AppConfig currentConfig)
+    {
+        var timeoutSeconds = int.TryParse(
+            ConfigSummaryRequestTimeoutTextBox.Text,
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture,
+            out var parsedTimeoutSeconds)
+                ? parsedTimeoutSeconds
+                : currentConfig.SummaryRequestTimeoutSeconds;
+
+        return currentConfig with
+        {
+            SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
+            SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
+            SummaryModelProxyBackend = ConfigSummaryModelProxyBackendTextBox.Text.Trim(),
+            SummaryModelProxyCodexModel = ConfigSummaryModelProxyCodexModelTextBox.Text.Trim(),
+            SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
+            SummaryRequestTimeoutSeconds = timeoutSeconds,
+        };
     }
 
     private ConfigEditorSnapshot ReadConfigEditorSnapshot()
@@ -5913,7 +6327,23 @@ public partial class MainWindow : Window
                 : _liveConfig.Current.BackgroundProcessingMode,
             ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                 ? backgroundSpeakerLabelingMode
-                : _liveConfig.Current.BackgroundSpeakerLabelingMode);
+                : _liveConfig.Current.BackgroundSpeakerLabelingMode,
+            ConfigSummaryGenerationEnabledCheckBox.IsChecked == true
+                ? MeetingSummaryGenerationMode.Enabled
+                : MeetingSummaryGenerationMode.Disabled,
+            ConfigSummaryProviderPreferenceComboBox.SelectedValue is MeetingSummaryProviderPreference summaryProviderPreference
+                ? summaryProviderPreference
+                : _liveConfig.Current.SummaryProviderPreference,
+            ConfigSummaryModelProxyBaseUrlTextBox.Text,
+            ConfigSummaryModelProxyModelTextBox.Text,
+            ConfigSummaryModelProxyBackendTextBox.Text,
+            ConfigSummaryModelProxyCodexModelTextBox.Text,
+            ConfigSummaryOpenAiModelTextBox.Text,
+            ConfigSummaryRequestTimeoutTextBox.Text,
+            ConfigSummaryTranscriptChunkTargetTextBox.Text,
+            ConfigSummaryTranscriptChunkOverlapTextBox.Text,
+            !string.IsNullOrWhiteSpace(ConfigSummaryModelProxyKeyPasswordBox.Password),
+            !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password));
     }
 
     private void ApplyConfigEditorSnapshot(ConfigEditorSnapshot snapshot)
@@ -5934,6 +6364,17 @@ public partial class MainWindow : Window
         ConfigUpdateFeedUrlTextBox.Text = snapshot.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = snapshot.PreferredTeamsIntegrationMode;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = snapshot.BackgroundProcessingMode;
+        ConfigSummaryGenerationEnabledCheckBox.IsChecked =
+            snapshot.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled;
+        ConfigSummaryProviderPreferenceComboBox.SelectedValue = snapshot.SummaryProviderPreference;
+        ConfigSummaryModelProxyBaseUrlTextBox.Text = snapshot.SummaryModelProxyBaseUrl;
+        ConfigSummaryModelProxyModelTextBox.Text = snapshot.SummaryModelProxyModel;
+        ConfigSummaryModelProxyBackendTextBox.Text = snapshot.SummaryModelProxyBackend;
+        ConfigSummaryModelProxyCodexModelTextBox.Text = snapshot.SummaryModelProxyCodexModel;
+        ConfigSummaryOpenAiModelTextBox.Text = snapshot.SummaryOpenAiModel;
+        ConfigSummaryRequestTimeoutTextBox.Text = snapshot.SummaryRequestTimeoutSecondsText;
+        ConfigSummaryTranscriptChunkTargetTextBox.Text = snapshot.SummaryTranscriptChunkTokenTargetText;
+        ConfigSummaryTranscriptChunkOverlapTextBox.Text = snapshot.SummaryTranscriptChunkOverlapTokensText;
         SetSpeakerLabelingModeSelectors(snapshot.BackgroundSpeakerLabelingMode);
     }
 

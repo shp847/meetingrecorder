@@ -51,6 +51,19 @@ public enum SpeakerNameLearningMode
     LocalAutoLearn = 1,
 }
 
+public enum MeetingSummaryGenerationMode
+{
+    Disabled = 0,
+    Enabled = 1,
+}
+
+public enum MeetingSummaryProviderPreference
+{
+    LocalThenOpenAi = 0,
+    LocalOnly = 1,
+    OpenAiOnly = 2,
+}
+
 public enum RushProcessingBehavior
 {
     RunNextOnly = 0,
@@ -111,6 +124,25 @@ public enum TeamsGraphOnlineMeetingStatus
     Error = 3,
     NotAvailable = 4,
     Supported = 5,
+}
+
+public static class MeetingSummaryDefaults
+{
+    public const string ModelProxyBaseUrl = "http://127.0.0.1:8645/v1";
+
+    public const string ModelProxyModel = "gpt-5.4-mini";
+
+    public const string ModelProxyBackend = "codex";
+
+    public const string ModelProxyCodexModel = "gpt-5.4-mini";
+
+    public const string OpenAiModel = "gpt-5-mini";
+
+    public const int RequestTimeoutSeconds = 120;
+
+    public const int TranscriptChunkTokenTarget = 6000;
+
+    public const int TranscriptChunkOverlapTokens = 250;
 }
 
 public sealed record TeamsThirdPartyApiCapability
@@ -225,6 +257,30 @@ public sealed record AppConfig
 
     public SpeakerNameLearningMode SpeakerNameLearningMode { get; init; } =
         SpeakerNameLearningMode.LocalAutoLearn;
+
+    public MeetingSummaryGenerationMode SummaryGenerationMode { get; init; } =
+        MeetingSummaryGenerationMode.Disabled;
+
+    public MeetingSummaryProviderPreference SummaryProviderPreference { get; init; } =
+        MeetingSummaryProviderPreference.LocalThenOpenAi;
+
+    public string SummaryModelProxyBaseUrl { get; init; } = MeetingSummaryDefaults.ModelProxyBaseUrl;
+
+    public string SummaryModelProxyModel { get; init; } = MeetingSummaryDefaults.ModelProxyModel;
+
+    public string SummaryModelProxyBackend { get; init; } = MeetingSummaryDefaults.ModelProxyBackend;
+
+    public string SummaryModelProxyCodexModel { get; init; } = MeetingSummaryDefaults.ModelProxyCodexModel;
+
+    public string SummaryOpenAiModel { get; init; } = MeetingSummaryDefaults.OpenAiModel;
+
+    public int SummaryRequestTimeoutSeconds { get; init; } = MeetingSummaryDefaults.RequestTimeoutSeconds;
+
+    public int SummaryTranscriptChunkTokenTarget { get; init; } =
+        MeetingSummaryDefaults.TranscriptChunkTokenTarget;
+
+    public int SummaryTranscriptChunkOverlapTokens { get; init; } =
+        MeetingSummaryDefaults.TranscriptChunkOverlapTokens;
 
     public double SpeakerNameAutoApplyConfidenceThreshold { get; init; } = 0.86d;
 

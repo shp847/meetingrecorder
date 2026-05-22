@@ -22,6 +22,17 @@ public sealed class ProcessingWorkerPerformanceSourceTests
         Assert.DoesNotContain("NumThreads = Math.Max(1, Environment.ProcessorCount)", diarization);
     }
 
+    [Fact]
+    public void Processing_Worker_Wires_Configured_Meeting_Summarization_Provider()
+    {
+        var programPath = GetPath("src", "MeetingRecorder.ProcessingWorker", "Program.cs");
+        var program = File.ReadAllText(programPath);
+
+        Assert.Contains("FileSummarySecretStore.CreateDefault()", program, StringComparison.Ordinal);
+        Assert.Contains("new SummaryChatClient", program, StringComparison.Ordinal);
+        Assert.Contains("new MeetingSummarizationProvider", program, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

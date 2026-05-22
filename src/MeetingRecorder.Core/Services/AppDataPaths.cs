@@ -73,6 +73,11 @@ public static class AppDataPaths
         return Path.Combine(GetAppRoot(applicationBaseDirectory), "speaker-profiles", "voice-profiles.json");
     }
 
+    public static string GetSummaryProviderSecretStorePath(string? applicationBaseDirectory = null)
+    {
+        return Path.Combine(GetAppRoot(applicationBaseDirectory), "secrets", "summary-provider-secrets.json");
+    }
+
     public static bool IsPortableMode(string? applicationBaseDirectory = null)
     {
         var baseDirectory = string.IsNullOrWhiteSpace(applicationBaseDirectory)

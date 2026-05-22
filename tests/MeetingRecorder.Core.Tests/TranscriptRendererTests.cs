@@ -97,6 +97,105 @@ public sealed class TranscriptRendererTests
         Assert.Equal("Window", document["detectedAudioSource"]?["matchKind"]?.GetValue<string>());
     }
 
+    [Fact]
+    public void RenderMarkdown_Includes_Summary_Before_Transcript_When_Summarization_Succeeds()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest() with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Succeeded,
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                "Summary generated."),
+            Summary = CreateSummary(),
+        };
+
+        var markdown = renderer.RenderMarkdown(
+            manifest,
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), "speaker_00", null, "Hello team")]);
+
+        var summaryIndex = markdown.IndexOf("## Summary", StringComparison.Ordinal);
+        var transcriptIndex = markdown.IndexOf("## Transcript", StringComparison.Ordinal);
+        Assert.True(summaryIndex >= 0);
+        Assert.True(summaryIndex < transcriptIndex);
+        Assert.Contains("The team aligned on launch readiness.", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Launch remains on track.", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Send pilot checklist. Owner: Pranav. Due: Friday.", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Provider: OpenAI (gpt-5-mini)", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RenderMarkdown_Omits_Summary_When_Summarization_Did_Not_Succeed()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest() with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Failed,
+                DateTimeOffset.UtcNow,
+                "ModelProxy returned HTTP 503 Failure."),
+            Summary = CreateSummary(),
+        };
+
+        var markdown = renderer.RenderMarkdown(
+            manifest,
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), null, null, "Hello team")]);
+
+        Assert.DoesNotContain("## Summary", markdown, StringComparison.Ordinal);
+        Assert.Contains("## Transcript", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RenderJson_Includes_Summarization_Status_And_Nullable_Summary()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest() with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Succeeded,
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                "Summary generated."),
+            Summary = CreateSummary(),
+        };
+
+        var json = renderer.RenderJson(
+            manifest,
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), null, null, "Hello team")]);
+        var document = JsonNode.Parse(json)?.AsObject()
+            ?? throw new InvalidOperationException("Transcript JSON was not an object.");
+
+        Assert.Equal("summarization", document["summarizationStatus"]?["StageName"]?.GetValue<string>());
+        Assert.Equal((int)StageExecutionState.Succeeded, document["summarizationStatus"]?["State"]?.GetValue<int>());
+        Assert.Equal("The team aligned on launch readiness.", document["summary"]?["overview"]?.GetValue<string>());
+        Assert.Equal("OpenAI", document["summary"]?["provider"]?["providerName"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void RenderJson_Writes_Null_Summary_For_Failed_Summarization()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest() with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Failed,
+                DateTimeOffset.UtcNow,
+                "ModelProxy returned HTTP 503 Failure."),
+        };
+
+        var json = renderer.RenderJson(
+            manifest,
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), null, null, "Hello team")]);
+        var document = JsonNode.Parse(json)?.AsObject()
+            ?? throw new InvalidOperationException("Transcript JSON was not an object.");
+
+        Assert.Equal((int)StageExecutionState.Failed, document["summarizationStatus"]?["State"]?.GetValue<int>());
+        Assert.Null(document["summary"]);
+    }
+
     private static MeetingSessionManifest CreateManifest()
     {
         return new MeetingSessionManifest
@@ -113,5 +212,19 @@ public sealed class TranscriptRendererTests
             DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
             PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "done"),
         };
+    }
+
+    private static MeetingSummary CreateSummary()
+    {
+        var generatedAtUtc = DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind);
+        return new MeetingSummary(
+            "The team aligned on launch readiness.",
+            ["Launch remains on track."],
+            ["Proceed with the pilot."],
+            [new MeetingSummaryActionItem("Send pilot checklist.", "Pranav", "Friday")],
+            ["Confirm legal review timing."],
+            new MeetingSummaryProviderInfo(SummaryChatProviderKind.OpenAi, "OpenAI", "gpt-5-mini", false),
+            generatedAtUtc,
+            "fingerprint-123");
     }
 }

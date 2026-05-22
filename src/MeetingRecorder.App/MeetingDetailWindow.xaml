@@ -79,9 +79,124 @@
                         <StackPanel>
                             <TextBlock Style="{StaticResource DialogSectionTitleStyle}"
                                        Text="AI Summary" />
-                            <TextBlock x:Name="AiSummaryPlaceholderTextBlock"
+                            <TextBlock x:Name="AiSummaryStatusTextBlock"
                                        Margin="0,10,0,0"
                                        Style="{StaticResource DialogBodyTextStyle}" />
+                            <StackPanel x:Name="AiSummaryGeneratedContentPanel"
+                                        Margin="0,12,0,0">
+                                <TextBlock FontWeight="SemiBold"
+                                           Text="Overview" />
+                                <TextBlock x:Name="AiSummaryOverviewTextBlock"
+                                           Margin="0,4,0,12"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource DialogBodyTextStyle}" />
+
+                                <TextBlock x:Name="AiSummaryKeyPointsHeaderTextBlock"
+                                           FontWeight="SemiBold"
+                                           Text="Key Points" />
+                                <ItemsControl x:Name="AiSummaryKeyPointsItemsControl"
+                                              Margin="0,4,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Margin="0,0,0,4"
+                                                       TextWrapping="Wrap"
+                                                       Style="{StaticResource DialogBodyTextStyle}"
+                                                       Text="{Binding StringFormat=- {0}}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="AiSummaryDecisionsHeaderTextBlock"
+                                           FontWeight="SemiBold"
+                                           Text="Decisions" />
+                                <ItemsControl x:Name="AiSummaryDecisionsItemsControl"
+                                              Margin="0,4,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Margin="0,0,0,4"
+                                                       TextWrapping="Wrap"
+                                                       Style="{StaticResource DialogBodyTextStyle}"
+                                                       Text="{Binding StringFormat=- {0}}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="AiSummaryActionItemsHeaderTextBlock"
+                                           FontWeight="SemiBold"
+                                           Text="Action Items" />
+                                <ItemsControl x:Name="AiSummaryActionItemsControl"
+                                              Margin="0,4,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,6">
+                                                <TextBlock TextWrapping="Wrap"
+                                                           Style="{StaticResource DialogBodyTextStyle}"
+                                                           Text="{Binding Text, StringFormat=- {0}}" />
+                                                <TextBlock Margin="12,2,0,0"
+                                                           Foreground="{StaticResource AppMutedTextBrush}"
+                                                           TextWrapping="Wrap">
+                                                    <TextBlock.Text>
+                                                        <MultiBinding StringFormat="Owner: {0} | Due: {1}">
+                                                            <Binding Path="Owner" TargetNullValue="Unassigned" />
+                                                            <Binding Path="DueDateText" TargetNullValue="None" />
+                                                        </MultiBinding>
+                                                    </TextBlock.Text>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="AiSummaryRisksHeaderTextBlock"
+                                           FontWeight="SemiBold"
+                                           Text="Risks / Open Questions" />
+                                <ItemsControl x:Name="AiSummaryRisksItemsControl"
+                                              Margin="0,4,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Margin="0,0,0,4"
+                                                       TextWrapping="Wrap"
+                                                       Style="{StaticResource DialogBodyTextStyle}"
+                                                       Text="{Binding StringFormat=- {0}}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="AiSummaryProviderTextBlock"
+                                           Foreground="{StaticResource AppMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="AiSummaryGeneratedAtTextBlock"
+                                           Margin="0,3,0,0"
+                                           Foreground="{StaticResource AppMutedTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="AiSummaryWarningTextBlock"
+                                           Margin="0,8,0,0"
+                                           Foreground="{StaticResource AppAccentBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button x:Name="ConfigureSummariesButton"
+                                        Width="150"
+                                        Height="30"
+                                        Margin="0,0,8,8"
+                                        Style="{StaticResource SecondaryActionButtonStyle}"
+                                        Click="ConfigureSummariesButton_OnClick"
+                                        Content="Configure Summaries" />
+                                <Button x:Name="GenerateSummaryButton"
+                                        Width="132"
+                                        Height="30"
+                                        Margin="0,0,8,8"
+                                        Style="{StaticResource SecondaryActionButtonStyle}"
+                                        Click="GenerateSummaryButton_OnClick"
+                                        Content="Generate Summary" />
+                                <Button x:Name="RetrySummaryButton"
+                                        Width="112"
+                                        Height="30"
+                                        Margin="0,0,8,8"
+                                        Style="{StaticResource SecondaryActionButtonStyle}"
+                                        Click="RetrySummaryButton_OnClick"
+                                        Content="Retry Summary" />
+                            </WrapPanel>
                         </StackPanel>
                     </Border>
 

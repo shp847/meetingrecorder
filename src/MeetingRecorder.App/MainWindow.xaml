@@ -2428,6 +2428,241 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
+
+                                <Border Style="{StaticResource ConfigSectionBorderStyle}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   FontSize="18"
+                                                   Foreground="{StaticResource AppTextBrush}"
+                                                   Text="AI Summaries" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Optional transcript summaries run after transcription and speaker labeling. Local ModelProxy stays on this machine; OpenAI sends transcript text to the hosted API only when you provide a key and allow that provider path." />
+
+                                        <StackPanel Margin="0,14,0,0">
+                                            <CheckBox x:Name="ConfigSummaryGenerationEnabledCheckBox"
+                                                      Content="Enable meeting summaries for future processing" />
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="New meetings summarize during processing when a provider is configured. Published meetings can also be summarized from the meeting detail window." />
+                                        </StackPanel>
+
+                                        <Grid Margin="0,16,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0"
+                                                       Grid.ColumnSpan="2"
+                                                       FontWeight="SemiBold"
+                                                       Text="Provider policy" />
+                                            <ComboBox x:Name="ConfigSummaryProviderPreferenceComboBox"
+                                                      Grid.Row="1"
+                                                      Grid.Column="1"
+                                                      Margin="0,6,0,8"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="1"
+                                                       Margin="0,6,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Preference" />
+
+                                            <TextBlock Grid.Row="2"
+                                                       Grid.ColumnSpan="2"
+                                                       Margin="0,10,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Text="ModelProxy local provider" />
+                                            <TextBlock Grid.Row="3"
+                                                       Margin="0,8,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Base URL" />
+                                            <TextBox x:Name="ConfigSummaryModelProxyBaseUrlTextBox"
+                                                     Grid.Row="3"
+                                                     Grid.Column="1"
+                                                     Margin="0,8,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="4"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Model" />
+                                            <TextBox x:Name="ConfigSummaryModelProxyModelTextBox"
+                                                     Grid.Row="4"
+                                                     Grid.Column="1"
+                                                     Margin="0,0,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="5"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Backend override" />
+                                            <TextBox x:Name="ConfigSummaryModelProxyBackendTextBox"
+                                                     Grid.Row="5"
+                                                     Grid.Column="1"
+                                                     Margin="0,0,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="6"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Codex model" />
+                                            <TextBox x:Name="ConfigSummaryModelProxyCodexModelTextBox"
+                                                     Grid.Row="6"
+                                                     Grid.Column="1"
+                                                     Margin="0,0,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="7"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Local key" />
+                                            <PasswordBox x:Name="ConfigSummaryModelProxyKeyPasswordBox"
+                                                         Grid.Row="7"
+                                                         Grid.Column="1"
+                                                         Margin="0,0,0,8"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center"
+                                                         PasswordChanged="ConfigSummaryProviderPasswordBox_OnPasswordChanged" />
+                                            <TextBlock x:Name="ConfigSummaryModelProxyKeyStatusTextBlock"
+                                                       Grid.Row="8"
+                                                       Grid.Column="1"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="ModelProxy key: not saved." />
+                                            <WrapPanel Grid.Row="9"
+                                                       Grid.Column="1"
+                                                       Margin="0,10,0,0">
+                                                <Button x:Name="ValidateModelProxySummaryProviderButton"
+                                                        Width="170"
+                                                        Height="32"
+                                                        Margin="0,0,12,0"
+                                                        Click="ValidateModelProxySummaryProviderButton_OnClick"
+                                                        Content="Validate ModelProxy" />
+                                                <Button x:Name="ClearModelProxySummaryKeyButton"
+                                                        Width="130"
+                                                        Height="32"
+                                                        Click="ClearModelProxySummaryKeyButton_OnClick"
+                                                        Content="Clear Key" />
+                                            </WrapPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,18,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0"
+                                                       Grid.ColumnSpan="2"
+                                                       FontWeight="SemiBold"
+                                                       Text="OpenAI hosted provider" />
+                                            <TextBlock Grid.Row="1"
+                                                       Margin="0,8,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Model" />
+                                            <TextBox x:Name="ConfigSummaryOpenAiModelTextBox"
+                                                     Grid.Row="1"
+                                                     Grid.Column="1"
+                                                     Margin="0,8,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="2"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="API key" />
+                                            <PasswordBox x:Name="ConfigSummaryOpenAiKeyPasswordBox"
+                                                         Grid.Row="2"
+                                                         Grid.Column="1"
+                                                         Margin="0,0,0,8"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center"
+                                                         PasswordChanged="ConfigSummaryProviderPasswordBox_OnPasswordChanged" />
+                                            <StackPanel Grid.Row="3"
+                                                        Grid.Column="1">
+                                                <TextBlock x:Name="ConfigSummaryOpenAiKeyStatusTextBlock"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="OpenAI key: not saved." />
+                                                <WrapPanel Margin="0,10,0,0">
+                                                    <Button x:Name="ValidateOpenAiSummaryProviderButton"
+                                                            Width="150"
+                                                            Height="32"
+                                                            Margin="0,0,12,0"
+                                                            Click="ValidateOpenAiSummaryProviderButton_OnClick"
+                                                            Content="Validate OpenAI" />
+                                                    <Button x:Name="ClearOpenAiSummaryKeyButton"
+                                                            Width="130"
+                                                            Height="32"
+                                                            Click="ClearOpenAiSummaryKeyButton_OnClick"
+                                                            Content="Clear Key" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,18,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Timeout seconds" />
+                                            <TextBox x:Name="ConfigSummaryRequestTimeoutTextBox"
+                                                     Grid.Row="0"
+                                                     Grid.Column="1"
+                                                     Margin="0,0,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="1"
+                                                       Margin="0,0,12,8"
+                                                       VerticalAlignment="Center"
+                                                       Text="Chunk token target" />
+                                            <TextBox x:Name="ConfigSummaryTranscriptChunkTargetTextBox"
+                                                     Grid.Row="1"
+                                                     Grid.Column="1"
+                                                     Margin="0,0,0,8"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Grid.Row="2"
+                                                       Margin="0,0,12,0"
+                                                       VerticalAlignment="Center"
+                                                       Text="Chunk overlap tokens" />
+                                            <TextBox x:Name="ConfigSummaryTranscriptChunkOverlapTextBox"
+                                                     Grid.Row="2"
+                                                     Grid.Column="1"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                        </Grid>
+
+                                        <TextBlock x:Name="ConfigSummaryProviderStatusTextBlock"
+                                                   Margin="0,14,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Summary providers are not validated yet." />
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
 

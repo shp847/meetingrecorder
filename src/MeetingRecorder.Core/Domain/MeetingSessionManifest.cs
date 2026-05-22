@@ -48,6 +48,11 @@ public sealed record MeetingSessionManifest
     public ProcessingStageStatus DiarizationStatus { get; init; } =
         new("diarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
 
+    public ProcessingStageStatus SummarizationStatus { get; init; } =
+        new("summarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
+
+    public MeetingSummary? Summary { get; init; }
+
     public ProcessingStageStatus PublishStatus { get; init; } =
         new("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
 

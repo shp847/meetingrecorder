@@ -17,6 +17,12 @@ public sealed class SessionProcessor
         PropertyNameCaseInsensitive = true,
         WriteIndented = true,
     };
+    private static readonly JsonSerializerOptions SummarySnapshotSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true,
+    };
 
     public SessionProcessor(
         SessionManifestStore manifestStore,
@@ -25,7 +31,8 @@ public sealed class SessionProcessor
         ITranscriptionProvider transcriptionProvider,
         IDiarizationProvider diarizationProvider,
         TranscriptRenderer transcriptRenderer,
-        FilePublishService publishService)
+        FilePublishService publishService,
+        IMeetingSummarizationProvider? summarizationProvider = null)
     {
         ManifestStore = manifestStore;
         PathBuilder = pathBuilder;
@@ -34,6 +41,7 @@ public sealed class SessionProcessor
         DiarizationProvider = diarizationProvider;
         TranscriptRenderer = transcriptRenderer;
         PublishService = publishService;
+        SummarizationProvider = summarizationProvider ?? NoOpMeetingSummarizationProvider.Instance;
     }
 
     public SessionManifestStore ManifestStore { get; }
@@ -50,6 +58,8 @@ public sealed class SessionProcessor
 
     public FilePublishService PublishService { get; }
 
+    public IMeetingSummarizationProvider SummarizationProvider { get; }
+
     public Task<PublishedArtifactSet> ProcessAsync(
         string manifestPath,
         AppConfig config,
@@ -61,6 +71,11 @@ public sealed class SessionProcessor
     internal static string GetPersistedTranscriptionSnapshotPath(string processingRoot)
     {
         return BuildTranscriptionSnapshotPath(processingRoot, string.Empty);
+    }
+
+    internal static string GetPersistedSummarySnapshotPath(string processingRoot)
+    {
+        return BuildSummarySnapshotPath(processingRoot);
     }
 
     internal static Task<TranscriptionResult?> LoadPersistedTranscriptionSnapshotAsync(
@@ -98,6 +113,7 @@ public sealed class SessionProcessor
                 State = SessionState.Failed,
                 TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Failed, now, exception.Message),
                 DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Skipped, now, "Skipped because source audio processing failed."),
+                SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.Skipped, now, "Skipped because source audio processing failed."),
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Skipped, now, "Skipped because source audio processing failed."),
                 ErrorSummary = exception.Message,
             };
@@ -126,6 +142,8 @@ public sealed class SessionProcessor
             MergedAudioPath = sourceAudioPath,
             TranscriptionStatus = initialTranscriptionStatus,
             DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
+            SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
+            Summary = null,
             PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
         };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
@@ -158,6 +176,7 @@ public sealed class SessionProcessor
                 {
                     State = SessionState.Failed,
                     TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Failed, DateTimeOffset.UtcNow, exception.Message),
+                    SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.Skipped, DateTimeOffset.UtcNow, "Skipped because transcription failed."),
                     PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Skipped, DateTimeOffset.UtcNow, "Merged audio was published, but transcript artifacts were not generated."),
                     ErrorSummary = exception.Message,
                 };
@@ -235,6 +254,14 @@ public sealed class SessionProcessor
         };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
+        manifest = await ApplySummarizationAsync(
+            manifest,
+            manifestPath,
+            processingRoot,
+            transcriptSegments,
+            config,
+            cancellationToken);
+
         var markdownPath = Path.Combine(processingRoot, $"{stem}.md");
         var jsonPath = Path.Combine(processingRoot, $"{stem}.json");
         await File.WriteAllTextAsync(markdownPath, TranscriptRenderer.RenderMarkdown(manifest, transcriptSegments), Encoding.UTF8, cancellationToken);
@@ -289,6 +316,185 @@ public sealed class SessionProcessor
     {
         _ = stem;
         return Path.Combine(processingRoot, "transcription.snapshot.json");
+    }
+
+    private static string BuildSummarySnapshotPath(string processingRoot)
+    {
+        return Path.Combine(processingRoot, "summary.snapshot.json");
+    }
+
+    private async Task<MeetingSessionManifest> ApplySummarizationAsync(
+        MeetingSessionManifest manifest,
+        string manifestPath,
+        string processingRoot,
+        IReadOnlyList<TranscriptSegment> transcriptSegments,
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        if (transcriptSegments.Count == 0)
+        {
+            var skipped = manifest with
+            {
+                SummarizationStatus = new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    "Summary generation skipped because no transcript segments were available."),
+                Summary = null,
+            };
+            await ManifestStore.SaveAsync(skipped, manifestPath, cancellationToken);
+            return skipped;
+        }
+
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled)
+        {
+            var skipped = manifest with
+            {
+                SummarizationStatus = new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    "Summary generation disabled."),
+                Summary = null,
+            };
+            await ManifestStore.SaveAsync(skipped, manifestPath, cancellationToken);
+            return skipped;
+        }
+
+        var fingerprint = MeetingSummaryTranscriptFingerprint.Compute(transcriptSegments);
+        var summarySnapshotPath = BuildSummarySnapshotPath(processingRoot);
+        var persistedSummary = await TryLoadPersistedSummaryAsync(
+            summarySnapshotPath,
+            fingerprint,
+            cancellationToken);
+        if (persistedSummary is not null)
+        {
+            var loaded = manifest with
+            {
+                SummarizationStatus = new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Succeeded,
+                    DateTimeOffset.UtcNow,
+                    "Loaded persisted summary snapshot from a prior attempt."),
+                Summary = persistedSummary,
+            };
+            await ManifestStore.SaveAsync(loaded, manifestPath, cancellationToken);
+            return loaded;
+        }
+
+        manifest = manifest with
+        {
+            SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.Running, DateTimeOffset.UtcNow, null),
+            Summary = null,
+        };
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+
+        MeetingSummaryResult result;
+        try
+        {
+            result = await SummarizationProvider.SummarizeAsync(
+                new MeetingSummaryRequest(manifest, transcriptSegments, config),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            result = new MeetingSummaryResult(
+                new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Failed,
+                    DateTimeOffset.UtcNow,
+                    BuildSafeUnexpectedSummaryFailureMessage(exception)),
+                null);
+        }
+
+        var status = NormalizeSummaryStatus(result.Status);
+        var summary = status.State == StageExecutionState.Succeeded
+            ? result.Summary
+            : null;
+        if (status.State == StageExecutionState.Succeeded && summary is null)
+        {
+            status = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Failed,
+                DateTimeOffset.UtcNow,
+                "Summary provider reported success without summary content.");
+        }
+
+        if (status.State == StageExecutionState.Succeeded && summary is not null)
+        {
+            summary = summary.TranscriptFingerprint == fingerprint
+                ? summary
+                : summary with
+                {
+                    TranscriptFingerprint = fingerprint,
+                };
+            await SavePersistedSummaryAsync(summarySnapshotPath, summary, cancellationToken);
+        }
+
+        var updated = manifest with
+        {
+            SummarizationStatus = status,
+            Summary = status.State == StageExecutionState.Succeeded ? summary : null,
+        };
+        await ManifestStore.SaveAsync(updated, manifestPath, cancellationToken);
+        return updated;
+    }
+
+    private static ProcessingStageStatus NormalizeSummaryStatus(ProcessingStageStatus status)
+    {
+        return status with
+        {
+            StageName = "summarization",
+        };
+    }
+
+    private static string BuildSafeUnexpectedSummaryFailureMessage(Exception exception)
+    {
+        return exception is HttpRequestException or TimeoutException
+            ? exception.Message
+            : "Summary generation failed before a usable summary was returned.";
+    }
+
+    private static async Task<MeetingSummary?> TryLoadPersistedSummaryAsync(
+        string summarySnapshotPath,
+        string expectedFingerprint,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(summarySnapshotPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var snapshotJson = await File.ReadAllTextAsync(summarySnapshotPath, cancellationToken);
+            var summary = JsonSerializer.Deserialize<MeetingSummary>(
+                snapshotJson,
+                SummarySnapshotSerializerOptions);
+            return string.Equals(summary?.TranscriptFingerprint, expectedFingerprint, StringComparison.Ordinal)
+                ? summary
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task SavePersistedSummaryAsync(
+        string summarySnapshotPath,
+        MeetingSummary summary,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(summarySnapshotPath)
+            ?? throw new InvalidOperationException("The summary snapshot path must include a directory."));
+
+        await using var stream = File.Create(summarySnapshotPath);
+        await JsonSerializer.SerializeAsync(
+            stream,
+            summary,
+            SummarySnapshotSerializerOptions,
+            cancellationToken);
     }
 
     private static async Task<TranscriptionResult?> TryLoadPersistedTranscriptionAsync(

@@ -263,6 +263,78 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void General_Settings_Expose_Ai_Summary_Provider_Controls()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("Text=\"AI Summaries\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryGenerationEnabledCheckBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryProviderPreferenceComboBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyBaseUrlTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyModelTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyBackendTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyCodexModelTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyKeyPasswordBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyKeyStatusTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"ValidateModelProxySummaryProviderButton\"", xaml);
+        Assert.Contains("x:Name=\"ClearModelProxySummaryKeyButton\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryOpenAiModelTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyPasswordBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyStatusTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"ValidateOpenAiSummaryProviderButton\"", xaml);
+        Assert.Contains("x:Name=\"ClearOpenAiSummaryKeyButton\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryRequestTimeoutTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryTranscriptChunkTargetTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryTranscriptChunkOverlapTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryProviderStatusTextBlock\"", xaml);
+        Assert.DoesNotContain("Summary generation starts in the processing stage in a later sprint.", xaml);
+    }
+
+    [Fact]
+    public void Meeting_Detail_Window_Exposes_Structured_Ai_Summary_Controls()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml");
+
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("Text=\"AI Summary\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryStatusTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryGeneratedContentPanel\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryOverviewTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryKeyPointsItemsControl\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryDecisionsItemsControl\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryActionItemsControl\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryRisksItemsControl\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryProviderTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryGeneratedAtTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"AiSummaryWarningTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"ConfigureSummariesButton\"", xaml);
+        Assert.Contains("x:Name=\"GenerateSummaryButton\"", xaml);
+        Assert.Contains("x:Name=\"RetrySummaryButton\"", xaml);
+        Assert.DoesNotContain("AiSummaryPlaceholderTextBlock", xaml);
+        Assert.DoesNotContain("AI summary is reserved for a later update", xaml);
+    }
+
+    [Fact]
+    public void Meeting_Detail_Window_Source_Wires_Summary_Actions()
+    {
+        var windowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml.cs"));
+        var mainWindowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("ConfigureSummariesRequested", windowSource);
+        Assert.Contains("GenerateSummaryRequested", windowSource);
+        Assert.Contains("RetrySummaryRequested", windowSource);
+        Assert.Contains("ConfigureSummariesButton_OnClick", windowSource);
+        Assert.Contains("GenerateSummaryButton_OnClick", windowSource);
+        Assert.Contains("RetrySummaryButton_OnClick", windowSource);
+        Assert.Contains("GenerateOpenMeetingDetailSummaryAsync", mainWindowSource);
+        Assert.Contains("OpenSettingsSurface(SettingsWindowSection.General)", mainWindowSource);
+        Assert.Contains("RefreshOpenMeetingDetailWindow", mainWindowSource);
+    }
+
+    [Fact]
     public void Updates_Tab_Exposes_A_Secondary_Override_Button_For_Queued_Installs()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

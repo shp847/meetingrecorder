@@ -50,6 +50,7 @@ public sealed class SessionManifestStore
             MergedAudioPath = null,
             TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.NotStarted, now, null),
             DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
+            SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.NotStarted, now, null),
             PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
         };
 
@@ -144,7 +145,18 @@ public sealed class SessionManifestStore
             CaptureTimeline = NormalizeCaptureTimeline(manifest.CaptureTimeline),
             KeyAttendees = MeetingMetadataNameMatcher.MergeNames(manifest.KeyAttendees, Array.Empty<string>()),
             Attendees = NormalizeAttendees(manifest.Attendees),
+            SummarizationStatus = NormalizeSummarizationStatus(manifest.SummarizationStatus),
         };
+    }
+
+    private static ProcessingStageStatus NormalizeSummarizationStatus(ProcessingStageStatus? status)
+    {
+        return status is null
+            ? new ProcessingStageStatus("summarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null)
+            : status with
+            {
+                StageName = "summarization",
+            };
     }
 
     private static IReadOnlyList<LoopbackCaptureSegment> NormalizeLoopbackCaptureSegments(MeetingSessionManifest manifest)

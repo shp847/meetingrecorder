@@ -38,6 +38,12 @@ public sealed class TranscriptRenderer
         };
         lines.AddRange(metadataLines);
         lines.Add(string.Empty);
+        if (ShouldRenderSummary(manifest))
+        {
+            AddSummaryMarkdown(lines, manifest.Summary!);
+            lines.Add(string.Empty);
+        }
+
         lines.Add("## Transcript");
         lines.Add(string.Empty);
 
@@ -64,6 +70,8 @@ public sealed class TranscriptRenderer
             manifest.DetectedAudioSource,
             manifest.TranscriptionStatus,
             manifest.DiarizationStatus,
+            manifest.SummarizationStatus,
+            ShouldRenderSummary(manifest) ? BuildTranscriptSummary(manifest.Summary!) : null,
             manifest.PublishStatus,
             manifest.Attendees,
             manifest.ProcessingMetadata?.TranscriptionModelFileName,
@@ -98,6 +106,8 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("detectedAudioSource")] DetectedAudioSource? DetectedAudioSource,
         ProcessingStageStatus TranscriptionStatus,
         ProcessingStageStatus DiarizationStatus,
+        [property: JsonPropertyName("summarizationStatus")] ProcessingStageStatus SummarizationStatus,
+        [property: JsonPropertyName("summary")] TranscriptDocumentSummary? Summary,
         ProcessingStageStatus PublishStatus,
         [property: JsonPropertyName("attendees")] IReadOnlyList<MeetingAttendee> Attendees,
         [property: JsonPropertyName("transcriptionModelFileName")] string? TranscriptionModelFileName,
@@ -114,6 +124,116 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("speakerLabel")] string? SpeakerLabel,
         [property: JsonPropertyName("displaySpeakerLabel")] string? DisplaySpeakerLabel,
         [property: JsonPropertyName("text")] string Text);
+
+    private sealed record TranscriptDocumentSummary(
+        [property: JsonPropertyName("overview")] string Overview,
+        [property: JsonPropertyName("keyPoints")] IReadOnlyList<string> KeyPoints,
+        [property: JsonPropertyName("decisions")] IReadOnlyList<string> Decisions,
+        [property: JsonPropertyName("actionItems")] IReadOnlyList<TranscriptDocumentSummaryActionItem> ActionItems,
+        [property: JsonPropertyName("risksAndOpenQuestions")] IReadOnlyList<string> RisksAndOpenQuestions,
+        [property: JsonPropertyName("provider")] TranscriptDocumentSummaryProvider Provider,
+        [property: JsonPropertyName("generatedAtUtc")] DateTimeOffset GeneratedAtUtc,
+        [property: JsonPropertyName("transcriptFingerprint")] string TranscriptFingerprint);
+
+    private sealed record TranscriptDocumentSummaryActionItem(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("owner")] string? Owner,
+        [property: JsonPropertyName("dueDateText")] string? DueDateText);
+
+    private sealed record TranscriptDocumentSummaryProvider(
+        [property: JsonPropertyName("providerKind")] string ProviderKind,
+        [property: JsonPropertyName("providerName")] string ProviderName,
+        [property: JsonPropertyName("model")] string Model,
+        [property: JsonPropertyName("fallbackUsed")] bool FallbackUsed);
+
+    private static bool ShouldRenderSummary(MeetingSessionManifest manifest)
+    {
+        return manifest.SummarizationStatus.State == StageExecutionState.Succeeded &&
+               manifest.Summary is not null;
+    }
+
+    private static void AddSummaryMarkdown(ICollection<string> lines, MeetingSummary summary)
+    {
+        lines.Add("## Summary");
+        lines.Add(string.Empty);
+        lines.Add(summary.Overview);
+        lines.Add(string.Empty);
+
+        AddBulletSection(lines, "Key Points", summary.KeyPoints);
+        AddBulletSection(lines, "Decisions", summary.Decisions);
+        if (summary.ActionItems.Count > 0)
+        {
+            lines.Add("### Action Items");
+            foreach (var actionItem in summary.ActionItems)
+            {
+                lines.Add($"- {BuildActionItemMarkdown(actionItem)}");
+            }
+
+            lines.Add(string.Empty);
+        }
+
+        AddBulletSection(lines, "Risks And Open Questions", summary.RisksAndOpenQuestions);
+        lines.Add($"- Provider: {summary.Provider.ProviderName} ({summary.Provider.Model})");
+        if (summary.Provider.FallbackUsed)
+        {
+            lines.Add("- Fallback used: Yes");
+        }
+    }
+
+    private static void AddBulletSection(
+        ICollection<string> lines,
+        string title,
+        IReadOnlyList<string> items)
+    {
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        lines.Add($"### {title}");
+        foreach (var item in items)
+        {
+            lines.Add($"- {item}");
+        }
+
+        lines.Add(string.Empty);
+    }
+
+    private static string BuildActionItemMarkdown(MeetingSummaryActionItem actionItem)
+    {
+        var parts = new List<string> { actionItem.Text };
+        if (!string.IsNullOrWhiteSpace(actionItem.Owner))
+        {
+            parts.Add($"Owner: {actionItem.Owner}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(actionItem.DueDateText))
+        {
+            parts.Add($"Due: {actionItem.DueDateText}.");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static TranscriptDocumentSummary BuildTranscriptSummary(MeetingSummary summary)
+    {
+        return new TranscriptDocumentSummary(
+            summary.Overview,
+            summary.KeyPoints,
+            summary.Decisions,
+            summary.ActionItems.Select(actionItem => new TranscriptDocumentSummaryActionItem(
+                actionItem.Text,
+                actionItem.Owner,
+                actionItem.DueDateText)).ToArray(),
+            summary.RisksAndOpenQuestions,
+            new TranscriptDocumentSummaryProvider(
+                summary.Provider.ProviderKind.ToString(),
+                summary.Provider.ProviderName,
+                summary.Provider.Model,
+                summary.Provider.FallbackUsed),
+            summary.GeneratedAtUtc,
+            summary.TranscriptFingerprint);
+    }
 
     private static IReadOnlyDictionary<string, string> BuildSpeakerCatalog(IReadOnlyList<SpeakerIdentity>? speakers)
     {

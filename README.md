@@ -8,6 +8,7 @@ It is designed for people who need practical local meeting capture with predicta
 - local transcription
 - optional microphone capture
 - optional local speaker diarization
+- optional configurable meeting summaries from completed transcripts
 - lightweight install and update paths
 - automation-friendly output artifacts
 
@@ -166,7 +167,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Published meeting list with project tags, status, duration, compact local-time timestamps, compact artifact actions, and recommendation badges
 - Grouped browsing now opens the first visible group by default, keeps other groups collapsed initially, and exposes quick `Expand All` and `Collapse All` controls
 - Separate meeting detail window showing local transcript segments from JSON sidecars with Markdown fallback, meeting facts, attendees, recommendation badges, transcript model metadata, speaker-label state, the persisted detected audio source summary, and collapsed capture diagnostics
-- The detail window reserves an inactive AI-summary area for a later update; current builds do not generate summaries or send transcript content to cloud services
+- The detail window requirements now include generated summary content when configured, plus clear disabled, unconfigured, unavailable, and failed summary states that do not confuse summary availability with transcript health
 - Recommendation badges for likely cleanup actions directly in the meeting list
 - Dedicated cleanup recommendation review area for bulk apply, dismiss, and open-related flows without leaving the Meetings workspace
 - Per-meeting context menu for opening details, artifacts, archive, delete, rename, retry, split, and speaker-label maintenance actions
@@ -362,6 +363,41 @@ The `Settings` surface opens as a dedicated dialog from the header, keeps capabi
 The header-level `Help` surface now opens as a dedicated dialog and owns About details, setup/help entry points, logs/data folder shortcuts, and release-page links.
 
 Calendar title fallback is optional and soft-fail by design. Separately, attendee enrichment now defaults on and can merge Outlook appointment attendees plus best-effort live Teams roster names into meeting metadata when those sources are available. Outlook attendee enrichment now requires a reasonable meeting-identity match before it stamps names into the meeting, so a 1:1 recording does not inherit attendees from an unrelated overlapping calendar item. The Outlook lookup path now reuses a per-day in-memory appointment cache, coalesces concurrent same-day reads, only binds to an already-running Outlook session, performs the COM read on an STA thread, narrows the Outlook `Items` query to the relevant meeting window, cancels timed-out background reads instead of letting them continue, and enters a temporary backoff after short lookup timeouts or other Outlook failures. That keeps generic-title detection and attendee backfill from repeatedly reopening calendar automation work, reduces the chance of Outlook shared-resource warnings, and lets queue processing continue when Outlook is unhealthy. If Outlook access or Teams automation is unavailable, recording and detection continue normally.
+
+## Meeting Summary Provider Requirements
+
+Meeting summaries are an optional processing stage after transcription and optional speaker labeling. They are disabled by default. When enabled and configured, the worker writes a successful summary into `summary.snapshot.json`, the transcript JSON sidecar, and a `## Summary` section in the Markdown transcript. The meeting detail window reads those local artifacts and shows the overview, key points, decisions, action items, risks/open questions, provider/model, generated timestamp, and fallback status. If no summary provider is configured, transcript publication still succeeds and the detail window explains the summary state without showing an error.
+
+The default provider path is local-first:
+
+- Try ModelProxy through its local OpenAI-compatible HTTP API.
+- Fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits hosted fallback.
+- Disable ModelProxy web search for summary requests so the model uses only the supplied transcript.
+- Treat summary failures as supplemental failures; they must not block `.md`, `.json`, or `.ready` transcript output.
+- Reuse a matching `summary.snapshot.json` on repaired processing attempts instead of calling a provider again.
+- Allow explicit summary generation or retry from the meeting detail window for published meetings that have a structured transcript JSON sidecar, without re-running transcription or speaker labeling.
+
+Meeting Recorder includes an opt-in ModelProxy validation path. It is deliberately separate from recording and publishing: validation must use synthetic prompts and must not send meeting audio, transcript text, attendee lists, or client metadata.
+
+The validation client lives in `MeetingRecorder.Core` and posts a synthetic text-only Chat Completions request to `http://127.0.0.1:8645/v1/chat/completions` with the local key ID configured in ModelProxy as `meeting-recorder`.
+
+Run the live smoke only after ModelProxy is already running:
+
+```powershell
+.\scripts\Test-ModelProxy.ps1
+```
+
+Defaults:
+
+- local API key: `sk-modelproxy-meeting-recorder`
+- caller model: `gpt-5.4-mini`
+- backend override: `X-ModelProxy-Backend: codex`
+- Codex model override: `X-ModelProxy-Codex-Model: gpt-5.4-mini`
+- summary requests must also send `X-ModelProxy-Web-Search: false`
+
+Use `MODELPROXY_MEETING_RECORDER_API_KEY` to override the local key for your machine. The script prints only the synthetic response string and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
+
+Settings includes summary provider configuration, DPAPI-protected local key storage under the app data root, and synthetic validation that asks providers to return `summary-provider-ok` without sending transcript, attendee, client, or meeting content. Automatic summary generation runs in the processing worker, and the meeting detail window can generate or retry summaries from existing transcript JSON artifacts. Credential clearing remains in Settings.
 
 ## Designed for Practical Windows Use
 

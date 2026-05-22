@@ -3,6 +3,8 @@ using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Processing;
 using MeetingRecorder.Core.Services;
 using NAudio.Wave;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 namespace MeetingRecorder.Core.Tests;
 
 public sealed class SessionProcessorTests
@@ -350,6 +352,205 @@ public sealed class SessionProcessorTests
         }
     }
 
+    [Fact]
+    public async Task ProcessAsync_Generates_Summary_After_Diarization_And_Publishes_Artifacts()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                new LabelingDiarizationProvider(),
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with
+                {
+                    SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                });
+
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var snapshotPath = SessionProcessor.GetPersistedSummarySnapshotPath(Path.Combine(context.SessionRoot, "processing"));
+            var markdown = await File.ReadAllTextAsync(published.MarkdownPath);
+            var json = await File.ReadAllTextAsync(published.JsonPath);
+            var document = JsonNode.Parse(json)?.AsObject()
+                ?? throw new InvalidOperationException("Transcript JSON was not an object.");
+
+            Assert.Equal(1, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, finalManifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.Succeeded, finalManifest.SummarizationStatus.State);
+            Assert.Equal("speaker_00", Assert.Single(summaryProvider.LastSegments).SpeakerId);
+            Assert.True(File.Exists(snapshotPath));
+            Assert.Contains("## Summary", markdown, StringComparison.Ordinal);
+            Assert.Contains("The processed meeting has a generated summary.", markdown, StringComparison.Ordinal);
+            Assert.Equal("The processed meeting has a generated summary.", document["summary"]?["overview"]?.GetValue<string>());
+            Assert.True(File.Exists(published.ReadyMarkerPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Skips_Summary_When_Disabled_Without_Calling_Provider()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync(skipSpeakerLabeling: true);
+
+        try
+        {
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                new TrackingDiarizationProvider(),
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(context.ManifestPath, context.CreateConfig());
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(SessionState.Published, finalManifest.State);
+            Assert.Equal(StageExecutionState.Skipped, finalManifest.SummarizationStatus.State);
+            Assert.Contains("disabled", finalManifest.SummarizationStatus.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(published.ReadyMarkerPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Marks_Summary_Failed_But_Still_Publishes_Ready_Marker()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync(skipSpeakerLabeling: true);
+
+        try
+        {
+            var summaryProvider = new TrackingSummaryProvider
+            {
+                ResultFactory = request => new MeetingSummaryResult(
+                    new ProcessingStageStatus(
+                        "summarization",
+                        StageExecutionState.Failed,
+                        DateTimeOffset.UtcNow,
+                        "ModelProxy returned HTTP 503 Failure."),
+                    null),
+            };
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                new TrackingDiarizationProvider(),
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with
+                {
+                    SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                });
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var markdown = await File.ReadAllTextAsync(published.MarkdownPath);
+
+            Assert.Equal(SessionState.Published, finalManifest.State);
+            Assert.Equal(StageExecutionState.Failed, finalManifest.SummarizationStatus.State);
+            Assert.True(File.Exists(published.ReadyMarkerPath));
+            Assert.DoesNotContain("## Summary", markdown, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Reuses_Persisted_Summary_Snapshot_When_Fingerprint_Matches()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync(skipSpeakerLabeling: true);
+
+        try
+        {
+            var segments = new[]
+            {
+                new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(1), null, null, "hello world"),
+            };
+            var fingerprint = MeetingSummaryTranscriptFingerprint.Compute(segments);
+            var snapshotPath = SessionProcessor.GetPersistedSummarySnapshotPath(Path.Combine(context.SessionRoot, "processing"));
+            await File.WriteAllTextAsync(
+                snapshotPath,
+                JsonSerializer.Serialize(
+                    CreateSummary(fingerprint, "Loaded persisted summary."),
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }));
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                new TrackingDiarizationProvider(),
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with
+                {
+                    SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                });
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var markdown = await File.ReadAllTextAsync(published.MarkdownPath);
+
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, finalManifest.SummarizationStatus.State);
+            Assert.Equal("Loaded persisted summary.", finalManifest.Summary?.Overview);
+            Assert.Contains("Loaded persisted summary.", markdown, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Summarizes_When_Diarization_Fails()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                new ThrowingDiarizationProvider(),
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with
+                {
+                    SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                });
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(StageExecutionState.Failed, finalManifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.Succeeded, finalManifest.SummarizationStatus.State);
+            Assert.Equal(1, summaryProvider.CallCount);
+            Assert.True(File.Exists(published.ReadyMarkerPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -365,6 +566,92 @@ public sealed class SessionProcessorTests
         }
 
         return Task.CompletedTask;
+    }
+
+    private static SessionProcessor CreateProcessor(
+        SessionManifestStore manifestStore,
+        ArtifactPathBuilder pathBuilder,
+        ITranscriptionProvider transcriptionProvider,
+        IDiarizationProvider diarizationProvider,
+        IMeetingSummarizationProvider summarizationProvider)
+    {
+        return new SessionProcessor(
+            manifestStore,
+            pathBuilder,
+            new WaveChunkMerger(),
+            transcriptionProvider,
+            diarizationProvider,
+            new TranscriptRenderer(),
+            new FilePublishService(),
+            summarizationProvider);
+    }
+
+    private static async Task<ProcessorTestContext> CreateQueuedSessionWithExistingAudioAsync(
+        bool skipSpeakerLabeling = false)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var pathBuilder = new ArtifactPathBuilder();
+        var workDir = Path.Combine(root, "work");
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(workDir);
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var manifest = await manifestStore.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Queued Session",
+            Array.Empty<DetectionSignal>());
+        var sessionRoot = Path.Combine(workDir, manifest.SessionId);
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        var sourceAudioPath = Path.Combine(sessionRoot, "processing", "existing-audio.wav");
+        await WriteSilentWaveFileAsync(sourceAudioPath, TimeSpan.FromSeconds(1));
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                State = SessionState.Queued,
+                EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1),
+                MergedAudioPath = sourceAudioPath,
+                ProcessingOverrides = new MeetingProcessingOverrides(null, null, skipSpeakerLabeling),
+            },
+            manifestPath);
+
+        return new ProcessorTestContext(
+            root,
+            workDir,
+            audioDir,
+            transcriptDir,
+            sessionRoot,
+            manifestPath,
+            manifestStore,
+            pathBuilder);
+    }
+
+    private static MeetingSummary CreateSummary(string fingerprint, string overview)
+    {
+        return new MeetingSummary(
+            overview,
+            ["Launch remains on track."],
+            ["Proceed with the pilot."],
+            [new MeetingSummaryActionItem("Send pilot checklist.", "Pranav", "Friday")],
+            ["Confirm legal review timing."],
+            new MeetingSummaryProviderInfo(SummaryChatProviderKind.OpenAi, "OpenAI", "gpt-5-mini", false),
+            DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+            fingerprint);
+    }
+
+    private static void DeleteDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
     }
 
     private sealed class FakeTranscriptionProvider : ITranscriptionProvider
@@ -407,6 +694,89 @@ public sealed class SessionProcessorTests
         {
             CallCount++;
             return Task.FromResult(new DiarizationResult(transcriptSegments, false, "not expected"));
+        }
+    }
+
+    private sealed class LabelingDiarizationProvider : IDiarizationProvider
+    {
+        public Task<DiarizationResult> ApplySpeakerLabelsAsync(
+            string audioPath,
+            IReadOnlyList<TranscriptSegment> transcriptSegments,
+            CancellationToken cancellationToken)
+        {
+            IReadOnlyList<TranscriptSegment> labeledSegments = transcriptSegments
+                .Select(segment => segment with
+                {
+                    SpeakerId = "speaker_00",
+                })
+                .ToArray();
+            return Task.FromResult(new DiarizationResult(
+                labeledSegments,
+                true,
+                "speaker labels applied",
+                [new SpeakerIdentity("speaker_00", "Pranav", false)],
+                [new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(1))],
+                null));
+        }
+    }
+
+    private sealed class ThrowingDiarizationProvider : IDiarizationProvider
+    {
+        public Task<DiarizationResult> ApplySpeakerLabelsAsync(
+            string audioPath,
+            IReadOnlyList<TranscriptSegment> transcriptSegments,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("diarization failed");
+        }
+    }
+
+    private sealed class TrackingSummaryProvider : IMeetingSummarizationProvider
+    {
+        public int CallCount { get; private set; }
+
+        public IReadOnlyList<TranscriptSegment> LastSegments { get; private set; } = Array.Empty<TranscriptSegment>();
+
+        public Func<MeetingSummaryRequest, MeetingSummaryResult>? ResultFactory { get; init; }
+
+        public Task<MeetingSummaryResult> SummarizeAsync(
+            MeetingSummaryRequest request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastSegments = request.Segments;
+            var result = ResultFactory?.Invoke(request) ?? new MeetingSummaryResult(
+                new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Succeeded,
+                    DateTimeOffset.UtcNow,
+                    "Summary generated."),
+                CreateSummary(
+                    MeetingSummaryTranscriptFingerprint.Compute(request.Segments),
+                    "The processed meeting has a generated summary."));
+            return Task.FromResult(result);
+        }
+    }
+
+    private sealed record ProcessorTestContext(
+        string Root,
+        string WorkDir,
+        string AudioDir,
+        string TranscriptDir,
+        string SessionRoot,
+        string ManifestPath,
+        SessionManifestStore ManifestStore,
+        ArtifactPathBuilder PathBuilder)
+    {
+        public AppConfig CreateConfig()
+        {
+            return new AppConfig
+            {
+                WorkDir = WorkDir,
+                AudioOutputDir = AudioDir,
+                TranscriptOutputDir = TranscriptDir,
+                TranscriptionModelPath = Path.Combine(Root, "models", "dummy.bin"),
+            };
         }
     }
 }

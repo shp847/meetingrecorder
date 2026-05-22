@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.Core.Tests;
@@ -55,6 +56,116 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.Equal("Speaker 1", result.Segments[0].SpeakerLabel);
         Assert.Equal("What are the objectives?", result.Segments[0].Text);
         Assert.Equal("Speaker 2", result.Segments[1].SpeakerLabel);
+        Assert.True(result.HasStructuredJson);
+        Assert.Equal(2, result.StructuredSegments.Count);
+        Assert.Equal(TimeSpan.FromSeconds(4), result.StructuredSegments[0].Start);
+        Assert.Equal(TimeSpan.FromSeconds(8), result.StructuredSegments[0].End);
+    }
+
+    [Fact]
+    public void Read_Parses_Summary_Status_And_Content_From_Json_Sidecar()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(
+            jsonPath,
+            """
+            {
+              "summarizationStatus": {
+                "stageName": "summarization",
+                "state": 3,
+                "updatedAtUtc": "2026-05-22T14:30:00Z",
+                "message": "Summary generated."
+              },
+              "summary": {
+                "overview": "The team aligned on launch readiness.",
+                "keyPoints": ["Launch remains on track."],
+                "decisions": ["Proceed with the pilot."],
+                "actionItems": [
+                  {
+                    "text": "Send pilot checklist.",
+                    "owner": "Pranav",
+                    "dueDateText": "Friday"
+                  }
+                ],
+                "risksAndOpenQuestions": ["Confirm legal review timing."],
+                "provider": {
+                  "providerKind": "OpenAi",
+                  "providerName": "OpenAI",
+                  "model": "gpt-5-mini",
+                  "fallbackUsed": true
+                },
+                "generatedAtUtc": "2026-05-22T14:30:00Z",
+                "transcriptFingerprint": "fingerprint-123"
+              },
+              "segments": [
+                {
+                  "start": "00:00:04",
+                  "end": "00:00:08",
+                  "speakerId": "speaker_00",
+                  "speakerLabel": "Speaker 1",
+                  "text": "What are the objectives?"
+                }
+              ]
+            }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        Assert.True(result.HasTranscript);
+        Assert.True(result.HasStructuredJson);
+        Assert.Equal(StageExecutionState.Succeeded, result.SummarizationStatus?.State);
+        Assert.NotNull(result.Summary);
+        Assert.Equal("The team aligned on launch readiness.", result.Summary.Overview);
+        Assert.Equal("Launch remains on track.", Assert.Single(result.Summary.KeyPoints));
+        Assert.Equal("Proceed with the pilot.", Assert.Single(result.Summary.Decisions));
+        var actionItem = Assert.Single(result.Summary.ActionItems);
+        Assert.Equal("Send pilot checklist.", actionItem.Text);
+        Assert.Equal("Pranav", actionItem.Owner);
+        Assert.Equal("Friday", actionItem.DueDateText);
+        Assert.Equal("Confirm legal review timing.", Assert.Single(result.Summary.RisksAndOpenQuestions));
+        Assert.Equal(SummaryChatProviderKind.OpenAi, result.Summary.Provider.ProviderKind);
+        Assert.Equal("OpenAI", result.Summary.Provider.ProviderName);
+        Assert.Equal("gpt-5-mini", result.Summary.Provider.Model);
+        Assert.True(result.Summary.Provider.FallbackUsed);
+        Assert.Equal("fingerprint-123", result.Summary.TranscriptFingerprint);
+        Assert.Equal("speaker_00", result.StructuredSegments[0].SpeakerId);
+    }
+
+    [Fact]
+    public void Read_Ignores_Malformed_Summary_Without_Losing_Transcript()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(
+            jsonPath,
+            """
+            {
+              "summarizationStatus": {
+                "stageName": "summarization",
+                "state": 4,
+                "updatedAtUtc": "2026-05-22T14:30:00Z",
+                "message": "Provider failed safely."
+              },
+              "summary": {
+                "keyPoints": ["Missing overview should not break transcript display."]
+              },
+              "segments": [
+                {
+                  "start": "00:00:04",
+                  "end": "00:00:08",
+                  "speakerLabel": "Speaker 1",
+                  "text": "What are the objectives?"
+                }
+              ]
+            }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        Assert.True(result.HasTranscript);
+        Assert.Equal(StageExecutionState.Failed, result.SummarizationStatus?.State);
+        Assert.Null(result.Summary);
+        Assert.Single(result.Segments);
+        Assert.Single(result.StructuredSegments);
     }
 
     [Fact]
@@ -80,6 +191,10 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.Equal("Showing 2 transcript segment(s) from Markdown transcript.", result.StatusText);
         Assert.Equal(new[] { "Hello team.", "Let's start." }, result.Segments.Select(segment => segment.Text));
         Assert.Equal("01:05", result.Segments[1].Timestamp);
+        Assert.False(result.HasStructuredJson);
+        Assert.Empty(result.StructuredSegments);
+        Assert.Null(result.SummarizationStatus);
+        Assert.Null(result.Summary);
     }
 
     [Fact]

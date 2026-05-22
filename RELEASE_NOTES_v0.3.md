@@ -2,7 +2,7 @@
 
 Meeting Recorder v0.3 is the first full release of a Windows-first, local-first meeting capture and transcription app designed for practical day-to-day use.
 
-It records meeting audio locally, transcribes with local Whisper models, optionally applies local speaker labeling, and publishes stable output files that are easy to review, archive, or hand off to downstream automation.
+It records meeting audio locally, transcribes with local Whisper models, optionally applies local speaker labeling, can generate configurable meeting summaries, and publishes stable output files that are easy to review, archive, or hand off to downstream automation.
 
 This release should be read as the product definition for Meeting Recorder as it exists today, not just as a list of incremental changes from the prior build.
 
@@ -21,6 +21,7 @@ The app is intentionally local-first:
 - capture runs on the local Windows audio stack
 - transcription runs on local Whisper models
 - optional speaker labeling runs from a separate local diarization bundle
+- optional meeting summaries run through a local-first provider path when configured
 - runtime data stays under user-writable locations instead of inside the installed app files
 
 ## End-to-End Workflow
@@ -98,9 +99,10 @@ After stop, the background worker processes the session locally:
 - runs Whisper transcription
 - optionally runs speaker labeling
 - optionally matches diarized speaker clusters against local user-confirmed voice profiles to auto-apply high-confidence names or show lower-confidence suggestions
+- optionally generates meeting summaries after transcription and speaker labeling
 - publishes stable artifacts
 
-Speaker labeling is optional and best-effort. A meeting can still complete successfully even when diarization is unavailable, skipped, or fails.
+Speaker labeling and meeting summaries are optional and best-effort. A meeting can still complete successfully even when diarization or summarization is unavailable, skipped, or fails.
 
 ### 5. Publish usable artifacts
 
@@ -110,6 +112,8 @@ For a successful transcript run, the app publishes:
 - Markdown transcript
 - JSON transcript
 - `.ready` completion marker
+
+When meeting summaries are enabled and configured, a successful summary is also written to `summary.snapshot.json`, the transcript JSON sidecar, and a `## Summary` section in the Markdown transcript. Summary failure never blocks transcript publication or `.ready`.
 
 For current managed installs, the default publish locations are:
 
@@ -137,6 +141,7 @@ It supports:
 - merge
 - split
 - speaker-label maintenance
+- structured meeting-summary review and manual generate/retry from transcript JSON
 - project tagging
 - cleanup recommendations for likely bad or fragmented recordings
 
@@ -173,6 +178,15 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - optional local speaker labeling through a separate diarization bundle
 - fallback behavior that prioritizes publishing transcripts even when speaker labeling is unavailable
 
+### Meeting summaries
+
+- optional meeting summaries after transcription and speaker labeling
+- Settings-based provider configuration with local-first ModelProxy and optional OpenAI fallback
+- DPAPI-protected provider keys stored outside plaintext app config
+- generated summaries persisted to `summary.snapshot.json`, transcript JSON, and Markdown
+- meeting detail display with overview, key points, decisions, action items, risks/open questions, provider/model, generated timestamp, and fallback status
+- manual generate/retry from existing transcript JSON without re-running transcription or speaker labeling
+
 ### Meetings workspace
 
 - published-meeting catalog
@@ -180,6 +194,7 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - searchable title, project, and attendee metadata
 - meeting cleanup and repair workflows
 - transcript retry and speaker-label maintenance
+- meeting summary display and retry controls
 - merge and split operations
 
 ### Setup and settings
@@ -235,6 +250,7 @@ Meeting Recorder v0.3 is intentionally strong in a few areas and explicitly limi
 
 - Windows local capture
 - local transcription
+- optional configurable meeting summaries
 - practical install/update paths
 - Teams and Google Meet assisted detection
 - manual recording fallback for other conferencing apps
@@ -252,6 +268,7 @@ Meeting Recorder v0.3 is intentionally strong in a few areas and explicitly limi
 
 - A valid local Whisper model is required for transcript generation.
 - Speaker labeling is optional.
+- Meeting summaries are optional and require Settings provider configuration before transcript text is sent to ModelProxy or OpenAI.
 - Assisted auto-detection currently focuses on Teams desktop and Google Meet only.
 - Manual recording works more broadly than assisted auto-detection.
 - Transcript quality depends on the selected model and source audio quality.
@@ -266,6 +283,7 @@ Meeting Recorder v0.3 is a complete local meeting workflow for Windows:
 - record manually or with assisted detection
 - process locally
 - publish stable outputs
+- review summaries and retry them from existing transcript JSON when needed
 - review and repair meetings from one workspace
 
 That is the product shipped in v0.3.

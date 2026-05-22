@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -13,12 +14,22 @@ internal static class MeetingTranscriptDocumentReader
     public static MeetingTranscriptReaderResult Read(string? jsonPath, string? markdownPath)
     {
         var hasJson = !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath);
-        if (hasJson && TryReadJsonTranscript(jsonPath!, out var jsonSegments))
+        if (hasJson &&
+            TryReadJsonTranscript(
+                jsonPath!,
+                out var jsonSegments,
+                out var structuredSegments,
+                out var summarizationStatus,
+                out var summary))
         {
             return new MeetingTranscriptReaderResult(
                 jsonSegments.Count > 0,
                 BuildStatusText(jsonSegments.Count, "JSON sidecar"),
-                jsonSegments);
+                jsonSegments,
+                structuredSegments,
+                summarizationStatus,
+                summary,
+                HasStructuredJson: true);
         }
 
         var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
@@ -44,9 +55,17 @@ internal static class MeetingTranscriptDocumentReader
             Array.Empty<MeetingTranscriptSegmentRow>());
     }
 
-    private static bool TryReadJsonTranscript(string jsonPath, out IReadOnlyList<MeetingTranscriptSegmentRow> segments)
+    private static bool TryReadJsonTranscript(
+        string jsonPath,
+        out IReadOnlyList<MeetingTranscriptSegmentRow> segments,
+        out IReadOnlyList<TranscriptSegment> structuredSegments,
+        out ProcessingStageStatus? summarizationStatus,
+        out MeetingSummary? summary)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
+        structuredSegments = Array.Empty<TranscriptSegment>();
+        summarizationStatus = null;
+        summary = null;
         try
         {
             var root = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
@@ -57,6 +76,7 @@ internal static class MeetingTranscriptDocumentReader
             }
 
             var rows = new List<MeetingTranscriptSegmentRow>();
+            var structuredRows = new List<TranscriptSegment>();
             foreach (var node in segmentNodes)
             {
                 if (node is not JsonObject segmentObject)
@@ -71,21 +91,32 @@ internal static class MeetingTranscriptDocumentReader
                 }
 
                 var start = GetJsonTimeSpan(segmentObject, "start", "Start") ?? TimeSpan.Zero;
+                var end = GetJsonTimeSpan(segmentObject, "end", "End") ?? start;
+                var speakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
                 var speakerLabel = GetJsonString(
                     segmentObject,
-                    "speakerLabel",
                     "displaySpeakerLabel",
-                    "SpeakerLabel",
                     "DisplaySpeakerLabel",
+                    "speakerLabel",
+                    "SpeakerLabel",
                     "speakerId",
                     "SpeakerId");
                 rows.Add(new MeetingTranscriptSegmentRow(
                     FormatTranscriptTimestamp(start),
                     string.IsNullOrWhiteSpace(speakerLabel) ? "Speaker" : speakerLabel.Trim(),
                     text.Trim()));
+                structuredRows.Add(new TranscriptSegment(
+                    start,
+                    end,
+                    string.IsNullOrWhiteSpace(speakerId) ? null : speakerId.Trim(),
+                    string.IsNullOrWhiteSpace(speakerLabel) ? null : speakerLabel.Trim(),
+                    text.Trim()));
             }
 
             segments = rows;
+            structuredSegments = structuredRows;
+            summarizationStatus = TryReadSummarizationStatus(root);
+            summary = TryReadSummary(root);
             return rows.Count > 0;
         }
         catch
@@ -138,6 +169,140 @@ internal static class MeetingTranscriptDocumentReader
         return root?["segments"] as JsonArray ?? root?["Segments"] as JsonArray;
     }
 
+    private static ProcessingStageStatus? TryReadSummarizationStatus(JsonObject? root)
+    {
+        if (root?["summarizationStatus"] is not JsonObject statusObject &&
+            root?["SummarizationStatus"] is not JsonObject statusObjectPascal)
+        {
+            return null;
+        }
+
+        var node = root["summarizationStatus"] as JsonObject ?? root["SummarizationStatus"] as JsonObject;
+        if (node is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var stageName = GetJsonString(node, "stageName", "StageName") ?? "summarization";
+            var state = GetJsonEnum(node, "state", "State") ?? StageExecutionState.NotStarted;
+            var updatedAtUtc = GetJsonDateTimeOffset(node, "updatedAtUtc", "UpdatedAtUtc") ?? DateTimeOffset.UtcNow;
+            var message = GetJsonNullableString(node, "message", "Message");
+            return new ProcessingStageStatus(stageName, state, updatedAtUtc, message);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static MeetingSummary? TryReadSummary(JsonObject? root)
+    {
+        var node = root?["summary"] as JsonObject ?? root?["Summary"] as JsonObject;
+        if (node is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var overview = GetJsonString(node, "overview", "Overview");
+            if (string.IsNullOrWhiteSpace(overview))
+            {
+                return null;
+            }
+
+            var providerObject = node["provider"] as JsonObject ?? node["Provider"] as JsonObject;
+            var providerName = GetOptionalJsonString(providerObject, "providerName", "ProviderName") ?? "Unknown provider";
+            var model = GetOptionalJsonString(providerObject, "model", "Model") ?? "Unknown model";
+            var providerKind = GetSummaryProviderKind(providerObject);
+            var fallbackUsed = GetJsonBool(providerObject, "fallbackUsed", "FallbackUsed") ?? false;
+            var generatedAtUtc = GetJsonDateTimeOffset(node, "generatedAtUtc", "GeneratedAtUtc") ?? DateTimeOffset.UtcNow;
+            var fingerprint = GetJsonString(node, "transcriptFingerprint", "TranscriptFingerprint") ?? string.Empty;
+            return new MeetingSummary(
+                overview.Trim(),
+                GetJsonStringArray(node, "keyPoints", "KeyPoints"),
+                GetJsonStringArray(node, "decisions", "Decisions"),
+                GetJsonActionItems(node),
+                GetJsonStringArray(node, "risksAndOpenQuestions", "RisksAndOpenQuestions"),
+                new MeetingSummaryProviderInfo(providerKind, providerName.Trim(), model.Trim(), fallbackUsed),
+                generatedAtUtc,
+                fingerprint.Trim());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static SummaryChatProviderKind GetSummaryProviderKind(JsonObject? providerObject)
+    {
+        if (providerObject is null)
+        {
+            return SummaryChatProviderKind.OpenAi;
+        }
+
+        foreach (var propertyName in new[] { "providerKind", "ProviderKind" })
+        {
+            if (providerObject[propertyName] is not JsonValue value)
+            {
+                continue;
+            }
+
+            if (value.TryGetValue<string>(out var text) &&
+                Enum.TryParse<SummaryChatProviderKind>(text, ignoreCase: true, out var parsedText))
+            {
+                return parsedText;
+            }
+
+            if (value.TryGetValue<int>(out var integer) &&
+                Enum.IsDefined(typeof(SummaryChatProviderKind), integer))
+            {
+                return (SummaryChatProviderKind)integer;
+            }
+        }
+
+        return SummaryChatProviderKind.OpenAi;
+    }
+
+    private static IReadOnlyList<string> GetJsonStringArray(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is not JsonArray array)
+            {
+                continue;
+            }
+
+            return array
+                .OfType<JsonValue>()
+                .Select(value => value.TryGetValue<string>(out var text) ? text.Trim() : string.Empty)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static IReadOnlyList<MeetingSummaryActionItem> GetJsonActionItems(JsonObject node)
+    {
+        var array = node["actionItems"] as JsonArray ?? node["ActionItems"] as JsonArray;
+        if (array is null)
+        {
+            return Array.Empty<MeetingSummaryActionItem>();
+        }
+
+        return array
+            .OfType<JsonObject>()
+            .Select(actionObject => new MeetingSummaryActionItem(
+                GetJsonString(actionObject, "text", "Text") ?? string.Empty,
+                GetJsonNullableString(actionObject, "owner", "Owner"),
+                GetJsonNullableString(actionObject, "dueDateText", "DueDateText")))
+            .Where(actionItem => !string.IsNullOrWhiteSpace(actionItem.Text))
+            .ToArray();
+    }
+
     private static string? GetJsonString(JsonObject node, params string[] propertyNames)
     {
         foreach (var propertyName in propertyNames)
@@ -147,6 +312,82 @@ internal static class MeetingTranscriptDocumentReader
                 !string.IsNullOrWhiteSpace(text))
             {
                 return text;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? GetOptionalJsonString(JsonObject? node, params string[] propertyNames)
+    {
+        return node is null ? null : GetJsonString(node, propertyNames);
+    }
+
+    private static string? GetJsonNullableString(JsonObject? node, params string[] propertyNames)
+    {
+        var value = GetOptionalJsonString(node, propertyNames);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static StageExecutionState? GetJsonEnum(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is not JsonValue value)
+            {
+                continue;
+            }
+
+            if (value.TryGetValue<int>(out var integer) &&
+                Enum.IsDefined(typeof(StageExecutionState), integer))
+            {
+                return (StageExecutionState)integer;
+            }
+
+            if (value.TryGetValue<string>(out var text) &&
+                Enum.TryParse<StageExecutionState>(text, ignoreCase: true, out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        return null;
+    }
+
+    private static DateTimeOffset? GetJsonDateTimeOffset(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is JsonValue value &&
+                value.TryGetValue<DateTimeOffset>(out var dateTimeOffset))
+            {
+                return dateTimeOffset;
+            }
+
+            if (node[propertyName] is JsonValue stringValue &&
+                stringValue.TryGetValue<string>(out var text) &&
+                DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool? GetJsonBool(JsonObject? node, params string[] propertyNames)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is JsonValue value &&
+                value.TryGetValue<bool>(out var boolean))
+            {
+                return boolean;
             }
         }
 

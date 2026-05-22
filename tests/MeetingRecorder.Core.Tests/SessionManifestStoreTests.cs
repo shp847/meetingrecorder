@@ -80,6 +80,94 @@ public sealed class SessionManifestStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_RoundTrips_Summary_Status_And_Content()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var manifest = await store.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Summary Roundtrip",
+            Array.Empty<DetectionSignal>());
+
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var generatedAtUtc = DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind);
+        var expected = manifest with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Succeeded,
+                generatedAtUtc,
+                "Summary generated."),
+            Summary = new MeetingSummary(
+                "The team aligned on launch readiness.",
+                ["Launch remains on track."],
+                ["Proceed with the pilot."],
+                [new MeetingSummaryActionItem("Send pilot checklist.", "Pranav", "Friday")],
+                ["Confirm legal review timing."],
+                new MeetingSummaryProviderInfo(SummaryChatProviderKind.OpenAi, "OpenAI", "gpt-5-mini", false),
+                generatedAtUtc,
+                "fingerprint-123"),
+        };
+
+        await store.SaveAsync(expected, manifestPath);
+        var saved = await store.LoadAsync(manifestPath);
+
+        Assert.Equal(StageExecutionState.Succeeded, saved.SummarizationStatus.State);
+        Assert.Equal("summarization", saved.SummarizationStatus.StageName);
+        Assert.NotNull(saved.Summary);
+        Assert.Equal("The team aligned on launch readiness.", saved.Summary.Overview);
+        Assert.Equal("Send pilot checklist.", Assert.Single(saved.Summary.ActionItems).Text);
+        Assert.Equal(SummaryChatProviderKind.OpenAi, saved.Summary.Provider.ProviderKind);
+    }
+
+    [Fact]
+    public async Task LoadAsync_Normalizes_Legacy_Manifests_To_NotStarted_Summarization_Status()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var sessionRoot = Path.Combine(workDir, "legacy-session");
+        Directory.CreateDirectory(sessionRoot);
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await File.WriteAllTextAsync(
+            manifestPath,
+            """
+            {
+              "sessionId": "legacy-session",
+              "platform": 2,
+              "detectedTitle": "Legacy Session",
+              "startedAtUtc": "2026-05-22T14:00:00Z",
+              "state": 3,
+              "transcriptionStatus": {
+                "stageName": "transcription",
+                "state": 0,
+                "updatedAtUtc": "2026-05-22T14:00:00Z",
+                "message": null
+              },
+              "diarizationStatus": {
+                "stageName": "diarization",
+                "state": 0,
+                "updatedAtUtc": "2026-05-22T14:00:00Z",
+                "message": null
+              },
+              "publishStatus": {
+                "stageName": "publish",
+                "state": 0,
+                "updatedAtUtc": "2026-05-22T14:00:00Z",
+                "message": null
+              }
+            }
+            """);
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var loaded = await store.LoadAsync(manifestPath);
+
+        Assert.Equal("summarization", loaded.SummarizationStatus.StageName);
+        Assert.Equal(StageExecutionState.NotStarted, loaded.SummarizationStatus.State);
+        Assert.Null(loaded.Summary);
+    }
+
+    [Fact]
     public async Task LoadAsync_Normalizes_Legacy_Microphone_Chunk_Paths_Into_A_Full_Session_Segment()
     {
         var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");

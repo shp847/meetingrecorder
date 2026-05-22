@@ -72,6 +72,16 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingsSortKey.Started, config.MeetingsSortKey);
         Assert.True(config.MeetingsSortDescending);
         Assert.Equal(MeetingsGroupKey.Week, config.MeetingsGroupKey);
+        Assert.Equal(MeetingSummaryGenerationMode.Disabled, config.SummaryGenerationMode);
+        Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, config.SummaryProviderPreference);
+        Assert.Equal("http://127.0.0.1:8645/v1", config.SummaryModelProxyBaseUrl);
+        Assert.Equal("gpt-5.4-mini", config.SummaryModelProxyModel);
+        Assert.Equal("codex", config.SummaryModelProxyBackend);
+        Assert.Equal("gpt-5.4-mini", config.SummaryModelProxyCodexModel);
+        Assert.Equal("gpt-5-mini", config.SummaryOpenAiModel);
+        Assert.Equal(120, config.SummaryRequestTimeoutSeconds);
+        Assert.Equal(6000, config.SummaryTranscriptChunkTokenTarget);
+        Assert.Equal(250, config.SummaryTranscriptChunkOverlapTokens);
     }
 
     [Fact]
@@ -156,6 +166,16 @@ public sealed class AppConfigStoreTests
             MeetingsSortKey = MeetingsSortKey.Title,
             MeetingsSortDescending = false,
             MeetingsGroupKey = MeetingsGroupKey.Month,
+            SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+            SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+            SummaryModelProxyBaseUrl = " http://127.0.0.1:8645/v1/ ",
+            SummaryModelProxyModel = " gpt-5.4-mini ",
+            SummaryModelProxyBackend = " codex ",
+            SummaryModelProxyCodexModel = " gpt-5.4-mini ",
+            SummaryOpenAiModel = " gpt-5-mini ",
+            SummaryRequestTimeoutSeconds = 180,
+            SummaryTranscriptChunkTokenTarget = 5000,
+            SummaryTranscriptChunkOverlapTokens = 200,
             DismissedMeetingRecommendations =
             [
                 new DismissedMeetingRecommendation("archive:meeting-1", DateTimeOffset.Parse("2026-03-20T01:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind)),
@@ -197,6 +217,16 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingsSortKey.Title, reloaded.MeetingsSortKey);
         Assert.False(reloaded.MeetingsSortDescending);
         Assert.Equal(MeetingsGroupKey.Month, reloaded.MeetingsGroupKey);
+        Assert.Equal(MeetingSummaryGenerationMode.Enabled, reloaded.SummaryGenerationMode);
+        Assert.Equal(MeetingSummaryProviderPreference.OpenAiOnly, reloaded.SummaryProviderPreference);
+        Assert.Equal("http://127.0.0.1:8645/v1", reloaded.SummaryModelProxyBaseUrl);
+        Assert.Equal("gpt-5.4-mini", reloaded.SummaryModelProxyModel);
+        Assert.Equal("codex", reloaded.SummaryModelProxyBackend);
+        Assert.Equal("gpt-5.4-mini", reloaded.SummaryModelProxyCodexModel);
+        Assert.Equal("gpt-5-mini", reloaded.SummaryOpenAiModel);
+        Assert.Equal(180, reloaded.SummaryRequestTimeoutSeconds);
+        Assert.Equal(5000, reloaded.SummaryTranscriptChunkTokenTarget);
+        Assert.Equal(200, reloaded.SummaryTranscriptChunkOverlapTokens);
         Assert.Equal(saved.AudioOutputDir, reloaded.AudioOutputDir);
         Assert.Equal(saved.TranscriptOutputDir, reloaded.TranscriptOutputDir);
         Assert.Equal(saved.WorkDir, reloaded.WorkDir);
@@ -536,5 +566,85 @@ public sealed class AppConfigStoreTests
         Assert.Equal(string.Empty, saved.DiarizationAssetPath);
         Assert.Equal(SpeakerLabelingModelProfilePreference.Disabled, reloaded.SpeakerLabelingModelProfilePreference);
         Assert.Equal(string.Empty, reloaded.DiarizationAssetPath);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Normalizes_Invalid_Summary_Settings_To_Safe_Defaults()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "audioOutputDir": "",
+              "transcriptOutputDir": "",
+              "workDir": "",
+              "modelCacheDir": "",
+              "transcriptionModelPath": "",
+              "diarizationAssetPath": "",
+              "micCaptureEnabled": true,
+              "launchOnLoginEnabled": true,
+              "autoDetectEnabled": false,
+              "autoDetectSecurityPromptMigrationApplied": true,
+              "calendarTitleFallbackEnabled": false,
+              "meetingAttendeeEnrichmentEnabled": true,
+              "updateCheckEnabled": true,
+              "autoInstallUpdatesEnabled": true,
+              "updateFeedUrl": "",
+              "summaryGenerationMode": 97,
+              "summaryProviderPreference": 98,
+              "summaryModelProxyBaseUrl": "   ",
+              "summaryModelProxyModel": "   ",
+              "summaryModelProxyBackend": "   ",
+              "summaryModelProxyCodexModel": "   ",
+              "summaryOpenAiModel": "   ",
+              "summaryRequestTimeoutSeconds": -1,
+              "summaryTranscriptChunkTokenTarget": 0,
+              "summaryTranscriptChunkOverlapTokens": 999999
+            }
+            """);
+
+        var store = new AppConfigStore(configPath, documentsRoot);
+
+        var migrated = await store.LoadOrCreateAsync();
+
+        Assert.Equal(MeetingSummaryGenerationMode.Disabled, migrated.SummaryGenerationMode);
+        Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, migrated.SummaryProviderPreference);
+        Assert.Equal("http://127.0.0.1:8645/v1", migrated.SummaryModelProxyBaseUrl);
+        Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyModel);
+        Assert.Equal("codex", migrated.SummaryModelProxyBackend);
+        Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyCodexModel);
+        Assert.Equal("gpt-5-mini", migrated.SummaryOpenAiModel);
+        Assert.Equal(120, migrated.SummaryRequestTimeoutSeconds);
+        Assert.Equal(6000, migrated.SummaryTranscriptChunkTokenTarget);
+        Assert.Equal(250, migrated.SummaryTranscriptChunkOverlapTokens);
+    }
+
+    [Fact]
+    public async Task SaveAsync_Does_Not_Write_Summary_Provider_Secrets_To_App_Config()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var defaults = await store.LoadOrCreateAsync();
+
+        await store.SaveAsync(defaults with
+        {
+            SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+            SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+        });
+
+        var json = await File.ReadAllTextAsync(configPath);
+
+        Assert.Contains("\"summaryGenerationMode\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"summaryProviderPreference\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-modelproxy", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sk-openai", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("summary:modelproxy", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("summary:openai", json, StringComparison.OrdinalIgnoreCase);
     }
 }

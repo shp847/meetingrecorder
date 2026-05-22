@@ -1350,7 +1350,19 @@ public sealed class MainWindowInteractionLogicTests
             " https://example.com/releases/latest ",
             PreferredTeamsIntegrationMode.Auto,
             BackgroundProcessingMode.Responsive,
-            BackgroundSpeakerLabelingMode.Deferred);
+            BackgroundSpeakerLabelingMode.Deferred,
+            MeetingSummaryGenerationMode.Disabled,
+            MeetingSummaryProviderPreference.LocalThenOpenAi,
+            " http://127.0.0.1:8645/v1 ",
+            " gpt-5.4-mini ",
+            " codex ",
+            " gpt-5.4-mini ",
+            " gpt-5-mini ",
+            "120",
+            "6000",
+            "250",
+            false,
+            false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
@@ -1395,7 +1407,19 @@ public sealed class MainWindowInteractionLogicTests
             "https://example.com/releases/latest",
             PreferredTeamsIntegrationMode.ThirdPartyApi,
             BackgroundProcessingMode.Balanced,
-            BackgroundSpeakerLabelingMode.Throttled);
+            BackgroundSpeakerLabelingMode.Throttled,
+            MeetingSummaryGenerationMode.Enabled,
+            MeetingSummaryProviderPreference.OpenAiOnly,
+            "http://127.0.0.1:8645/v1",
+            "gpt-5.4-mini",
+            "codex",
+            "gpt-5.4-mini",
+            "gpt-5-mini",
+            "120",
+            "6000",
+            "250",
+            false,
+            false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
@@ -1426,11 +1450,83 @@ public sealed class MainWindowInteractionLogicTests
             string.Empty,
             PreferredTeamsIntegrationMode.ThirdPartyApi,
             BackgroundProcessingMode.Responsive,
-            BackgroundSpeakerLabelingMode.Deferred);
+            BackgroundSpeakerLabelingMode.Deferred,
+            MeetingSummaryGenerationMode.Disabled,
+            MeetingSummaryProviderPreference.LocalThenOpenAi,
+            "http://127.0.0.1:8645/v1",
+            "gpt-5.4-mini",
+            "codex",
+            "gpt-5.4-mini",
+            "gpt-5-mini",
+            "120",
+            "6000",
+            "250",
+            false,
+            false);
 
         var result = MainWindowInteractionLogic.HasPendingConfigChanges(config, editor);
 
         Assert.True(result);
+    }
+
+    [Fact]
+    public void HasPendingConfigChanges_Tracks_Summary_Settings_And_Pending_Secret_Entry()
+    {
+        var config = new AppConfig
+        {
+            SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
+            SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+            SummaryModelProxyBaseUrl = "http://127.0.0.1:8645/v1",
+            SummaryModelProxyModel = "gpt-5.4-mini",
+            SummaryModelProxyBackend = "codex",
+            SummaryModelProxyCodexModel = "gpt-5.4-mini",
+            SummaryOpenAiModel = "gpt-5-mini",
+            SummaryRequestTimeoutSeconds = 120,
+            SummaryTranscriptChunkTokenTarget = 6000,
+            SummaryTranscriptChunkOverlapTokens = 250,
+        };
+        var matchingEditor = new ConfigEditorSnapshot(
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            false,
+            "0.02",
+            "30",
+            true,
+            false,
+            false,
+            false,
+            true,
+            true,
+            true,
+            string.Empty,
+            PreferredTeamsIntegrationMode.Auto,
+            BackgroundProcessingMode.Responsive,
+            BackgroundSpeakerLabelingMode.Deferred,
+            MeetingSummaryGenerationMode.Disabled,
+            MeetingSummaryProviderPreference.LocalThenOpenAi,
+            " http://127.0.0.1:8645/v1/ ",
+            " gpt-5.4-mini ",
+            " codex ",
+            " gpt-5.4-mini ",
+            " gpt-5-mini ",
+            "120",
+            "6000",
+            "250",
+            false,
+            false);
+        var changedEditor = matchingEditor with
+        {
+            SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+        };
+        var pendingSecretEditor = matchingEditor with
+        {
+            HasPendingSummaryOpenAiSecret = true,
+        };
+
+        Assert.False(MainWindowInteractionLogic.HasPendingConfigChanges(config, matchingEditor));
+        Assert.True(MainWindowInteractionLogic.HasPendingConfigChanges(config, changedEditor));
+        Assert.True(MainWindowInteractionLogic.HasPendingConfigChanges(config, pendingSecretEditor));
     }
 
     [Fact]
@@ -1988,7 +2084,7 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void BuildMeetingDetailWindowState_Uses_Inspector_Metadata_And_Future_Ai_Summary_Placeholder()
+    public void BuildMeetingDetailWindowState_Uses_Inspector_Metadata_And_Generated_Summary()
     {
         var meeting = new MeetingOutputRecord(
             "meeting-1",
@@ -2012,7 +2108,23 @@ public sealed class MainWindowInteractionLogicTests
         var transcript = new MeetingTranscriptReaderResult(
             true,
             "Showing 1 transcript segment(s) from JSON sidecar.",
-            [new MeetingTranscriptSegmentRow("00:00", "Speaker 1", "What are the objectives?")]);
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker 1", "What are the objectives?")],
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(4), "Speaker 1", "What are the objectives?")],
+            new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Succeeded,
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, DateTimeStyles.RoundtripKind),
+                "Summary generated."),
+            new MeetingSummary(
+                "The team aligned on launch readiness.",
+                ["Launch remains on track."],
+                ["Proceed with the pilot."],
+                [new MeetingSummaryActionItem("Send pilot checklist.", "Pranav", "Friday")],
+                ["Confirm legal review timing."],
+                new MeetingSummaryProviderInfo(SummaryChatProviderKind.OpenAi, "OpenAI", "gpt-5-mini", true),
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, DateTimeStyles.RoundtripKind),
+                "fingerprint-123"),
+            true);
 
         var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
             meeting,
@@ -2025,11 +2137,23 @@ public sealed class MainWindowInteractionLogicTests
             canProcessAsap: true,
             isSelectedMeetingAsap: false,
             CultureInfo.GetCultureInfo("en-US"),
-            TimeZoneInfo.Utc);
+            TimeZoneInfo.Utc,
+            new SummaryProviderConfigurationState(
+                IsEnabled: false,
+                MeetingSummaryProviderPreference.LocalThenOpenAi,
+                HasModelProxyKey: false,
+                HasOpenAiKey: false),
+            isGeneratingSummary: false);
 
         Assert.Equal("Client Sync", state.Title);
         Assert.Equal("Teams | 4/20/2026 2:15 PM | 31:00", state.Subtitle);
-        Assert.Equal("AI summary is reserved for a later update. This view currently reads only local transcript artifacts.", state.AiSummaryPlaceholderText);
+        Assert.Equal(MeetingDetailSummaryStatus.Generated, state.Summary.Status);
+        Assert.True(state.Summary.ShowGeneratedContent);
+        Assert.Equal("The team aligned on launch readiness.", state.Summary.Overview);
+        Assert.Equal("OpenAI | gpt-5-mini", state.Summary.ProviderText);
+        Assert.Contains("Fallback used", state.Summary.WarningText, StringComparison.Ordinal);
+        Assert.False(state.Summary.CanGenerate);
+        Assert.False(state.Summary.CanRetry);
         Assert.Equal("IonQ", state.ProjectName);
         Assert.True(state.CanOpenAudio);
         Assert.True(state.CanOpenTranscript);
@@ -2037,6 +2161,147 @@ public sealed class MainWindowInteractionLogicTests
         Assert.True(state.CanProcessAsap);
         Assert.False(state.CanClearAsap);
         Assert.Same(transcript, state.Transcript);
+    }
+
+    [Fact]
+    public void BuildMeetingDetailWindowState_Summary_State_Explains_Disabled_Unconfigured_And_Unavailable()
+    {
+        var meeting = CreateSummaryStateMeeting();
+        var structuredTranscript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from JSON sidecar.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker", "Hello team.")],
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), "Speaker", "Hello team.")],
+            null,
+            null,
+            true);
+        var markdownOnlyTranscript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from Markdown transcript.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker", "Hello team.")]);
+
+        var disabled = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            structuredTranscript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(false, MeetingSummaryProviderPreference.LocalThenOpenAi, false, false));
+        var unconfigured = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            structuredTranscript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.OpenAiOnly, false, false));
+        var unavailable = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            markdownOnlyTranscript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(true, MeetingSummaryProviderPreference.LocalThenOpenAi, true, false));
+
+        Assert.Equal(MeetingDetailSummaryStatus.Disabled, disabled.Summary.Status);
+        Assert.True(disabled.Summary.CanConfigure);
+        Assert.False(disabled.Summary.CanGenerate);
+        Assert.Contains("off", disabled.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(MeetingDetailSummaryStatus.Unconfigured, unconfigured.Summary.Status);
+        Assert.True(unconfigured.Summary.CanConfigure);
+        Assert.False(unconfigured.Summary.CanGenerate);
+        Assert.Contains("provider key", unconfigured.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(MeetingDetailSummaryStatus.Unavailable, unavailable.Summary.Status);
+        Assert.False(unavailable.Summary.CanGenerate);
+        Assert.Contains("JSON", unavailable.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMeetingDetailWindowState_Summary_State_Enables_Generate_Retry_And_InProgress()
+    {
+        var meeting = CreateSummaryStateMeeting();
+        var transcript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from JSON sidecar.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker", "Hello team.")],
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), "Speaker", "Hello team.")],
+            null,
+            null,
+            true);
+        var failedTranscript = transcript with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Failed,
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, DateTimeStyles.RoundtripKind),
+                "OpenAI HTTP 503 Service Unavailable.")
+        };
+        var configured = new SummaryProviderConfigurationState(
+            true,
+            MeetingSummaryProviderPreference.LocalThenOpenAi,
+            HasModelProxyKey: true,
+            HasOpenAiKey: false);
+
+        var generateReady = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            transcript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: configured);
+        var retryReady = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            failedTranscript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: configured);
+        var inProgress = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            transcript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: configured,
+            isGeneratingSummary: true);
+
+        Assert.Equal(MeetingDetailSummaryStatus.Unavailable, generateReady.Summary.Status);
+        Assert.True(generateReady.Summary.CanGenerate);
+        Assert.False(generateReady.Summary.CanRetry);
+
+        Assert.Equal(MeetingDetailSummaryStatus.Failed, retryReady.Summary.Status);
+        Assert.False(retryReady.Summary.CanGenerate);
+        Assert.True(retryReady.Summary.CanRetry);
+        Assert.Contains("HTTP 503", retryReady.Summary.StatusText, StringComparison.Ordinal);
+
+        Assert.Equal(MeetingDetailSummaryStatus.InProgress, inProgress.Summary.Status);
+        Assert.False(inProgress.Summary.CanGenerate);
+        Assert.False(inProgress.Summary.CanRetry);
     }
 
     [Fact]
@@ -2293,6 +2558,26 @@ public sealed class MainWindowInteractionLogicTests
         var result = MainWindowInteractionLogic.IsPendingUpdateAlreadyInstalled(config, localState);
 
         Assert.True(result);
+    }
+
+    private static MeetingOutputRecord CreateSummaryStateMeeting()
+    {
+        return new MeetingOutputRecord(
+            "meeting-1",
+            "Client Sync",
+            DateTimeOffset.Parse("2026-04-20T14:15:00Z", null, DateTimeStyles.RoundtripKind),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(31),
+            AudioPath: @"C:\Meetings\client-sync.wav",
+            MarkdownPath: @"C:\Meetings\client-sync.md",
+            JsonPath: @"C:\Meetings\json\client-sync.json",
+            ReadyMarkerPath: @"C:\Meetings\json\client-sync.ready",
+            ManifestPath: @"C:\Meetings\work\session\manifest.json",
+            ManifestState: SessionState.Published,
+            Attendees: Array.Empty<MeetingAttendee>(),
+            HasSpeakerLabels: true,
+            TranscriptionModelFileName: "ggml-small.bin",
+            ProjectName: "IonQ");
     }
 
     private static MeetingSessionManifest CreatePublishedManifest()

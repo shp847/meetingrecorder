@@ -21,7 +21,19 @@ internal sealed record ConfigEditorSnapshot(
     string UpdateFeedUrl,
     PreferredTeamsIntegrationMode PreferredTeamsIntegrationMode,
     BackgroundProcessingMode BackgroundProcessingMode,
-    BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode);
+    BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode,
+    MeetingSummaryGenerationMode SummaryGenerationMode,
+    MeetingSummaryProviderPreference SummaryProviderPreference,
+    string SummaryModelProxyBaseUrl,
+    string SummaryModelProxyModel,
+    string SummaryModelProxyBackend,
+    string SummaryModelProxyCodexModel,
+    string SummaryOpenAiModel,
+    string SummaryRequestTimeoutSecondsText,
+    string SummaryTranscriptChunkTokenTargetText,
+    string SummaryTranscriptChunkOverlapTokensText,
+    bool HasPendingSummaryModelProxySecret,
+    bool HasPendingSummaryOpenAiSecret);
 
 internal sealed record SpeakerLabelDraft(string OriginalLabel, string EditedLabel);
 
@@ -174,10 +186,62 @@ internal sealed record MeetingTranscriptSegmentRow(
     string SpeakerLabel,
     string Text);
 
+internal enum MeetingDetailSummaryStatus
+{
+    Disabled,
+    Unconfigured,
+    Unavailable,
+    InProgress,
+    Failed,
+    Generated,
+}
+
+internal sealed record SummaryProviderConfigurationState(
+    bool IsEnabled,
+    MeetingSummaryProviderPreference Preference,
+    bool HasModelProxyKey,
+    bool HasOpenAiKey);
+
+internal sealed record MeetingDetailSummaryState(
+    MeetingDetailSummaryStatus Status,
+    string StatusText,
+    string? Overview,
+    IReadOnlyList<string> KeyPoints,
+    IReadOnlyList<string> Decisions,
+    IReadOnlyList<MeetingSummaryActionItem> ActionItems,
+    IReadOnlyList<string> RisksAndOpenQuestions,
+    string ProviderText,
+    string GeneratedAtText,
+    string WarningText,
+    bool ShowGeneratedContent,
+    bool CanConfigure,
+    bool CanGenerate,
+    bool CanRetry);
+
 internal sealed record MeetingTranscriptReaderResult(
     bool HasTranscript,
     string StatusText,
-    IReadOnlyList<MeetingTranscriptSegmentRow> Segments);
+    IReadOnlyList<MeetingTranscriptSegmentRow> Segments,
+    IReadOnlyList<TranscriptSegment> StructuredSegments,
+    ProcessingStageStatus? SummarizationStatus,
+    MeetingSummary? Summary,
+    bool HasStructuredJson)
+{
+    public MeetingTranscriptReaderResult(
+        bool hasTranscript,
+        string statusText,
+        IReadOnlyList<MeetingTranscriptSegmentRow> segments)
+        : this(
+            hasTranscript,
+            statusText,
+            segments,
+            Array.Empty<TranscriptSegment>(),
+            null,
+            null,
+            false)
+    {
+    }
+}
 
 internal sealed record MeetingDetailWindowState(
     string Title,
@@ -193,7 +257,7 @@ internal sealed record MeetingDetailWindowState(
     IReadOnlyList<string> RecommendationBadges,
     string DetectedAudioSourceSummary,
     string CaptureDiagnosticsSummary,
-    string AiSummaryPlaceholderText,
+    MeetingDetailSummaryState Summary,
     MeetingTranscriptReaderResult Transcript,
     bool CanOpenAudio,
     bool CanOpenTranscript,
@@ -1378,7 +1442,9 @@ internal static class MainWindowInteractionLogic
         bool canProcessAsap,
         bool isSelectedMeetingAsap,
         CultureInfo? culture = null,
-        TimeZoneInfo? localTimeZone = null)
+        TimeZoneInfo? localTimeZone = null,
+        SummaryProviderConfigurationState? summaryProviderConfiguration = null,
+        bool isGeneratingSummary = false)
     {
         var inspectorState = BuildMeetingInspectorState(meeting, recommendations, culture, localTimeZone);
         var subtitleParts = new[]
@@ -1403,7 +1469,16 @@ internal static class MainWindowInteractionLogic
             inspectorState.RecommendationBadges,
             inspectorState.DetectedAudioSourceSummary,
             inspectorState.CaptureDiagnosticsSummary,
-            "AI summary is reserved for a later update. This view currently reads only local transcript artifacts.",
+            BuildMeetingDetailSummaryState(
+                transcript,
+                summaryProviderConfiguration ?? new SummaryProviderConfigurationState(
+                    false,
+                    MeetingSummaryProviderPreference.LocalThenOpenAi,
+                    false,
+                    false),
+                isGeneratingSummary,
+                culture,
+                localTimeZone),
             transcript,
             CanOpenAudio: canOpenAudio,
             CanOpenTranscript: canOpenTranscript,
@@ -1415,6 +1490,138 @@ internal static class MainWindowInteractionLogic
             CanSplit: meeting.Duration is { } duration && duration > TimeSpan.FromSeconds(2),
             CanArchive: true,
             CanDeletePermanently: true);
+    }
+
+    private static MeetingDetailSummaryState BuildMeetingDetailSummaryState(
+        MeetingTranscriptReaderResult transcript,
+        SummaryProviderConfigurationState providerConfiguration,
+        bool isGeneratingSummary,
+        CultureInfo? culture,
+        TimeZoneInfo? localTimeZone)
+    {
+        if (transcript.SummarizationStatus?.State == StageExecutionState.Succeeded &&
+            transcript.Summary is { } summary)
+        {
+            return new MeetingDetailSummaryState(
+                MeetingDetailSummaryStatus.Generated,
+                "Summary generated from this transcript.",
+                summary.Overview,
+                summary.KeyPoints,
+                summary.Decisions,
+                summary.ActionItems,
+                summary.RisksAndOpenQuestions,
+                $"{summary.Provider.ProviderName} | {summary.Provider.Model}",
+                FormatSummaryGeneratedAt(summary.GeneratedAtUtc, culture, localTimeZone),
+                summary.Provider.FallbackUsed ? "Fallback used for this summary." : string.Empty,
+                ShowGeneratedContent: true,
+                CanConfigure: true,
+                CanGenerate: false,
+                CanRetry: false);
+        }
+
+        if (isGeneratingSummary)
+        {
+            return EmptySummaryState(
+                MeetingDetailSummaryStatus.InProgress,
+                "Generating summary from the published transcript...",
+                canConfigure: false,
+                canGenerate: false,
+                canRetry: false);
+        }
+
+        if (!providerConfiguration.IsEnabled)
+        {
+            return EmptySummaryState(
+                MeetingDetailSummaryStatus.Disabled,
+                "AI summaries are off. Turn them on in Settings to summarize published transcripts.",
+                canConfigure: true,
+                canGenerate: false,
+                canRetry: false);
+        }
+
+        if (!HasUsableSummaryProvider(providerConfiguration))
+        {
+            return EmptySummaryState(
+                MeetingDetailSummaryStatus.Unconfigured,
+                "No summary provider key is saved for the selected provider preference.",
+                canConfigure: true,
+                canGenerate: false,
+                canRetry: false);
+        }
+
+        if (!transcript.HasStructuredJson || transcript.StructuredSegments.Count == 0)
+        {
+            return EmptySummaryState(
+                MeetingDetailSummaryStatus.Unavailable,
+                "Summary generation needs a readable transcript JSON sidecar for this meeting.",
+                canConfigure: true,
+                canGenerate: false,
+                canRetry: false);
+        }
+
+        if (transcript.SummarizationStatus?.State == StageExecutionState.Failed)
+        {
+            return EmptySummaryState(
+                MeetingDetailSummaryStatus.Failed,
+                string.IsNullOrWhiteSpace(transcript.SummarizationStatus.Message)
+                    ? "Summary generation failed. You can retry from the current transcript JSON."
+                    : $"Summary generation failed: {transcript.SummarizationStatus.Message}",
+                canConfigure: true,
+                canGenerate: false,
+                canRetry: true);
+        }
+
+        return EmptySummaryState(
+            MeetingDetailSummaryStatus.Unavailable,
+            "No summary has been generated for this meeting yet.",
+            canConfigure: true,
+            canGenerate: true,
+            canRetry: false);
+    }
+
+    private static bool HasUsableSummaryProvider(SummaryProviderConfigurationState providerConfiguration)
+    {
+        return providerConfiguration.Preference switch
+        {
+            MeetingSummaryProviderPreference.LocalOnly => providerConfiguration.HasModelProxyKey,
+            MeetingSummaryProviderPreference.OpenAiOnly => providerConfiguration.HasOpenAiKey,
+            _ => providerConfiguration.HasModelProxyKey || providerConfiguration.HasOpenAiKey,
+        };
+    }
+
+    private static MeetingDetailSummaryState EmptySummaryState(
+        MeetingDetailSummaryStatus status,
+        string statusText,
+        bool canConfigure,
+        bool canGenerate,
+        bool canRetry)
+    {
+        return new MeetingDetailSummaryState(
+            status,
+            statusText,
+            Overview: null,
+            KeyPoints: Array.Empty<string>(),
+            Decisions: Array.Empty<string>(),
+            ActionItems: Array.Empty<MeetingSummaryActionItem>(),
+            RisksAndOpenQuestions: Array.Empty<string>(),
+            ProviderText: string.Empty,
+            GeneratedAtText: string.Empty,
+            WarningText: string.Empty,
+            ShowGeneratedContent: false,
+            CanConfigure: canConfigure,
+            CanGenerate: canGenerate,
+            CanRetry: canRetry);
+    }
+
+    private static string FormatSummaryGeneratedAt(
+        DateTimeOffset generatedAtUtc,
+        CultureInfo? culture,
+        TimeZoneInfo? localTimeZone)
+    {
+        var displayCulture = culture ?? CultureInfo.CurrentCulture;
+        var displayTimeZone = localTimeZone ?? TimeZoneInfo.Local;
+        var local = TimeZoneInfo.ConvertTime(generatedAtUtc, displayTimeZone);
+        return local.ToString("g", displayCulture);
     }
 
     public static string BuildDetectedAudioSourceSummary(DetectedAudioSource? audioSource)
@@ -1921,12 +2128,29 @@ internal static class MainWindowInteractionLogic
             !string.Equals(currentConfig.UpdateFeedUrl, NormalizeText(editor.UpdateFeedUrl), StringComparison.OrdinalIgnoreCase) ||
             currentConfig.PreferredTeamsIntegrationMode != editor.PreferredTeamsIntegrationMode ||
             currentConfig.BackgroundProcessingMode != editor.BackgroundProcessingMode ||
-            currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode;
+            currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode ||
+            currentConfig.SummaryGenerationMode != editor.SummaryGenerationMode ||
+            currentConfig.SummaryProviderPreference != editor.SummaryProviderPreference ||
+            !string.Equals(NormalizeSummaryBaseUrl(currentConfig.SummaryModelProxyBaseUrl), NormalizeSummaryBaseUrl(editor.SummaryModelProxyBaseUrl), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(currentConfig.SummaryModelProxyModel, NormalizeText(editor.SummaryModelProxyModel), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryModelProxyBackend, NormalizeText(editor.SummaryModelProxyBackend), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryModelProxyCodexModel, NormalizeText(editor.SummaryModelProxyCodexModel), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryOpenAiModel, NormalizeText(editor.SummaryOpenAiModel), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryRequestTimeoutSecondsText), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkTokenTargetText), StringComparison.Ordinal) ||
+            !string.Equals(currentConfig.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkOverlapTokensText), StringComparison.Ordinal) ||
+            editor.HasPendingSummaryModelProxySecret ||
+            editor.HasPendingSummaryOpenAiSecret;
     }
 
     private static string FormatThreshold(double threshold)
     {
         return threshold.ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
+    private static string NormalizeSummaryBaseUrl(string text)
+    {
+        return NormalizeText(text).TrimEnd('/');
     }
 
     private static bool TryParseClockText(string? text, out TimeSpan value)

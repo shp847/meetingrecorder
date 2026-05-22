@@ -86,7 +86,7 @@ public sealed class MeetingWorkspaceRefreshXamlTests
         Assert.Contains("<ScrollViewer x:Name=\"MeetingsInspectorScrollViewer\"", mainWindowXaml);
         Assert.Contains("Visibility=\"Collapsed\"", splitterBlock);
         Assert.Contains("x:Name=\"TranscriptSegmentsListBox\"", detailWindowXaml);
-        Assert.Contains("AI summary is reserved", File.ReadAllText(Path.GetFullPath(Path.Combine(
+        Assert.Contains("MeetingDetailSummaryState", File.ReadAllText(Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..",
             "..",

@@ -62,6 +62,7 @@ User-facing installer and updater rule:
 - the MSI post-finalize `provision-models` handoff now stays on the compact alias form and the deployment CLI now parses those advertised aliases correctly, so first-install provisioning cannot fail on an option-name mismatch or custom-action target overflow
 - that MSI handoff now also passes the install root as `INSTALLFOLDER.` instead of a raw quoted trailing-backslash directory, so Windows command-line parsing cannot break the custom-action launch with `0x80070002`
 - that MSI handoff now runs after `InstallFinalize` and is best-effort, so a provisioning launch or download failure no longer aborts the installer itself
+- the MSI progress page uses plain-language action text for application file copy, registration, and shortcut creation so users do not see raw Windows Installer field placeholders such as `File: [1], Directory: [9], Size: [6]`
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
 
 For newer managed installs:
@@ -86,6 +87,30 @@ If you are rebuilding from source locally, note the difference between artifacts
 - `.artifacts\publish\win-x64\MeetingRecorder` is only the freshly published bundle output
 - `%USERPROFILE%\Documents\MeetingRecorder` is the canonical managed install root that the Start Menu and live app should use
 - local repo deployments are intentionally disabled for publishing validation; use the MSI install path or release bootstrap scripts when you need to test the managed install root
+
+## AI Summary Provider Setup
+
+Meeting summaries are optional and disabled by default. When enabled, the processing worker runs summary generation after transcription and optional speaker labeling. Successful summaries are written to `summary.snapshot.json`, the transcript JSON sidecar, and the Markdown transcript. If no provider is configured, meeting transcripts still publish normally and the detail window explains that summaries are off or need setup.
+
+For an already-published meeting, open the meeting detail window to view the structured summary or generate/retry one from the existing transcript JSON sidecar. This does not re-run transcription or speaker labeling. Markdown-only legacy transcripts remain readable, but manual summary generation requires the JSON sidecar so the app can update summary status and schema safely.
+
+Local-first setup uses ModelProxy:
+
+- ModelProxy should be running on `127.0.0.1:8645`.
+- Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
+- The ModelProxy local config should include a dedicated `meeting-recorder` key record.
+- Summary requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript.
+- The app uses non-streaming Chat Completions for automatic summary generation.
+
+Synthetic validation is allowed and should never use real meeting content:
+
+```powershell
+.\scripts\Test-ModelProxy.ps1
+```
+
+The default local key is `sk-modelproxy-meeting-recorder`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` if your ignored ModelProxy config uses a different key.
+
+Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Summary provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and credential clearing.
 
 ## 2. Data Layout
 
@@ -570,7 +595,8 @@ What the detail window shows for the focused meeting:
 - speaker-label state
 - detected audio source and collapsed capture diagnostics
 - transcript segments read from the local JSON sidecar, with Markdown fallback for app-rendered transcripts
-- an inactive AI-summary placeholder reserved for a later update
+- meeting summary content when summary generation is enabled and a summary exists
+- a clear disabled, unconfigured, unavailable, or failed summary state when no summary can be shown
 
 You can also right-click a meeting to open the context menu for common maintenance actions.
 
@@ -601,7 +627,7 @@ The lower Meetings area is now intentionally library-level:
 - the cleanup review area is for bulk review, apply, dismiss, and open-related actions
 - the selected-meeting command strip handles the most common artifact and detail-entry flows without making the page longer
 - meeting-specific metadata, transcript reading, project edits, rename, retry, split, speaker labels, archive, and delete live in the detail window
-- generated AI summaries are not part of this release; transcript reading remains local-file based
+- generated summaries are supplemental to transcript reading and must not change `.ready` transcript-completion semantics
 
 Separately, the Meetings tab context menu now includes a manual `Delete Permanently` action. That path is not part of cleanup recommendations, requires typing `DELETE` exactly to confirm, and irreversibly removes the published audio, transcript markdown, transcript JSON, ready marker, and linked session work folder when one still exists.
 

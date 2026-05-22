@@ -100,6 +100,7 @@ The product family also includes installer and update surfaces:
 - Optional microphone capture mixed into the final WAV
 - Separate worker-based offline transcription
 - Optional diarization with post-publish speaker-label editing
+- Optional configured meeting summaries after transcription and speaker labeling
 - Whisper model download, import, selection, validation, and fallback handling from the guided Setup flow
 - Stable published `.wav`, `.md`, `.json`, and `.ready` outputs
 - Meetings workspace with search, sort, group, selection command strip, cleanup review, and a separate meeting detail window
@@ -120,7 +121,7 @@ The product family also includes installer and update surfaces:
 - Full calendar-native scheduling or calendar-management workflow
 - Required browser extension integration
 - Required cloud services
-- Generated AI summaries or meeting note generation; the detail window may reserve inactive space for future AI summaries
+- Required AI summaries, required meeting-note generation, or automatic hosted AI calls without explicit user configuration
 - Cross-device sync or shared-account collaboration features
 
 ## 6. Functional Requirements
@@ -205,6 +206,7 @@ The product family also includes installer and update surfaces:
   - `<stem>.ready`
 - `.ready` must be created last.
 - Power Automate and similar downstream tools should watch `.ready`, not raw transcript creation.
+- Meeting summaries are supplemental to transcript readiness. Summary generation must not delay or suppress `.ready` when transcript publication succeeds.
 - If transcription fails, the app must still publish the final audio file.
 - If transcription fails, transcript artifacts and `.ready` must not be created.
 - For managed installs, published outputs should default to the stable Meetings folder layout under the user's Documents folder.
@@ -221,12 +223,31 @@ The product family also includes installer and update surfaces:
 - Single-meeting reading and maintenance must happen in an owned detail window opened from the Meetings library, not in a long mixed right rail.
 - The detail window must show the key metadata needed for follow-up work, including timing, status, project value, attendee data when available, transcript model, speaker-label state, recommendations, detected audio source, and capture diagnostics.
 - The detail window must render local transcript segments from structured JSON sidecars and fall back to the app-owned Markdown transcript format when possible.
-- The detail window must show an inactive AI-summary placeholder and must not generate summaries in the current scope.
+- The detail window must show meeting summaries when summary generation is configured and a transcript summary exists.
+- If summaries are disabled, unconfigured, or unavailable, the detail window must show a clear non-error state that explains summaries are not configured without implying the transcript failed.
+- The detail window must allow a user to generate or retry a summary for an existing transcript without re-running transcription or speaker labeling.
 - Cleanup recommendations must remain separate from publish status and may suggest actions such as archive, rename, retry transcript, merge, split, or add speaker labels.
 - Historical cleanup review and ongoing recommendation flows must remain archive-first and reversible where possible.
 - The workspace must expose `Re-Generate Transcript` for sessions that can be retried from an existing or synthesized work manifest.
 - The workspace and detail window together must support rename, merge, split, archive, permanent delete, project editing, and speaker-label maintenance without requiring external file editing.
 - The workspace must support multi-selection for the maintenance actions that are safe and meaningful in bulk.
+
+### 6.8.1 Meeting Summaries
+
+- Summary generation must run after transcription and after optional speaker labeling has either succeeded, skipped, or failed safely.
+- Summary generation must be disabled by default and explicitly configurable because transcript text may leave the machine when a hosted fallback provider is enabled.
+- The default provider behavior should be local-first: use ModelProxy when configured and reachable, then fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits fallback.
+- Supported provider preferences must include local-first with OpenAI fallback, local-only, and OpenAI-only.
+- ModelProxy integration must use the OpenAI-compatible HTTP interface at `http://127.0.0.1:8645/v1`, local bearer authentication, non-streaming chat completions, and `X-ModelProxy-Web-Search: false` so summaries use only the supplied transcript.
+- OpenAI fallback must use the user-provided API key from Settings and must not require ModelProxy to be installed.
+- API keys and bearer tokens must not be logged, displayed after save, written to transcript artifacts, or persisted as plaintext in the normal app config.
+- If no summary provider is configured, summary generation must be skipped and transcript publication must continue normally.
+- If all configured summary providers fail, the meeting must keep its published transcript and audio artifacts, store a safe summary failure status, and allow a manual retry after configuration or provider health changes.
+- Summary output must include a short overview, key points, decisions, action items with owner and due date when present, risks or open questions, provider/model metadata, generated timestamp, and a transcript fingerprint.
+- Long transcripts must be summarized through deterministic chunking and a final combine pass. Prompts must instruct the provider to use only the transcript and metadata supplied by Meeting Recorder.
+- Successful automatic summaries must be persisted as `summary.snapshot.json` and included in published transcript Markdown/JSON artifacts. Matching snapshots may be reused on repaired processing attempts.
+- Existing published meetings without summaries must remain readable and can receive a summary later from the meeting detail window when a structured transcript JSON sidecar is available. Manual summary generation must update the published transcript artifacts and must not re-run transcription or speaker labeling.
+- Summary provider credential clearing must remain in Settings, even when the meeting detail window routes users there for setup.
 
 ## 6.9 Configuration and Operational Settings
 
@@ -249,10 +270,15 @@ The app must allow configuration of:
 - calendar-based title fallback on or off
 - attendee enrichment on or off
 - diarization GPU acceleration preference
+- summary generation on or off
+- summary provider preference
+- local ModelProxy base URL, model, backend override, Codex model override, and local key reference
+- hosted OpenAI model and API-key credential
 
 Configuration requirements:
 
 - config must be stored in a user-writable location
+- secrets such as OpenAI API keys and local bearer keys must be stored outside plaintext app config
 - supported settings must hot reload without restart
 - the UI must indicate whether a setting applies immediately, on the next recording, or on the next processing run
 - `Setup` must remain focused on capability readiness, while `Settings` owns behavior, storage, updates, and troubleshooting
@@ -284,7 +310,10 @@ Configuration requirements:
 - Deep calendar-first meeting management
 - Required browser-extension or native-messaging integration
 - Required cloud transcription, cloud storage, or cloud account workflows
-- In-app summarization, action-item extraction, or meeting-note generation
+- Live in-meeting summarization or real-time action-item extraction
+- Summary editing in the first summary-generation release
+- AI tool calls, public web search, or calendar/email enrichment beyond metadata already captured by Meeting Recorder
+- Required AI provider accounts, required ModelProxy installation, or automatic cloud fallback without explicit user configuration
 - Cross-device sync and shared multi-user collaboration
 
 ## 8. Acceptance Criteria for the Current Release Line
@@ -298,6 +327,8 @@ The current release line is considered successful when:
 - a valid local Whisper model can be installed or imported through the guided Setup flow
 - once a valid model exists, the app can generate `.md`, `.json`, and `.ready` outputs
 - optional speaker-labeling setup can be completed separately and does not block core transcription
+- if summary generation is configured, completed transcripts can produce a meeting summary after transcription and optional speaker labeling
+- if summary generation is disabled or unconfigured, completed transcripts remain published and the detail window explains the summary state without an error
 - a failed transcription caused by a missing or invalid model can be retried from the Meetings workspace after setup is fixed
 - the Meetings workspace can inspect published meetings, open artifacts, and perform core maintenance actions such as rename, retry, archive, merge, split, and permanent delete
 - downstream automation can watch `.ready` and find sibling artifacts by stem

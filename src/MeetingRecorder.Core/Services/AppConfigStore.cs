@@ -172,6 +172,16 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
             SpeakerNameLearningMode = SpeakerNameLearningMode.LocalAutoLearn,
+            SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
+            SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+            SummaryModelProxyBaseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl,
+            SummaryModelProxyModel = MeetingSummaryDefaults.ModelProxyModel,
+            SummaryModelProxyBackend = MeetingSummaryDefaults.ModelProxyBackend,
+            SummaryModelProxyCodexModel = MeetingSummaryDefaults.ModelProxyCodexModel,
+            SummaryOpenAiModel = MeetingSummaryDefaults.OpenAiModel,
+            SummaryRequestTimeoutSeconds = MeetingSummaryDefaults.RequestTimeoutSeconds,
+            SummaryTranscriptChunkTokenTarget = MeetingSummaryDefaults.TranscriptChunkTokenTarget,
+            SummaryTranscriptChunkOverlapTokens = MeetingSummaryDefaults.TranscriptChunkOverlapTokens,
             SpeakerNameAutoApplyConfidenceThreshold = 0.86d,
             SpeakerNameSuggestionConfidenceThreshold = 0.78d,
             SpeakerNameMatchMarginThreshold = 0.05d,
@@ -271,6 +281,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var speakerNameMatchMarginThreshold = NormalizeThreshold(
             config.SpeakerNameMatchMarginThreshold,
             defaults.SpeakerNameMatchMarginThreshold);
+        var summaryTranscriptChunkTarget = config.SummaryTranscriptChunkTokenTarget <= 0
+            ? defaults.SummaryTranscriptChunkTokenTarget
+            : config.SummaryTranscriptChunkTokenTarget;
+        var summaryTranscriptChunkOverlap = config.SummaryTranscriptChunkOverlapTokens < 0 ||
+            config.SummaryTranscriptChunkOverlapTokens >= summaryTranscriptChunkTarget
+                ? defaults.SummaryTranscriptChunkOverlapTokens
+                : config.SummaryTranscriptChunkOverlapTokens;
         if (speakerNameSuggestionThreshold > speakerNameAutoApplyThreshold)
         {
             speakerNameSuggestionThreshold = defaults.SpeakerNameSuggestionConfidenceThreshold;
@@ -307,6 +324,18 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,
             SpeakerNameLearningMode = NormalizeEnum(config.SpeakerNameLearningMode, defaults.SpeakerNameLearningMode),
+            SummaryGenerationMode = NormalizeEnum(config.SummaryGenerationMode, defaults.SummaryGenerationMode),
+            SummaryProviderPreference = NormalizeEnum(config.SummaryProviderPreference, defaults.SummaryProviderPreference),
+            SummaryModelProxyBaseUrl = NormalizeOptionalSummaryText(config.SummaryModelProxyBaseUrl, defaults.SummaryModelProxyBaseUrl).TrimEnd('/'),
+            SummaryModelProxyModel = NormalizeOptionalSummaryText(config.SummaryModelProxyModel, defaults.SummaryModelProxyModel),
+            SummaryModelProxyBackend = NormalizeOptionalSummaryText(config.SummaryModelProxyBackend, defaults.SummaryModelProxyBackend),
+            SummaryModelProxyCodexModel = NormalizeOptionalSummaryText(config.SummaryModelProxyCodexModel, defaults.SummaryModelProxyCodexModel),
+            SummaryOpenAiModel = NormalizeOptionalSummaryText(config.SummaryOpenAiModel, defaults.SummaryOpenAiModel),
+            SummaryRequestTimeoutSeconds = config.SummaryRequestTimeoutSeconds <= 0
+                ? defaults.SummaryRequestTimeoutSeconds
+                : config.SummaryRequestTimeoutSeconds,
+            SummaryTranscriptChunkTokenTarget = summaryTranscriptChunkTarget,
+            SummaryTranscriptChunkOverlapTokens = summaryTranscriptChunkOverlap,
             SpeakerNameAutoApplyConfidenceThreshold = speakerNameAutoApplyThreshold,
             SpeakerNameSuggestionConfidenceThreshold = speakerNameSuggestionThreshold,
             SpeakerNameMatchMarginThreshold = speakerNameMatchMarginThreshold,
@@ -361,6 +390,13 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         return configuredValue is > 0d and <= 1d
             ? configuredValue
             : fallbackValue;
+    }
+
+    private static string NormalizeOptionalSummaryText(string? configuredValue, string fallbackValue)
+    {
+        return string.IsNullOrWhiteSpace(configuredValue)
+            ? fallbackValue
+            : configuredValue.Trim();
     }
 
     private static IReadOnlyList<DismissedMeetingRecommendation> NormalizeDismissedMeetingRecommendations(
