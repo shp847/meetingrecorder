@@ -173,7 +173,7 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Config_Save_Preserves_Speaker_Labeling_Security_Migration_State()
+    public void Config_Save_Marks_Speaker_Labeling_Security_Migration_Applied()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -182,8 +182,21 @@ public sealed class MainWindowStartupSourceTests
         var saveBlock = source[saveStart..saveEnd];
 
         Assert.Contains(
-            "SpeakerLabelingSecurityPromptMigrationApplied = currentConfig.SpeakerLabelingSecurityPromptMigrationApplied",
+            "SpeakerLabelingSecurityPromptMigrationApplied = true",
             saveBlock);
+    }
+
+    [Fact]
+    public void Quick_Speaker_Labeling_Mode_Save_Marks_Security_Migration_Applied()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var saveStart = source.IndexOf("private async Task SaveSpeakerLabelingRunModeQuickSettingAsync", StringComparison.Ordinal);
+        var saveEnd = source.IndexOf("private AppConfig BuildTeamsProbeConfigFromEditor", saveStart, StringComparison.Ordinal);
+        var saveBlock = source[saveStart..saveEnd];
+
+        Assert.Contains("BackgroundSpeakerLabelingMode = selectedMode", saveBlock);
+        Assert.Contains("SpeakerLabelingSecurityPromptMigrationApplied = true", saveBlock);
     }
 
     [Fact]

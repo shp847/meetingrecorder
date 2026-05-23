@@ -65,6 +65,7 @@ User-facing installer and updater rule:
 - that MSI handoff now runs after `InstallFinalize` and is best-effort, so a provisioning launch or download failure no longer aborts the installer itself
 - the MSI progress page uses plain-language action text for application file copy, registration, and shortcut creation so users do not see raw Windows Installer field placeholders such as `File: [1], Directory: [9], Size: [6]`
 - if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
+- pinned taskbar repair is limited to an existing `Meeting Recorder.lnk` whose target is missing or already belongs to the current install root, so installer/update tests cannot repoint a healthy user pin to a temporary install folder
 - app startup repairs a missing or malformed process `windir` before WPF creates the main window, so installer/update relaunches cannot fail inside WPF font initialization when the inherited environment is incomplete
 - unexpected dispatcher UI errors close Meeting Recorder after logging instead of leaving a hidden primary instance that blocks future launches
 - second launches are acknowledged only after the existing instance has surfaced a real main window; if no window can be surfaced, the hidden primary instance shuts down so the new launch can take over
@@ -215,7 +216,7 @@ Secondary maintenance and support actions live in the header:
   - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for manual follow-up.
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
   - `Inline`: keep speaker labeling in the primary pass for labeled output sooner, with processing speed controlled by the selected background mode.
-  - Once the one-time legacy safety migration has run, saving Settings preserves explicit `Throttled` and `Inline` choices.
+  - Settings and Setup saves mark the one-time legacy safety migration as applied, so explicit `Throttled` and `Inline` choices survive later app restarts and in-app updates.
 
 The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.

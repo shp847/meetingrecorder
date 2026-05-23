@@ -165,6 +165,11 @@ public sealed class WindowsShortcutService
         string iconPath,
         string? taskbarRoot = null)
     {
+        if (taskbarRoot is null && IsPathUnderDirectory(targetPath, Path.GetTempPath()))
+        {
+            return [];
+        }
+
         var resolvedTaskbarRoot = taskbarRoot ?? GetPinnedTaskbarShortcutRoot();
         if (string.IsNullOrWhiteSpace(resolvedTaskbarRoot) ||
             !Directory.Exists(resolvedTaskbarRoot))
@@ -180,6 +185,11 @@ public sealed class WindowsShortcutService
                 continue;
             }
 
+            if (!ShouldRepairPinnedTaskbarShortcut(shortcutPath, targetPath, workingDirectory, iconPath))
+            {
+                continue;
+            }
+
             if (TryCreateShortcut(shortcutPath, targetPath, workingDirectory, iconPath).Success)
             {
                 repairedShortcutPaths.Add(shortcutPath);
@@ -187,6 +197,90 @@ public sealed class WindowsShortcutService
         }
 
         return repairedShortcutPaths;
+    }
+
+    private static bool ShouldRepairPinnedTaskbarShortcut(
+        string shortcutPath,
+        string targetPath,
+        string workingDirectory,
+        string iconPath)
+    {
+        var shortcut = TryReadShortcut(shortcutPath);
+        if (shortcut is null)
+        {
+            return false;
+        }
+
+        var existingTargetPath = shortcut.TargetPath;
+        var existingWorkingDirectory = shortcut.WorkingDirectory;
+        var existingIconPath = ExtractIconPath(shortcut.IconLocation);
+
+        var targetMatches = PathsEqual(existingTargetPath, targetPath);
+        var workingDirectoryMatches = PathsEqual(existingWorkingDirectory, workingDirectory);
+        var iconMatches = PathsEqual(existingIconPath, iconPath);
+        if (targetMatches && workingDirectoryMatches && iconMatches)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(existingTargetPath) || !File.Exists(existingTargetPath))
+        {
+            return true;
+        }
+
+        return targetMatches ||
+            workingDirectoryMatches ||
+            IsPathUnderDirectory(existingTargetPath, workingDirectory) ||
+            IsPathUnderDirectory(existingWorkingDirectory, workingDirectory);
+    }
+
+    private static ShortcutSnapshot? TryReadShortcut(string shortcutPath)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null)
+            {
+                return null;
+            }
+
+            var shell = Activator.CreateInstance(shellType);
+            if (shell is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                dynamic dynamicShell = shell;
+                var shortcut = dynamicShell.CreateShortcut(shortcutPath);
+                if (shortcut is null)
+                {
+                    return null;
+                }
+
+                try
+                {
+                    dynamic dynamicShortcut = shortcut;
+                    return new ShortcutSnapshot(
+                        dynamicShortcut.TargetPath,
+                        dynamicShortcut.WorkingDirectory,
+                        dynamicShortcut.IconLocation);
+                }
+                finally
+                {
+                    TryReleaseComObject(shortcut);
+                }
+            }
+            finally
+            {
+                TryReleaseComObject(shell);
+            }
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void CreateShortcut(
@@ -335,6 +429,60 @@ public sealed class WindowsShortcutService
 
         return false;
     }
+
+    private static string ExtractIconPath(string iconLocation)
+    {
+        var trimmed = iconLocation.Trim().Trim('"');
+        var separatorIndex = trimmed.LastIndexOf(',');
+        if (separatorIndex > 0 &&
+            int.TryParse(trimmed[(separatorIndex + 1)..], out _))
+        {
+            trimmed = trimmed[..separatorIndex].Trim().Trim('"');
+        }
+
+        return trimmed;
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            NormalizePath(left),
+            NormalizePath(right),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPathUnderDirectory(string path, string directory)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(directory))
+        {
+            return false;
+        }
+
+        var normalizedPath = NormalizePath(path);
+        var normalizedDirectory = NormalizePath(directory);
+        return string.Equals(normalizedPath, normalizedDirectory, StringComparison.OrdinalIgnoreCase) ||
+            normalizedPath.StartsWith(
+                normalizedDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePath(string path)
+    {
+        var trimmed = path.Trim().Trim('"');
+        return Path.GetFullPath(Environment.ExpandEnvironmentVariables(trimmed))
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private sealed record ShortcutSnapshot(
+        string TargetPath,
+        string WorkingDirectory,
+        string IconLocation);
 }
 
 public sealed record ShortcutCreationResult(bool Success, string? ErrorMessage);

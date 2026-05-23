@@ -3131,7 +3131,7 @@ public partial class MainWindow : Window
                 SummaryRequestTimeoutSeconds = summaryRequestTimeoutSeconds,
                 SummaryTranscriptChunkTokenTarget = summaryTranscriptChunkTarget,
                 SummaryTranscriptChunkOverlapTokens = summaryTranscriptChunkOverlap,
-                SpeakerLabelingSecurityPromptMigrationApplied = currentConfig.SpeakerLabelingSecurityPromptMigrationApplied,
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
                 LastUpdateCheckUtc = currentConfig.LastUpdateCheckUtc,
                 InstalledReleaseVersion = currentConfig.InstalledReleaseVersion,
                 InstalledReleasePublishedAtUtc = currentConfig.InstalledReleasePublishedAtUtc,
@@ -3606,6 +3606,7 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
                     provisioningResult.Config.BackgroundSpeakerLabelingMode,
                     speakerLabelingProfile),
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
             };
             var speakerLabelingModeAutoEnabled =
                 speakerLabelingProfile != SpeakerLabelingModelProfilePreference.Disabled &&
@@ -3875,6 +3876,7 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
                     _liveConfig.Current.BackgroundSpeakerLabelingMode,
                     profilePreference),
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
             };
             var speakerLabelingModeAutoEnabled =
                 _liveConfig.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred &&
@@ -3935,6 +3937,7 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = MainWindowInteractionLogic.ResolveBackgroundSpeakerLabelingModeAfterProfileSelection(
                     _liveConfig.Current.BackgroundSpeakerLabelingMode,
                     SpeakerLabelingModelProfilePreference.Custom),
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
             };
             var speakerLabelingModeAutoEnabled =
                 _liveConfig.Current.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred &&
@@ -6603,6 +6606,7 @@ public partial class MainWindow : Window
             await _liveConfig.SaveAsync(currentConfig with
             {
                 BackgroundSpeakerLabelingMode = selectedMode,
+                SpeakerLabelingSecurityPromptMigrationApplied = true,
             }, _lifetimeCts.Token);
 
             DiarizationActionStatusTextBlock.Text = selectedMode switch

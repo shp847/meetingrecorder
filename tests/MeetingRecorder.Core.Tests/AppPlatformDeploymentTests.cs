@@ -802,6 +802,130 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
+    public void PlatformShortcutService_Does_Not_Repoint_Healthy_Taskbar_Pin_To_Unrelated_Install()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var taskbarRoot = Path.Combine(root, "TaskBar");
+        var currentInstallRoot = Path.Combine(root, "Current", "MeetingRecorder");
+        var unrelatedInstallRoot = Path.Combine(root, "Unrelated", "MeetingRecorder");
+        Directory.CreateDirectory(taskbarRoot);
+        Directory.CreateDirectory(currentInstallRoot);
+        Directory.CreateDirectory(unrelatedInstallRoot);
+
+        try
+        {
+            var pinnedShortcutPath = Path.Combine(taskbarRoot, "Meeting Recorder.lnk");
+            var currentExecutablePath = Path.Combine(currentInstallRoot, "MeetingRecorder.App.exe");
+            var currentIconPath = Path.Combine(currentInstallRoot, "MeetingRecorder.ico");
+            var unrelatedExecutablePath = Path.Combine(unrelatedInstallRoot, "MeetingRecorder.App.exe");
+            var unrelatedIconPath = Path.Combine(unrelatedInstallRoot, "MeetingRecorder.ico");
+            File.WriteAllText(currentExecutablePath, "current-apphost");
+            File.WriteAllText(currentIconPath, "current-icon");
+            File.WriteAllText(unrelatedExecutablePath, "unrelated-apphost");
+            File.WriteAllText(unrelatedIconPath, "unrelated-icon");
+
+            var service = new WindowsShortcutService();
+            var existingShortcut = service.TryCreateShortcut(
+                pinnedShortcutPath,
+                currentExecutablePath,
+                currentInstallRoot,
+                currentIconPath + ",0");
+            Assert.True(existingShortcut.Success, existingShortcut.ErrorMessage);
+
+            var repairedPaths = service.RepairPinnedTaskbarShortcuts(
+                new ShellShortcutPolicy(
+                    "Meeting Recorder",
+                    "Meeting Recorder.lnk",
+                    "Meeting Recorder.lnk",
+                    "MeetingRecorder"),
+                unrelatedExecutablePath,
+                unrelatedInstallRoot,
+                unrelatedIconPath,
+                taskbarRoot);
+
+            var shortcut = ReadShortcut(pinnedShortcutPath);
+            Assert.Empty(repairedPaths);
+            Assert.Equal(currentExecutablePath, shortcut.TargetPath);
+            Assert.Equal(currentInstallRoot, shortcut.WorkingDirectory);
+            Assert.Equal(currentIconPath + ",0", shortcut.IconLocation);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PlatformShortcutService_Repairs_Broken_Taskbar_Pin_To_Current_Install()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
+        var taskbarRoot = Path.Combine(root, "TaskBar");
+        var missingInstallRoot = Path.Combine(root, "Missing", "MeetingRecorder");
+        var currentInstallRoot = Path.Combine(root, "Current", "MeetingRecorder");
+        Directory.CreateDirectory(taskbarRoot);
+        Directory.CreateDirectory(missingInstallRoot);
+        Directory.CreateDirectory(currentInstallRoot);
+
+        try
+        {
+            var pinnedShortcutPath = Path.Combine(taskbarRoot, "Meeting Recorder.lnk");
+            var missingExecutablePath = Path.Combine(missingInstallRoot, "MeetingRecorder.App.exe");
+            var missingIconPath = Path.Combine(missingInstallRoot, "MeetingRecorder.ico");
+            var currentExecutablePath = Path.Combine(currentInstallRoot, "MeetingRecorder.App.exe");
+            var currentIconPath = Path.Combine(currentInstallRoot, "MeetingRecorder.ico");
+            File.WriteAllText(missingExecutablePath, "removed-apphost");
+            File.WriteAllText(missingIconPath, "removed-icon");
+            File.WriteAllText(currentExecutablePath, "current-apphost");
+            File.WriteAllText(currentIconPath, "current-icon");
+
+            var service = new WindowsShortcutService();
+            var staleShortcut = service.TryCreateShortcut(
+                pinnedShortcutPath,
+                missingExecutablePath,
+                missingInstallRoot,
+                missingIconPath + ",0");
+            Assert.True(staleShortcut.Success, staleShortcut.ErrorMessage);
+            File.Delete(missingExecutablePath);
+            File.Delete(missingIconPath);
+
+            var repairedPaths = service.RepairPinnedTaskbarShortcuts(
+                new ShellShortcutPolicy(
+                    "Meeting Recorder",
+                    "Meeting Recorder.lnk",
+                    "Meeting Recorder.lnk",
+                    "MeetingRecorder"),
+                currentExecutablePath,
+                currentInstallRoot,
+                currentIconPath,
+                taskbarRoot);
+
+            var repairedShortcut = ReadShortcut(pinnedShortcutPath);
+            Assert.Contains(pinnedShortcutPath, repairedPaths);
+            Assert.Equal(currentExecutablePath, repairedShortcut.TargetPath);
+            Assert.Equal(currentInstallRoot, repairedShortcut.WorkingDirectory);
+            Assert.Equal(currentIconPath + ",0", repairedShortcut.IconLocation);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlatformPortableBundleInstaller_Quarantines_Legacy_Install_Roots_When_Deploying_To_Canonical_Root()
     {
         var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));

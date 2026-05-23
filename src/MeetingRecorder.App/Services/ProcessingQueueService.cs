@@ -266,7 +266,11 @@ internal sealed class ProcessingQueueService
         if (deferFutureMeetings && _config.Current.BackgroundSpeakerLabelingMode != BackgroundSpeakerLabelingMode.Deferred)
         {
             await _config.SaveAsync(
-                _config.Current with { BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred },
+                _config.Current with
+                {
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+                    SpeakerLabelingSecurityPromptMigrationApplied = true,
+                },
                 cancellationToken);
         }
 
