@@ -372,9 +372,11 @@ Meeting summaries are an optional processing stage after transcription and optio
 The default provider path is local-first:
 
 - Try ModelProxy through its local OpenAI-compatible HTTP API.
+- Read `GET /v1/models` from ModelProxy and use `default_model` unless the app has a user-saved summary model override.
 - Fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits hosted fallback.
 - Disable ModelProxy web search for summary and validation requests with `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt, because ModelProxy enables public web search by default.
 - Read ModelProxy's safe routing headers on local responses, including request id, requested/effective backend, web-search backend, app-server search support, and fallback reason. If a future web-enabled request falls back to CLI search, the app must tolerate that route and use a timeout above ModelProxy's 45-second CLI search timeout.
+- Treat terminal streaming `event: error` frames as structured ModelProxy failures, not endpoint connectivity failures. A `cli_timeout` error means ModelProxy was reachable but its effective CLI web-search backend timed out.
 - Treat forced app-server web-search `400` responses as a capability issue and offer a retry path without web search.
 - Treat summary failures as supplemental failures; they must not block `.md`, `.json`, or `.ready` transcript output.
 - Reuse a matching `summary.snapshot.json` on repaired processing attempts instead of calling a provider again.
@@ -393,8 +395,9 @@ Run the live smoke only after ModelProxy is already running:
 Defaults:
 
 - ModelProxy auth default: `sk-modelproxy`
-- caller model: `gpt-5.4-mini`
+- caller model: discovered from `GET /v1/models` `default_model` unless `-Model` is supplied
 - summary requests must also send `X-ModelProxy-Web-Search: false`
+- real ModelProxy transcript summaries use at least a 240-second timeout so local processing is not mistaken for provider validation failure
 
 Use `MODELPROXY_MEETING_RECORDER_API_KEY` only if your local ModelProxy operator config uses a non-default local key. The script prints only the synthetic response string plus safe ModelProxy routing headers and should not be used with real meeting content. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.
 

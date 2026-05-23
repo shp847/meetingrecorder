@@ -93,6 +93,42 @@ public sealed record SummaryChatProviderOptions(
     public bool ModelProxyWebSearchEnabled { get; init; }
 }
 
+public sealed record ModelProxyModelCatalog(
+    string? DefaultModel,
+    string? DefaultCodexModel,
+    IReadOnlyList<ModelProxyModelInfo> Models)
+{
+    public string ResolveModel(string? projectSpecificOverride = null)
+    {
+        if (!string.IsNullOrWhiteSpace(projectSpecificOverride))
+        {
+            return projectSpecificOverride.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(DefaultModel))
+        {
+            return DefaultModel.Trim();
+        }
+
+        var defaultItem = Models.FirstOrDefault(model => model.IsDefault);
+        if (!string.IsNullOrWhiteSpace(defaultItem?.Id))
+        {
+            return defaultItem.Id.Trim();
+        }
+
+        var firstItem = Models.FirstOrDefault();
+        return !string.IsNullOrWhiteSpace(firstItem?.Id)
+            ? firstItem.Id.Trim()
+            : MeetingSummaryDefaults.ModelProxyModel;
+    }
+}
+
+public sealed record ModelProxyModelInfo(
+    string Id,
+    bool IsDefault,
+    string? Backend,
+    string? DefaultBackendModel);
+
 public interface ISummarySecretStore
 {
     Task SaveAsync(
@@ -340,7 +376,7 @@ public sealed class SummaryChatClient : ISummaryChatClient
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"{providerOptions.ProviderName} summary validation timed out after {effectiveTimeout.TotalSeconds:0} seconds.");
+                $"{providerOptions.ProviderName} summary request timed out after {effectiveTimeout.TotalSeconds:0} seconds.");
         }
     }
 
@@ -427,14 +463,33 @@ public sealed class SummaryChatClient : ISummaryChatClient
     private static string ExtractStreamingAssistantContent(string providerName, string responseBody)
     {
         var builder = new StringBuilder();
+        var eventName = "message";
+        var dataLines = new List<string>();
         using var reader = new StringReader(responseBody);
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
             var trimmedLine = line.TrimStart();
-            if (trimmedLine.Length == 0 ||
-                trimmedLine.StartsWith(":", StringComparison.Ordinal))
+            if (trimmedLine.Length == 0)
             {
+                if (ProcessStreamingSseEvent(providerName, eventName, dataLines, builder))
+                {
+                    break;
+                }
+
+                eventName = "message";
+                dataLines.Clear();
+                continue;
+            }
+
+            if (trimmedLine.StartsWith(":", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmedLine.StartsWith("event:", StringComparison.OrdinalIgnoreCase))
+            {
+                eventName = trimmedLine["event:".Length..].Trim();
                 continue;
             }
 
@@ -444,20 +499,56 @@ public sealed class SummaryChatClient : ISummaryChatClient
             }
 
             var data = trimmedLine["data:".Length..].TrimStart();
-            if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
-            {
-                break;
-            }
-
             if (data.Length == 0)
             {
                 continue;
             }
 
-            builder.Append(ExtractStreamingChunkContent(providerName, data));
+            dataLines.Add(data);
+        }
+
+        if (dataLines.Count > 0)
+        {
+            ProcessStreamingSseEvent(providerName, eventName, dataLines, builder);
         }
 
         return builder.ToString();
+    }
+
+    private static bool ProcessStreamingSseEvent(
+        string providerName,
+        string eventName,
+        IReadOnlyList<string> dataLines,
+        StringBuilder builder)
+    {
+        if (dataLines.Count == 0)
+        {
+            return false;
+        }
+
+        var data = string.Join("\n", dataLines).Trim();
+        if (string.Equals(data, "[DONE]", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (string.Equals(eventName, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HttpRequestException(BuildStreamingFailureMessage(providerName, data));
+        }
+
+        builder.Append(ExtractStreamingChunkContent(providerName, data));
+        return false;
+    }
+
+    private static string BuildStreamingFailureMessage(
+        string providerName,
+        string errorPayload)
+    {
+        var safeDetails = TryExtractSafeErrorDetails(errorPayload);
+        return string.IsNullOrWhiteSpace(safeDetails)
+            ? $"{providerName} streaming request failed."
+            : $"{providerName} streaming request failed. {safeDetails}";
     }
 
     private static string ExtractStreamingChunkContent(string providerName, string json)
@@ -578,21 +669,13 @@ public sealed class SummaryChatClient : ISummaryChatClient
             if (root.TryGetProperty("detail", out var detail) &&
                 detail.ValueKind == JsonValueKind.Object)
             {
-                var parts = new List<string>();
-                AddSafeJsonProperty(parts, detail, "category", "Category");
-                AddSafeJsonProperty(parts, detail, "backend", "Backend");
-                AddSafeJsonProperty(parts, detail, "request_id", "Request");
-                AddSafeJsonProperty(parts, detail, "next_step", "Next step");
-                return string.Join(" ", parts);
+                return BuildSafeErrorDetails(detail);
             }
 
             if (root.TryGetProperty("error", out var error) &&
                 error.ValueKind == JsonValueKind.Object)
             {
-                var parts = new List<string>();
-                AddSafeJsonProperty(parts, error, "type", "Type");
-                AddSafeJsonProperty(parts, error, "code", "Code");
-                return string.Join(" ", parts);
+                return BuildSafeErrorDetails(error);
             }
         }
         catch (JsonException)
@@ -603,6 +686,21 @@ public sealed class SummaryChatClient : ISummaryChatClient
         return string.Empty;
     }
 
+    private static string BuildSafeErrorDetails(JsonElement error)
+    {
+        var parts = new List<string>();
+        AddSafeJsonProperty(parts, error, "type", "Type");
+        AddSafeJsonProperty(parts, error, "category", "Category");
+        AddSafeJsonProperty(parts, error, "code", "Code");
+        AddSafeJsonProperty(parts, error, "backend", "Backend");
+        AddSafeJsonProperty(parts, error, "requested_backend", "Requested backend");
+        AddSafeJsonProperty(parts, error, "request_id", "Request");
+        AddSafeJsonNumberProperty(parts, error, "elapsed_seconds", "Elapsed seconds");
+        AddSafeJsonNumberProperty(parts, error, "timeout_seconds", "Timeout seconds");
+        AddSafeJsonProperty(parts, error, "next_step", "Next step");
+        return string.Join(" ", parts);
+    }
+
     private static void AddSafeJsonProperty(
         ICollection<string> parts,
         JsonElement source,
@@ -611,6 +709,30 @@ public sealed class SummaryChatClient : ISummaryChatClient
     {
         if (source.TryGetProperty(propertyName, out var property) &&
             property.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(property.GetString()))
+        {
+            parts.Add($"{label}: {property.GetString()}.");
+        }
+    }
+
+    private static void AddSafeJsonNumberProperty(
+        ICollection<string> parts,
+        JsonElement source,
+        string propertyName,
+        string label)
+    {
+        if (!source.TryGetProperty(propertyName, out var property))
+        {
+            return;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number)
+        {
+            parts.Add($"{label}: {property.GetRawText()}.");
+            return;
+        }
+
+        if (property.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(property.GetString()))
         {
             parts.Add($"{label}: {property.GetString()}.");
@@ -793,13 +915,37 @@ public sealed record SummaryProviderValidationResult(
 
 public sealed class ModelProxyClient
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+
     private readonly SummaryChatClient _chatClient;
+    private readonly HttpClient _httpClient;
     private readonly ModelProxyOptions _options;
 
     public ModelProxyClient(HttpClient httpClient, ModelProxyOptions? options = null)
     {
+        _httpClient = httpClient;
         _chatClient = new SummaryChatClient(httpClient);
         _options = options ?? new ModelProxyOptions();
+    }
+
+    public async Task<ModelProxyModelCatalog> GetModelsAsync(CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(new Uri(NormalizeBaseUrl(_options.BaseUrl)), "models"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey.Trim());
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var reason = string.IsNullOrWhiteSpace(response.ReasonPhrase)
+                ? response.StatusCode.ToString()
+                : response.ReasonPhrase;
+            throw new HttpRequestException($"ModelProxy returned HTTP {(int)response.StatusCode} {reason} while retrieving models.");
+        }
+
+        return ParseModelCatalog(responseBody);
     }
 
     public async Task<ModelProxyCompletionResult> CompleteSyntheticPromptAsync(
@@ -822,6 +968,41 @@ public sealed class ModelProxyClient
         var response = await _chatClient.CompleteAsync(providerOptions, request, cancellationToken);
         return new ModelProxyCompletionResult(response.Content);
     }
+
+    private static ModelProxyModelCatalog ParseModelCatalog(string responseBody)
+    {
+        var payload = JsonSerializer.Deserialize<ModelProxyModelsPayload>(responseBody, SerializerOptions)
+            ?? throw new InvalidOperationException("ModelProxy models response was empty.");
+        var models = (payload.Data ?? [])
+            .Where(model => !string.IsNullOrWhiteSpace(model.Id))
+            .Select(model => new ModelProxyModelInfo(
+                model.Id!.Trim(),
+                model.IsDefault,
+                string.IsNullOrWhiteSpace(model.Backend) ? null : model.Backend.Trim(),
+                string.IsNullOrWhiteSpace(model.DefaultBackendModel) ? null : model.DefaultBackendModel.Trim()))
+            .ToArray();
+
+        return new ModelProxyModelCatalog(
+            string.IsNullOrWhiteSpace(payload.DefaultModel) ? null : payload.DefaultModel.Trim(),
+            string.IsNullOrWhiteSpace(payload.DefaultCodexModel) ? null : payload.DefaultCodexModel.Trim(),
+            models);
+    }
+
+    private static string NormalizeBaseUrl(string baseUrl)
+    {
+        return baseUrl.Trim().TrimEnd('/') + "/";
+    }
+
+    private sealed record ModelProxyModelsPayload(
+        [property: JsonPropertyName("default_model")] string? DefaultModel,
+        [property: JsonPropertyName("default_codex_model")] string? DefaultCodexModel,
+        [property: JsonPropertyName("data")] IReadOnlyList<ModelProxyModelPayload>? Data);
+
+    private sealed record ModelProxyModelPayload(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("default")] bool IsDefault,
+        [property: JsonPropertyName("backend")] string? Backend,
+        [property: JsonPropertyName("default_backend_model")] string? DefaultBackendModel);
 }
 
 public sealed record ModelProxyOptions

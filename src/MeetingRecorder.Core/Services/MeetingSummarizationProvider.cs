@@ -201,9 +201,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         AppConfig config,
         CancellationToken cancellationToken)
     {
+        var timeoutSeconds = GetSummaryRequestTimeoutSeconds(candidate, config);
         var response = await _chatClient.CompleteAsync(
             candidate.ProviderOptions,
-            BuildSummaryRequest(candidate.Model, transcriptChunk, config.SummaryRequestTimeoutSeconds),
+            BuildSummaryRequest(candidate.Model, transcriptChunk, timeoutSeconds),
             cancellationToken);
         return ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content);
     }
@@ -215,6 +216,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         CancellationToken cancellationToken)
     {
         var partialSummaries = new List<MeetingSummaryContent>(chunks.Count);
+        var timeoutSeconds = GetSummaryRequestTimeoutSeconds(candidate, config);
         for (var index = 0; index < chunks.Count; index++)
         {
             var response = await _chatClient.CompleteAsync(
@@ -222,7 +224,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 BuildSummaryRequest(
                     candidate.Model,
                     $"Transcript chunk {index + 1} of {chunks.Count}:{Environment.NewLine}{chunks[index]}",
-                    config.SummaryRequestTimeoutSeconds),
+                    timeoutSeconds),
                 cancellationToken);
             partialSummaries.Add(ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content));
         }
@@ -250,9 +252,21 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                     new SummaryChatMessage(SummaryChatRole.System, BuildSystemPrompt()),
                     new SummaryChatMessage(SummaryChatRole.User, combinePrompt),
                 ],
-                TimeSpan.FromSeconds(Math.Max(1, config.SummaryRequestTimeoutSeconds))),
+                TimeSpan.FromSeconds(timeoutSeconds)),
             cancellationToken);
         return ParseSummaryContent(candidate.ProviderOptions.ProviderName, combineResponse.Content);
+    }
+
+    private static int GetSummaryRequestTimeoutSeconds(
+        ProviderCandidate candidate,
+        AppConfig config)
+    {
+        var configuredTimeoutSeconds = Math.Max(1, config.SummaryRequestTimeoutSeconds);
+        return candidate.ProviderOptions.ProviderKind == SummaryChatProviderKind.ModelProxy
+            ? Math.Max(
+                configuredTimeoutSeconds,
+                MeetingSummaryDefaults.MinimumModelProxySummaryRequestTimeoutSeconds)
+            : configuredTimeoutSeconds;
     }
 
     private static SummaryChatRequest BuildSummaryRequest(

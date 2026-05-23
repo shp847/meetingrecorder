@@ -104,9 +104,12 @@ Local-first setup uses ModelProxy:
 - ModelProxy should be running on `127.0.0.1:8645`.
 - Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
 - Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
+- Meeting Recorder reads `GET /v1/models` and uses ModelProxy's `default_model` unless Settings has an explicit summary model override.
 - Summary and validation requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. ModelProxy enables public web search by default for requests that do not opt out.
 - Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. A web-enabled request may route to CLI search when app-server search has not been proved safe.
+- Streaming clients must ignore SSE comment lines that begin with `:` and parse terminal `event: error` frames as structured ModelProxy errors. A `cli_timeout` means ModelProxy was reachable but the effective CLI web-search backend timed out.
 - The app uses non-streaming Chat Completions for automatic summary generation.
+- Real transcript summaries through ModelProxy use at least a 240-second request timeout; synthetic validation remains lightweight.
 
 Synthetic validation is allowed and should never use real meeting content:
 

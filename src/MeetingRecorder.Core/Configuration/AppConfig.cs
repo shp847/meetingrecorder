@@ -138,6 +138,8 @@ public static class MeetingSummaryDefaults
 
     public const int RequestTimeoutSeconds = 120;
 
+    public const int MinimumModelProxySummaryRequestTimeoutSeconds = 240;
+
     public const int TranscriptChunkTokenTarget = 6000;
 
     public const int TranscriptChunkOverlapTokens = 250;

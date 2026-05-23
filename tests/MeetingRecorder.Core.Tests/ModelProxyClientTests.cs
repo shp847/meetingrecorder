@@ -83,6 +83,59 @@ public sealed class ModelProxyClientTests
     }
 
     [Fact]
+    public async Task GetModelsAsync_Reads_Default_Model_From_ModelProxy_Models_Endpoint()
+    {
+        using var handler = new CapturingHandler(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "object": "list",
+                      "default_model": "gpt-5.4-mini",
+                      "default_codex_model": "gpt-5.4-mini",
+                      "data": [
+                        {
+                          "id": "gpt-5.4-mini",
+                          "object": "model",
+                          "owned_by": "modelproxy",
+                          "default": true,
+                          "backend": "codex",
+                          "default_backend_model": "gpt-5.4-mini"
+                        },
+                        {
+                          "id": "gpt-5.5",
+                          "object": "model",
+                          "owned_by": "modelproxy",
+                          "default": false,
+                          "backend": "codex",
+                          "default_backend_model": "gpt-5.5"
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var httpClient = new HttpClient(handler);
+        var client = new ModelProxyClient(httpClient);
+
+        var catalog = await client.GetModelsAsync();
+
+        Assert.NotNull(handler.Request);
+        Assert.Equal(HttpMethod.Get, handler.Request!.Method);
+        Assert.Equal("http://127.0.0.1:8645/v1/models", handler.Request.RequestUri!.ToString());
+        Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
+        Assert.Equal("sk-modelproxy", handler.Request.Headers.Authorization.Parameter);
+        Assert.Equal("gpt-5.4-mini", catalog.DefaultModel);
+        Assert.Equal("gpt-5.4-mini", catalog.ResolveModel());
+        Assert.Equal("gpt-5.5", catalog.ResolveModel(" gpt-5.5 "));
+        Assert.Equal(2, catalog.Models.Count);
+        Assert.True(catalog.Models[0].IsDefault);
+        Assert.Equal("gpt-5.4-mini", catalog.Models[0].DefaultBackendModel);
+    }
+
+    [Fact]
     public async Task SummaryChatClient_Posts_No_Search_AppServer_ModelProxy_Request()
     {
         using var handler = new CapturingHandler(
@@ -174,6 +227,63 @@ public sealed class ModelProxyClientTests
     }
 
     [Fact]
+    public async Task SummaryChatClient_Reports_NonStreaming_CliTimeout_With_Structured_Metadata()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            ReasonPhrase = "Bad Gateway",
+            Content = new StringContent(
+                """
+                {
+                  "detail": {
+                    "category": "cli_timeout",
+                    "type": "cli_timeout",
+                    "message": "Prompt text should not leak.",
+                    "request_id": "mp-timeout",
+                    "backend": "cli",
+                    "requested_backend": "auto",
+                    "elapsed_seconds": 45.123,
+                    "timeout_seconds": 45,
+                    "next_step": "Retry with a shorter prompt or increase the ModelProxy CLI timeout."
+                  }
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", "mp-timeout");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "auto");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-App-Server-Web-Search-Supported", "false");
+
+        using var handler = new CapturingHandler(response);
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+            "sk-modelproxy-secret",
+            webSearchEnabled: true);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
+            TimeSpan.FromSeconds(60));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.CompleteAsync(providerOptions, request));
+
+        Assert.Contains("HTTP 502", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("cli_timeout", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Request: mp-timeout", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Effective backend: cli", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Elapsed seconds: 45.123", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Timeout seconds: 45", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Retry with a shorter prompt", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Prompt text should not leak", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("private prompt marker", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-modelproxy-secret", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SummaryChatClient_Ignores_Sse_Comment_Lines_When_Parsing_Stream()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -215,6 +325,63 @@ public sealed class ModelProxyClientTests
         Assert.Contains("\"stream\":true", handler.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("keepalive", result.Content, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("request_id", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Parses_Terminal_Sse_Error_As_ModelProxy_Failure()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """
+                : request_id=mp-stream effective_backend=cli
+
+                event: error
+                data: {"error":{"type":"cli_timeout","category":"cli_timeout","message":"Prompt text should not leak.","request_id":"mp-stream","backend":"cli","requested_backend":"auto","web_search":true,"elapsed_seconds":45.123,"timeout_seconds":45,"next_step":"Retry with a shorter prompt or increase the ModelProxy CLI timeout."}}
+
+                data: [DONE]
+
+                """,
+                Encoding.UTF8,
+                "text/event-stream"),
+        };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("text/event-stream");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", "mp-stream");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "auto");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search-Backend", "cli");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-App-Server-Web-Search-Supported", "false");
+
+        using var handler = new CapturingHandler(response);
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
+            TimeSpan.FromSeconds(60))
+        {
+            Stream = true,
+        };
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.CompleteAsync(
+                SummaryChatProviderOptions.ForModelProxy(
+                    "sk-modelproxy-secret",
+                    webSearchEnabled: true),
+                request));
+
+        Assert.Contains("ModelProxy streaming request failed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("cli_timeout", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Request: mp-stream", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Backend: cli", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Elapsed seconds: 45.123", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Timeout seconds: 45", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Retry with a shorter prompt", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not reach", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("endpoint", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Prompt text should not leak", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("private prompt marker", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-modelproxy-secret", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -398,6 +565,26 @@ public sealed class ModelProxyClientTests
         Assert.DoesNotContain("secret body should not leak", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task SummaryChatClient_Reports_Timeout_As_Summary_Request_Failure()
+    {
+        using var handler = new DelayingHandler(TimeSpan.FromSeconds(5));
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
+            TimeSpan.FromMilliseconds(10));
+
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            client.CompleteAsync(SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"), request));
+
+        Assert.Contains("summary request timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("validation", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("summary-provider-ok", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sk-modelproxy-test", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class CapturingHandler : HttpMessageHandler, IDisposable
     {
         private readonly HttpResponseMessage _response;
@@ -425,6 +612,27 @@ public sealed class ModelProxyClientTests
         void IDisposable.Dispose()
         {
             _response.Dispose();
+        }
+    }
+
+    private sealed class DelayingHandler : HttpMessageHandler
+    {
+        private readonly TimeSpan _delay;
+
+        public DelayingHandler(TimeSpan delay)
+        {
+            _delay = delay;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(_delay, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
         }
     }
 }

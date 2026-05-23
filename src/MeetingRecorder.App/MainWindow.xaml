@@ -2624,6 +2624,9 @@
                                                      Height="32"
                                                      VerticalContentAlignment="Center" />
                                         </Grid>
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Local ModelProxy transcript summaries use at least 240 seconds so long local requests can finish; validation remains synthetic and lightweight." />
 
                                         <TextBlock x:Name="ConfigSummaryProviderStatusTextBlock"
                                                    Margin="0,14,0,0"

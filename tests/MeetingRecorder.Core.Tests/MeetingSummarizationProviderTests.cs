@@ -172,6 +172,50 @@ public sealed class MeetingSummarizationProviderTests
         Assert.DoesNotContain("summary-provider-ok", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task SummarizeAsync_Uses_ModelProxy_Minimum_Timeout_For_Transcript_Summaries()
+    {
+        var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
+        var chatClient = new FakeSummaryChatClient();
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalOnly,
+                SummaryRequestTimeoutSeconds = 120,
+            }),
+            CancellationToken.None);
+
+        var call = Assert.Single(chatClient.Calls);
+        Assert.Equal(SummaryChatProviderKind.ModelProxy, call.ProviderOptions.ProviderKind);
+        Assert.Equal(
+            TimeSpan.FromSeconds(MeetingSummaryDefaults.MinimumModelProxySummaryRequestTimeoutSeconds),
+            call.Request.Timeout);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Keeps_Configured_Timeout_For_OpenAi_Summaries()
+    {
+        var secrets = new TrackingSummarySecretStore { OpenAiSecret = "sk-openai-test" };
+        var chatClient = new FakeSummaryChatClient();
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+                SummaryRequestTimeoutSeconds = 90,
+            }),
+            CancellationToken.None);
+
+        var call = Assert.Single(chatClient.Calls);
+        Assert.Equal(SummaryChatProviderKind.OpenAi, call.ProviderOptions.ProviderKind);
+        Assert.Equal(TimeSpan.FromSeconds(90), call.Request.Timeout);
+    }
+
     private static MeetingSummaryRequest CreateRequest(AppConfig config)
     {
         return new MeetingSummaryRequest(

@@ -1,35 +1,72 @@
 param(
     [string]$BaseUrl = "http://127.0.0.1:8645/v1",
     [string]$ApiKey = $env:MODELPROXY_MEETING_RECORDER_API_KEY,
-    [string]$Model = "gpt-5.4-mini"
+    [string]$Model = $null
 )
 
 $ErrorActionPreference = "Stop"
 
 Add-Type -AssemblyName System.Net.Http
 
+$normalizedBaseUrl = $BaseUrl.TrimEnd("/")
+
 if (-not $ApiKey) {
     $ApiKey = "sk-modelproxy"
 }
-
-$headers = @{
-    Authorization = "Bearer $ApiKey"
-    "Content-Type" = "application/json"
-    "X-ModelProxy-Web-Search" = "false"
-}
-$body = @{
-    model = $Model
-    messages = @(@{ role = "user"; content = "Reply exactly: summary-provider-ok" })
-} | ConvertTo-Json -Depth 8
 
 $httpClient = [System.Net.Http.HttpClient]::new()
 $httpRequest = $null
 $httpResponse = $null
 try {
     $httpClient.Timeout = [TimeSpan]::FromSeconds(900)
+    if (-not $Model) {
+        $modelsRequest = [System.Net.Http.HttpRequestMessage]::new(
+            [System.Net.Http.HttpMethod]::Get,
+            "$normalizedBaseUrl/models")
+        $modelsRequest.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ApiKey)
+        try {
+            $modelsResponse = $httpClient.SendAsync($modelsRequest).GetAwaiter().GetResult()
+            $modelsContent = $modelsResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            if (-not $modelsResponse.IsSuccessStatusCode) {
+                throw "ModelProxy models request failed with HTTP $([int]$modelsResponse.StatusCode) $($modelsResponse.ReasonPhrase)."
+            }
+
+            $modelsPayload = $modelsContent | ConvertFrom-Json
+            $Model = $modelsPayload.default_model
+            if (-not $Model -and $modelsPayload.data) {
+                $defaultEntry = @($modelsPayload.data | Where-Object { $_.default } | Select-Object -First 1)
+                if ($defaultEntry.Count -gt 0) {
+                    $Model = $defaultEntry[0].id
+                }
+            }
+            if (-not $Model -and $modelsPayload.data) {
+                $firstEntry = @($modelsPayload.data | Select-Object -First 1)
+                if ($firstEntry.Count -gt 0) {
+                    $Model = $firstEntry[0].id
+                }
+            }
+            if (-not $Model) {
+                throw "ModelProxy models response did not include a usable default model."
+            }
+            Write-Host "Meeting Recorder ModelProxy default model: $Model"
+        }
+        finally {
+            if ($modelsResponse) {
+                $modelsResponse.Dispose()
+            }
+
+            $modelsRequest.Dispose()
+        }
+    }
+
+    $body = @{
+        model = $Model
+        messages = @(@{ role = "user"; content = "Reply exactly: summary-provider-ok" })
+    } | ConvertTo-Json -Depth 8
+
     $httpRequest = [System.Net.Http.HttpRequestMessage]::new(
         [System.Net.Http.HttpMethod]::Post,
-        "$($BaseUrl.TrimEnd('/'))/chat/completions")
+        "$normalizedBaseUrl/chat/completions")
     $httpRequest.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ApiKey)
     $httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search", "false") | Out-Null
     $httpRequest.Content = [System.Net.Http.StringContent]::new($body, [Text.Encoding]::UTF8, "application/json")
