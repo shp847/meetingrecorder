@@ -93,7 +93,20 @@ public sealed class SessionManifestStore
         foreach (var manifestPath in manifestPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var manifest = await LoadAsync(manifestPath, cancellationToken);
+            MeetingSessionManifest manifest;
+            try
+            {
+                manifest = await LoadAsync(manifestPath, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                continue;
+            }
+
             if (manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing)
             {
                 pending.Add((manifestPath, manifest));

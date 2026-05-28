@@ -49,7 +49,7 @@ By default, the installers preserve existing user data on update so recordings, 
 The portable bundle now ships with `bundle-integrity.json`, and the shared deployment CLI validates that manifest before it touches the managed install root.
 The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-on timestamp plus any trusted installed package published-at and asset size used by the in-app updater. MSI post-install provisioning now recreates that file when it is missing, and the app still keeps the startup repair as a safety net for older managed installs. If a fresh install still reaches the app without package metadata, the first successful `UpToDate` GitHub check now backfills the installed package published-at and asset size into `install-provenance.json` so the Updates tab and same-version comparison logic can recover durably instead of keeping those fields unknown.
 The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%USERPROFILE%\Documents\MeetingRecorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
-After a meeting publishes successfully, current builds keep the merged processing audio but prune the raw capture chunks from `%LOCALAPPDATA%\MeetingRecorder\work`, and startup also reclaims those raw artifacts from older already-published sessions.
+After a meeting publishes successfully, current builds keep the published recording as the retained audio copy, prune raw capture chunks from `%LOCALAPPDATA%\MeetingRecorder\work`, and delete redundant work-cache processing WAVs when a matching published recording exists. Startup also reclaims those artifacts from older already-published sessions.
 
 User-facing installer and updater rule:
 
@@ -91,7 +91,7 @@ If you are rebuilding from source locally, note the difference between artifacts
 
 - `.artifacts\publish\win-x64\MeetingRecorder` is only the freshly published bundle output
 - `%USERPROFILE%\Documents\MeetingRecorder` is the canonical managed install root that the Start Menu and live app should use
-- local repo deployments are intentionally disabled for publishing validation; use the MSI install path or release bootstrap scripts when you need to test the managed install root
+- `scripts\Deploy-Local.ps1 -BuildFirst` can refresh the managed install root for local development by publishing the portable bundle and delegating to `AppPlatform.Deployment.Cli install-bundle`; use the MSI install path or release bootstrap scripts for publish validation
 
 ## AI Summary Provider Setup
 
@@ -104,12 +104,13 @@ Local-first setup uses ModelProxy:
 - ModelProxy should be running on `127.0.0.1:8645`.
 - Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
 - Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
-- Meeting Recorder reads `GET /v1/models` and uses ModelProxy's `default_model` unless Settings has an explicit summary model override.
-- Summary and validation requests must send `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. ModelProxy enables public web search by default for requests that do not opt out.
-- Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. A web-enabled request may route to CLI search when app-server search has not been proved safe.
-- Streaming clients must ignore SSE comment lines that begin with `:` and parse terminal `event: error` frames as structured ModelProxy errors. A `cli_timeout` means ModelProxy was reachable but the effective CLI web-search backend timed out.
+- Model discovery uses `GET http://127.0.0.1:8645/v1/models`; consumers should use `default_model` unless Settings names another advertised model.
+- Summary and validation requests must send `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. ModelProxy enables public web search by default for requests that do not opt out.
+- Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. Safe routing headers are persisted with summary provider metadata when present. A web-enabled request may route to CLI search when app-server search has not been proved safe.
+- Streaming clients must ignore SSE comment lines beginning with `:` and parse terminal `event: error` frames as structured ModelProxy failures. A `cli_timeout` terminal stream error means the local endpoint was reachable and the effective CLI web-search backend timed out.
+- `backend_busy` means temporary ModelProxy saturation. Meeting Recorder retries it with short backoff and should not report the endpoint as unreachable while `/v1/models` or health is reachable.
 - The app uses non-streaming Chat Completions for automatic summary generation.
-- Real transcript summaries through ModelProxy use at least a 240-second request timeout; synthetic validation remains lightweight.
+- Local ModelProxy transcript summaries use an effective minimum timeout of 240 seconds. The Settings validation action remains a short synthetic probe and does not send transcript content.
 
 Synthetic validation is allowed and should never use real meeting content:
 
@@ -117,7 +118,7 @@ Synthetic validation is allowed and should never use real meeting content:
 .\scripts\Test-ModelProxy.ps1
 ```
 
-The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script prints safe routing headers when ModelProxy returns them; it does not print prompt text, API keys, bearer headers, or raw response bodies.
+The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script sends five parallel no-search app-server requests, retries `backend_busy`, and prints safe routing headers when ModelProxy returns them; it does not print prompt text, response text, API keys, bearer headers, or raw response bodies.
 
 Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and hosted credential clearing.
 
@@ -142,6 +143,8 @@ App-managed runtime data:
 - `%LOCALAPPDATA%\MeetingRecorder\logs`
 - `%LOCALAPPDATA%\MeetingRecorder\work`
 - `%LOCALAPPDATA%\MeetingRecorder\models`
+
+Before a new recording starts, Meeting Recorder checks that the work-drive root has at least `1 GB` free. If the drive is below that floor, recording does not start and the app shows a disk-space message instead of opening partial audio chunks.
 
 ### Portable mode
 
@@ -226,6 +229,8 @@ That same responsiveness rule now applies to the shell: supported-call detection
 
 For one urgent meeting, use `Process ASAP` from the meeting detail window or `Process This ASAP...` from the context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
 
+For diarized meetings, the detail window keeps name learning and label repair separate. `Refresh Suggestions` only checks stored speaker voice samples against local voice profiles; it does not retranscribe audio, re-run diarization, or queue the worker. `Undo Name Recognition` removes profile-applied or profile-suggested names from that meeting, preserves explicit user-entered names, and records scoped feedback so the same profile is less likely to be offered for the same meeting speaker again. `Repair Speaker Labels` is the heavier action for suspicious speaker-label explosions and re-runs speaker labeling from the existing transcript snapshot when the meeting is eligible.
+
 When auto-detection is on, the app now also tries to attribute active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata. The compact summary appears on `Home`, and `Help` includes the current app/window/tab match plus confidence when attribution is available.
 For Google Meet, the detector still tries to prove audio belongs to the Meet tab first, and an explicit active `Meet - ...` browser window can auto-start from active browser-family audio even when browser session metadata is too weak to name the exact tab. When that same explicit Meet evidence is silent, the app now waits for sustained specific Meet-code evidence before auto-starting so brief browser-title flashes do not create tiny fragments.
 For Google Meet recordings that are already active and tied to a specific Meet code, a brief switch to a Teams chat, calendar, or search surface no longer immediately ages the Meet into auto-stop while captured system audio is active or while the current audio probe is silent; the app uses a bounded grace period of up to three minutes so short focus changes do not fragment the same call.
@@ -253,7 +258,7 @@ For the default self-contained portable bundle, the .NET download is usually not
 The MSI welcome flow now skips the license-agreement screen entirely and goes straight from welcome to ready-to-install.
 If the MSI launches the app immediately after an install or update while the previous app instance is still open, it now launches through `Launch-MeetingRecorder-AfterInstall.vbs`. That wrapper writes a short-lived relaunch marker under `%LOCALAPPDATA%\MeetingRecorder`, lets the app request a cooperative installer shutdown of the running instance, waits for the primary-instance lock to clear, and then starts the fresh app instance. If the app is still busy recording or processing, the restart request is deferred and the current instance stays alive.
 On first app startup after any installer or updater relaunch, Meeting Recorder also verifies the inherited Windows font environment and restores `windir` from `SystemRoot` or the Windows system folder before WPF window creation.
-If a startup or dispatcher UI error still occurs, Meeting Recorder logs the error and closes instead of staying alive without a window. A later launch is only acknowledged by the running app after its main window is visible.
+If a startup or dispatcher UI error still occurs, Meeting Recorder logs the error when possible and closes instead of staying alive without a window. A later launch is only acknowledged by the running app after its main window is visible. App and worker logs are bounded and logging failures are non-fatal, so a full disk should not turn the error handler itself into a second crash.
 
 Examples:
 
@@ -331,8 +336,8 @@ The EXE shell keeps the `Try backup CMD installer` action available after a hand
 The `Install-LatestFromGitHub.cmd` wrapper now preserves the real PowerShell/bootstrap exit code in its local-script path, so a successful install no longer prints a stale generic failure message afterward.
 The Home screen now uses a wider full-canvas recording layout inside its dedicated scroll viewer, stretches to the full tab content width at startup, keeps the quick-setting cards underneath the main console, and uses fixed-width `On` / `Off` controls so the setting cards do not resize while you toggle them.
 The Home graph now also stays on a lightweight timer only while the Home deck is actually visible and a live recording state is worth drawing, which reduces unnecessary UI churn while you are elsewhere in the app.
-Normal in-app update installs do not use `Deploy-Local.ps1`; that old repo-only developer utility is now intentionally disabled so MSI and real upgrade paths stay the only supported validation routes.
-Startup now also performs a one-time higher-aggression cleanup of stale unlocked files under `%LOCALAPPDATA%\Temp\MeetingRecorderDiarization` and `%LOCALAPPDATA%\Temp\MeetingRecorderTranscription`, then falls back to recurring cleanup on later starts and before worker launches so orphaned temp data does not keep growing indefinitely.
+Normal in-app update installs do not use `Deploy-Local.ps1`; the repo-local shortcut is only for developer-managed install refreshes, while MSI and real upgrade paths stay the supported validation routes.
+Startup now also performs a one-time higher-aggression cleanup of stale unlocked files under `%LOCALAPPDATA%\Temp\MeetingRecorderDiarization` and `%LOCALAPPDATA%\Temp\MeetingRecorderTranscription`, then falls back to recurring cleanup on later starts and before worker launches so orphaned temp data does not keep growing indefinitely. Published-session startup maintenance also prunes raw capture chunks and redundant work-cache processing WAVs after the matching published recording exists, leaving published recordings and transcripts intact.
 
 ## 5. Whisper Model Setup
 
@@ -409,11 +414,21 @@ The app treats tiny files as invalid and will not accept an HTML or proxy error 
 
 Speaker labeling is the optional diarization model-bundle path. It can group transcript text under speaker labels such as `Speaker 1` and `Speaker 2`, but normal transcription still works without it.
 
-When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries lower thresholds. If clustering over-segments above the supported automatic range, it retries higher thresholds. If no valid range is found, the transcript still publishes without bad labels.
+When speaker labeling runs, the local worker estimates anonymous speakers from voice embeddings, then assigns transcript segments to the speaker turn with the strongest time overlap. If the default clustering pass collapses voices into fewer than two supported speakers, the worker retries lower thresholds. If clustering over-segments, it retries progressively higher thresholds, then gives over-segmented candidates one merge-rescue pass using speaker embeddings before deciding labels are unsafe. The worker prefers compact automatic speaker counts, merges acoustically similar over-split clusters, and drops tiny fragment-only speaker IDs from the published catalog. If no valid range is found, the transcript still publishes without bad labels. If an older published JSON transcript already contains a speaker explosion, the Meetings cleanup tray and detail window can queue `Repair Speaker Labels` to reuse the existing transcript text and re-run only the speaker-labeling pass.
 
-Speaker names can also improve over time when `Settings > General > Learn speaker names from my corrections` is enabled. The app stores local voice-profile embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles\voice-profiles.json` (or the portable app `data\speaker-profiles` folder), compares future anonymous speaker clusters with those user-confirmed profiles, and auto-applies names only when the best match is above the high-confidence threshold and clearly ahead of the next profile. Lower-confidence matches stay anonymous and appear as suggestions in the speaker-name editor.
+For local calibration, run `powershell -ExecutionPolicy Bypass -File .\scripts\Analyze-Diarization.ps1 -JsonPath <transcript-json> -ExpectedSpeakerCount 2`. The script reports speaker-label counts and contiguous speaker runs without printing transcript text or modifying manifests. The expected count is only an evaluation target for that known example; normal diarization does not require or consume a speaker-count hint.
 
-Voice profiles are local-only user data. The app stores embeddings/centroids rather than raw audio, does not upload them, and lets you disable, delete selected profiles, or delete all profiles from Settings. Voice-profile data can still be sensitive because it is derived from a person's voice; review your local policies before teaching names for other people. Background reference: [sherpa-onnx speaker identification](https://k2-fsa.github.io/sherpa/onnx/speaker-identification/index.html) and [FTC biometric information warning](https://www.ftc.gov/news-events/news/press-releases/2023/05/ftc-warns-about-misuses-biometric-information-harm-consumers).
+For a faster implementation loop that does not deploy, launch the app, or re-run full diarization, run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-DiarizationFixture.ps1 -JsonPath <transcript-json> -ManifestPath <work-manifest> -ExpectedSpeakerCount 2`. The focused replay uses the existing speaker turns and voice samples to exercise the production cluster-merge stage, reports before/after speaker counts, and treats the expected count as an assertion for that known fixture only.
+
+For an example that has full audio and a persisted transcript snapshot but no stored speaker turns yet, run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-DiarizationFullAudioFixture.ps1 -ManifestPath <work-manifest> -SpeakerLabelingProfile HighAccuracy -ExpectedSpeakerCount 2 -PublishedArtifactPath <published-json>,<published-md>`. This uses the full source audio instead of sampled windows, publishes only into a temporary `probe-output` folder, and verifies any protected published artifacts by hash before and after the probe. Add `-EnableSpeakerNameMatching -ExpectedSpeakerName "Name 1","Name 2"` only when evaluating a known local speaker-name fixture; those names are assertions against the output, not runtime hints.
+
+For a repeatable local fixture corpus, copy `docs\diarization-fixtures\fixture-catalog.example.json` to the ignored private path `.artifacts\diarization-fixtures\fixture-catalog.local.json`, replace the placeholder paths, and run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-DiarizationFixtureCatalog.ps1`. The catalog runner can mix stored-turn and full-audio fixtures, keeps expected speaker counts and names as pass/fail labels only, writes metadata-only reports under `.artifacts\diarization-fixtures\reports`, and verifies any listed protected artifacts by hash without retranscribing or rewriting published files in dry-run mode. Keep real meeting titles, names, audio paths, and transcript content out of committed catalogs.
+
+For threshold calibration, copy `docs\diarization-fixtures\calibration-candidates.example.json` to `.artifacts\diarization-fixtures\calibration-candidates.local.json`, enable only the candidate sets you want to test, then run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-DiarizationCalibration.ps1`. The calibration runner first records a `baseline-current-defaults` report, then reruns the same enabled fixtures with candidate-only environment overrides for diarization threshold search, speaker-duration filtering, speaker-cluster merge thresholds, or speaker-name recognition thresholds. Candidate reports are scored against the baseline, false auto-applies and protected-category regressions block promotion, and inconclusive evidence keeps the current production defaults unchanged.
+
+Speaker names can also improve over time when `Settings > General > Learn speaker names from my corrections` is enabled. The app stores local voice-profile embeddings under `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles\voice-profiles.json` (or the portable app `data\speaker-profiles` folder), learns from confirmed speaker-name corrections, compares future anonymous speaker clusters with those user-confirmed profiles, and auto-applies names only when the profile is mature, the sample is long enough, the best match is above the high-confidence threshold, and the match is clearly ahead of the next profile. Lower-confidence matches stay anonymous and appear as suggestions with a reason in the speaker-name editor.
+
+Voice profiles are local-only user data. The app stores embeddings/centroids rather than raw audio, does not upload them, and lets you disable, delete selected profiles, or delete all profiles from Settings. In a meeting detail window, `Use` and `Reject` are enabled only when a suggested name exists: use `Use` to accept a suggested name, `Reject` to remember that a suggested profile was wrong for that meeting speaker, `Refresh Suggestions` to re-check an already diarized meeting against the current local profiles without retranscribing audio, or `Undo Name Recognition` to remove profile-sourced names for that meeting while keeping explicit user-entered names. Voice-profile data can still be sensitive because it is derived from a person's voice; review your local policies before teaching names for other people. Background reference: [sherpa-onnx speaker identification](https://k2-fsa.github.io/sherpa/onnx/speaker-identification/index.html) and [FTC biometric information warning](https://www.ftc.gov/news-events/news/press-releases/2023/05/ftc-warns-about-misuses-biometric-information-harm-consumers).
 
 Built-in automatic speaker-labeling downloads use GitHub release assets only. Alternate public download locations, when shown, are curated links and may currently be unavailable.
 
@@ -557,24 +572,30 @@ Transcript regeneration works when:
 - the session work folder and `manifest.json` still exist, or
 - the app can synthesize a new work manifest from an existing published audio file
 
+`Re-Generate Transcript` forces a fresh Whisper pass instead of reusing a saved `transcription.snapshot.json` from an earlier attempt. If auto-language detection produces an implausibly sparse transcript despite active audio, the worker retries with an English language hint and keeps the richer result.
+
 ## 8.1 Cleanup Recommendations
 
 The Meetings tab now includes an ongoing cleanup recommendation system.
 
 What it does:
 
-- shows row-level recommendation badges such as `Archive`, `Merge`, `Rename`, `Split`, `Retry Transcript`, or `Add Speaker Labels`
+- shows row-level recommendation badges such as `Archive`, `Merge`, `Rename`, `Split`, `Retry Transcript`, `Add Speaker Labels`, or `Repair Speaker Labels`
 - shows a lighter cleanup review tray for the current selection or the whole library
 - offers a one-time historical review prompt with `Review Suggestions` and `Apply Safe Fixes`
 - includes `Add Speaker Labels` as a safe fix only when the diarization model bundle is installed and the meeting has usable published audio plus a transcript that currently lacks speaker labels
+- includes `Repair Speaker Labels` as a safe fix when a published JSON transcript already has labels but the speaker distribution looks like over-fragmentation, such as many fragment-only speakers in a short conversation
+- flags unusually sparse published transcripts for manual review when a long recording produced very little transcript text
 
 Important behavior:
 
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
-- safe automatic fixes only apply high-confidence archive, merge, and retry-transcript actions
+- safe automatic fixes only apply high-confidence archive, merge, retry-transcript, add-speaker-label, and repair-speaker-label actions
+- sparse-transcript recommendations stay manual so the app does not automatically spend time retranscribing long recordings that may contain unusable source audio
 - split and lower-confidence actions stay manual
-- on first launch after the updated build, the versioned `published-meeting-repair-v6` pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence, and republish repairable historical microphone sessions from `%LOCALAPPDATA%\MeetingRecorder\work` while archiving the replaced published and processing WAVs plus an `echo-repair-report.txt` summary
-- successful publishes now also normalize the work manifest onto the retained merged audio and prune raw capture chunks from the session `raw` folder, and startup reclaims the same raw artifacts from older already-published sessions so `%LOCALAPPDATA%\MeetingRecorder\work` does not keep growing without bound
+- on first launch after the updated build, the versioned `published-meeting-repair-v7` pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence, republish repairable historical microphone sessions from `%LOCALAPPDATA%\MeetingRecorder\work`, and queue suspicious over-fragmented speaker labels for repair when speaker labeling is ready
+- speaker-label repair reuses the existing published transcript text by writing a fresh `transcription.snapshot.json` without the old speaker IDs or labels, then re-runs diarization from the published audio instead of forcing a full retranscription
+- successful publishes now also normalize the work manifest onto the retained published audio, prune raw capture chunks from the session `raw` folder, and delete redundant work-cache processing WAVs when a matching published recording exists; startup reclaims the same artifacts from older already-published sessions so `%LOCALAPPDATA%\MeetingRecorder\work` does not keep growing without bound
 - repaired merged publishes now show duration from the repaired artifact itself when the preserved original stem would otherwise point back to stale manifest timing
 - dismissed recommendations stay hidden until the underlying meeting data changes enough to produce a new recommendation fingerprint
 
@@ -608,7 +629,7 @@ What the detail window shows for the focused meeting:
 - transcript model metadata
 - speaker-label state
 - detected audio source and collapsed capture diagnostics
-- transcript segments read from the local JSON sidecar, with Markdown fallback for app-rendered transcripts
+- readable transcript paragraphs built from the local JSON sidecar, with Markdown fallback for app-rendered transcripts; raw JSON segments remain available for structured processing
 - meeting summary content when summary generation is enabled and a summary exists
 - a clear disabled, unconfigured, unavailable, or failed summary state when no summary can be shown
 
@@ -672,6 +693,7 @@ Common causes:
 - Whisper model missing
 - Whisper model invalid or too small
 - network filtering replaced the download with an HTML or proxy page
+- the work drive has less than `1 GB` free, which blocks new recordings before audio chunks are opened
 
 Then inspect:
 

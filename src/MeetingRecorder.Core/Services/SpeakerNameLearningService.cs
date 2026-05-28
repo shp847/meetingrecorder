@@ -8,9 +8,15 @@ public sealed record SpeakerNameLearningResult(
     int UpdatedCount,
     int SkippedCount);
 
+public sealed record SpeakerNameRejectedMatch(
+    string ProfileId,
+    string MeetingId,
+    string SpeakerId);
+
 public sealed class SpeakerNameLearningService
 {
     private const int MaximumMeetingIdsPerProfile = 128;
+    private const int MaximumRejectedMatchesPerProfile = 256;
     private readonly VoiceProfileStore _profileStore;
 
     public SpeakerNameLearningService(VoiceProfileStore profileStore)
@@ -43,6 +49,7 @@ public sealed class SpeakerNameLearningService
             .GroupBy(sample => sample.SpeakerId, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var confirmedSamples = new List<(string DisplayName, SpeakerVoiceSample Sample)>();
+        var rejectedMatches = new List<SpeakerNameRejectedMatch>();
 
         foreach (var speaker in speakers)
         {
@@ -57,15 +64,24 @@ public sealed class SpeakerNameLearningService
             }
 
             confirmedSamples.Add((NormalizeDisplayName(correctedName), sample));
+            if (!string.IsNullOrWhiteSpace(speaker.ProfileId) &&
+                speaker.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile)
+            {
+                rejectedMatches.Add(new SpeakerNameRejectedMatch(
+                    speaker.ProfileId,
+                    manifest.SessionId,
+                    speaker.Id));
+            }
         }
 
-        if (confirmedSamples.Count == 0)
+        if (confirmedSamples.Count == 0 && rejectedMatches.Count == 0)
         {
             return new SpeakerNameLearningResult(0, 0, speakerLabelMap.Count);
         }
 
         var createdCount = 0;
         var updatedCount = 0;
+        var normalizedRejectedMatches = NormalizeRejectedMatches(rejectedMatches, now);
         await _profileStore.UpdateAsync(
             document =>
             {
@@ -80,6 +96,11 @@ public sealed class SpeakerNameLearningService
 
                     if (existingIndex >= 0)
                     {
+                        if (HasAlreadyLearnedFromMeeting(profiles[existingIndex], manifest.SessionId))
+                        {
+                            continue;
+                        }
+
                         profiles[existingIndex] = UpdateProfile(
                             profiles[existingIndex],
                             manifest.SessionId,
@@ -98,6 +119,8 @@ public sealed class SpeakerNameLearningService
                     }
                 }
 
+                ApplyRejectedMatches(profiles, normalizedRejectedMatches);
+
                 return document with
                 {
                     UpdatedAtUtc = now,
@@ -110,6 +133,13 @@ public sealed class SpeakerNameLearningService
             createdCount,
             updatedCount,
             Math.Max(0, speakerLabelMap.Count - createdCount - updatedCount));
+    }
+
+    private static bool HasAlreadyLearnedFromMeeting(VoiceProfile profile, string sessionId)
+    {
+        return !string.IsNullOrWhiteSpace(sessionId) &&
+            profile.ConfirmedMeetingIds.Any(meetingId =>
+                string.Equals(meetingId, sessionId, StringComparison.Ordinal));
     }
 
     public async Task UpdateLastMatchedAsync(
@@ -141,6 +171,34 @@ public sealed class SpeakerNameLearningService
             cancellationToken);
     }
 
+    public async Task<int> RejectMatchesAsync(
+        IReadOnlyList<SpeakerNameRejectedMatch> rejectedMatches,
+        DateTimeOffset rejectedAtUtc,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedRejectedMatches = NormalizeRejectedMatches(rejectedMatches, rejectedAtUtc);
+        if (normalizedRejectedMatches.Count == 0)
+        {
+            return 0;
+        }
+
+        var rejectedCount = 0;
+        await _profileStore.UpdateAsync(
+            document =>
+            {
+                var profiles = document.Profiles.ToList();
+                ApplyRejectedMatches(profiles, normalizedRejectedMatches, () => rejectedCount++);
+                return document with
+                {
+                    UpdatedAtUtc = rejectedAtUtc,
+                    Profiles = profiles,
+                };
+            },
+            cancellationToken);
+
+        return rejectedCount;
+    }
+
     private static VoiceProfile CreateProfile(
         string displayName,
         string sessionId,
@@ -156,7 +214,8 @@ public sealed class SpeakerNameLearningService
             1,
             [sessionId],
             now,
-            VoiceProfileStatus.Active);
+            VoiceProfileStatus.Active,
+            []);
     }
 
     private static VoiceProfile UpdateProfile(
@@ -186,6 +245,73 @@ public sealed class SpeakerNameLearningService
             LastMatchedAtUtc = now,
             Status = VoiceProfileStatus.Active,
         };
+    }
+
+    private static IReadOnlyList<(string ProfileId, VoiceProfileRejectedMatch Match)> NormalizeRejectedMatches(
+        IReadOnlyList<SpeakerNameRejectedMatch> rejectedMatches,
+        DateTimeOffset rejectedAtUtc)
+    {
+        return rejectedMatches
+            .Where(match =>
+                !string.IsNullOrWhiteSpace(match.ProfileId) &&
+                !string.IsNullOrWhiteSpace(match.MeetingId) &&
+                !string.IsNullOrWhiteSpace(match.SpeakerId))
+            .GroupBy(match => $"{match.ProfileId.Trim()}\n{match.MeetingId.Trim()}\n{match.SpeakerId.Trim()}", StringComparer.Ordinal)
+            .Select(group => group.First())
+            .Select(match => (
+                ProfileId: match.ProfileId.Trim(),
+                Match: new VoiceProfileRejectedMatch(
+                    match.MeetingId.Trim(),
+                    match.SpeakerId.Trim(),
+                    rejectedAtUtc)))
+            .ToArray();
+    }
+
+    private static void ApplyRejectedMatches(
+        List<VoiceProfile> profiles,
+        IReadOnlyList<(string ProfileId, VoiceProfileRejectedMatch Match)> rejectedMatches,
+        Action? onRejected = null)
+    {
+        if (rejectedMatches.Count == 0)
+        {
+            return;
+        }
+
+        for (var index = 0; index < profiles.Count; index++)
+        {
+            var profile = profiles[index];
+            var matchesForProfile = rejectedMatches
+                .Where(match => string.Equals(match.ProfileId, profile.ProfileId, StringComparison.Ordinal))
+                .Select(match => match.Match)
+                .ToArray();
+            if (matchesForProfile.Length == 0)
+            {
+                continue;
+            }
+
+            var existing = profile.RejectedMatches ?? Array.Empty<VoiceProfileRejectedMatch>();
+            var beforeKeys = existing
+                .Select(match => $"{match.MeetingId}\n{match.SpeakerId}")
+                .ToHashSet(StringComparer.Ordinal);
+            var mergedMatches = existing
+                .Concat(matchesForProfile)
+                .GroupBy(match => $"{match.MeetingId}\n{match.SpeakerId}", StringComparer.Ordinal)
+                .Select(group => group.OrderByDescending(match => match.RejectedAtUtc).First())
+                .OrderByDescending(match => match.RejectedAtUtc)
+                .Take(MaximumRejectedMatchesPerProfile)
+                .OrderBy(match => match.MeetingId, StringComparer.Ordinal)
+                .ThenBy(match => match.SpeakerId, StringComparer.Ordinal)
+                .ToArray();
+            var afterKeys = mergedMatches
+                .Select(match => $"{match.MeetingId}\n{match.SpeakerId}")
+                .ToHashSet(StringComparer.Ordinal);
+            if (afterKeys.Except(beforeKeys, StringComparer.Ordinal).Any())
+            {
+                onRejected?.Invoke();
+            }
+
+            profiles[index] = profile with { RejectedMatches = mergedMatches };
+        }
     }
 
     private static string NormalizeDisplayName(string displayName)

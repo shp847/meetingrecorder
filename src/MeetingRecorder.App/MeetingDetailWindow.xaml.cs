@@ -14,11 +14,57 @@ internal sealed class MeetingDetailSpeakerLabelsEventArgs(IReadOnlyList<MeetingD
     public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
 }
 
-internal sealed class MeetingDetailSpeakerLabelEditorRow(string originalLabel)
+internal sealed class MeetingDetailSpeakerLabelEditorRow(
+    string originalLabel,
+    string provenance = "",
+    string? suggestedDisplayName = null,
+    string? speakerId = null,
+    string? profileId = null,
+    bool hasProfileAttribution = false)
 {
     public string OriginalLabel { get; } = originalLabel;
 
     public string EditedLabel { get; set; } = originalLabel;
+
+    public string Provenance { get; } = provenance;
+
+    public string? SuggestedDisplayName { get; } = suggestedDisplayName;
+
+    public string? SpeakerId { get; } = speakerId;
+
+    public string? ProfileId { get; } = profileId;
+
+    public bool HasProfileAttribution { get; } = hasProfileAttribution;
+
+    public bool HasSuggestion => !string.IsNullOrWhiteSpace(SuggestedDisplayName);
+
+    public bool IsSuggestionRejected { get; private set; }
+
+    public string SuggestionText => HasSuggestion
+        ? SuggestedDisplayName!
+        : string.Empty;
+
+    public void AcceptSuggestion()
+    {
+        if (!HasSuggestion)
+        {
+            return;
+        }
+
+        EditedLabel = SuggestedDisplayName!;
+        IsSuggestionRejected = false;
+    }
+
+    public void RejectSuggestion()
+    {
+        if (!HasSuggestion)
+        {
+            return;
+        }
+
+        EditedLabel = OriginalLabel;
+        IsSuggestionRejected = true;
+    }
 }
 
 public partial class MeetingDetailWindow : Window
@@ -34,6 +80,7 @@ public partial class MeetingDetailWindow : Window
     private bool _canProcessAsap;
     private bool _canSplit;
     private bool _canApplySpeakerNames;
+    private bool _canUndoSpeakerNameRecognition;
     private bool _canArchive;
     private bool _canDelete;
 
@@ -74,6 +121,10 @@ public partial class MeetingDetailWindow : Window
 
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
 
+    internal event EventHandler? RefreshSpeakerNamesRequested;
+
+    internal event EventHandler? UndoSpeakerNameRecognitionRequested;
+
     internal event EventHandler? ArchiveRequested;
 
     internal event EventHandler? DeleteRequested;
@@ -112,6 +163,7 @@ public partial class MeetingDetailWindow : Window
         _canSplit = state.CanSplit;
         _canArchive = state.CanArchive;
         _canDelete = state.CanDeletePermanently;
+        AddSpeakerLabelsButton.Content = state.SpeakerLabelActionLabel;
         ProcessAsapButton.Content = state.CanClearAsap ? "Clear ASAP" : "Process ASAP";
 
         TitleDraftTextBox.Text = state.Title;
@@ -119,6 +171,7 @@ public partial class MeetingDetailWindow : Window
         ProjectComboBox.Text = state.ProjectName == "None" ? string.Empty : state.ProjectName;
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
+        _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
         MaintenanceStatusTextBlock.Text = speakerLabelRows.Count == 0
             ? "No editable speaker labels are available for this transcript yet."
             : "Edit speaker display names, then apply changes.";
@@ -196,8 +249,8 @@ public partial class MeetingDetailWindow : Window
 
         TranscriptSegmentsListBox.ItemsSource = filteredSegments;
         TranscriptStatusTextBlock.Text = string.IsNullOrWhiteSpace(query)
-            ? $"{_allTranscriptSegments.Length} segment(s)"
-            : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} segment(s)";
+            ? $"{_allTranscriptSegments.Length} paragraph(s)"
+            : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} paragraph(s)";
     }
 
     private void UpdateMaintenanceButtonAvailability()
@@ -216,6 +269,8 @@ public partial class MeetingDetailWindow : Window
         ProcessAsapButton.IsEnabled = canUseMaintenance && _canProcessAsap;
         SplitButton.IsEnabled = canUseMaintenance && _canSplit;
         ApplySpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
+        RefreshSpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
+        UndoSpeakerNameRecognitionButton.IsEnabled = canUseMaintenance && _canUndoSpeakerNameRecognition;
         ArchiveButton.IsEnabled = canUseMaintenance && _canArchive;
         DeleteButton.IsEnabled = canUseMaintenance && _canDelete;
     }
@@ -306,6 +361,34 @@ public partial class MeetingDetailWindow : Window
         ApplySpeakerNamesRequested?.Invoke(
             this,
             new MeetingDetailSpeakerLabelsEventArgs(rows?.ToArray() ?? Array.Empty<MeetingDetailSpeakerLabelEditorRow>()));
+    }
+
+    private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        RefreshSpeakerNamesRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UndoSpeakerNameRecognitionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        UndoSpeakerNameRecognitionRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UseSpeakerSuggestionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingDetailSpeakerLabelEditorRow row)
+        {
+            row.AcceptSuggestion();
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+    }
+
+    private void RejectSpeakerSuggestionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingDetailSpeakerLabelEditorRow row)
+        {
+            row.RejectSuggestion();
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
     }
 
     private void ArchiveButton_OnClick(object sender, RoutedEventArgs e)

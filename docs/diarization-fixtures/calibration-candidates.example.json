@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic calibration-candidate template only. Copy to .artifacts/diarization-fixtures/calibration-candidates.local.json before enabling candidates against private fixtures.",
+  "candidates": [
+    {
+      "name": "merge-more-conservatively",
+      "description": "Raises cluster-merge similarity requirements to reduce accidental speaker collapse.",
+      "enabled": false,
+      "disabledReason": "Example only. Enable in a private local copy after reviewing fixture evidence.",
+      "environment": {
+        "MEETING_RECORDER_SPEAKER_CLUSTER_HIGH_CONFIDENCE_THRESHOLD": "0.92",
+        "MEETING_RECORDER_SPEAKER_CLUSTER_SMALL_THRESHOLD": "0.68",
+        "MEETING_RECORDER_SPEAKER_CLUSTER_TINY_MAX_SECONDS": "10"
+      }
+    },
+    {
+      "name": "filter-tiny-speakers-more-aggressively",
+      "description": "Raises the minimum supported speaker duration to reduce fragment-only speakers.",
+      "enabled": false,
+      "disabledReason": "Example only. Enable in a private local copy after reviewing fixture evidence.",
+      "environment": {
+        "MEETING_RECORDER_DIARIZATION_MIN_SPEAKER_DURATION_SECONDS": "3",
+        "MEETING_RECORDER_DIARIZATION_MIN_SPEAKER_DURATION_SHARE": "0.008"
+      }
+    },
+    {
+      "name": "speaker-name-suggest-first",
+      "description": "Keeps profile recognition conservative by making auto-apply harder while leaving suggestions available.",
+      "enabled": false,
+      "disabledReason": "Example only. Enable in a private local copy after reviewing fixture evidence.",
+      "environment": {
+        "MEETING_RECORDER_SPEAKER_NAME_AUTO_APPLY_CONFIDENCE_THRESHOLD": "0.90",
+        "MEETING_RECORDER_SPEAKER_NAME_SUGGESTION_CONFIDENCE_THRESHOLD": "0.78",
+        "MEETING_RECORDER_SPEAKER_NAME_MATCH_MARGIN_THRESHOLD": "0.08",
+        "MEETING_RECORDER_SPEAKER_NAME_MIN_AUTO_APPLY_PROFILE_SAMPLES": "3",
+        "MEETING_RECORDER_SPEAKER_NAME_MIN_AUTO_APPLY_SPEECH_SECONDS": "10"
+      }
+    }
+  ]
+}

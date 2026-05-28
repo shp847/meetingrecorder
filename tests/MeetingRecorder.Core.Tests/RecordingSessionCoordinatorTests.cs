@@ -74,6 +74,41 @@ public sealed class RecordingSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task StartAsync_Blocks_When_Work_Drive_Has_Insufficient_Free_Space()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-low-disk-start-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                storageAvailabilityProvider: _ => new RecordingStorageAvailability("C:\\", 512L * 1024L * 1024L));
+
+            var exception = await Assert.ThrowsAsync<InsufficientRecordingStorageException>(() =>
+                coordinator.StartAsync(
+                    MeetingPlatform.Teams,
+                    "Low Disk Meeting",
+                    Array.Empty<DetectionSignal>(),
+                    autoStarted: true));
+
+            Assert.Null(coordinator.ActiveSession);
+            Assert.Equal("C:\\", exception.RootPath);
+            Assert.Contains("512 MB free", exception.Message);
+            Assert.Contains("1.0 GB", exception.Message);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task SetMicrophoneCaptureEnabledAsync_Starts_Capture_And_Persists_An_Open_Segment_When_Enabled_During_Recording()
     {
         var root = Path.Combine(Path.GetTempPath(), $"meeting-live-mic-enable-{Guid.NewGuid():N}");

@@ -12,6 +12,7 @@ internal sealed record ConfigEditorSnapshot(
     string AutoDetectThresholdText,
     string MeetingStopTimeoutText,
     bool MicCaptureEnabled,
+    SpeakerNameLearningMode SpeakerNameLearningMode,
     bool LaunchOnLoginEnabled,
     bool AutoDetectEnabled,
     bool CalendarTitleFallbackEnabled,
@@ -260,6 +261,7 @@ internal sealed record MeetingDetailWindowState(
     bool CanRegenerateTranscript,
     bool CanReTranscribeWithDifferentModel,
     bool CanAddSpeakerLabels,
+    string SpeakerLabelActionLabel,
     bool CanProcessAsap,
     bool CanClearAsap,
     bool CanSplit,
@@ -341,6 +343,53 @@ internal static class MainWindowInteractionLogic
             _ =>
                 "Throttled runs speaker labeling automatically after transcription while keeping the selected background processing budget in control.",
         };
+    }
+
+    public static string BuildSpeakerNameRefreshStatusText(SpeakerNameRefreshResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.Warning))
+        {
+            return result.Warning;
+        }
+
+        if (result.Predictions.Count == 0)
+        {
+            return "Refreshed speaker names. No eligible voice-profile matches were found.";
+        }
+
+        var autoAppliedCount = result.Predictions.Count(prediction =>
+            prediction.Source == SpeakerNameSource.AutoAppliedVoiceProfile);
+        var suggestionCount = result.Predictions.Count(prediction =>
+            prediction.Source == SpeakerNameSource.SuggestedVoiceProfile);
+
+        return (autoAppliedCount, suggestionCount) switch
+        {
+            (> 0, > 0) =>
+                $"Refreshed speaker names. Auto-applied {autoAppliedCount} high-confidence match(es); {suggestionCount} suggestion(s) need review.",
+            (> 0, 0) =>
+                $"Refreshed speaker names. Auto-applied {autoAppliedCount} high-confidence voice-profile match(es).",
+            (0, > 0) =>
+                $"Refreshed speaker names. Added {suggestionCount} voice-profile suggestion(s) for review.",
+            _ =>
+                "Refreshed speaker names. No eligible voice-profile matches were found.",
+        };
+    }
+
+    public static string BuildSpeakerNameUndoStatusText(SpeakerNameUndoResult result)
+    {
+        if (result.UpdatedSpeakerCount == 0)
+        {
+            return !string.IsNullOrWhiteSpace(result.Warning)
+                ? result.Warning
+                : "No undoable voice-profile speaker names were found for this meeting.";
+        }
+
+        var suppressedText = result.SuppressedMatchCount > 0
+            ? $" Suppressed {result.SuppressedMatchCount} profile suggestion(s) for this meeting speaker."
+            : " Profile suggestions were cleared from this meeting.";
+        return string.IsNullOrWhiteSpace(result.Warning)
+            ? $"Undid voice-profile speaker names for {result.UpdatedSpeakerCount} speaker(s).{suppressedText}"
+            : $"Undid voice-profile speaker names for {result.UpdatedSpeakerCount} speaker(s). {result.Warning}";
     }
 
     private static string BuildBackgroundProcessingModeOptionLabel(
@@ -1376,15 +1425,17 @@ internal static class MainWindowInteractionLogic
         MeetingSessionManifest manifest,
         DateTimeOffset now,
         string transcriptionQueuedMessage,
-        bool forceSpeakerLabeling)
+        bool forceSpeakerLabeling,
+        bool forceTranscription = false)
     {
         return manifest with
         {
             State = SessionState.Queued,
             ErrorSummary = null,
-            ProcessingOverrides = forceSpeakerLabeling
-                ? ClearSpeakerLabelingSkipOverride(manifest.ProcessingOverrides)
-                : manifest.ProcessingOverrides,
+            ProcessingOverrides = BuildReprocessingOverrides(
+                manifest.ProcessingOverrides,
+                forceSpeakerLabeling,
+                forceTranscription),
             TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Queued, now, transcriptionQueuedMessage),
             DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, now, null),
             PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.NotStarted, now, null),
@@ -1423,7 +1474,9 @@ internal static class MainWindowInteractionLogic
             string.IsNullOrWhiteSpace(meeting.TranscriptionModelFileName)
                 ? "Not recorded"
                 : meeting.TranscriptionModelFileName,
-            meeting.HasSpeakerLabels
+            meeting.HasSuspiciousSpeakerLabels
+                ? "Speaker labels need repair."
+                : meeting.HasSpeakerLabels
                 ? "Speaker labels are present."
                 : "Speaker labels are missing.",
             displayedAttendeeNames,
@@ -1488,6 +1541,7 @@ internal static class MainWindowInteractionLogic
             CanRegenerateTranscript: canRegenerateTranscript,
             CanReTranscribeWithDifferentModel: canRegenerateTranscript,
             CanAddSpeakerLabels: canAddSpeakerLabels,
+            SpeakerLabelActionLabel: meeting.HasSuspiciousSpeakerLabels ? "Repair Speaker Labels" : "Add Speaker Labels",
             CanProcessAsap: canProcessAsap && !isSelectedMeetingAsap,
             CanClearAsap: isSelectedMeetingAsap,
             CanSplit: meeting.Duration is { } duration && duration > TimeSpan.FromSeconds(2),
@@ -1890,6 +1944,7 @@ internal static class MainWindowInteractionLogic
             MeetingCleanupAction.Rename => "Rename",
             MeetingCleanupAction.RegenerateTranscript => "Retry Transcript",
             MeetingCleanupAction.GenerateSpeakerLabels => "Add Speaker Labels",
+            MeetingCleanupAction.RepairSpeakerLabels => "Repair Speaker Labels",
             _ => "Review",
         };
     }
@@ -2082,7 +2137,7 @@ internal static class MainWindowInteractionLogic
     {
         return recommendation.CanApplyAutomatically &&
                recommendation.Confidence == MeetingCleanupConfidence.High &&
-               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels;
+               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
     }
 
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)
@@ -2122,6 +2177,7 @@ internal static class MainWindowInteractionLogic
             !string.Equals(FormatThreshold(currentConfig.AutoDetectAudioPeakThreshold), NormalizeText(editor.AutoDetectThresholdText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.MeetingStopTimeoutText), StringComparison.Ordinal) ||
             currentConfig.MicCaptureEnabled != editor.MicCaptureEnabled ||
+            currentConfig.SpeakerNameLearningMode != editor.SpeakerNameLearningMode ||
             currentConfig.LaunchOnLoginEnabled != editor.LaunchOnLoginEnabled ||
             currentConfig.AutoDetectEnabled != editor.AutoDetectEnabled ||
             currentConfig.CalendarTitleFallbackEnabled != editor.CalendarTitleFallbackEnabled ||
@@ -2214,6 +2270,7 @@ internal static class MainWindowInteractionLogic
             MeetingCleanupAction.Rename => 2,
             MeetingCleanupAction.RegenerateTranscript => 3,
             MeetingCleanupAction.GenerateSpeakerLabels => 4,
+            MeetingCleanupAction.RepairSpeakerLabels => 4,
             MeetingCleanupAction.Split => 5,
             _ => 10,
         };
@@ -2240,11 +2297,37 @@ internal static class MainWindowInteractionLogic
         };
     }
 
-    private static MeetingProcessingOverrides? ClearSpeakerLabelingSkipOverride(MeetingProcessingOverrides? overrides)
+    private static MeetingProcessingOverrides? BuildReprocessingOverrides(
+        MeetingProcessingOverrides? overrides,
+        bool forceSpeakerLabeling,
+        bool forceTranscription)
     {
-        return overrides is null
-            ? null
-            : overrides with { SkipSpeakerLabeling = false };
+        var updated = overrides;
+        if (forceTranscription && updated is null)
+        {
+            updated = new MeetingProcessingOverrides(null, null);
+        }
+
+        if (updated is null)
+        {
+            return null;
+        }
+
+        if (forceSpeakerLabeling)
+        {
+            updated = updated with
+            {
+                SkipSpeakerLabeling = false,
+                ForceTranscription = false,
+            };
+        }
+
+        if (forceTranscription)
+        {
+            updated = updated with { ForceTranscription = true };
+        }
+
+        return updated;
     }
 
     private static string NormalizeText(string? value)

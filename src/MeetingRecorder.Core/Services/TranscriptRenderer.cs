@@ -47,10 +47,12 @@ public sealed class TranscriptRenderer
         lines.Add("## Transcript");
         lines.Add(string.Empty);
 
-        foreach (var segment in segments)
+        var paragraphs = TranscriptParagraphBuilder.Build(
+            segments,
+            segment => ResolveSpeakerLabel(segment, speakerCatalog));
+        foreach (var paragraph in paragraphs)
         {
-            var speaker = ResolveSpeakerLabel(segment, speakerCatalog);
-            lines.Add($"[{segment.Start:hh\\:mm\\:ss} - {segment.End:hh\\:mm\\:ss}] **{speaker}:** {segment.Text}");
+            lines.Add($"[{paragraph.Start:hh\\:mm\\:ss} - {paragraph.End:hh\\:mm\\:ss}] **{paragraph.SpeakerLabel}:** {paragraph.Text}");
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -144,7 +146,18 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("providerKind")] string ProviderKind,
         [property: JsonPropertyName("providerName")] string ProviderName,
         [property: JsonPropertyName("model")] string Model,
-        [property: JsonPropertyName("fallbackUsed")] bool FallbackUsed);
+        [property: JsonPropertyName("fallbackUsed")] bool FallbackUsed,
+        [property: JsonPropertyName("modelProxyRouting")]
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        TranscriptDocumentModelProxyRouting? ModelProxyRouting);
+
+    private sealed record TranscriptDocumentModelProxyRouting(
+        [property: JsonPropertyName("requestId")] string? RequestId,
+        [property: JsonPropertyName("requestedBackend")] string? RequestedBackend,
+        [property: JsonPropertyName("effectiveBackend")] string? EffectiveBackend,
+        [property: JsonPropertyName("webSearchBackend")] string? WebSearchBackend,
+        [property: JsonPropertyName("appServerWebSearchSupported")] bool? AppServerWebSearchSupported,
+        [property: JsonPropertyName("fallbackReason")] string? FallbackReason);
 
     private static bool ShouldRenderSummary(MeetingSessionManifest manifest)
     {
@@ -230,9 +243,24 @@ public sealed class TranscriptRenderer
                 summary.Provider.ProviderKind.ToString(),
                 summary.Provider.ProviderName,
                 summary.Provider.Model,
-                summary.Provider.FallbackUsed),
+                summary.Provider.FallbackUsed,
+                BuildTranscriptModelProxyRouting(summary.Provider.ModelProxyRouting)),
             summary.GeneratedAtUtc,
             summary.TranscriptFingerprint);
+    }
+
+    private static TranscriptDocumentModelProxyRouting? BuildTranscriptModelProxyRouting(
+        ModelProxyRoutingInfo? routingInfo)
+    {
+        return routingInfo is null
+            ? null
+            : new TranscriptDocumentModelProxyRouting(
+                routingInfo.RequestId,
+                routingInfo.RequestedBackend,
+                routingInfo.EffectiveBackend,
+                routingInfo.WebSearchBackend,
+                routingInfo.AppServerWebSearchSupported,
+                routingInfo.FallbackReason);
     }
 
     private static IReadOnlyDictionary<string, string> BuildSpeakerCatalog(IReadOnlyList<SpeakerIdentity>? speakers)

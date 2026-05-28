@@ -133,6 +133,8 @@ A security popup can be a symptom, not the underlying defect.
 Important lesson:
 
 - if endpoint tooling reports access involving `WerFault.exe`, check whether the app is actually crashing first
+- if the crash is tied to low disk space, keep diagnostic logging non-fatal and gate new recording starts before opening raw audio chunks
+- keep published-session work cleanup active: once a matching published recording exists, redundant local `work` WAV caches should be pruned automatically so recovery caches do not quietly consume the drive
 
 Recommended first checks:
 

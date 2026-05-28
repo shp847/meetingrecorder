@@ -1,6 +1,7 @@
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using NAudio.Wave;
+using System.Text.Json;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -419,7 +420,7 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
 
         Assert.False(result.AlreadyApplied);
         Assert.True(File.Exists(result.MarkerPath));
-        Assert.Equal("published-meeting-repair-v6.done", Path.GetFileName(result.MarkerPath));
+        Assert.Equal("published-meeting-repair-v7.done", Path.GetFileName(result.MarkerPath));
         Assert.True(Directory.Exists(result.ArchiveDirectory));
 
         var updatedManifest = await manifestStore.LoadAsync(Path.Combine(sessionRoot, "manifest.json"));
@@ -526,6 +527,70 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
         var report = await File.ReadAllTextAsync(reportPath);
         Assert.Contains("Skipped: 1", report, StringComparison.Ordinal);
         Assert.Contains($"{stem}: missing published audio", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RepairKnownIssuesAsync_Queues_SuspiciousSpeakerLabelRepair_And_Seeds_TranscriptSnapshot()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var appRoot = CreateDirectory("app");
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var stem = "2026-05-21_220300_teams_google-cloud-vmo-daily-touchpoints";
+        await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{stem}.wav"), TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12));
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Google Cloud VMO - daily touchpoints",
+                hasSpeakerLabels = true,
+                speakers = Enumerable.Range(1, 12)
+                    .Select(index => new
+                    {
+                        id = $"speaker-{index}",
+                        displayName = $"Speaker {index}",
+                    })
+                    .ToArray(),
+                segments = Enumerable.Range(1, 12)
+                    .Select(index => new
+                    {
+                        start = TimeSpan.FromSeconds(index).ToString("c"),
+                        end = TimeSpan.FromSeconds(index + 1).ToString("c"),
+                        speakerId = $"speaker-{index}",
+                        speakerLabel = $"Speaker {index}",
+                        text = index == 1
+                            ? "the way I was thinking about it was just creating a script of how we would talk about it"
+                            : "um",
+                    })
+                    .ToArray(),
+            }));
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(
+            audioDir,
+            transcriptDir,
+            appRoot,
+            isDiarizationReady: true);
+
+        Assert.Equal(1, result.QueuedSpeakerLabelRepairCount);
+        Assert.Equal("published-meeting-repair-v7.done", Path.GetFileName(result.MarkerPath));
+        var manifestPath = Assert.Single(Directory.EnumerateFiles(Path.Combine(appRoot, "work"), "manifest.json", SearchOption.AllDirectories));
+        var manifest = await new SessionManifestStore(new ArtifactPathBuilder()).LoadAsync(manifestPath);
+        Assert.Equal(SessionState.Queued, manifest.State);
+        Assert.Equal(StageExecutionState.Queued, manifest.TranscriptionStatus.State);
+        Assert.Contains("repair speaker labels", manifest.TranscriptionStatus.Message, StringComparison.OrdinalIgnoreCase);
+
+        var processingRoot = Path.Combine(Path.GetDirectoryName(manifestPath)!, "processing");
+        var snapshotPath = SessionProcessor.GetPersistedTranscriptionSnapshotPath(processingRoot);
+        var snapshot = await SessionProcessor.LoadPersistedTranscriptionSnapshotAsync(snapshotPath);
+        Assert.NotNull(snapshot);
+        Assert.Equal(12, snapshot.Segments.Count);
+        Assert.All(snapshot.Segments, segment =>
+        {
+            Assert.Null(segment.SpeakerId);
+            Assert.Null(segment.SpeakerLabel);
+        });
     }
 
     public void Dispose()

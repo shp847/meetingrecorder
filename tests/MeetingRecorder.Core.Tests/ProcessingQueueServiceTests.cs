@@ -993,7 +993,16 @@ public sealed class ProcessingQueueServiceTests
         process.CompleteExit();
 
         await WaitForConditionAsync(async () =>
-            (await manifestStore.LoadAsync(manifestPath)).State == SessionState.Failed);
+        {
+            try
+            {
+                return (await manifestStore.LoadAsync(manifestPath)).State == SessionState.Failed;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        });
         var failedManifest = await manifestStore.LoadAsync(manifestPath);
 
         Assert.Equal(SessionState.Failed, failedManifest.State);
@@ -1665,10 +1674,11 @@ public sealed class ProcessingQueueServiceTests
 
         public IWorkerProcess Start(ProcessStartInfo startInfo)
         {
-            var process = _processes[StartCount];
+            var index = StartCount;
+            var process = _processes[index];
             StartInfos.Add(startInfo);
-            _startedSignals[StartCount].TrySetResult(process);
             StartCount++;
+            _startedSignals[index].TrySetResult(process);
             return process;
         }
 

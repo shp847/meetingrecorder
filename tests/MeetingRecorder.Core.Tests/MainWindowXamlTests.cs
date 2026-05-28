@@ -378,6 +378,34 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Meeting_Detail_Window_Disables_Speaker_Suggestion_Actions_When_No_Suggestion_Exists()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Equal(2, xaml.Split("IsEnabled=\"{Binding HasSuggestion}\"").Length - 1);
+        Assert.Contains("Click=\"UseSpeakerSuggestionButton_OnClick\"", xaml);
+        Assert.Contains("Click=\"RejectSpeakerSuggestionButton_OnClick\"", xaml);
+    }
+
+    [Fact]
+    public void Meeting_Detail_Window_Separates_Speaker_Name_Refresh_Undo_And_Label_Repair()
+    {
+        var xaml = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml"));
+        var windowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml.cs"));
+        var mainWindowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"RefreshSpeakerNamesButton\"", xaml);
+        Assert.Contains("Content=\"Refresh Suggestions\"", xaml);
+        Assert.Contains("x:Name=\"UndoSpeakerNameRecognitionButton\"", xaml);
+        Assert.Contains("Content=\"Undo Name Recognition\"", xaml);
+        Assert.Contains("Repair Speaker Labels above", xaml);
+        Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
+        Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
+        Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);
+    }
+
+    [Fact]
     public void Updates_Tab_Exposes_A_Secondary_Override_Button_For_Queued_Installs()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

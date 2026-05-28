@@ -21,4 +21,5 @@ public sealed record MeetingSummaryProviderInfo(
     SummaryChatProviderKind ProviderKind,
     string ProviderName,
     string Model,
-    bool FallbackUsed);
+    bool FallbackUsed,
+    ModelProxyRoutingInfo? ModelProxyRouting = null);

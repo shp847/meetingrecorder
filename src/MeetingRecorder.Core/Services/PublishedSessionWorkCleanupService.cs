@@ -28,11 +28,24 @@ internal static class PublishedSessionWorkCleanupService
                 continue;
             }
 
-            var result = await PrunePublishedSessionAsync(
-                manifestStore,
-                manifestPath,
-                publishedAudioOutputDir,
-                cancellationToken);
+            PublishedSessionWorkCleanupResult result;
+            try
+            {
+                result = await PrunePublishedSessionAsync(
+                    manifestStore,
+                    manifestPath,
+                    publishedAudioOutputDir,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                continue;
+            }
+
             sessionsPruned += result.SessionsPruned;
             bytesReclaimed += result.BytesReclaimed;
         }
@@ -90,19 +103,28 @@ internal static class PublishedSessionWorkCleanupService
                                          manifest.LoopbackCaptureSegments.Count > 0 ||
                                          manifest.MicrophoneCaptureSegments.Count > 0 ||
                                          Directory.Exists(rawRoot);
-        if (!hadRetainedCaptureArtifacts)
+        var supersededProcessingAudioPaths = FindSupersededPublishedProcessingAudioPaths(
+            sessionRoot,
+            publishedAudioOutputDir,
+            retainedAudioPath).ToArray();
+        var mergedAudioPathChanged = !AreSamePath(manifest.MergedAudioPath, retainedAudioPath);
+        if (!hadRetainedCaptureArtifacts && supersededProcessingAudioPaths.Length == 0 && !mergedAudioPathChanged)
         {
             return PublishedSessionWorkCleanupResult.Empty;
         }
 
-        var updatedManifest = manifest with
+        var updatedManifest = manifest with { MergedAudioPath = retainedAudioPath };
+        if (hadRetainedCaptureArtifacts)
         {
-            MergedAudioPath = retainedAudioPath,
-            RawChunkPaths = Array.Empty<string>(),
-            LoopbackCaptureSegments = Array.Empty<LoopbackCaptureSegment>(),
-            MicrophoneChunkPaths = Array.Empty<string>(),
-            MicrophoneCaptureSegments = Array.Empty<MicrophoneCaptureSegment>(),
-        };
+            updatedManifest = updatedManifest with
+            {
+                RawChunkPaths = Array.Empty<string>(),
+                LoopbackCaptureSegments = Array.Empty<LoopbackCaptureSegment>(),
+                MicrophoneChunkPaths = Array.Empty<string>(),
+                MicrophoneCaptureSegments = Array.Empty<MicrophoneCaptureSegment>(),
+            };
+        }
+
         await manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
 
         long bytesReclaimed = 0;
@@ -121,6 +143,18 @@ internal static class PublishedSessionWorkCleanupService
             }
 
             bytesReclaimed += DeleteFileIfPresent(path);
+        }
+
+        foreach (var path in supersededProcessingAudioPaths)
+        {
+            bytesReclaimed += DeleteFileIfPresent(path);
+        }
+
+        var processingRoot = Path.Combine(sessionRoot, "processing");
+        if (Directory.Exists(processingRoot))
+        {
+            TryDeleteEmptyDirectories(processingRoot);
+            TryDeleteDirectoryIfEmpty(processingRoot);
         }
 
         return new PublishedSessionWorkCleanupResult(1, bytesReclaimed);
@@ -202,13 +236,99 @@ internal static class PublishedSessionWorkCleanupService
         }
     }
 
+    private static IEnumerable<string> FindSupersededPublishedProcessingAudioPaths(
+        string sessionRoot,
+        string? publishedAudioOutputDir,
+        string retainedAudioPath)
+    {
+        if (string.IsNullOrWhiteSpace(publishedAudioOutputDir) ||
+            string.IsNullOrWhiteSpace(retainedAudioPath) ||
+            !Directory.Exists(publishedAudioOutputDir))
+        {
+            yield break;
+        }
+
+        var processingRoot = Path.Combine(sessionRoot, "processing");
+        if (!Directory.Exists(processingRoot))
+        {
+            yield break;
+        }
+
+        foreach (var processingAudioPath in Directory.EnumerateFiles(processingRoot, "*.wav", SearchOption.AllDirectories))
+        {
+            if (AreSamePath(processingAudioPath, retainedAudioPath))
+            {
+                continue;
+            }
+
+            var publishedCandidatePath = Path.Combine(
+                publishedAudioOutputDir,
+                Path.GetFileName(processingAudioPath));
+            if (!File.Exists(publishedCandidatePath) ||
+                AreSamePath(processingAudioPath, publishedCandidatePath))
+            {
+                continue;
+            }
+
+            if (!HasNonEmptyFile(publishedCandidatePath))
+            {
+                continue;
+            }
+
+            yield return processingAudioPath;
+        }
+    }
+
+    private static bool AreSamePath(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(left),
+                Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static bool HasNonEmptyFile(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string? ResolveRetainedAudioPath(MeetingSessionManifest manifest, string? publishedAudioOutputDir)
     {
+        var publishedAudioPath = ResolvePublishedAudioPath(manifest, publishedAudioOutputDir);
+        if (!string.IsNullOrWhiteSpace(publishedAudioPath))
+        {
+            return publishedAudioPath;
+        }
+
         if (!string.IsNullOrWhiteSpace(manifest.MergedAudioPath) && File.Exists(manifest.MergedAudioPath))
         {
             return manifest.MergedAudioPath;
         }
 
+        return null;
+    }
+
+    private static string? ResolvePublishedAudioPath(MeetingSessionManifest manifest, string? publishedAudioOutputDir)
+    {
         if (string.IsNullOrWhiteSpace(publishedAudioOutputDir) ||
             string.IsNullOrWhiteSpace(manifest.MergedAudioPath))
         {

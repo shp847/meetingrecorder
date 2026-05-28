@@ -45,6 +45,39 @@ public sealed class SpeakerNameLearningServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task LearnFromCorrectionsAsync_Does_Not_Add_Duplicate_Sample_For_Same_Meeting()
+    {
+        var store = new VoiceProfileStore(Path.Combine(_root, "voice-profiles.json"));
+        var service = new SpeakerNameLearningService(store);
+        var manifest = BuildManifest(
+            [new SpeakerIdentity("speaker_00", "Speaker 1", false)],
+            [Sample("speaker_00", [1f, 0f, 0f])]);
+        var corrections = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Speaker 1"] = "Pranav Sharma",
+        };
+
+        var first = await service.LearnFromCorrectionsAsync(
+            manifest,
+            corrections,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            _now);
+        var second = await service.LearnFromCorrectionsAsync(
+            manifest,
+            corrections,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            _now.AddMinutes(1));
+
+        Assert.Equal(1, first.CreatedCount);
+        Assert.Equal(0, second.CreatedCount);
+        Assert.Equal(0, second.UpdatedCount);
+        Assert.Equal(1, second.SkippedCount);
+        var profile = Assert.Single((await store.LoadOrCreateAsync()).Profiles);
+        Assert.Equal(1, profile.SampleCount);
+        Assert.Equal(["session-a"], profile.ConfirmedMeetingIds);
+    }
+
+    [Fact]
     public async Task LearnFromCorrectionsAsync_Updates_Corrected_Profile_Not_Rejected_Profile()
     {
         var store = new VoiceProfileStore(Path.Combine(_root, "voice-profiles.json"));
@@ -107,6 +140,40 @@ public sealed class SpeakerNameLearningServiceTests : IDisposable
         var document = await store.LoadOrCreateAsync();
         Assert.Equal(1, result.SkippedCount);
         Assert.Empty(document.Profiles);
+    }
+
+    [Fact]
+    public async Task RejectMatchesAsync_Suppresses_Same_Profile_Only_For_That_Meeting_Speaker()
+    {
+        var store = new VoiceProfileStore(Path.Combine(_root, "voice-profiles.json"));
+        await store.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            _now,
+            [Profile("voice_pranav", "Pranav Sharma", [1f, 0f, 0f])]));
+        var service = new SpeakerNameLearningService(store);
+        var matcher = new VoiceProfileMatcher();
+
+        var rejectedCount = await service.RejectMatchesAsync(
+            [new SpeakerNameRejectedMatch("voice_pranav", "session-a", "speaker_00")],
+            _now);
+        var profiles = (await store.LoadOrCreateAsync()).Profiles;
+
+        Assert.Equal(1, rejectedCount);
+        Assert.Empty(matcher.Match(
+            [Sample("speaker_00", [1f, 0f, 0f])],
+            profiles,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d),
+            "session-a"));
+        Assert.NotEmpty(matcher.Match(
+            [Sample("speaker_01", [1f, 0f, 0f])],
+            profiles,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d),
+            "session-a"));
+        Assert.NotEmpty(matcher.Match(
+            [Sample("speaker_00", [1f, 0f, 0f])],
+            profiles,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d),
+            "session-b"));
     }
 
     private MeetingSessionManifest BuildManifest(

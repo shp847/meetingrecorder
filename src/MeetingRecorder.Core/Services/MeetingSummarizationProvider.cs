@@ -55,13 +55,16 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
 
     private readonly ISummarySecretStore _secretStore;
     private readonly ISummaryChatClient _chatClient;
+    private readonly IModelProxyModelCatalogClient? _modelCatalogClient;
 
     public MeetingSummarizationProvider(
         ISummarySecretStore secretStore,
-        ISummaryChatClient chatClient)
+        ISummaryChatClient chatClient,
+        IModelProxyModelCatalogClient? modelCatalogClient = null)
     {
         _secretStore = secretStore;
         _chatClient = chatClient;
+        _modelCatalogClient = modelCatalogClient;
     }
 
     public async Task<MeetingSummaryResult> SummarizeAsync(
@@ -111,7 +114,8 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                         candidate.ProviderOptions.ProviderKind,
                         candidate.ProviderOptions.ProviderName,
                         candidate.Model,
-                        candidate.FallbackUsed),
+                        candidate.FallbackUsed,
+                        content.ModelProxyRouting),
                     DateTimeOffset.UtcNow,
                     fingerprint);
                 return new MeetingSummaryResult(
@@ -152,11 +156,16 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 ? MeetingSummaryDefaults.ModelProxyLocalApiKey
                 : secret;
 
-            candidates.Add(new ProviderCandidate(
-                SummaryChatProviderOptions.ForModelProxy(
-                    apiKey,
-                    config.SummaryModelProxyBaseUrl),
+            var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+                apiKey,
+                config.SummaryModelProxyBaseUrl);
+            var model = await ResolveModelProxyModelAsync(
+                providerOptions,
                 config.SummaryModelProxyModel,
+                cancellationToken);
+            candidates.Add(new ProviderCandidate(
+                providerOptions,
+                model,
                 FallbackUsed: false));
         }
 
@@ -195,6 +204,46 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         return candidates;
     }
 
+    private async Task<string> ResolveModelProxyModelAsync(
+        SummaryChatProviderOptions providerOptions,
+        string configuredModel,
+        CancellationToken cancellationToken)
+    {
+        var normalizedConfiguredModel = NormalizeModelName(configuredModel, MeetingSummaryDefaults.ModelProxyModel);
+        if (_modelCatalogClient is null)
+        {
+            return normalizedConfiguredModel;
+        }
+
+        try
+        {
+            var catalog = await _modelCatalogClient.GetModelsAsync(providerOptions, cancellationToken);
+            if (IsAdvertisedUserModelOverride(normalizedConfiguredModel, catalog))
+            {
+                return normalizedConfiguredModel;
+            }
+
+            return catalog.ResolveModel();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or ArgumentException)
+        {
+            return normalizedConfiguredModel;
+        }
+    }
+
+    private static string NormalizeModelName(string model, string defaultModel)
+    {
+        return string.IsNullOrWhiteSpace(model) ? defaultModel : model.Trim();
+    }
+
+    private static bool IsAdvertisedUserModelOverride(
+        string configuredModel,
+        ModelProxyModelCatalog catalog)
+    {
+        return !string.Equals(configuredModel, MeetingSummaryDefaults.ModelProxyModel, StringComparison.OrdinalIgnoreCase) &&
+               catalog.Models.Any(model => string.Equals(model.Id, configuredModel, StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task<MeetingSummaryContent> SummarizeSingleChunkAsync(
         ProviderCandidate candidate,
         string transcriptChunk,
@@ -206,7 +255,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
             candidate.ProviderOptions,
             BuildSummaryRequest(candidate.Model, transcriptChunk, timeoutSeconds),
             cancellationToken);
-        return ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content);
+        return ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content) with
+        {
+            ModelProxyRouting = response.ModelProxyRouting,
+        };
     }
 
     private async Task<MeetingSummaryContent> SummarizeAndCombineChunksAsync(
@@ -254,7 +306,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 ],
                 TimeSpan.FromSeconds(timeoutSeconds)),
             cancellationToken);
-        return ParseSummaryContent(candidate.ProviderOptions.ProviderName, combineResponse.Content);
+        return ParseSummaryContent(candidate.ProviderOptions.ProviderName, combineResponse.Content) with
+        {
+            ModelProxyRouting = combineResponse.ModelProxyRouting,
+        };
     }
 
     private static int GetSummaryRequestTimeoutSeconds(
@@ -449,7 +504,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         IReadOnlyList<string> KeyPoints,
         IReadOnlyList<string> Decisions,
         IReadOnlyList<MeetingSummaryActionItem> ActionItems,
-        IReadOnlyList<string> RisksAndOpenQuestions);
+        IReadOnlyList<string> RisksAndOpenQuestions)
+    {
+        public ModelProxyRoutingInfo? ModelProxyRouting { get; init; }
+    }
 }
 
 public static class MeetingSummaryTranscriptFingerprint

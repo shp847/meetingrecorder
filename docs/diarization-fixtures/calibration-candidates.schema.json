@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-recorder.local/schemas/diarization-calibration-candidates.schema.json",
+  "title": "Meeting Recorder Diarization Calibration Candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "candidates"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description",
+        "enabled",
+        "environment"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "disabledReason": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "MEETING_RECORDER_DIARIZATION_DEFAULT_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_COLLAPSED_THRESHOLDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_OVERSEGMENTED_THRESHOLDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_MIN_SPEAKER_DURATION_SECONDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_MAX_MIN_SPEAKER_DURATION_SECONDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_MIN_SPEAKER_DURATION_SHARE": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_DIARIZATION_MAX_PREFERRED_SPEAKER_COUNT": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_CLUSTER_TINY_MAX_SECONDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_CLUSTER_SMALL_MAX_SECONDS": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_CLUSTER_SMALL_SHARE": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_CLUSTER_HIGH_CONFIDENCE_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_CLUSTER_SMALL_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_NAME_AUTO_APPLY_CONFIDENCE_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_NAME_SUGGESTION_CONFIDENCE_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_NAME_MATCH_MARGIN_THRESHOLD": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_NAME_MIN_AUTO_APPLY_PROFILE_SAMPLES": {
+              "type": "string"
+            },
+            "MEETING_RECORDER_SPEAKER_NAME_MIN_AUTO_APPLY_SPEECH_SECONDS": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

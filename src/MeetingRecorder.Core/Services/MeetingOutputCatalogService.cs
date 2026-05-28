@@ -1,4 +1,5 @@
 using MeetingRecorder.Core.Domain;
+using MeetingRecorder.Core.Processing;
 using NAudio.Wave;
 using System.Globalization;
 using System.Text.Json.Nodes;
@@ -10,7 +11,10 @@ public sealed record SpeakerLabelInfo(
     string DisplayName,
     SpeakerNameSource NameSource,
     string? SuggestedDisplayName,
-    double? Confidence);
+    double? Confidence,
+    string? SpeakerId = null,
+    string? ProfileId = null,
+    SpeakerNameDecisionReason? DecisionReason = null);
 
 public sealed class MeetingOutputCatalogService
 {
@@ -279,6 +283,173 @@ public sealed class MeetingOutputCatalogService
         }
     }
 
+    public async Task UpdateSpeakerIdentitiesAsync(
+        MeetingOutputRecord record,
+        IReadOnlyList<SpeakerIdentity> updatedSpeakers,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (updatedSpeakers.Count == 0)
+        {
+            return;
+        }
+
+        var updatedById = updatedSpeakers
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+            .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        if (updatedById.Count == 0)
+        {
+            return;
+        }
+
+        var labelMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(record.ManifestPath) && File.Exists(record.ManifestPath))
+        {
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var manifest = await manifestStore.LoadAsync(record.ManifestPath, cancellationToken);
+            if (manifest.ProcessingMetadata?.Speakers is { Count: > 0 } speakers)
+            {
+                var mergedSpeakers = speakers
+                    .Select(speaker =>
+                    {
+                        if (!updatedById.TryGetValue(speaker.Id, out var updatedSpeaker))
+                        {
+                            return speaker;
+                        }
+
+                        if (!string.Equals(speaker.DisplayName, updatedSpeaker.DisplayName, StringComparison.Ordinal) &&
+                            !string.IsNullOrWhiteSpace(speaker.DisplayName) &&
+                            !string.IsNullOrWhiteSpace(updatedSpeaker.DisplayName))
+                        {
+                            labelMap[speaker.DisplayName] = updatedSpeaker.DisplayName;
+                        }
+
+                        return updatedSpeaker;
+                    })
+                    .ToArray();
+
+                await manifestStore.SaveAsync(
+                    manifest with
+                    {
+                        ProcessingMetadata = manifest.ProcessingMetadata with
+                        {
+                            Speakers = mergedSpeakers,
+                        },
+                    },
+                    record.ManifestPath,
+                    cancellationToken);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.JsonPath) && File.Exists(record.JsonPath))
+        {
+            await UpdateJsonSpeakerIdentitiesAsync(record.JsonPath, updatedById, cancellationToken);
+        }
+
+        if (labelMap.Count > 0 &&
+            !string.IsNullOrWhiteSpace(record.MarkdownPath) &&
+            File.Exists(record.MarkdownPath))
+        {
+            await UpdateMarkdownSpeakerLabelsAsync(record.MarkdownPath, labelMap, cancellationToken);
+        }
+    }
+
+    public async Task ClearSpeakerProfileSuggestionsAsync(
+        MeetingOutputRecord record,
+        IReadOnlyList<SpeakerNameRejectedMatch> rejectedMatches,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var rejectedKeys = rejectedMatches
+            .Where(match =>
+                !string.IsNullOrWhiteSpace(match.ProfileId) &&
+                !string.IsNullOrWhiteSpace(match.SpeakerId))
+            .Select(match => $"{match.ProfileId.Trim()}\n{match.SpeakerId.Trim()}")
+            .ToHashSet(StringComparer.Ordinal);
+        if (rejectedKeys.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.ManifestPath) && File.Exists(record.ManifestPath))
+        {
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var manifest = await manifestStore.LoadAsync(record.ManifestPath, cancellationToken);
+            if (manifest.ProcessingMetadata?.Speakers is { Count: > 0 } speakers)
+            {
+                var updatedSpeakers = speakers
+                    .Select(speaker => IsRejectedSpeaker(speaker, rejectedKeys)
+                        ? speaker with
+                        {
+                            ProfileId = null,
+                            NameSource = SpeakerNameSource.None,
+                            Confidence = null,
+                            SuggestedDisplayName = null,
+                            DecisionReason = null,
+                        }
+                        : speaker)
+                    .ToArray();
+
+                await manifestStore.SaveAsync(
+                    manifest with
+                    {
+                        ProcessingMetadata = manifest.ProcessingMetadata with
+                        {
+                            Speakers = updatedSpeakers,
+                        },
+                    },
+                    record.ManifestPath,
+                    cancellationToken);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(record.JsonPath) && File.Exists(record.JsonPath))
+        {
+            await UpdateJsonAsync(
+                record.JsonPath,
+                node =>
+                {
+                    var speakers = GetSpeakersArray(node);
+                    if (speakers is null)
+                    {
+                        return;
+                    }
+
+                    foreach (var speakerNode in speakers)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (speakerNode is not JsonObject speakerObject)
+                        {
+                            continue;
+                        }
+
+                        var speakerId = GetJsonString(speakerObject, "Id", "id");
+                        var profileId = GetJsonString(speakerObject, "ProfileId", "profileId");
+                        if (string.IsNullOrWhiteSpace(speakerId) ||
+                            string.IsNullOrWhiteSpace(profileId) ||
+                            !rejectedKeys.Contains($"{profileId.Trim()}\n{speakerId.Trim()}"))
+                        {
+                            continue;
+                        }
+
+                        speakerObject[speakerObject.ContainsKey("profileId") ? "profileId" : "ProfileId"] = null;
+                        speakerObject[speakerObject.ContainsKey("nameSource") ? "nameSource" : "NameSource"] = SpeakerNameSource.None.ToString();
+                        speakerObject[speakerObject.ContainsKey("confidence") ? "confidence" : "Confidence"] = null;
+                        speakerObject[speakerObject.ContainsKey("suggestedDisplayName") ? "suggestedDisplayName" : "SuggestedDisplayName"] = null;
+                        speakerObject[speakerObject.ContainsKey("decisionReason") ? "decisionReason" : "DecisionReason"] = null;
+                    }
+                },
+                cancellationToken);
+        }
+
+        static bool IsRejectedSpeaker(SpeakerIdentity speaker, HashSet<string> rejectedKeys)
+        {
+            return !string.IsNullOrWhiteSpace(speaker.ProfileId) &&
+                rejectedKeys.Contains($"{speaker.ProfileId.Trim()}\n{speaker.Id.Trim()}");
+        }
+    }
+
     public async Task<string> CreateSyntheticManifestForPublishedMeetingAsync(
         MeetingOutputRecord record,
         string workDir,
@@ -339,6 +510,58 @@ public sealed class MeetingOutputCatalogService
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         await manifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
         return manifestPath;
+    }
+
+    internal async Task<bool> TrySeedTranscriptionSnapshotForPublishedMeetingAsync(
+        MeetingOutputRecord record,
+        string manifestPath,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return false;
+        }
+
+        if (!MeetingTranscriptDocumentReader.TryReadStructuredSegments(
+                record.JsonPath,
+                record.MarkdownPath,
+                out var publishedSegments) ||
+            publishedSegments.Count == 0)
+        {
+            return false;
+        }
+
+        var sessionRoot = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(sessionRoot))
+        {
+            return false;
+        }
+
+        var unlabelledSegments = publishedSegments
+            .Select(static segment => new TranscriptSegment(
+                segment.Start,
+                segment.End,
+                null,
+                null,
+                segment.Text))
+            .ToArray();
+        if (unlabelledSegments.Length == 0)
+        {
+            return false;
+        }
+
+        var processingRoot = Path.Combine(sessionRoot, "processing");
+        var snapshotPath = SessionProcessor.GetPersistedTranscriptionSnapshotPath(processingRoot);
+        await SessionProcessor.SavePersistedTranscriptionSnapshotAsync(
+            snapshotPath,
+            new TranscriptionResult(
+                unlabelledSegments,
+                "auto",
+                "Loaded existing published transcript for speaker-label repair."),
+            cancellationToken);
+        return true;
     }
 
     public async Task<MergedMeetingResult> MergeMeetingsAsync(
@@ -563,6 +786,8 @@ public sealed class MeetingOutputCatalogService
     {
         var jsonMetadata = TryReadJsonMetadata(record.JsonPath);
         var manifestState = ResolveManifestState(record, manifestInfo);
+        var hasSpeakerLabels = manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false;
+        var hasSuspiciousSpeakerLabels = hasSpeakerLabels && (jsonMetadata?.HasSuspiciousSpeakerLabels ?? false);
 
         if (TryParseStem(record.Stem, out var stemInfo))
         {
@@ -582,13 +807,14 @@ public sealed class MeetingOutputCatalogService
                 manifestInfo?.ManifestPath,
                 manifestState,
                 manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
-                manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
+                hasSpeakerLabels,
                 manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
                 projectName,
                 manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
                 keyAttendees,
                 manifestInfo?.CaptureTimeline,
-                manifestInfo?.LoopbackCaptureSegments);
+                manifestInfo?.LoopbackCaptureSegments,
+                hasSuspiciousSpeakerLabels);
         }
 
         var fallbackTimestamp = record.AudioPath is not null
@@ -607,13 +833,14 @@ public sealed class MeetingOutputCatalogService
             manifestInfo?.ManifestPath,
             manifestState,
             manifestInfo?.Attendees ?? jsonMetadata?.Attendees ?? Array.Empty<MeetingAttendee>(),
-            manifestInfo?.ProcessingMetadata?.HasSpeakerLabels ?? jsonMetadata?.HasSpeakerLabels ?? false,
+            hasSpeakerLabels,
             manifestInfo?.ProcessingMetadata?.TranscriptionModelFileName ?? jsonMetadata?.TranscriptionModelFileName,
             manifestInfo?.ProjectName ?? jsonMetadata?.ProjectName ?? TryReadMarkdownProject(record.MarkdownPath),
             manifestInfo?.DetectedAudioSource ?? jsonMetadata?.DetectedAudioSource,
             manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath),
             manifestInfo?.CaptureTimeline,
-            manifestInfo?.LoopbackCaptureSegments);
+            manifestInfo?.LoopbackCaptureSegments,
+            hasSuspiciousSpeakerLabels);
     }
 
     private static SessionState? ResolveManifestState(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
@@ -823,6 +1050,7 @@ public sealed class MeetingOutputCatalogService
 
             var hasSpeakerLabels = TryGetJsonBoolean(node, "HasSpeakerLabels", "hasSpeakerLabels")
                 ?? TryInferHasSpeakerLabels(node);
+            var hasSuspiciousSpeakerLabels = hasSpeakerLabels && HasSuspiciousSpeakerLabelDistribution(node);
 
             return new JsonTranscriptMetadata(
                 GetJsonString(node, "Title", "title"),
@@ -831,6 +1059,7 @@ public sealed class MeetingOutputCatalogService
                 NormalizeOptionalMetadataValue(GetJsonString(node, "ProjectName", "projectName")),
                 NormalizeKeyAttendees(TryReadJsonKeyAttendees(node)),
                 hasSpeakerLabels,
+                hasSuspiciousSpeakerLabels,
                 TryReadDetectedAudioSource(node));
         }
         catch
@@ -958,6 +1187,154 @@ public sealed class MeetingOutputCatalogService
         return false;
     }
 
+    private static bool HasSuspiciousSpeakerLabelDistribution(JsonObject node)
+    {
+        const int minimumSuspiciousSpeakerCount = 9;
+        const int alwaysSuspiciousSpeakerCount = 13;
+        const double minimumFragmentSpeakerRatio = 0.5d;
+
+        var knownSpeakerKeys = ReadKnownSpeakerKeys(node);
+        var segmentStats = ReadSegmentSpeakerStats(node);
+        var turnStats = ReadSpeakerTurnStats(node);
+        var observedSpeakerCount = new[]
+            {
+                knownSpeakerKeys.Count,
+                segmentStats.Count,
+                turnStats.Count,
+            }
+            .Max();
+
+        if (observedSpeakerCount >= alwaysSuspiciousSpeakerCount)
+        {
+            return true;
+        }
+
+        if (observedSpeakerCount < minimumSuspiciousSpeakerCount)
+        {
+            return false;
+        }
+
+        var fragmentStats = segmentStats.Count > 0 ? segmentStats : turnStats;
+        if (fragmentStats.Count == 0)
+        {
+            return false;
+        }
+
+        var fragmentSpeakerCount = fragmentStats.Values.Count(static stats => stats.IsFragment);
+        return fragmentSpeakerCount >= Math.Ceiling(fragmentStats.Count * minimumFragmentSpeakerRatio);
+    }
+
+    private static HashSet<string> ReadKnownSpeakerKeys(JsonObject node)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var speakers = GetSpeakersArray(node);
+        if (speakers is null)
+        {
+            return keys;
+        }
+
+        foreach (var speakerNode in speakers)
+        {
+            if (speakerNode is not JsonObject speakerObject)
+            {
+                continue;
+            }
+
+            AddIfPresent(
+                keys,
+                GetJsonString(speakerObject, "Id", "id") ??
+                GetJsonString(speakerObject, "SpeakerId", "speakerId") ??
+                GetJsonString(speakerObject, "DisplayName", "displayName"));
+        }
+
+        return keys;
+    }
+
+    private static Dictionary<string, SpeakerLabelDistributionStats> ReadSegmentSpeakerStats(JsonObject node)
+    {
+        var statsBySpeaker = new Dictionary<string, SpeakerLabelDistributionStats>(StringComparer.OrdinalIgnoreCase);
+        var segments = GetSegmentsArray(node);
+        if (segments is null)
+        {
+            return statsBySpeaker;
+        }
+
+        foreach (var segmentNode in segments)
+        {
+            if (segmentNode is not JsonObject segmentObject)
+            {
+                continue;
+            }
+
+            var speakerKey = GetJsonString(
+                segmentObject,
+                "speakerId",
+                "SpeakerId",
+                "speakerLabel",
+                "SpeakerLabel",
+                "displaySpeakerLabel",
+                "DisplaySpeakerLabel");
+            if (string.IsNullOrWhiteSpace(speakerKey))
+            {
+                continue;
+            }
+
+            var text = GetJsonString(segmentObject, "text", "Text") ?? string.Empty;
+            var current = statsBySpeaker.TryGetValue(speakerKey, out var existing)
+                ? existing
+                : SpeakerLabelDistributionStats.Empty;
+            statsBySpeaker[speakerKey] = current.AddSegment(CountWords(text));
+        }
+
+        return statsBySpeaker;
+    }
+
+    private static Dictionary<string, SpeakerLabelDistributionStats> ReadSpeakerTurnStats(JsonObject node)
+    {
+        var statsBySpeaker = new Dictionary<string, SpeakerLabelDistributionStats>(StringComparer.OrdinalIgnoreCase);
+        var turns = node["speakerTurns"] as JsonArray ?? node["SpeakerTurns"] as JsonArray;
+        if (turns is null)
+        {
+            return statsBySpeaker;
+        }
+
+        foreach (var turnNode in turns)
+        {
+            if (turnNode is not JsonObject turnObject)
+            {
+                continue;
+            }
+
+            var speakerKey = GetJsonString(turnObject, "speakerId", "SpeakerId");
+            if (string.IsNullOrWhiteSpace(speakerKey))
+            {
+                continue;
+            }
+
+            var current = statsBySpeaker.TryGetValue(speakerKey, out var existing)
+                ? existing
+                : SpeakerLabelDistributionStats.Empty;
+            statsBySpeaker[speakerKey] = current.AddSegment(0);
+        }
+
+        return statsBySpeaker;
+    }
+
+    private static void AddIfPresent(ISet<string> values, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            values.Add(value.Trim());
+        }
+    }
+
+    private static int CountWords(string text)
+    {
+        return text
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Length;
+    }
+
     private static bool? TryGetJsonBoolean(JsonObject node, params string[] propertyNames)
     {
         foreach (var propertyName in propertyNames)
@@ -1014,11 +1391,21 @@ public sealed class MeetingOutputCatalogService
                         "nameSource")
                         ? parsedNameSource
                         : SpeakerNameSource.None;
+                    var decisionReason = TryParseJsonEnum<SpeakerNameDecisionReason>(
+                        speakerObject,
+                        out var parsedDecisionReason,
+                        "DecisionReason",
+                        "decisionReason")
+                        ? parsedDecisionReason
+                        : (SpeakerNameDecisionReason?)null;
                     speakerLabels.Add(new SpeakerLabelInfo(
                         displayName,
                         nameSource,
                         GetJsonString(speakerObject, "SuggestedDisplayName", "suggestedDisplayName"),
-                        TryGetJsonDouble(speakerObject, "Confidence", "confidence")));
+                        TryGetJsonDouble(speakerObject, "Confidence", "confidence"),
+                        GetJsonString(speakerObject, "Id", "id"),
+                        GetJsonString(speakerObject, "ProfileId", "profileId"),
+                        decisionReason));
                 }
 
                 if (speakerLabels.Count > 0)
@@ -1422,6 +1809,7 @@ public sealed class MeetingOutputCatalogService
                         speakerObject[speakerObject.ContainsKey("confidence") ? "confidence" : "Confidence"] = null;
                         speakerObject[speakerObject.ContainsKey("suggestedDisplayName") ? "suggestedDisplayName" : "SuggestedDisplayName"] = null;
                         speakerObject[speakerObject.ContainsKey("profileId") ? "profileId" : "ProfileId"] = null;
+                        speakerObject[speakerObject.ContainsKey("decisionReason") ? "decisionReason" : "DecisionReason"] = null;
                     }
                 }
 
@@ -1458,6 +1846,88 @@ public sealed class MeetingOutputCatalogService
             cancellationToken);
     }
 
+    private static async Task UpdateJsonSpeakerIdentitiesAsync(
+        string jsonPath,
+        IReadOnlyDictionary<string, SpeakerIdentity> updatedSpeakersById,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            return;
+        }
+
+        await UpdateJsonAsync(
+            jsonPath,
+            node =>
+            {
+                var speakers = GetSpeakersArray(node);
+                if (speakers is not null)
+                {
+                    foreach (var speakerNode in speakers)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (speakerNode is not JsonObject speakerObject)
+                        {
+                            continue;
+                        }
+
+                        var speakerId = GetJsonString(speakerObject, "Id", "id");
+                        if (string.IsNullOrWhiteSpace(speakerId) ||
+                            !updatedSpeakersById.TryGetValue(speakerId.Trim(), out var updatedSpeaker))
+                        {
+                            continue;
+                        }
+
+                        SetJsonSpeakerIdentity(speakerObject, updatedSpeaker);
+                    }
+                }
+
+                var segments = GetSegmentsArray(node);
+                if (segments is null)
+                {
+                    return;
+                }
+
+                foreach (var segmentNode in segments)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (segmentNode is not JsonObject segmentObject)
+                    {
+                        continue;
+                    }
+
+                    var speakerId = GetJsonString(segmentObject, "SpeakerId", "speakerId");
+                    if (string.IsNullOrWhiteSpace(speakerId) ||
+                        !updatedSpeakersById.TryGetValue(speakerId.Trim(), out var updatedSpeaker))
+                    {
+                        continue;
+                    }
+
+                    foreach (var propertyName in new[]
+                             {
+                                 segmentObject.ContainsKey("speakerLabel") ? "speakerLabel" : "SpeakerLabel",
+                                 segmentObject.ContainsKey("displaySpeakerLabel") ? "displaySpeakerLabel" : "DisplaySpeakerLabel",
+                             }.Distinct(StringComparer.Ordinal))
+                    {
+                        segmentObject[propertyName] = updatedSpeaker.DisplayName;
+                    }
+                }
+            },
+            cancellationToken);
+    }
+
+    private static void SetJsonSpeakerIdentity(JsonObject speakerObject, SpeakerIdentity speaker)
+    {
+        speakerObject[speakerObject.ContainsKey("id") ? "id" : "Id"] = speaker.Id;
+        speakerObject[speakerObject.ContainsKey("displayName") ? "displayName" : "DisplayName"] = speaker.DisplayName;
+        speakerObject[speakerObject.ContainsKey("isUserEdited") ? "isUserEdited" : "IsUserEdited"] = speaker.IsUserEdited;
+        speakerObject[speakerObject.ContainsKey("profileId") ? "profileId" : "ProfileId"] = speaker.ProfileId;
+        speakerObject[speakerObject.ContainsKey("nameSource") ? "nameSource" : "NameSource"] = speaker.NameSource.ToString();
+        speakerObject[speakerObject.ContainsKey("confidence") ? "confidence" : "Confidence"] = speaker.Confidence;
+        speakerObject[speakerObject.ContainsKey("suggestedDisplayName") ? "suggestedDisplayName" : "SuggestedDisplayName"] = speaker.SuggestedDisplayName;
+        speakerObject[speakerObject.ContainsKey("decisionReason") ? "decisionReason" : "DecisionReason"] = speaker.DecisionReason?.ToString();
+    }
+
     private static async Task UpdateManifestSpeakerLabelsAsync(
         string manifestPath,
         IReadOnlyDictionary<string, string> speakerLabelMap,
@@ -1487,6 +1957,7 @@ public sealed class MeetingOutputCatalogService
                     NameSource = SpeakerNameSource.UserEdited,
                     Confidence = null,
                     SuggestedDisplayName = null,
+                    DecisionReason = null,
                 };
             })
             .ToArray();
@@ -2048,7 +2519,20 @@ public sealed class MeetingOutputCatalogService
         string? ProjectName,
         IReadOnlyList<string> KeyAttendees,
         bool HasSpeakerLabels,
+        bool HasSuspiciousSpeakerLabels,
         DetectedAudioSource? DetectedAudioSource);
+
+    private readonly record struct SpeakerLabelDistributionStats(int SegmentCount, int WordCount)
+    {
+        public static SpeakerLabelDistributionStats Empty { get; } = new(0, 0);
+
+        public bool IsFragment => SegmentCount <= 2 || WordCount <= 20;
+
+        public SpeakerLabelDistributionStats AddSegment(int wordCount)
+        {
+            return new SpeakerLabelDistributionStats(SegmentCount + 1, WordCount + Math.Max(0, wordCount));
+        }
+    }
 
     private readonly record struct StemInfo(DateTimeOffset StartedAtUtc, MeetingPlatform Platform, string TitleSlug);
 
@@ -2100,7 +2584,8 @@ public sealed record MeetingOutputRecord(
     DetectedAudioSource? DetectedAudioSource = null,
     IReadOnlyList<string>? KeyAttendees = null,
     IReadOnlyList<CaptureTimelineEntry>? CaptureTimeline = null,
-    IReadOnlyList<LoopbackCaptureSegment>? LoopbackCaptureSegments = null);
+    IReadOnlyList<LoopbackCaptureSegment>? LoopbackCaptureSegments = null,
+    bool HasSuspiciousSpeakerLabels = false);
 
 public sealed record MergedMeetingResult(
     string ManifestPath,

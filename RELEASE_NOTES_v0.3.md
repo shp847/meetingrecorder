@@ -141,6 +141,7 @@ It supports:
 - merge
 - split
 - speaker-label maintenance
+- speaker-name suggestion refresh and bad-name undo for local voice-profile matches
 - structured meeting-summary review and manual generate/retry from transcript JSON
 - project tagging
 - cleanup recommendations for likely bad or fragmented recordings
@@ -176,6 +177,8 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - curated Standard vs Higher Accuracy setup flow
 - downloadable or imported local models
 - optional local speaker labeling through a separate diarization bundle
+- optional local voice-profile learning from confirmed speaker-name corrections, with conservative auto-apply, reviewable suggestions, meeting-scoped rejection feedback, and `Undo Name Recognition` for bad profile-applied names
+- speaker-label recovery now attempts to merge acoustically similar over-segmented clusters before skipping labels as unsafe
 - optional DirectML GPU preference for speaker labeling, defaulted off, with `Test GPU`, bundled-runtime validation, and automatic CPU fallback; Meeting Recorder now ships the pinned DirectML-enabled Sherpa runtime instead of requiring any user-side Sherpa setup
 - clustering quality gates that skip unusable over-segmented labels while still publishing the transcript
 - fallback behavior that prioritizes publishing transcripts even when speaker labeling is unavailable
@@ -196,6 +199,8 @@ The app is meant to help users recover from real-world messy recordings, not jus
 - searchable title, project, and attendee metadata
 - meeting cleanup and repair workflows
 - transcript retry and speaker-label maintenance
+- `Refresh Suggestions` for local voice-profile matching without retranscribing or re-running diarization
+- `Undo Name Recognition` to clear profile-sourced names for one meeting while preserving explicit user edits
 - meeting summary display and retry controls
 - merge and split operations
 

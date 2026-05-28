@@ -250,6 +250,107 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_Ignores_Persisted_Transcription_Snapshot_When_ForceTranscription_Is_Set()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var pathBuilder = new ArtifactPathBuilder();
+            var workDir = Path.Combine(root, "work");
+            var audioDir = Path.Combine(root, "audio");
+            var transcriptDir = Path.Combine(root, "transcripts");
+            Directory.CreateDirectory(workDir);
+            Directory.CreateDirectory(audioDir);
+            Directory.CreateDirectory(transcriptDir);
+
+            var manifestStore = new SessionManifestStore(pathBuilder);
+            var manifest = await manifestStore.CreateAsync(
+                workDir,
+                MeetingPlatform.Teams,
+                "Queued Session",
+                Array.Empty<DetectionSignal>());
+            var sessionRoot = Path.Combine(workDir, manifest.SessionId);
+            var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+            var sourceAudioPath = Path.Combine(sessionRoot, "processing", "existing-audio.wav");
+            await WriteSilentWaveFileAsync(sourceAudioPath, TimeSpan.FromSeconds(1));
+
+            var updatedManifest = manifest with
+            {
+                State = SessionState.Queued,
+                EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1),
+                MergedAudioPath = sourceAudioPath,
+                ProcessingOverrides = new MeetingProcessingOverrides(
+                    null,
+                    null,
+                    SkipSpeakerLabeling: true,
+                    ForceTranscription: true),
+            };
+            await manifestStore.SaveAsync(updatedManifest, manifestPath);
+
+            var persistedTranscriptionPath = SessionProcessor.GetPersistedTranscriptionSnapshotPath(Path.Combine(sessionRoot, "processing"));
+            await File.WriteAllTextAsync(
+                persistedTranscriptionPath,
+                """
+                {
+                  "segments": [
+                    {
+                      "start": "00:00:00",
+                      "end": "00:00:01",
+                      "speakerId": null,
+                      "speakerLabel": null,
+                      "text": "stale persisted text"
+                    }
+                  ],
+                  "language": "en",
+                  "message": "persisted"
+                }
+                """);
+
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var processor = new SessionProcessor(
+                manifestStore,
+                pathBuilder,
+                new WaveChunkMerger(),
+                transcriptionProvider,
+                diarizationProvider,
+                new TranscriptRenderer(),
+                new FilePublishService());
+
+            var published = await processor.ProcessAsync(
+                manifestPath,
+                new AppConfig
+                {
+                    WorkDir = workDir,
+                    AudioOutputDir = audioDir,
+                    TranscriptOutputDir = transcriptDir,
+                    TranscriptionModelPath = Path.Combine(root, "models", "dummy.bin"),
+                });
+
+            var finalManifest = await manifestStore.LoadAsync(manifestPath);
+            var markdown = await File.ReadAllTextAsync(published.MarkdownPath);
+
+            Assert.Equal(1, transcriptionProvider.CallCount);
+            Assert.Equal(0, diarizationProvider.CallCount);
+            Assert.False(finalManifest.ProcessingOverrides?.ForceTranscription == true);
+            Assert.Contains("should not be used", markdown);
+            Assert.DoesNotContain("stale persisted text", markdown);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessAsync_Prunes_Raw_Capture_Files_After_Successful_Publish()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -336,6 +437,7 @@ public sealed class SessionProcessorTests
             Assert.False(File.Exists(loopbackChunkPath));
             Assert.False(File.Exists(microphoneChunkPath));
             Assert.True(File.Exists(finalManifest.MergedAudioPath));
+            Assert.Equal(Path.GetFullPath(published.AudioPath), Path.GetFullPath(finalManifest.MergedAudioPath!));
             Assert.True(File.Exists(published.AudioPath));
             Assert.True(File.Exists(published.MarkdownPath));
             Assert.True(File.Exists(published.JsonPath));

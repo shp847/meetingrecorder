@@ -54,6 +54,103 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildSpeakerNameRefreshStatusText_Separates_AutoApply_Suggestions_And_Skips()
+    {
+        var mixed = MainWindowInteractionLogic.BuildSpeakerNameRefreshStatusText(
+            new SpeakerNameRefreshResult(
+                [
+                    new SpeakerNamePrediction(
+                        "speaker_00",
+                        "voice_pranav",
+                        "Pranav Sharma",
+                        0.91d,
+                        SpeakerNameSource.AutoAppliedVoiceProfile,
+                        SpeakerNameDecisionReason.AutoAppliedHighConfidence),
+                    new SpeakerNamePrediction(
+                        "speaker_01",
+                        "voice_terry",
+                        "Terry Jones",
+                        0.82d,
+                        SpeakerNameSource.SuggestedVoiceProfile,
+                        SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold),
+                ],
+                null));
+        var none = MainWindowInteractionLogic.BuildSpeakerNameRefreshStatusText(
+            new SpeakerNameRefreshResult(Array.Empty<SpeakerNamePrediction>(), null));
+        var skipped = MainWindowInteractionLogic.BuildSpeakerNameRefreshStatusText(
+            new SpeakerNameRefreshResult(
+                Array.Empty<SpeakerNamePrediction>(),
+                "Speaker-name refresh skipped because no local voice profiles are available yet."));
+
+        Assert.Contains("Auto-applied 1", mixed, StringComparison.Ordinal);
+        Assert.Contains("1 suggestion", mixed, StringComparison.Ordinal);
+        Assert.Contains("No eligible voice-profile matches", none, StringComparison.Ordinal);
+        Assert.Equal("Speaker-name refresh skipped because no local voice profiles are available yet.", skipped);
+    }
+
+    [Fact]
+    public void BuildSpeakerNameUndoStatusText_Separates_Restored_Suppressed_Warning_And_NoOp()
+    {
+        var restored = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(
+            new SpeakerNameUndoResult(UpdatedSpeakerCount: 2, SuppressedMatchCount: 2, Warning: null));
+        var noOp = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(
+            new SpeakerNameUndoResult(UpdatedSpeakerCount: 0, SuppressedMatchCount: 0, Warning: null));
+        var warning = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(
+            new SpeakerNameUndoResult(
+                UpdatedSpeakerCount: 1,
+                SuppressedMatchCount: 0,
+                Warning: "Speaker-name undo completed, but profile feedback could not be saved: store unavailable"));
+
+        Assert.Contains("Undid voice-profile speaker names for 2 speaker", restored, StringComparison.Ordinal);
+        Assert.Contains("Suppressed 2 profile suggestion", restored, StringComparison.Ordinal);
+        Assert.Contains("No undoable voice-profile speaker names", noOp, StringComparison.Ordinal);
+        Assert.Contains("profile feedback could not be saved", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildMeetingDetailWindowState_Distinguishes_Suspicious_Speaker_Label_Repair()
+    {
+        var meeting = new MeetingOutputRecord(
+            "meeting-1",
+            "Client Sync",
+            DateTimeOffset.Parse("2026-04-20T14:15:00Z", null, DateTimeStyles.RoundtripKind),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(31),
+            AudioPath: @"C:\Meetings\client-sync.wav",
+            MarkdownPath: @"C:\Meetings\client-sync.md",
+            JsonPath: @"C:\Meetings\json\client-sync.json",
+            ReadyMarkerPath: @"C:\Meetings\json\client-sync.ready",
+            ManifestPath: @"C:\Meetings\work\session\manifest.json",
+            ManifestState: SessionState.Published,
+            Attendees: Array.Empty<MeetingAttendee>(),
+            HasSpeakerLabels: true,
+            TranscriptionModelFileName: "ggml-small.bin",
+            HasSuspiciousSpeakerLabels: true);
+        var transcript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from JSON sidecar.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker 1", "What are the objectives?")],
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(4), "Speaker 1", "What are the objectives?")],
+            null,
+            null,
+            true);
+
+        var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            meeting,
+            Array.Empty<MeetingCleanupRecommendation>(),
+            transcript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: true,
+            canProcessAsap: false,
+            isSelectedMeetingAsap: false);
+
+        Assert.Equal("Speaker labels need repair.", state.SpeakerLabelState);
+        Assert.Equal("Repair Speaker Labels", state.SpeakerLabelActionLabel);
+    }
+
+    [Fact]
     public void BuildShellStatus_Prioritizes_Model_Setup_When_No_Valid_Model_Is_Configured()
     {
         var result = MainWindowInteractionLogic.BuildShellStatus(
@@ -1341,6 +1438,7 @@ public sealed class MainWindowInteractionLogicTests
             "0.125",
             "15",
             true,
+            SpeakerNameLearningMode.LocalAutoLearn,
             true,
             true,
             false,
@@ -1395,6 +1493,7 @@ public sealed class MainWindowInteractionLogicTests
             "0.125",
             "15",
             true,
+            SpeakerNameLearningMode.LocalAutoLearn,
             true,
             true,
             false,
@@ -1435,6 +1534,7 @@ public sealed class MainWindowInteractionLogicTests
             "0.02",
             "30",
             true,
+            SpeakerNameLearningMode.LocalAutoLearn,
             false,
             false,
             false,
@@ -1482,6 +1582,7 @@ public sealed class MainWindowInteractionLogicTests
             "0.02",
             "30",
             true,
+            SpeakerNameLearningMode.LocalAutoLearn,
             false,
             false,
             false,
@@ -1731,6 +1832,42 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void GetAutoApplicableMeetingCleanupRecommendations_Includes_RepairSpeakerLabels_When_Deterministic()
+    {
+        var recommendations = new[]
+        {
+            new MeetingCleanupRecommendation(
+                "repair-labels-1",
+                MeetingCleanupAction.RepairSpeakerLabels,
+                MeetingCleanupConfidence.High,
+                "Repair speaker labels",
+                "Speaker labels can be repaired safely.",
+                "meeting-1",
+                new[] { "meeting-1" },
+                true,
+                null,
+                null),
+            new MeetingCleanupRecommendation(
+                "rename-1",
+                MeetingCleanupAction.Rename,
+                MeetingCleanupConfidence.Medium,
+                "Rename generic title",
+                "A better title is available.",
+                "meeting-2",
+                new[] { "meeting-2" },
+                false,
+                "Better Title",
+                null),
+        };
+
+        var result = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(recommendations);
+
+        Assert.Single(result);
+        Assert.Equal("repair-labels-1", result[0].Fingerprint);
+        Assert.Equal("Repair Speaker Labels", MainWindowInteractionLogic.BuildMeetingCleanupActionLabel(result[0].Action));
+    }
+
+    [Fact]
     public void BuildMeetingCleanupSafetyLabel_Matches_Safe_Fix_Rules()
     {
         var safeRecommendation = new MeetingCleanupRecommendation(
@@ -1831,9 +1968,34 @@ public sealed class MainWindowInteractionLogicTests
             manifest,
             now,
             "Queued to re-generate the transcript.",
-            forceSpeakerLabeling: false);
+            forceSpeakerLabeling: false,
+            forceTranscription: true);
 
         Assert.True(queued.ProcessingOverrides?.SkipSpeakerLabeling);
+        Assert.True(queued.ProcessingOverrides?.ForceTranscription);
+    }
+
+    [Fact]
+    public void BuildQueuedMeetingReprocessingManifest_Clears_ForceTranscription_When_Speaker_Labels_Are_Requested()
+    {
+        var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
+        var manifest = CreatePublishedManifest() with
+        {
+            ProcessingOverrides = new MeetingProcessingOverrides(
+                @"C:\models\custom.bin",
+                "custom.bin",
+                SkipSpeakerLabeling: true,
+                ForceTranscription: true),
+        };
+
+        var queued = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            now,
+            "Queued to add speaker labels.",
+            forceSpeakerLabeling: true);
+
+        Assert.False(queued.ProcessingOverrides?.SkipSpeakerLabeling == true);
+        Assert.False(queued.ProcessingOverrides?.ForceTranscription == true);
     }
 
     [Fact]
@@ -2143,6 +2305,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.True(state.CanOpenAudio);
         Assert.True(state.CanOpenTranscript);
         Assert.True(state.CanRegenerateTranscript);
+        Assert.Equal("Add Speaker Labels", state.SpeakerLabelActionLabel);
         Assert.True(state.CanProcessAsap);
         Assert.False(state.CanClearAsap);
         Assert.Same(transcript, state.Transcript);

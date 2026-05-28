@@ -196,6 +196,100 @@ public sealed class MeetingSummarizationProviderTests
     }
 
     [Fact]
+    public async Task SummarizeAsync_Uses_ModelProxy_Advertised_Default_When_Config_Still_Default()
+    {
+        var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
+        var chatClient = new FakeSummaryChatClient();
+        var modelCatalogClient = new FakeModelProxyModelCatalogClient(
+            new ModelProxyModelCatalog(
+                "gpt-5.5-mini",
+                "gpt-5.5-mini",
+                [
+                    new ModelProxyModelInfo("gpt-5.5-mini", true, "app-server", "gpt-5.5-mini"),
+                    new ModelProxyModelInfo(MeetingSummaryDefaults.ModelProxyModel, false, "app-server", MeetingSummaryDefaults.ModelProxyModel),
+                ]));
+        var provider = new MeetingSummarizationProvider(secrets, chatClient, modelCatalogClient);
+
+        var result = await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalOnly,
+                SummaryModelProxyModel = MeetingSummaryDefaults.ModelProxyModel,
+            }),
+            CancellationToken.None);
+
+        Assert.Equal(StageExecutionState.Succeeded, result.Status.State);
+        var call = Assert.Single(chatClient.Calls);
+        Assert.Equal("gpt-5.5-mini", call.Request.Model);
+        Assert.Equal("gpt-5.5-mini", result.Summary!.Provider.Model);
+        Assert.Equal("app-server", call.ProviderOptions.ModelProxyBackend);
+        Assert.False(call.ProviderOptions.ModelProxyWebSearchEnabled);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Keeps_User_Selected_Advertised_Model()
+    {
+        var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
+        var chatClient = new FakeSummaryChatClient();
+        var modelCatalogClient = new FakeModelProxyModelCatalogClient(
+            new ModelProxyModelCatalog(
+                "gpt-5.5-mini",
+                "gpt-5.5-mini",
+                [
+                    new ModelProxyModelInfo("gpt-5.5-mini", true, "app-server", "gpt-5.5-mini"),
+                    new ModelProxyModelInfo("gpt-5.4", false, "app-server", "gpt-5.4"),
+                ]));
+        var provider = new MeetingSummarizationProvider(secrets, chatClient, modelCatalogClient);
+
+        var result = await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalOnly,
+                SummaryModelProxyModel = "gpt-5.4",
+            }),
+            CancellationToken.None);
+
+        Assert.Equal(StageExecutionState.Succeeded, result.Status.State);
+        var call = Assert.Single(chatClient.Calls);
+        Assert.Equal("gpt-5.4", call.Request.Model);
+        Assert.Equal("gpt-5.4", result.Summary!.Provider.Model);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Preserves_Safe_ModelProxy_Routing_Metadata()
+    {
+        var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
+        var routingInfo = new ModelProxyRoutingInfo(
+            "mp-summary",
+            "app-server",
+            "app-server",
+            null,
+            false,
+            null);
+        var chatClient = new FakeSummaryChatClient
+        {
+            OnComplete = call => CreateChatResponse(call.ProviderOptions, call.Request, "Summary generated.", routingInfo),
+        };
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        var result = await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalOnly,
+            }),
+            CancellationToken.None);
+
+        Assert.Equal(StageExecutionState.Succeeded, result.Status.State);
+        Assert.Equal("mp-summary", result.Summary!.Provider.ModelProxyRouting?.RequestId);
+        Assert.Equal("app-server", result.Summary.Provider.ModelProxyRouting?.RequestedBackend);
+        Assert.Equal("app-server", result.Summary.Provider.ModelProxyRouting?.EffectiveBackend);
+        Assert.False(result.Summary.Provider.ModelProxyRouting?.AppServerWebSearchSupported);
+    }
+
+    [Fact]
     public async Task SummarizeAsync_Keeps_Configured_Timeout_For_OpenAi_Summaries()
     {
         var secrets = new TrackingSummarySecretStore { OpenAiSecret = "sk-openai-test" };
@@ -239,11 +333,13 @@ public sealed class MeetingSummarizationProviderTests
     private static SummaryChatResponse CreateChatResponse(
         SummaryChatProviderOptions providerOptions,
         SummaryChatRequest request,
-        string overview)
+        string overview,
+        ModelProxyRoutingInfo? modelProxyRouting = null)
     {
         return new SummaryChatResponse(CreateSummaryJson(overview), providerOptions.ProviderName, request.Model)
         {
             ProviderKind = providerOptions.ProviderKind,
+            ModelProxyRouting = modelProxyRouting,
         };
     }
 
@@ -322,4 +418,21 @@ public sealed class MeetingSummarizationProviderTests
     private sealed record SummaryChatCall(
         SummaryChatProviderOptions ProviderOptions,
         SummaryChatRequest Request);
+
+    private sealed class FakeModelProxyModelCatalogClient : IModelProxyModelCatalogClient
+    {
+        private readonly ModelProxyModelCatalog _catalog;
+
+        public FakeModelProxyModelCatalogClient(ModelProxyModelCatalog catalog)
+        {
+            _catalog = catalog;
+        }
+
+        public Task<ModelProxyModelCatalog> GetModelsAsync(
+            SummaryChatProviderOptions providerOptions,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_catalog);
+        }
+    }
 }

@@ -22,7 +22,9 @@ public sealed class TranscriptSchemaTests
                         false,
                         "voice_pranav",
                         SpeakerNameSource.AutoAppliedVoiceProfile,
-                        0.91d),
+                        0.91d,
+                        null,
+                        SpeakerNameDecisionReason.AutoAppliedHighConfidence),
                     new SpeakerIdentity("speaker_01", "Speaker 2", true),
                 ],
                 [
@@ -66,8 +68,13 @@ public sealed class TranscriptSchemaTests
         Assert.Equal("voice_pranav", document["speakers"]?[0]?["profileId"]?.GetValue<string>());
         Assert.Equal("AutoAppliedVoiceProfile", document["speakers"]?[0]?["nameSource"]?.GetValue<string>());
         Assert.Equal(0.91d, document["speakers"]?[0]?["confidence"]?.GetValue<double>());
+        Assert.Equal("AutoAppliedHighConfidence", document["speakers"]?[0]?["decisionReason"]?.GetValue<string>());
         Assert.Equal(2, document["speakerTurns"]?.AsArray().Count);
         Assert.False(document.ContainsKey("speakerVoiceSamples"));
+        Assert.DoesNotContain("\"speakerVoiceSamples\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"embedding\":", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"centroid\"", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"profiles\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("sherpa-onnx", document["diarizationMetadata"]?["provider"]?.GetValue<string>());
         Assert.Equal("directml probe failed.", document["diarizationMetadata"]?["diagnosticMessage"]?.GetValue<string>().ToLowerInvariant());
         Assert.Equal("Pranav Sharma", document["segments"]?[0]?["speakerLabel"]?.GetValue<string>());

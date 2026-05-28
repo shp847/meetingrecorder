@@ -12,6 +12,7 @@ public enum MeetingCleanupAction
     Rename = 3,
     RegenerateTranscript = 4,
     GenerateSpeakerLabels = 5,
+    RepairSpeakerLabels = 6,
 }
 
 public enum MeetingCleanupConfidence
@@ -48,6 +49,8 @@ internal static class MeetingCleanupRecommendationEngine
     private static readonly TimeSpan MaximumShortGenericTeamsDuration = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan MaximumShortSplitSegmentDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MinimumSplitEligibleDuration = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan MinimumSparseTranscriptReviewDuration = TimeSpan.FromMinutes(10);
+    private const double SparseTranscriptCharactersPerMinuteThreshold = 80d;
 
     public static IReadOnlyList<MeetingCleanupRecommendation> Analyze(IReadOnlyList<MeetingInspectionRecord> inspections)
     {
@@ -107,6 +110,11 @@ internal static class MeetingCleanupRecommendationEngine
             if (TryBuildGenerateSpeakerLabelsRecommendation(inspection) is { } generateSpeakerLabelsRecommendation)
             {
                 recommendations.Add(generateSpeakerLabelsRecommendation);
+            }
+
+            if (TryBuildRepairSpeakerLabelsRecommendation(inspection) is { } repairSpeakerLabelsRecommendation)
+            {
+                recommendations.Add(repairSpeakerLabelsRecommendation);
             }
 
             if (TryBuildSplitRecommendation(inspection) is { } splitRecommendation)
@@ -315,24 +323,59 @@ internal static class MeetingCleanupRecommendationEngine
     private static MeetingCleanupRecommendation? TryBuildRegenerateRecommendation(MeetingInspectionRecord inspection)
     {
         if (string.IsNullOrWhiteSpace(inspection.Meeting.AudioPath) ||
-            !File.Exists(inspection.Meeting.AudioPath) ||
-            !string.IsNullOrWhiteSpace(inspection.Meeting.MarkdownPath) ||
-            !string.IsNullOrWhiteSpace(inspection.Meeting.JsonPath))
+            !File.Exists(inspection.Meeting.AudioPath))
         {
             return null;
         }
 
-        return BuildRecommendation(
-            inspection.Meeting.Stem,
-            MeetingCleanupAction.RegenerateTranscript,
-            MeetingCleanupConfidence.High,
-            "Re-generate missing transcript",
-            $"Audio exists for '{inspection.Meeting.Title}', but transcript artifacts are missing.",
-            [inspection.Meeting.Stem],
-            canApplyAutomatically: true,
-            suggestedTitle: null,
-            suggestedSplitPoint: null,
-            reasonCode: "regenerate-missing-transcript");
+        if (string.IsNullOrWhiteSpace(inspection.Meeting.MarkdownPath) &&
+            string.IsNullOrWhiteSpace(inspection.Meeting.JsonPath))
+        {
+            return BuildRecommendation(
+                inspection.Meeting.Stem,
+                MeetingCleanupAction.RegenerateTranscript,
+                MeetingCleanupConfidence.High,
+                "Re-generate missing transcript",
+                $"Audio exists for '{inspection.Meeting.Title}', but transcript artifacts are missing.",
+                [inspection.Meeting.Stem],
+                canApplyAutomatically: true,
+                suggestedTitle: null,
+                suggestedSplitPoint: null,
+                reasonCode: "regenerate-missing-transcript");
+        }
+
+        if (IsSparsePublishedTranscript(inspection.Meeting))
+        {
+            return BuildRecommendation(
+                inspection.Meeting.Stem,
+                MeetingCleanupAction.RegenerateTranscript,
+                MeetingCleanupConfidence.Medium,
+                "Review sparse transcript",
+                $"'{inspection.Meeting.Title}' has a much shorter transcript than expected for its recording duration.",
+                [inspection.Meeting.Stem],
+                canApplyAutomatically: false,
+                suggestedTitle: null,
+                suggestedSplitPoint: null,
+                reasonCode: "regenerate-sparse-transcript");
+        }
+
+        return null;
+    }
+
+    private static bool IsSparsePublishedTranscript(MeetingOutputRecord meeting)
+    {
+        if (meeting.Duration is not { } duration ||
+            duration < MinimumSparseTranscriptReviewDuration ||
+            IsProcessingPending(meeting) ||
+            !MeetingTranscriptDocumentReader.TryReadStructuredSegments(meeting.JsonPath, meeting.MarkdownPath, out var segments) ||
+            segments.Count == 0)
+        {
+            return false;
+        }
+
+        var textCharacters = segments.Sum(segment => string.IsNullOrWhiteSpace(segment.Text) ? 0 : segment.Text.Length);
+        var charactersPerMinute = textCharacters / Math.Max(1d, duration.TotalMinutes);
+        return charactersPerMinute < SparseTranscriptCharactersPerMinuteThreshold;
     }
 
     private static MeetingCleanupRecommendation? TryBuildSplitRecommendation(MeetingInspectionRecord inspection)
@@ -368,6 +411,7 @@ internal static class MeetingCleanupRecommendationEngine
     {
         if (!inspection.IsDiarizationReady ||
             inspection.Meeting.HasSpeakerLabels ||
+            IsProcessingPending(inspection.Meeting) ||
             string.IsNullOrWhiteSpace(inspection.Meeting.AudioPath) ||
             !File.Exists(inspection.Meeting.AudioPath) ||
             !HasTranscriptArtifacts(inspection.Meeting))
@@ -386,6 +430,32 @@ internal static class MeetingCleanupRecommendationEngine
             suggestedTitle: null,
             suggestedSplitPoint: null,
             reasonCode: "generate-speaker-labels");
+    }
+
+    private static MeetingCleanupRecommendation? TryBuildRepairSpeakerLabelsRecommendation(MeetingInspectionRecord inspection)
+    {
+        if (!inspection.IsDiarizationReady ||
+            !inspection.Meeting.HasSpeakerLabels ||
+            !inspection.Meeting.HasSuspiciousSpeakerLabels ||
+            IsProcessingPending(inspection.Meeting) ||
+            string.IsNullOrWhiteSpace(inspection.Meeting.AudioPath) ||
+            !File.Exists(inspection.Meeting.AudioPath) ||
+            !HasTranscriptArtifacts(inspection.Meeting))
+        {
+            return null;
+        }
+
+        return BuildRecommendation(
+            inspection.Meeting.Stem,
+            MeetingCleanupAction.RepairSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            "Repair suspicious speaker labels",
+            $"'{inspection.Meeting.Title}' has an unusually fragmented speaker-label distribution, so speaker labeling can be re-run from the existing transcript.",
+            [inspection.Meeting.Stem],
+            canApplyAutomatically: true,
+            suggestedTitle: null,
+            suggestedSplitPoint: null,
+            reasonCode: "repair-speaker-labels");
     }
 
     private static TimeSpan? TrySuggestSplitPoint(
@@ -591,6 +661,7 @@ internal static class MeetingCleanupRecommendationEngine
             MeetingCleanupAction.Rename => 2,
             MeetingCleanupAction.RegenerateTranscript => 3,
             MeetingCleanupAction.GenerateSpeakerLabels => 4,
+            MeetingCleanupAction.RepairSpeakerLabels => 4,
             MeetingCleanupAction.Split => 5,
             _ => 10,
         };
@@ -651,6 +722,11 @@ internal static class MeetingCleanupRecommendationEngine
     {
         return (!string.IsNullOrWhiteSpace(meeting.MarkdownPath) && File.Exists(meeting.MarkdownPath)) ||
                (!string.IsNullOrWhiteSpace(meeting.JsonPath) && File.Exists(meeting.JsonPath));
+    }
+
+    private static bool IsProcessingPending(MeetingOutputRecord meeting)
+    {
+        return meeting.ManifestState is SessionState.Queued or SessionState.Processing or SessionState.Finalizing;
     }
 
     private static bool IsTinyOrEmptyAudioArtifact(MeetingOutputRecord meeting)

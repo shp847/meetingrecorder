@@ -15,6 +15,47 @@ internal sealed record MicrophoneCaptureRefreshResult(
     bool SwapFailed,
     string? StatusMessage);
 
+internal readonly record struct RecordingStorageAvailability(
+    string RootPath,
+    long AvailableFreeBytes);
+
+internal sealed class InsufficientRecordingStorageException : IOException
+{
+    public InsufficientRecordingStorageException(
+        string rootPath,
+        long availableFreeBytes,
+        long requiredFreeBytes)
+        : base(
+            $"Recording cannot start because '{rootPath}' has only {FormatBytes(availableFreeBytes)} free. " +
+            $"Free at least {FormatBytes(requiredFreeBytes)} before recording so Meeting Recorder can write audio safely.")
+    {
+        RootPath = rootPath;
+        AvailableFreeBytes = availableFreeBytes;
+        RequiredFreeBytes = requiredFreeBytes;
+    }
+
+    public string RootPath { get; }
+
+    public long AvailableFreeBytes { get; }
+
+    public long RequiredFreeBytes { get; }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1024L * 1024L * 1024L)
+        {
+            return $"{bytes / (1024d * 1024d * 1024d):0.0} GB";
+        }
+
+        if (bytes >= 1024L * 1024L)
+        {
+            return $"{bytes / (1024d * 1024d):0} MB";
+        }
+
+        return $"{bytes} bytes";
+    }
+}
+
 internal sealed record LoopbackCaptureStatusSnapshot(
     bool IsRecording,
     bool IsSwapPending,
@@ -28,12 +69,15 @@ internal sealed record LoopbackCaptureStatusSnapshot(
 
 internal sealed class RecordingSessionCoordinator
 {
+    private const long MinimumRecordingFreeBytes = 1L * 1024L * 1024L * 1024L;
+
     private readonly LiveAppConfig _config;
     private readonly SessionManifestStore _manifestStore;
     private readonly ArtifactPathBuilder _pathBuilder;
     private readonly FileLogWriter _logger;
     private readonly ILoopbackCaptureFactory _loopbackCaptureFactory;
     private readonly IMicrophoneCaptureFactory _microphoneCaptureFactory;
+    private readonly Func<string, RecordingStorageAvailability> _storageAvailabilityProvider;
     private LoopbackCaptureEvaluation? _lastLoopbackEvaluation;
     private MicrophoneCaptureEvaluation? _lastMicrophoneEvaluation;
 
@@ -44,7 +88,8 @@ internal sealed class RecordingSessionCoordinator
         FileLogWriter logger,
         Func<IWaveIn>? legacyMicrophoneCaptureFactory = null,
         ILoopbackCaptureFactory? loopbackCaptureFactory = null,
-        IMicrophoneCaptureFactory? microphoneCaptureFactory = null)
+        IMicrophoneCaptureFactory? microphoneCaptureFactory = null,
+        Func<string, RecordingStorageAvailability>? storageAvailabilityProvider = null)
     {
         _config = config;
         _manifestStore = manifestStore;
@@ -55,6 +100,7 @@ internal sealed class RecordingSessionCoordinator
             (legacyMicrophoneCaptureFactory is not null
                 ? new LegacyMicrophoneCaptureFactory(legacyMicrophoneCaptureFactory)
                 : new SystemMicrophoneCaptureFactory(logger.Log));
+        _storageAvailabilityProvider = storageAvailabilityProvider ?? GetRecordingStorageAvailability;
     }
 
     public ActiveRecordingSession? ActiveSession { get; private set; }
@@ -75,6 +121,7 @@ internal sealed class RecordingSessionCoordinator
         }
 
         var currentConfig = _config.Current;
+        EnsureRecordingStorageAvailable(currentConfig.WorkDir);
         var initialManifest = await _manifestStore.CreateAsync(currentConfig.WorkDir, platform, title, detectionEvidence, cancellationToken);
         if (detectedAudioSource is not null)
         {
@@ -162,6 +209,33 @@ internal sealed class RecordingSessionCoordinator
             microphoneRecorder?.Dispose();
             throw;
         }
+    }
+
+    private void EnsureRecordingStorageAvailable(string directoryPath)
+    {
+        var availability = _storageAvailabilityProvider(directoryPath);
+        if (availability.AvailableFreeBytes < MinimumRecordingFreeBytes)
+        {
+            throw new InsufficientRecordingStorageException(
+                availability.RootPath,
+                availability.AvailableFreeBytes,
+                MinimumRecordingFreeBytes);
+        }
+    }
+
+    private static RecordingStorageAvailability GetRecordingStorageAvailability(string directoryPath)
+    {
+        var fullPath = Path.GetFullPath(directoryPath);
+        var rootPath = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            return new RecordingStorageAvailability(fullPath, long.MaxValue);
+        }
+
+        var drive = new DriveInfo(rootPath);
+        return new RecordingStorageAvailability(
+            drive.Name,
+            drive.IsReady ? drive.AvailableFreeSpace : 0L);
     }
 
     public async Task<string?> StopAsync(string reason, CancellationToken cancellationToken = default)

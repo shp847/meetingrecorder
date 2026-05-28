@@ -110,7 +110,7 @@ Packaging validation notes:
 - the shared deployment CLI should update an existing managed install in place instead of renaming the whole `Documents\MeetingRecorder` root, so locked files under the preserved `data` tree do not block routine updates
 - Desktop and Start Menu launchers created by the shared deployment path should be normal `.lnk` shortcuts that target `Run-MeetingRecorder.cmd`, not raw visible `.cmd` files
 - `Run-MeetingRecorder.cmd` should wait briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, so short install/update handoff gaps do not look like a permanent broken install
-- repo-local deploy is intentionally disabled for publish validation so MSI install testing and in-app upgrade testing stay the canonical managed-install paths
+- repo-local deploy is a developer-only shortcut for refreshing the managed install root; MSI install testing and in-app upgrade testing stay the canonical publish-validation paths
 - the EXE shell should keep the backup CMD action enabled even after a handoff, because the command window can still fail after the EXE has already stepped aside
 - `Install-LatestFromGitHub.cmd` should preserve the real exit code from the local `Install-LatestFromGitHub.ps1` handoff so a successful install does not print a stale generic failure prompt afterward
 - `Run-MeetingRecorder.cmd` and `Check-Dependencies.ps1` should fail clearly and pause if `MeetingRecorder.App.exe` is missing, rather than attempting an invalid WPF DLL fallback
@@ -286,7 +286,14 @@ The WPF app host no longer requires these loose published files in the shipped s
 Important local verification note:
 
 - `scripts\Publish-Portable.ps1`, `scripts\Build-Installer.ps1`, and `scripts\Build-Release.ps1` create fresh artifacts under `.artifacts`, but they do not replace the live app already installed under `%USERPROFILE%\Documents\MeetingRecorder`
-- if you want to test the canonical managed install root after a rebuild, use the published MSI, EXE bootstrapper, or release scripts instead of the old repo-local deploy shortcut:
+- if you want to refresh the canonical managed install root for local development after a rebuild, use the repo-local deploy shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Deploy-Local.ps1 -BuildFirst
+```
+
+- `scripts\Deploy-Local.ps1` delegates to `AppPlatform.Deployment.Cli install-bundle` with the `DirectCli` install channel; add `-NoLaunch`, `-NoDesktopShortcut`, `-NoStartMenuShortcut`, or `-InstallRoot <path>` for isolated local checks
+- for release validation, use the published MSI, EXE bootstrapper, or release scripts so install and upgrade testing still exercises the shipped paths:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1
@@ -298,7 +305,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1
 MeetingRecorderInstaller.msi
 ```
 
-- `scripts\Deploy-Local.ps1` and `scripts\Deploy-Local.cmd` are intentionally disabled so publish validation goes through the same MSI and in-app upgrade paths that end users will exercise
+- `scripts\Deploy-Local.ps1` and `scripts\Deploy-Local.cmd` are available for developer-only local deploys, not as substitutes for MSI or in-app upgrade publish validation
 - `Smoke-Test-Release.ps1` launches the built bundle and the MSI-installed app copy, waits 30 seconds for each, and fails on new `.NET Runtime`, `Application Error`, or `Windows Error Reporting` events that mention `MeetingRecorder.App.exe`
 
 If you want the packaged startup smoke test before publishing, run:

@@ -220,16 +220,35 @@ public sealed class PublishedMeetingSummaryService
                 ["dueDateText"] = actionItem.DueDateText,
             }).Cast<JsonNode?>().ToArray()),
             ["risksAndOpenQuestions"] = BuildStringArray(summary.RisksAndOpenQuestions),
-            ["provider"] = new JsonObject
-            {
-                ["providerKind"] = summary.Provider.ProviderKind.ToString(),
-                ["providerName"] = summary.Provider.ProviderName,
-                ["model"] = summary.Provider.Model,
-                ["fallbackUsed"] = summary.Provider.FallbackUsed,
-            },
+            ["provider"] = BuildProviderJson(summary.Provider),
             ["generatedAtUtc"] = summary.GeneratedAtUtc,
             ["transcriptFingerprint"] = summary.TranscriptFingerprint,
         };
+    }
+
+    private static JsonObject BuildProviderJson(MeetingSummaryProviderInfo provider)
+    {
+        var providerJson = new JsonObject
+        {
+            ["providerKind"] = provider.ProviderKind.ToString(),
+            ["providerName"] = provider.ProviderName,
+            ["model"] = provider.Model,
+            ["fallbackUsed"] = provider.FallbackUsed,
+        };
+        if (provider.ModelProxyRouting is not null)
+        {
+            providerJson["modelProxyRouting"] = new JsonObject
+            {
+                ["requestId"] = provider.ModelProxyRouting.RequestId,
+                ["requestedBackend"] = provider.ModelProxyRouting.RequestedBackend,
+                ["effectiveBackend"] = provider.ModelProxyRouting.EffectiveBackend,
+                ["webSearchBackend"] = provider.ModelProxyRouting.WebSearchBackend,
+                ["appServerWebSearchSupported"] = provider.ModelProxyRouting.AppServerWebSearchSupported,
+                ["fallbackReason"] = provider.ModelProxyRouting.FallbackReason,
+            };
+        }
+
+        return providerJson;
     }
 
     private static JsonArray BuildStringArray(IReadOnlyList<string> values)

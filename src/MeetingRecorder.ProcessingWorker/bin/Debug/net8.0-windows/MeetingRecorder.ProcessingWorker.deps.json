@@ -9,14 +9,12 @@
       "MeetingRecorder.ProcessingWorker/0.3.0": {
         "dependencies": {
           "MeetingRecorder.Core": "0.3.0",
-          "Microsoft.ML.OnnxRuntime.DirectML": "1.17.1",
           "org.k2fsa.sherpa.onnx": "1.12.17"
         },
         "runtime": {
           "MeetingRecorder.ProcessingWorker.dll": {}
         }
       },
-      "Microsoft.AI.DirectML/1.13.1": {},
       "Microsoft.Extensions.AI.Abstractions/10.0.0": {
         "dependencies": {
           "System.Text.Json": "10.0.0"
@@ -25,55 +23,6 @@
           "lib/net8.0/Microsoft.Extensions.AI.Abstractions.dll": {
             "assemblyVersion": "10.0.0.0",
             "fileVersion": "10.0.25.55903"
-          }
-        }
-      },
-      "Microsoft.ML.OnnxRuntime.DirectML/1.17.1": {
-        "dependencies": {
-          "Microsoft.AI.DirectML": "1.13.1",
-          "Microsoft.ML.OnnxRuntime.Managed": "1.17.1"
-        },
-        "runtimeTargets": {
-          "runtimes/win-arm64/native/onnxruntime.dll": {
-            "rid": "win-arm64",
-            "assetType": "native",
-            "fileVersion": "1.17.24.223"
-          },
-          "runtimes/win-arm64/native/onnxruntime.lib": {
-            "rid": "win-arm64",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win-x64/native/onnxruntime.dll": {
-            "rid": "win-x64",
-            "assetType": "native",
-            "fileVersion": "1.17.24.223"
-          },
-          "runtimes/win-x64/native/onnxruntime.lib": {
-            "rid": "win-x64",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win-x86/native/onnxruntime.dll": {
-            "rid": "win-x86",
-            "assetType": "native",
-            "fileVersion": "1.17.24.223"
-          },
-          "runtimes/win-x86/native/onnxruntime.lib": {
-            "rid": "win-x86",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          }
-        }
-      },
-      "Microsoft.ML.OnnxRuntime.Managed/1.17.1": {
-        "dependencies": {
-          "System.Memory": "4.5.5"
-        },
-        "runtime": {
-          "lib/net6.0/Microsoft.ML.OnnxRuntime.dll": {
-            "assemblyVersion": "0.0.0.0",
-            "fileVersion": "0.0.0.0"
           }
         }
       },
@@ -240,6 +189,11 @@
       },
       "org.k2fsa.sherpa.onnx.runtime.win-arm64/1.12.17": {
         "runtimeTargets": {
+          "runtimes/win-arm64/native/onnxruntime.dll": {
+            "rid": "win-arm64",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
           "runtimes/win-arm64/native/sherpa-onnx-c-api.dll": {
             "rid": "win-arm64",
             "assetType": "native",
@@ -249,6 +203,11 @@
       },
       "org.k2fsa.sherpa.onnx.runtime.win-x64/1.12.17": {
         "runtimeTargets": {
+          "runtimes/win-x64/native/onnxruntime.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
           "runtimes/win-x64/native/sherpa-onnx-c-api.dll": {
             "rid": "win-x64",
             "assetType": "native",
@@ -258,6 +217,11 @@
       },
       "org.k2fsa.sherpa.onnx.runtime.win-x86/1.12.17": {
         "runtimeTargets": {
+          "runtimes/win-x86/native/onnxruntime.dll": {
+            "rid": "win-x86",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
           "runtimes/win-x86/native/sherpa-onnx-c-api.dll": {
             "rid": "win-x86",
             "assetType": "native",
@@ -273,7 +237,6 @@
           }
         }
       },
-      "System.Memory/4.5.5": {},
       "System.Security.AccessControl/4.7.0": {
         "dependencies": {
           "Microsoft.NETCore.Platforms": "3.1.0",
@@ -368,33 +331,12 @@
       "serviceable": false,
       "sha512": ""
     },
-    "Microsoft.AI.DirectML/1.13.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-on1rMgHziYLlb6QEjb7mqjF11KhtX/kwUOeIgwA7G8fqcrn3tksS3OxWuxtKGukP6pnOElOdvFjmFAY+6PZ+4g==",
-      "path": "microsoft.ai.directml/1.13.1",
-      "hashPath": "microsoft.ai.directml.1.13.1.nupkg.sha512"
-    },
     "Microsoft.Extensions.AI.Abstractions/10.0.0": {
       "type": "package",
       "serviceable": true,
       "sha512": "sha512-PHeuDm2tC6wJPEQvleUr2kNQaIMNqSf3aEbzkIPlZyQ0+0SYI9SwXVLdGD1NPBI+xB+Vb2lxZKhrFlIf9kP9WA==",
       "path": "microsoft.extensions.ai.abstractions/10.0.0",
       "hashPath": "microsoft.extensions.ai.abstractions.10.0.0.nupkg.sha512"
-    },
-    "Microsoft.ML.OnnxRuntime.DirectML/1.17.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-l06GCKKlTpcB61MLkg0IwCyj2qbRNEHcXI5mLoWeA8p+4ECLC1L4UUniWjB4iBtpzSydJO0SC7qYzHtnrQUBKg==",
-      "path": "microsoft.ml.onnxruntime.directml/1.17.1",
-      "hashPath": "microsoft.ml.onnxruntime.directml.1.17.1.nupkg.sha512"
-    },
-    "Microsoft.ML.OnnxRuntime.Managed/1.17.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-eQWP47/pXr6aXsoZTLYNdj7DGOL5oosnYyM+0xzhjLo0qCTS4+rVzj6Y2RrET07tMaImlYD2vTRq6so+MzHL1g==",
-      "path": "microsoft.ml.onnxruntime.managed/1.17.1",
-      "hashPath": "microsoft.ml.onnxruntime.managed.1.17.1.nupkg.sha512"
     },
     "Microsoft.NETCore.Platforms/3.1.0": {
       "type": "package",
@@ -521,13 +463,6 @@
       "sha512": "sha512-M1eb3nfXntaRJPrrMVM9EFS8I1bDTnt0uvUS6QP/SicZf/ZZjydMD5NiXxfmwW/uQwaMDP/yX2P+zQN1NBHChg==",
       "path": "system.io.pipelines/10.0.0",
       "hashPath": "system.io.pipelines.10.0.0.nupkg.sha512"
-    },
-    "System.Memory/4.5.5": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-XIWiDvKPXaTveaB7HVganDlOCRoj03l+jrwNvcge/t8vhGYKvqV+dMv6G4SAX2NoNmN0wZfVPTAlFwZcZvVOUw==",
-      "path": "system.memory/4.5.5",
-      "hashPath": "system.memory.4.5.5.nupkg.sha512"
     },
     "System.Security.AccessControl/4.7.0": {
       "type": "package",

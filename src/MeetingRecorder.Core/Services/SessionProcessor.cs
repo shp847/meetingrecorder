@@ -122,9 +122,12 @@ public sealed class SessionProcessor
         }
 
         var transcriptionSnapshotPath = BuildTranscriptionSnapshotPath(processingRoot, stem);
-        var persistedTranscription = await TryLoadPersistedTranscriptionAsync(
-            transcriptionSnapshotPath,
-            cancellationToken);
+        var forceTranscription = manifest.ProcessingOverrides?.ForceTranscription == true;
+        var persistedTranscription = forceTranscription
+            ? null
+            : await TryLoadPersistedTranscriptionAsync(
+                transcriptionSnapshotPath,
+                cancellationToken);
 
         var initialTranscriptionStatus = persistedTranscription is null
             ? new ProcessingStageStatus("transcription", StageExecutionState.Queued, DateTimeOffset.UtcNow, null)
@@ -164,9 +167,10 @@ public sealed class SessionProcessor
             try
             {
                 transcription = await TranscriptionProvider.TranscribeAsync(sourceAudioPath, cancellationToken);
-                await SavePersistedTranscriptionAsync(transcriptionSnapshotPath, transcription, cancellationToken);
+                await SavePersistedTranscriptionSnapshotAsync(transcriptionSnapshotPath, transcription, cancellationToken);
                 manifest = manifest with
                 {
+                    ProcessingOverrides = ClearForceTranscriptionOverride(manifest.ProcessingOverrides),
                     TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, transcription.Message),
                 };
             }
@@ -555,7 +559,7 @@ public sealed class SessionProcessor
         }
     }
 
-    private static async Task SavePersistedTranscriptionAsync(
+    internal static async Task SavePersistedTranscriptionSnapshotAsync(
         string transcriptionSnapshotPath,
         TranscriptionResult transcription,
         CancellationToken cancellationToken)
@@ -572,6 +576,13 @@ public sealed class SessionProcessor
                 transcription.Message),
             TranscriptionSnapshotSerializerOptions,
             cancellationToken);
+    }
+
+    private static MeetingProcessingOverrides? ClearForceTranscriptionOverride(MeetingProcessingOverrides? overrides)
+    {
+        return overrides?.ForceTranscription == true
+            ? overrides with { ForceTranscription = false }
+            : overrides;
     }
 
     private async Task<string> ResolveSourceAudioPathAsync(

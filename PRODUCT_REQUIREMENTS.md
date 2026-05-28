@@ -100,6 +100,7 @@ The product family also includes installer and update surfaces:
 - Optional microphone capture mixed into the final WAV
 - Separate worker-based offline transcription
 - Optional diarization with post-publish speaker-label editing
+- Local speaker-name learning from confirmed corrections, with voice-profile suggestions, conservative auto-apply, rejection memory, and profile deletion controls
 - Optional configured meeting summaries after transcription and speaker labeling
 - Whisper model download, import, selection, validation, and fallback handling from the guided Setup flow
 - Stable published `.wav`, `.md`, `.json`, and `.ready` outputs
@@ -117,7 +118,7 @@ The product family also includes installer and update surfaces:
 
 - Live transcription during the meeting
 - Full transcript text editing and correction UI
-- Automatic named speaker identity beyond generic labels and user-edited display names
+- Shared or organization-wide speaker identity mapping beyond local user-taught voice profiles
 - Full calendar-native scheduling or calendar-management workflow
 - Required browser extension integration
 - Required cloud services
@@ -180,6 +181,7 @@ The product family also includes installer and update surfaces:
 - When available, speaker labeling must produce generic transcript labels such as `Speaker 1`, `Speaker 2`, and so on.
 - Diarization failure or missing diarization assets must not block transcript output.
 - The diarization runtime must allow a user-controlled GPU acceleration preference, must make Meeting Recorder's installer own any DirectML-enabled native runtime, must not imply an end-user Sherpa install/build step can enable GPU, and must fall back safely when acceleration is unavailable.
+- Diarization tuning should be evaluated against known example meetings with repeatable metrics, but normal processing must not require a user-provided speaker-count hint.
 - Automatic speaker clustering must reject unsupported speaker counts instead of publishing unusable labels.
 
 ## 6.6 Model and Asset Management
@@ -240,9 +242,10 @@ The product family also includes installer and update surfaces:
 - The default provider behavior should be local-first: use ModelProxy when configured and reachable, then fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits fallback.
 - Supported provider preferences must include local-first with OpenAI fallback, local-only, and OpenAI-only.
 - ModelProxy integration must use the OpenAI-compatible HTTP interface at `http://127.0.0.1:8645/v1`, local bearer authentication, non-streaming chat completions, and `X-ModelProxy-Web-Search: false` so summaries use only the supplied transcript even though ModelProxy defaults public web search to enabled.
-- Meeting Recorder must read `GET /v1/models` from ModelProxy and use `default_model` unless the user has saved a project-specific summary model override.
-- ModelProxy responses must be consumed with safe routing metadata from the `X-ModelProxy-*` headers for request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. Web-enabled ModelProxy requests must tolerate CLI fallback and use a timeout above the local CLI-search timeout; terminal streaming `event: error` frames, including `cli_timeout`, must be treated as structured ModelProxy failures rather than endpoint connectivity failures. Forced app-server web-search `400` responses must show a capability message and offer retry without web search.
-- Real transcript summaries through ModelProxy must use at least a 240-second request timeout so local processing is not confused with synthetic validation failure.
+- ModelProxy clients must be able to retrieve `GET /v1/models`, use `default_model` when no project-specific override is configured, and preserve model catalog metadata without reading ModelProxy internals.
+- Local ModelProxy transcript summary requests must use an effective minimum timeout of 240 seconds so longer no-search transcript summaries are not marked failed just before ModelProxy returns a successful response.
+- ModelProxy responses must be consumed with safe routing metadata from the `X-ModelProxy-*` headers for request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. Web-enabled ModelProxy requests must tolerate CLI fallback and use a timeout above the local CLI-search timeout; forced app-server web-search `400` responses must show a capability message and offer retry without web search.
+- Streaming ModelProxy clients must ignore SSE comment lines that begin with `:`, parse terminal `event: error` payloads as structured ModelProxy failures, and preserve safe fields such as type/category, request id, backend, elapsed seconds, timeout seconds, and next step. `cli_timeout` must be shown as a reachable ModelProxy backend timeout, not as an endpoint connectivity failure.
 - OpenAI fallback must use the user-provided API key from Settings and must not require ModelProxy to be installed.
 - API keys and bearer tokens must not be logged, displayed after save, written to transcript artifacts, or persisted as plaintext in the normal app config.
 - If no summary provider is configured, summary generation must be skipped and transcript publication must continue normally.

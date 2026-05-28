@@ -5,8 +5,8 @@ namespace MeetingRecorder.Core.Services;
 
 public static partial class PublishedMeetingRepairService
 {
-    private const string RepairMarkerFileName = "published-meeting-repair-v6.done";
-    private const string RepairArchiveDirectoryName = "published-meeting-repair-v6";
+    private const string RepairMarkerFileName = "published-meeting-repair-v7.done";
+    private const string RepairArchiveDirectoryName = "published-meeting-repair-v7";
     private const string EchoRepairReportFileName = "echo-repair-report.txt";
     private const string EchoRepairPublishMessage = "Published audio was republished after one-time echo repair v6.";
     private static readonly TimeSpan MaximumRepeatedSplitChainGap = TimeSpan.FromMinutes(5);
@@ -17,6 +17,7 @@ public static partial class PublishedMeetingRepairService
         string audioOutputDir,
         string transcriptOutputDir,
         string appRoot,
+        bool isDiarizationReady = false,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -47,6 +48,7 @@ public static partial class PublishedMeetingRepairService
         var mergedSplitPairCount = 0;
         var archivedEditorArtifactCount = 0;
         var archivedShortGenericTeamsMeetingCount = 0;
+        var queuedSpeakerLabelRepairCount = 0;
         var echoRepairResult = EchoRepairPassResult.Empty;
 
         foreach (var splitChain in FindRepeatedSplitChains(meetings))
@@ -74,6 +76,7 @@ public static partial class PublishedMeetingRepairService
                     audioOutputDir,
                     transcriptOutputDir,
                     workDir,
+                    isDiarizationReady,
                     cancellationToken)))
             .ToArray();
 
@@ -129,6 +132,23 @@ public static partial class PublishedMeetingRepairService
                     archivedMeetingStems.Add(secondMeeting.Stem);
                     mergedSplitPairCount++;
                     break;
+
+                case MeetingCleanupAction.RepairSpeakerLabels:
+                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var repairMeeting))
+                    {
+                        continue;
+                    }
+
+                    if (await QueueSpeakerLabelRepairAsync(
+                            catalog,
+                            manifestStore,
+                            repairMeeting,
+                            workDir,
+                            cancellationToken))
+                    {
+                        queuedSpeakerLabelRepairCount++;
+                    }
+                    break;
             }
         }
 
@@ -144,7 +164,7 @@ public static partial class PublishedMeetingRepairService
         Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
         await File.WriteAllTextAsync(
             markerPath,
-            $"mergedSplitPairCount={mergedSplitPairCount};archivedMeetingCount={archivedMeetingCount};archivedEditorArtifactCount={archivedEditorArtifactCount};archivedShortGenericTeamsMeetingCount={archivedShortGenericTeamsMeetingCount};echoRepairedCount={echoRepairResult.RepairedCount};echoSkippedCount={echoRepairResult.SkippedCount}",
+            $"mergedSplitPairCount={mergedSplitPairCount};archivedMeetingCount={archivedMeetingCount};archivedEditorArtifactCount={archivedEditorArtifactCount};archivedShortGenericTeamsMeetingCount={archivedShortGenericTeamsMeetingCount};queuedSpeakerLabelRepairCount={queuedSpeakerLabelRepairCount};echoRepairedCount={echoRepairResult.RepairedCount};echoSkippedCount={echoRepairResult.SkippedCount}",
             cancellationToken);
 
         return new PublishedMeetingRepairResult(
@@ -154,7 +174,8 @@ public static partial class PublishedMeetingRepairService
             archivedMeetingCount,
             archivedEditorArtifactCount,
             archivedShortGenericTeamsMeetingCount,
-            false);
+            false,
+            queuedSpeakerLabelRepairCount);
     }
 
     private static async Task<IReadOnlyList<MeetingInspectionRecord>> BuildInspections(
@@ -163,6 +184,7 @@ public static partial class PublishedMeetingRepairService
         string audioOutputDir,
         string transcriptOutputDir,
         string workDir,
+        bool isDiarizationReady,
         CancellationToken cancellationToken)
     {
         var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
@@ -186,10 +208,49 @@ public static partial class PublishedMeetingRepairService
                 }
             }
 
-            inspections.Add(new MeetingInspectionRecord(meeting, manifest, SuggestedTitle: null, SuggestedTitleSource: null));
+            inspections.Add(new MeetingInspectionRecord(meeting, manifest, SuggestedTitle: null, SuggestedTitleSource: null, isDiarizationReady));
         }
 
         return inspections;
+    }
+
+    private static async Task<bool> QueueSpeakerLabelRepairAsync(
+        MeetingOutputCatalogService catalog,
+        SessionManifestStore manifestStore,
+        MeetingOutputRecord meeting,
+        string workDir,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(meeting.AudioPath) ||
+            !File.Exists(meeting.AudioPath) ||
+            string.IsNullOrWhiteSpace(workDir))
+        {
+            return false;
+        }
+
+        var manifestPath = meeting.ManifestPath;
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            manifestPath = await catalog.CreateSyntheticManifestForPublishedMeetingAsync(
+                meeting,
+                workDir,
+                cancellationToken);
+        }
+
+        var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
+        var queuedManifest = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            DateTimeOffset.UtcNow,
+            "Queued to repair speaker labels.",
+            forceSpeakerLabeling: true);
+        await manifestStore.SaveAsync(queuedManifest, manifestPath, cancellationToken);
+        await catalog.TrySeedTranscriptionSnapshotForPublishedMeetingAsync(
+            meeting,
+            manifestPath,
+            cancellationToken);
+        return true;
     }
 
     private static IReadOnlyList<IReadOnlyList<MeetingOutputRecord>> FindRepeatedSplitChains(
@@ -591,4 +652,5 @@ public sealed record PublishedMeetingRepairResult(
     int ArchivedArtifactCount,
     int ArchivedEditorArtifactCount,
     int ArchivedShortGenericTeamsMeetingCount,
-    bool AlreadyApplied);
+    bool AlreadyApplied,
+    int QueuedSpeakerLabelRepairCount = 0);

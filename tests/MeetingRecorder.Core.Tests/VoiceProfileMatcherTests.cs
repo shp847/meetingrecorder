@@ -6,7 +6,12 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class VoiceProfileMatcherTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
-    private static readonly SpeakerNameRecognitionOptions Options = new(0.86d, 0.78d, 0.05d);
+    private static readonly SpeakerNameRecognitionOptions Options = new(
+        0.86d,
+        0.78d,
+        0.05d,
+        2,
+        TimeSpan.FromSeconds(8));
 
     [Fact]
     public void Match_AutoApplies_When_Confidence_And_Margin_Are_High()
@@ -25,6 +30,7 @@ public sealed class VoiceProfileMatcherTests
         Assert.Equal("voice_pranav", prediction.ProfileId);
         Assert.Equal("Pranav Sharma", prediction.DisplayName);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameDecisionReason.AutoAppliedHighConfidence, prediction.DecisionReason);
         Assert.True(prediction.Confidence >= 0.86d);
     }
 
@@ -40,6 +46,7 @@ public sealed class VoiceProfileMatcherTests
 
         var prediction = Assert.Single(predictions);
         Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold, prediction.DecisionReason);
         Assert.Equal("Pranav Sharma", prediction.DisplayName);
         Assert.True(prediction.Confidence >= 0.78d);
         Assert.True(prediction.Confidence < 0.86d);
@@ -60,6 +67,23 @@ public sealed class VoiceProfileMatcherTests
 
         var prediction = Assert.Single(predictions);
         Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin, prediction.DecisionReason);
+    }
+
+    [Fact]
+    public void Match_Suggests_When_Profile_Is_Not_Mature_Enough_For_AutoApply()
+    {
+        var matcher = new VoiceProfileMatcher();
+
+        var predictions = matcher.Match(
+            [Sample("speaker_00", [0.99f, 0.01f, 0f])],
+            [Profile("voice_pranav", "Pranav Sharma", [1f, 0f, 0f], sampleCount: 1)],
+            Options,
+            meetingId: "meeting-a");
+
+        var prediction = Assert.Single(predictions);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameDecisionReason.SuggestedProfileNeedsMoreSamples, prediction.DecisionReason);
     }
 
     [Fact]
@@ -77,6 +101,9 @@ public sealed class VoiceProfileMatcherTests
 
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, predictions.Single(item => item.SpeakerId == "speaker_00").Source);
         Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, predictions.Single(item => item.SpeakerId == "speaker_01").Source);
+        Assert.Equal(
+            SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
+            predictions.Single(item => item.SpeakerId == "speaker_01").DecisionReason);
     }
 
     [Fact]
@@ -95,6 +122,55 @@ public sealed class VoiceProfileMatcherTests
         Assert.Empty(predictions);
     }
 
+    [Fact]
+    public void Match_Ignores_Profile_Rejected_For_This_Meeting_Speaker()
+    {
+        var matcher = new VoiceProfileMatcher();
+
+        var predictions = matcher.Match(
+            [Sample("speaker_00", [1f, 0f, 0f])],
+            [
+                Profile("voice_pranav", "Pranav Sharma", [1f, 0f, 0f]) with
+                {
+                    RejectedMatches =
+                    [
+                        new VoiceProfileRejectedMatch("meeting-a", "speaker_00", Now),
+                    ],
+                },
+            ],
+            Options,
+            meetingId: "meeting-a");
+
+        Assert.Empty(predictions);
+    }
+
+    [Fact]
+    public void Match_Rejection_Is_Scoped_To_Meeting_And_Speaker()
+    {
+        var matcher = new VoiceProfileMatcher();
+        var profile = Profile("voice_pranav", "Pranav Sharma", [1f, 0f, 0f]) with
+        {
+            RejectedMatches =
+            [
+                new VoiceProfileRejectedMatch("meeting-a", "speaker_00", Now),
+            ],
+        };
+
+        var sameMeetingDifferentSpeaker = matcher.Match(
+            [Sample("speaker_01", [1f, 0f, 0f])],
+            [profile],
+            Options,
+            meetingId: "meeting-a");
+        var differentMeetingSameSpeaker = matcher.Match(
+            [Sample("speaker_00", [1f, 0f, 0f])],
+            [profile],
+            Options,
+            meetingId: "meeting-b");
+
+        Assert.Single(sameMeetingDifferentSpeaker);
+        Assert.Single(differentMeetingSameSpeaker);
+    }
+
     private static SpeakerVoiceSample Sample(string speakerId, IReadOnlyList<float> embedding)
     {
         return new SpeakerVoiceSample(
@@ -106,7 +182,11 @@ public sealed class VoiceProfileMatcherTests
             Now);
     }
 
-    private static VoiceProfile Profile(string profileId, string displayName, IReadOnlyList<float> centroid)
+    private static VoiceProfile Profile(
+        string profileId,
+        string displayName,
+        IReadOnlyList<float> centroid,
+        int sampleCount = 2)
     {
         return new VoiceProfile(
             profileId,
@@ -114,9 +194,10 @@ public sealed class VoiceProfileMatcherTests
             "embedding.onnx",
             centroid.Count,
             centroid,
-            1,
+            sampleCount,
             ["meeting-a"],
             null,
-            VoiceProfileStatus.Active);
+            VoiceProfileStatus.Active,
+            []);
     }
 }

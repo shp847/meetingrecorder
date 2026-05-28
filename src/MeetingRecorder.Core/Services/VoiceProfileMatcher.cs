@@ -5,21 +5,25 @@ namespace MeetingRecorder.Core.Services;
 public sealed record SpeakerNameRecognitionOptions(
     double AutoApplyConfidenceThreshold,
     double SuggestionConfidenceThreshold,
-    double MatchMarginThreshold);
+    double MatchMarginThreshold,
+    int MinimumAutoApplyProfileSampleCount = 2,
+    TimeSpan MinimumAutoApplySpeechDuration = default);
 
 public sealed record SpeakerNamePrediction(
     string SpeakerId,
     string ProfileId,
     string DisplayName,
     double Confidence,
-    SpeakerNameSource Source);
+    SpeakerNameSource Source,
+    SpeakerNameDecisionReason DecisionReason);
 
 public sealed class VoiceProfileMatcher
 {
     public IReadOnlyList<SpeakerNamePrediction> Match(
         IReadOnlyList<SpeakerVoiceSample> samples,
         IReadOnlyList<VoiceProfile> profiles,
-        SpeakerNameRecognitionOptions options)
+        SpeakerNameRecognitionOptions options,
+        string? meetingId = null)
     {
         if (samples.Count == 0 || profiles.Count == 0)
         {
@@ -28,7 +32,7 @@ public sealed class VoiceProfileMatcher
 
         var normalizedOptions = NormalizeOptions(options);
         var candidates = samples
-            .Select(sample => BuildCandidate(sample, profiles, normalizedOptions))
+            .Select(sample => BuildCandidate(sample, profiles, normalizedOptions, meetingId))
             .Where(candidate => candidate is not null)
             .Select(candidate => candidate!)
             .ToArray();
@@ -53,7 +57,11 @@ public sealed class VoiceProfileMatcher
                 candidate.Source == SpeakerNameSource.AutoAppliedVoiceProfile &&
                 winningAutoApplyByProfileId.TryGetValue(candidate.ProfileId, out var winningSpeakerId) &&
                 !string.Equals(candidate.SpeakerId, winningSpeakerId, StringComparison.Ordinal)
-                    ? candidate with { Source = SpeakerNameSource.SuggestedVoiceProfile }
+                    ? candidate with
+                    {
+                        Source = SpeakerNameSource.SuggestedVoiceProfile,
+                        DecisionReason = SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
+                    }
                     : candidate)
             .OrderBy(candidate => candidate.SpeakerId, StringComparer.Ordinal)
             .ToArray();
@@ -88,6 +96,7 @@ public sealed class VoiceProfileMatcher
                         NameSource = SpeakerNameSource.AutoAppliedVoiceProfile,
                         Confidence = prediction.Confidence,
                         SuggestedDisplayName = null,
+                        DecisionReason = prediction.DecisionReason,
                     }
                     : speaker with
                     {
@@ -95,6 +104,7 @@ public sealed class VoiceProfileMatcher
                         NameSource = SpeakerNameSource.SuggestedVoiceProfile,
                         Confidence = prediction.Confidence,
                         SuggestedDisplayName = prediction.DisplayName,
+                        DecisionReason = prediction.DecisionReason,
                     };
             })
             .ToArray();
@@ -103,7 +113,8 @@ public sealed class VoiceProfileMatcher
     private static SpeakerNamePrediction? BuildCandidate(
         SpeakerVoiceSample sample,
         IReadOnlyList<VoiceProfile> profiles,
-        SpeakerNameRecognitionOptions options)
+        SpeakerNameRecognitionOptions options,
+        string? meetingId)
     {
         if (sample.EmbeddingDimension <= 0 ||
             sample.Embedding.Count != sample.EmbeddingDimension ||
@@ -117,7 +128,8 @@ public sealed class VoiceProfileMatcher
                 profile.Status == VoiceProfileStatus.Active &&
                 profile.EmbeddingDimension == sample.EmbeddingDimension &&
                 string.Equals(profile.EmbeddingModelFileName, sample.EmbeddingModelFileName, StringComparison.OrdinalIgnoreCase) &&
-                profile.Centroid.Count == sample.EmbeddingDimension)
+                profile.Centroid.Count == sample.EmbeddingDimension &&
+                !HasRejectedMatch(profile, meetingId, sample.SpeakerId))
             .Select(profile => new
             {
                 Profile = profile,
@@ -136,18 +148,23 @@ public sealed class VoiceProfileMatcher
 
         var best = rankedMatches[0];
         var secondBestConfidence = rankedMatches.Length > 1 ? rankedMatches[1].Confidence : 0d;
-        var source =
-            best.Confidence >= options.AutoApplyConfidenceThreshold &&
-            best.Confidence - secondBestConfidence >= options.MatchMarginThreshold
-                ? SpeakerNameSource.AutoAppliedVoiceProfile
-                : SpeakerNameSource.SuggestedVoiceProfile;
+        var decision = ClassifyDecision(
+            best.Profile,
+            sample,
+            best.Confidence,
+            secondBestConfidence,
+            options);
+        var source = decision == SpeakerNameDecisionReason.AutoAppliedHighConfidence
+            ? SpeakerNameSource.AutoAppliedVoiceProfile
+            : SpeakerNameSource.SuggestedVoiceProfile;
 
         return new SpeakerNamePrediction(
             sample.SpeakerId,
             best.Profile.ProfileId,
             best.Profile.DisplayName,
             best.Confidence,
-            source);
+            source,
+            decision);
     }
 
     private static SpeakerNameRecognitionOptions NormalizeOptions(SpeakerNameRecognitionOptions options)
@@ -155,12 +172,61 @@ public sealed class VoiceProfileMatcher
         var autoApply = NormalizeThreshold(options.AutoApplyConfidenceThreshold, 0.86d);
         var suggestion = NormalizeThreshold(options.SuggestionConfidenceThreshold, 0.78d);
         var margin = NormalizeThreshold(options.MatchMarginThreshold, 0.05d);
+        var minimumProfileSamples = options.MinimumAutoApplyProfileSampleCount > 0
+            ? options.MinimumAutoApplyProfileSampleCount
+            : 2;
+        var minimumSpeechDuration = options.MinimumAutoApplySpeechDuration > TimeSpan.Zero
+            ? options.MinimumAutoApplySpeechDuration
+            : TimeSpan.FromSeconds(8);
         if (suggestion > autoApply)
         {
             suggestion = 0.78d;
         }
 
-        return new SpeakerNameRecognitionOptions(autoApply, suggestion, margin);
+        return DiarizationCalibrationEnvironment.LoadSpeakerNameRecognitionOptions(new SpeakerNameRecognitionOptions(
+            autoApply,
+            suggestion,
+            margin,
+            minimumProfileSamples,
+            minimumSpeechDuration));
+    }
+
+    private static SpeakerNameDecisionReason ClassifyDecision(
+        VoiceProfile profile,
+        SpeakerVoiceSample sample,
+        double confidence,
+        double secondBestConfidence,
+        SpeakerNameRecognitionOptions options)
+    {
+        if (confidence < options.AutoApplyConfidenceThreshold)
+        {
+            return SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold;
+        }
+
+        if (confidence - secondBestConfidence < options.MatchMarginThreshold)
+        {
+            return SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin;
+        }
+
+        if (profile.SampleCount < options.MinimumAutoApplyProfileSampleCount)
+        {
+            return SpeakerNameDecisionReason.SuggestedProfileNeedsMoreSamples;
+        }
+
+        if (sample.SpeechDuration < options.MinimumAutoApplySpeechDuration)
+        {
+            return SpeakerNameDecisionReason.SuggestedSampleTooShort;
+        }
+
+        return SpeakerNameDecisionReason.AutoAppliedHighConfidence;
+    }
+
+    private static bool HasRejectedMatch(VoiceProfile profile, string? meetingId, string speakerId)
+    {
+        return !string.IsNullOrWhiteSpace(meetingId) &&
+            profile.RejectedMatches?.Any(match =>
+                string.Equals(match.MeetingId, meetingId, StringComparison.Ordinal) &&
+                string.Equals(match.SpeakerId, speakerId, StringComparison.Ordinal)) == true;
     }
 
     private static double NormalizeThreshold(double value, double fallback)

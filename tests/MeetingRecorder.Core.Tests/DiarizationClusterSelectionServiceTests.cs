@@ -111,6 +111,73 @@ public sealed class DiarizationClusterSelectionServiceTests
         Assert.Contains("outside the supported automatic range", selection.DiagnosticMessage, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void SelectBestCandidate_Continues_Past_High_Count_Fallback_For_OverSegmented_Default()
+    {
+        var service = new DiarizationClusterSelectionService();
+        var defaultCandidate = new DiarizationClusterCandidate(
+            0.5f,
+            BuildSpeakerTurns(29));
+        var highCountFallback = new DiarizationClusterCandidate(
+            0.75f,
+            BuildSpeakerTurns(14));
+        var compactFallback = new DiarizationClusterCandidate(
+            0.8f,
+            BuildSpeakerTurns(4));
+
+        var selection = service.SelectBestCandidate([defaultCandidate, highCountFallback, compactFallback]);
+
+        Assert.Same(compactFallback, selection.Candidate);
+        Assert.Equal(4, selection.SupportedSpeakerCount);
+        Assert.True(selection.IsAutomaticSpeakerCountSupported);
+        Assert.Contains("0.80", selection.DiagnosticMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelectBestCandidate_Keeps_High_Count_Fallback_Unsupported_When_No_Preferred_Candidate_Exists()
+    {
+        var service = new DiarizationClusterSelectionService();
+        var defaultCandidate = new DiarizationClusterCandidate(
+            0.5f,
+            BuildSpeakerTurns(29));
+        var highCountFallback = new DiarizationClusterCandidate(
+            0.75f,
+            BuildSpeakerTurns(14));
+
+        var selection = service.SelectBestCandidate([defaultCandidate, highCountFallback]);
+
+        Assert.Same(defaultCandidate, selection.Candidate);
+        Assert.Equal(29, selection.SupportedSpeakerCount);
+        Assert.False(selection.IsAutomaticSpeakerCountSupported);
+        Assert.Contains("outside the supported automatic range", selection.DiagnosticMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelectBestCandidate_Filters_Tiny_Fragment_Speakers_From_Selected_Candidate()
+    {
+        var service = new DiarizationClusterSelectionService();
+        var defaultCandidate = new DiarizationClusterCandidate(
+            0.5f,
+            BuildSpeakerTurns(29));
+        var compactFallback = new DiarizationClusterCandidate(
+            0.8f,
+            [
+                new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(120)),
+                new SpeakerTurn("speaker_01", TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(240)),
+                new SpeakerTurn("speaker_02", TimeSpan.FromSeconds(240), TimeSpan.FromSeconds(360)),
+                new SpeakerTurn("speaker_03", TimeSpan.FromSeconds(360), TimeSpan.FromSeconds(480)),
+                new SpeakerTurn("speaker_99", TimeSpan.FromSeconds(480), TimeSpan.FromMilliseconds(480500)),
+            ]);
+
+        var selection = service.SelectBestCandidate([defaultCandidate, compactFallback]);
+
+        Assert.NotSame(compactFallback, selection.Candidate);
+        Assert.Equal(4, selection.SupportedSpeakerCount);
+        Assert.Equal(
+            ["speaker_00", "speaker_01", "speaker_02", "speaker_03"],
+            selection.Candidate.SpeakerTurns.Select(turn => turn.SpeakerId).Distinct(StringComparer.Ordinal).ToArray());
+    }
+
     [Theory]
     [InlineData(1, false)]
     [InlineData(2, true)]

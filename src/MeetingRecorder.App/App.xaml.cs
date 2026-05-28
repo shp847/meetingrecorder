@@ -209,11 +209,15 @@ public partial class App : Application
 
         try
         {
+            var isDiarizationReady = new DiarizationAssetCatalogService()
+                .InspectInstalledAssets(config.DiarizationAssetPath)
+                .IsReady;
             publishedMeetingRepairResult = await Task.Run(
                 () => PublishedMeetingRepairService.RepairKnownIssuesAsync(
                     config.AudioOutputDir,
                     config.TranscriptOutputDir,
-                    AppDataPaths.GetAppRoot()));
+                    AppDataPaths.GetAppRoot(),
+                    isDiarizationReady));
         }
         catch (Exception exception)
         {
@@ -223,7 +227,11 @@ public partial class App : Application
         if (publishedMeetingRepairResult is { AlreadyApplied: false } repairResult)
         {
             _logger?.Log(
-                $"Published meeting repair completed: mergedSplitPairCount={repairResult.MergedSplitPairCount}; archivedArtifactCount={repairResult.ArchivedArtifactCount}; archiveDirectory='{repairResult.ArchiveDirectory}'.");
+                $"Published meeting repair completed: mergedSplitPairCount={repairResult.MergedSplitPairCount}; archivedArtifactCount={repairResult.ArchivedArtifactCount}; queuedSpeakerLabelRepairCount={repairResult.QueuedSpeakerLabelRepairCount}; archiveDirectory='{repairResult.ArchiveDirectory}'.");
+            if (repairResult.QueuedSpeakerLabelRepairCount > 0 && MainWindow is MainWindow mainWindow)
+            {
+                await mainWindow.ResumePendingProcessingAfterMaintenanceAsync(CancellationToken.None);
+            }
         }
 
         if (publishedMeetingRepairFailure is not null)
@@ -459,7 +467,7 @@ public partial class App : Application
         {
             _hasShownUnhandledExceptionMessage = true;
             MessageBox.Show(
-                $"{AppBranding.ProductName} hit an unexpected UI error and will close. Details were written to the log file.",
+                $"{AppBranding.ProductName} hit an unexpected UI error and will close. Details were written to the log file when possible.",
                 AppBranding.DisplayNameWithVersion,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);

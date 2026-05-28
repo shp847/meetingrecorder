@@ -24,7 +24,7 @@ internal static class MeetingTranscriptDocumentReader
         {
             return new MeetingTranscriptReaderResult(
                 jsonSegments.Count > 0,
-                BuildStatusText(jsonSegments.Count, "JSON sidecar"),
+                BuildStatusText(jsonSegments.Count, structuredSegments.Count, "JSON sidecar"),
                 jsonSegments,
                 structuredSegments,
                 summarizationStatus,
@@ -37,7 +37,7 @@ internal static class MeetingTranscriptDocumentReader
         {
             return new MeetingTranscriptReaderResult(
                 markdownSegments.Count > 0,
-                BuildStatusText(markdownSegments.Count, "Markdown transcript"),
+                BuildStatusText(markdownSegments.Count, markdownSegments.Count, "Markdown transcript"),
                 markdownSegments);
         }
 
@@ -53,6 +53,36 @@ internal static class MeetingTranscriptDocumentReader
             false,
             "Transcript artifact did not contain readable app transcript segments.",
             Array.Empty<MeetingTranscriptSegmentRow>());
+    }
+
+    internal static bool TryReadStructuredSegments(
+        string? jsonPath,
+        string? markdownPath,
+        out IReadOnlyList<TranscriptSegment> segments)
+    {
+        segments = Array.Empty<TranscriptSegment>();
+        var hasJson = !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath);
+        if (hasJson &&
+            TryReadJsonTranscript(
+                jsonPath!,
+                out _,
+                out var jsonStructuredSegments,
+                out _,
+                out _) &&
+            jsonStructuredSegments.Count > 0)
+        {
+            segments = jsonStructuredSegments;
+            return true;
+        }
+
+        var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
+        if (hasMarkdown && TryReadMarkdownTranscriptSegments(markdownPath!, out var markdownSegments))
+        {
+            segments = markdownSegments;
+            return markdownSegments.Count > 0;
+        }
+
+        return false;
     }
 
     private static bool TryReadJsonTranscript(
@@ -75,7 +105,6 @@ internal static class MeetingTranscriptDocumentReader
                 return false;
             }
 
-            var rows = new List<MeetingTranscriptSegmentRow>();
             var structuredRows = new List<TranscriptSegment>();
             foreach (var node in segmentNodes)
             {
@@ -101,10 +130,6 @@ internal static class MeetingTranscriptDocumentReader
                     "SpeakerLabel",
                     "speakerId",
                     "SpeakerId");
-                rows.Add(new MeetingTranscriptSegmentRow(
-                    FormatTranscriptTimestamp(start),
-                    string.IsNullOrWhiteSpace(speakerLabel) ? "Speaker" : speakerLabel.Trim(),
-                    text.Trim()));
                 structuredRows.Add(new TranscriptSegment(
                     start,
                     end,
@@ -113,11 +138,11 @@ internal static class MeetingTranscriptDocumentReader
                     text.Trim()));
             }
 
-            segments = rows;
+            segments = BuildDisplayRows(structuredRows);
             structuredSegments = structuredRows;
             summarizationStatus = TryReadSummarizationStatus(root);
             summary = TryReadSummary(root);
-            return rows.Count > 0;
+            return structuredRows.Count > 0;
         }
         catch
         {
@@ -128,9 +153,21 @@ internal static class MeetingTranscriptDocumentReader
     private static bool TryReadMarkdownTranscript(string markdownPath, out IReadOnlyList<MeetingTranscriptSegmentRow> segments)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
+        if (!TryReadMarkdownTranscriptSegments(markdownPath, out var markdownSegments))
+        {
+            return false;
+        }
+
+        segments = BuildDisplayRows(markdownSegments);
+        return markdownSegments.Count > 0;
+    }
+
+    private static bool TryReadMarkdownTranscriptSegments(string markdownPath, out IReadOnlyList<TranscriptSegment> segments)
+    {
+        segments = Array.Empty<TranscriptSegment>();
         try
         {
-            var rows = new List<MeetingTranscriptSegmentRow>();
+            var markdownSegments = new List<TranscriptSegment>();
             foreach (var line in File.ReadLines(markdownPath))
             {
                 var match = MarkdownTranscriptLinePattern.Match(line);
@@ -148,20 +185,38 @@ internal static class MeetingTranscriptDocumentReader
                 var start = TimeSpan.TryParse(match.Groups["start"].Value, CultureInfo.InvariantCulture, out var parsedStart)
                     ? parsedStart
                     : TimeSpan.Zero;
+                var end = TimeSpan.TryParse(match.Groups["end"].Value, CultureInfo.InvariantCulture, out var parsedEnd)
+                    ? parsedEnd
+                    : start;
                 var speakerLabel = match.Groups["speaker"].Value.Trim();
-                rows.Add(new MeetingTranscriptSegmentRow(
-                    FormatTranscriptTimestamp(start),
+                markdownSegments.Add(new TranscriptSegment(
+                    start,
+                    end,
+                    null,
                     string.IsNullOrWhiteSpace(speakerLabel) ? "Speaker" : speakerLabel,
                     text));
             }
 
-            segments = rows;
-            return rows.Count > 0;
+            segments = markdownSegments;
+            return markdownSegments.Count > 0;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static IReadOnlyList<MeetingTranscriptSegmentRow> BuildDisplayRows(IReadOnlyList<TranscriptSegment> segments)
+    {
+        return TranscriptParagraphBuilder
+            .Build(segments, static segment => string.IsNullOrWhiteSpace(segment.SpeakerLabel)
+                ? "Speaker"
+                : segment.SpeakerLabel)
+            .Select(paragraph => new MeetingTranscriptSegmentRow(
+                FormatTranscriptTimestamp(paragraph.Start),
+                paragraph.SpeakerLabel,
+                paragraph.Text))
+            .ToArray();
     }
 
     private static JsonArray? GetSegmentsArray(JsonObject? root)
@@ -218,6 +273,7 @@ internal static class MeetingTranscriptDocumentReader
             var model = GetOptionalJsonString(providerObject, "model", "Model") ?? "Unknown model";
             var providerKind = GetSummaryProviderKind(providerObject);
             var fallbackUsed = GetJsonBool(providerObject, "fallbackUsed", "FallbackUsed") ?? false;
+            var modelProxyRouting = GetModelProxyRouting(providerObject);
             var generatedAtUtc = GetJsonDateTimeOffset(node, "generatedAtUtc", "GeneratedAtUtc") ?? DateTimeOffset.UtcNow;
             var fingerprint = GetJsonString(node, "transcriptFingerprint", "TranscriptFingerprint") ?? string.Empty;
             return new MeetingSummary(
@@ -226,7 +282,7 @@ internal static class MeetingTranscriptDocumentReader
                 GetJsonStringArray(node, "decisions", "Decisions"),
                 GetJsonActionItems(node),
                 GetJsonStringArray(node, "risksAndOpenQuestions", "RisksAndOpenQuestions"),
-                new MeetingSummaryProviderInfo(providerKind, providerName.Trim(), model.Trim(), fallbackUsed),
+                new MeetingSummaryProviderInfo(providerKind, providerName.Trim(), model.Trim(), fallbackUsed, modelProxyRouting),
                 generatedAtUtc,
                 fingerprint.Trim());
         }
@@ -264,6 +320,33 @@ internal static class MeetingTranscriptDocumentReader
         }
 
         return SummaryChatProviderKind.OpenAi;
+    }
+
+    private static ModelProxyRoutingInfo? GetModelProxyRouting(JsonObject? providerObject)
+    {
+        var routingObject = providerObject?["modelProxyRouting"] as JsonObject ??
+                            providerObject?["ModelProxyRouting"] as JsonObject;
+        if (routingObject is null)
+        {
+            return null;
+        }
+
+        var routingInfo = new ModelProxyRoutingInfo(
+            GetJsonNullableString(routingObject, "requestId", "RequestId"),
+            GetJsonNullableString(routingObject, "requestedBackend", "RequestedBackend"),
+            GetJsonNullableString(routingObject, "effectiveBackend", "EffectiveBackend"),
+            GetJsonNullableString(routingObject, "webSearchBackend", "WebSearchBackend"),
+            GetJsonBool(routingObject, "appServerWebSearchSupported", "AppServerWebSearchSupported"),
+            GetJsonNullableString(routingObject, "fallbackReason", "FallbackReason"));
+
+        return routingInfo.RequestId is null &&
+               routingInfo.RequestedBackend is null &&
+               routingInfo.EffectiveBackend is null &&
+               routingInfo.WebSearchBackend is null &&
+               routingInfo.AppServerWebSearchSupported is null &&
+               routingInfo.FallbackReason is null
+            ? null
+            : routingInfo;
     }
 
     private static IReadOnlyList<string> GetJsonStringArray(JsonObject node, params string[] propertyNames)
@@ -425,10 +508,15 @@ internal static class MeetingTranscriptDocumentReader
             : timestamp.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
     }
 
-    private static string BuildStatusText(int segmentCount, string sourceLabel)
+    private static string BuildStatusText(int displayCount, int sourceSegmentCount, string sourceLabel)
     {
-        return segmentCount == 0
-            ? $"No readable transcript segments found in {sourceLabel}."
-            : $"Showing {segmentCount} transcript segment(s) from {sourceLabel}.";
+        if (displayCount == 0)
+        {
+            return $"No readable transcript segments found in {sourceLabel}.";
+        }
+
+        return displayCount == sourceSegmentCount
+            ? $"Showing {displayCount} transcript segment(s) from {sourceLabel}."
+            : $"Showing {displayCount} transcript paragraph(s) from {sourceLabel} (merged from {sourceSegmentCount} segment(s)).";
     }
 }

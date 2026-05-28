@@ -15,9 +15,6 @@ public sealed record DiarizationClusterSelection(
 
 public sealed class DiarizationClusterSelectionService
 {
-    private static readonly TimeSpan AbsoluteMinimumSpeakerDuration = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan MaximumMinimumSpeakerDuration = TimeSpan.FromSeconds(15);
-    private const double MinimumSpeakerDurationShare = 0.005d;
     public const int MinimumAutomaticSpeakerCount = 2;
     public const int MaximumAutomaticSpeakerCount = 16;
 
@@ -28,50 +25,53 @@ public sealed class DiarizationClusterSelectionService
             throw new ArgumentException("At least one diarization cluster candidate is required.", nameof(candidates));
         }
 
-        var defaultCandidate = candidates[0];
-        var defaultSupportedSpeakerCount = CountSupportedSpeakers(defaultCandidate);
-        if (IsAutomaticSpeakerCountSupported(defaultSupportedSpeakerCount))
+        var options = DiarizationCalibrationEnvironment.LoadClusterSelectionOptions();
+        var evaluations = candidates
+            .Select((candidate, index) => EvaluateCandidate(candidate, index, options))
+            .ToArray();
+        var defaultEvaluation = evaluations[0];
+        if (defaultEvaluation.IsAutomaticSpeakerCountSupported &&
+            defaultEvaluation.SupportedSpeakerCount <= options.MaximumPreferredAutomaticSpeakerCount &&
+            defaultEvaluation.UnsupportedSpeakerCount == 0)
         {
-            return BuildSelection(defaultCandidate, defaultSupportedSpeakerCount, defaultCandidate);
+            return BuildSelection(defaultEvaluation, defaultEvaluation);
         }
 
-        foreach (var candidate in candidates.Skip(1))
+        if (defaultEvaluation.SupportedSpeakerCount < MinimumAutomaticSpeakerCount)
         {
-            var supportedSpeakerCount = CountSupportedSpeakers(candidate);
-            if (IsAutomaticSpeakerCountSupported(supportedSpeakerCount))
-            {
-                return BuildSelection(candidate, supportedSpeakerCount, defaultCandidate);
-            }
+            var collapsedRecovery = evaluations
+                .Skip(1)
+                .FirstOrDefault(static evaluation => evaluation.IsAutomaticSpeakerCountSupported);
+            return collapsedRecovery is null
+                ? BuildSelection(defaultEvaluation, defaultEvaluation)
+                : BuildSelection(collapsedRecovery, defaultEvaluation);
         }
 
-        return BuildSelection(defaultCandidate, defaultSupportedSpeakerCount, defaultCandidate);
+        var preferredRecovery = evaluations
+            .Where(static evaluation =>
+                evaluation.IsAutomaticSpeakerCountSupported)
+            .Where(evaluation => evaluation.SupportedSpeakerCount <= options.MaximumPreferredAutomaticSpeakerCount)
+            .OrderBy(static evaluation => evaluation.UnsupportedSpeakerCount)
+            .ThenBy(static evaluation => evaluation.SupportedSpeakerCount)
+            .ThenBy(static evaluation => evaluation.RawSpeakerCount)
+            .ThenBy(static evaluation => evaluation.Index)
+            .FirstOrDefault();
+        if (preferredRecovery is not null)
+        {
+            return BuildSelection(preferredRecovery, defaultEvaluation);
+        }
+
+        if (defaultEvaluation.IsAutomaticSpeakerCountSupported)
+        {
+            return BuildSelection(defaultEvaluation, defaultEvaluation);
+        }
+
+        return BuildSelection(defaultEvaluation, defaultEvaluation);
     }
 
     public int CountSupportedSpeakers(DiarizationClusterCandidate candidate)
     {
-        var speakerDurations = candidate.SpeakerTurns
-            .Where(static turn => turn.End > turn.Start && !string.IsNullOrWhiteSpace(turn.SpeakerId))
-            .GroupBy(static turn => turn.SpeakerId, StringComparer.Ordinal)
-            .Select(static group => new
-            {
-                SpeakerId = group.Key,
-                Duration = TimeSpan.FromTicks(group.Sum(turn => (turn.End - turn.Start).Ticks)),
-            })
-            .ToArray();
-
-        if (speakerDurations.Length == 0)
-        {
-            return 0;
-        }
-
-        var totalDurationTicks = speakerDurations.Sum(speaker => speaker.Duration.Ticks);
-        if (totalDurationTicks <= 0)
-        {
-            return 0;
-        }
-
-        var minimumSupportedDuration = CalculateMinimumSupportedDuration(TimeSpan.FromTicks(totalDurationTicks));
-        return speakerDurations.Count(speaker => speaker.Duration >= minimumSupportedDuration);
+        return GetSupportedSpeakerIds(candidate, DiarizationCalibrationEnvironment.LoadClusterSelectionOptions()).Count;
     }
 
     public static bool IsAutomaticSpeakerCountSupported(int speakerCount)
@@ -79,37 +79,126 @@ public sealed class DiarizationClusterSelectionService
         return speakerCount is >= MinimumAutomaticSpeakerCount and <= MaximumAutomaticSpeakerCount;
     }
 
-    private static TimeSpan CalculateMinimumSupportedDuration(TimeSpan totalVoicedDuration)
+    private static CandidateEvaluation EvaluateCandidate(
+        DiarizationClusterCandidate candidate,
+        int index,
+        DiarizationClusterSelectionOptions options)
     {
-        var proportionalMinimum = TimeSpan.FromTicks((long)(totalVoicedDuration.Ticks * MinimumSpeakerDurationShare));
-        var cappedMinimum = proportionalMinimum < MaximumMinimumSpeakerDuration
+        var rawSpeakerCount = CountRawSpeakers(candidate);
+        var supportedSpeakerIds = GetSupportedSpeakerIds(candidate, options);
+        return new CandidateEvaluation(
+            candidate,
+            index,
+            rawSpeakerCount,
+            supportedSpeakerIds);
+    }
+
+    private static int CountRawSpeakers(DiarizationClusterCandidate candidate)
+    {
+        return candidate.SpeakerTurns
+            .Select(static turn => turn.SpeakerId)
+            .Where(static speakerId => !string.IsNullOrWhiteSpace(speakerId))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+    }
+
+    private static IReadOnlySet<string> GetSupportedSpeakerIds(
+        DiarizationClusterCandidate candidate,
+        DiarizationClusterSelectionOptions options)
+    {
+        var speakerDurations = candidate.SpeakerTurns
+            .Where(static turn => turn.End > turn.Start && !string.IsNullOrWhiteSpace(turn.SpeakerId))
+            .GroupBy(static turn => turn.SpeakerId, StringComparer.Ordinal)
+            .Select(static group => (
+                SpeakerId: group.Key,
+                Duration: TimeSpan.FromTicks(group.Sum(turn => (turn.End - turn.Start).Ticks))))
+            .ToArray();
+
+        if (speakerDurations.Length == 0)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var totalDurationTicks = speakerDurations.Sum(speaker => speaker.Duration.Ticks);
+        if (totalDurationTicks <= 0)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var minimumSupportedDuration = CalculateMinimumSupportedDuration(TimeSpan.FromTicks(totalDurationTicks), options);
+        return speakerDurations
+            .Where(speaker => speaker.Duration >= minimumSupportedDuration)
+            .Select(static speaker => speaker.SpeakerId)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static TimeSpan CalculateMinimumSupportedDuration(
+        TimeSpan totalVoicedDuration,
+        DiarizationClusterSelectionOptions options)
+    {
+        var proportionalMinimum = TimeSpan.FromTicks((long)(totalVoicedDuration.Ticks * options.MinimumSpeakerDurationShare));
+        var cappedMinimum = proportionalMinimum < options.MaximumMinimumSpeakerDuration
             ? proportionalMinimum
-            : MaximumMinimumSpeakerDuration;
-        return cappedMinimum > AbsoluteMinimumSpeakerDuration
+            : options.MaximumMinimumSpeakerDuration;
+        return cappedMinimum > options.AbsoluteMinimumSpeakerDuration
             ? cappedMinimum
-            : AbsoluteMinimumSpeakerDuration;
+            : options.AbsoluteMinimumSpeakerDuration;
     }
 
     private static DiarizationClusterSelection BuildSelection(
-        DiarizationClusterCandidate selectedCandidate,
-        int supportedSpeakerCount,
-        DiarizationClusterCandidate defaultCandidate)
+        CandidateEvaluation selectedEvaluation,
+        CandidateEvaluation defaultEvaluation)
     {
-        var selectedThreshold = FormatThreshold(selectedCandidate.Threshold);
+        var selectedCandidate = FilterToSupportedSpeakerTurns(
+            selectedEvaluation.Candidate,
+            selectedEvaluation.SupportedSpeakerIds);
+        var selectedThreshold = FormatThreshold(selectedEvaluation.Candidate.Threshold);
+        var supportedSpeakerCount = selectedEvaluation.SupportedSpeakerCount;
         var speakerText = supportedSpeakerCount == 1 ? "speaker" : "speakers";
         var isSupported = IsAutomaticSpeakerCountSupported(supportedSpeakerCount);
         var rangeMessage = isSupported
             ? string.Empty
             : $" This is outside the supported automatic range of {MinimumAutomaticSpeakerCount}-{MaximumAutomaticSpeakerCount} speakers.";
-        var diagnosticMessage = ReferenceEquals(selectedCandidate, defaultCandidate)
+        var diagnosticMessage = ReferenceEquals(selectedEvaluation.Candidate, defaultEvaluation.Candidate)
             ? $"Speaker clustering used threshold {selectedThreshold} and detected {supportedSpeakerCount} supported {speakerText}."
-            : $"Speaker clustering adapted from threshold {FormatThreshold(defaultCandidate.Threshold)} to {selectedThreshold} and detected {supportedSpeakerCount} supported {speakerText}.";
+            : $"Speaker clustering adapted from threshold {FormatThreshold(defaultEvaluation.Candidate.Threshold)} to {selectedThreshold} and detected {supportedSpeakerCount} supported {speakerText}.";
 
         return new DiarizationClusterSelection(selectedCandidate, supportedSpeakerCount, diagnosticMessage + rangeMessage, isSupported);
+    }
+
+    private static DiarizationClusterCandidate FilterToSupportedSpeakerTurns(
+        DiarizationClusterCandidate candidate,
+        IReadOnlySet<string> supportedSpeakerIds)
+    {
+        if (supportedSpeakerIds.Count == 0 || supportedSpeakerIds.Count == CountRawSpeakers(candidate))
+        {
+            return candidate;
+        }
+
+        var filteredSpeakerTurns = candidate.SpeakerTurns
+            .Where(turn => !string.IsNullOrWhiteSpace(turn.SpeakerId) && supportedSpeakerIds.Contains(turn.SpeakerId))
+            .ToArray();
+        return filteredSpeakerTurns.Length == candidate.SpeakerTurns.Count
+            ? candidate
+            : new DiarizationClusterCandidate(candidate.Threshold, filteredSpeakerTurns);
     }
 
     private static string FormatThreshold(float threshold)
     {
         return threshold.ToString("0.00", CultureInfo.InvariantCulture);
+    }
+
+    private sealed record CandidateEvaluation(
+        DiarizationClusterCandidate Candidate,
+        int Index,
+        int RawSpeakerCount,
+        IReadOnlySet<string> SupportedSpeakerIds)
+    {
+        public int SupportedSpeakerCount => SupportedSpeakerIds.Count;
+
+        public int UnsupportedSpeakerCount => RawSpeakerCount - SupportedSpeakerCount;
+
+        public bool IsAutomaticSpeakerCountSupported =>
+            DiarizationClusterSelectionService.IsAutomaticSpeakerCountSupported(SupportedSpeakerCount);
     }
 }

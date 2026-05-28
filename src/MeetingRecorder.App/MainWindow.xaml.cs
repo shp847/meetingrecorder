@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private const string SpeakerLabelingSetupGuideFallbackUrl = "https://github.com/shp847/meetingrecorder/blob/main/SETUP.md#speaker-labeling-optional";
     private const string TeamsThirdPartyApiGuideUrl = "https://support.microsoft.com/en-au/office/connect-to-third-party-devices-in-microsoft-teams-aabca9f2-47bb-407f-9f9b-81a104a883d6";
     private static readonly TimeSpan ShutdownUpdateCheckTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RecordingStorageAutoStartBackoff = TimeSpan.FromMinutes(1);
     private static readonly Brush HealthyModelStatusBrush = CreateBrush(0x2E, 0x7D, 0x32);
     private static readonly Brush HealthyModelStatusChipBackgroundBrush = CreateBrush(0xE8, 0xF3, 0xE8);
     private static readonly Brush HealthyModelStatusChipBorderBrush = CreateBrush(0xA8, 0xCC, 0xAB);
@@ -54,6 +55,8 @@ public partial class MainWindow : Window
     private readonly ArtifactPathBuilder _pathBuilder;
     private readonly SessionManifestStore _manifestStore;
     private readonly MeetingOutputCatalogService _meetingOutputCatalogService;
+    private readonly VoiceProfileStore _voiceProfileStore;
+    private readonly SpeakerNameCorrectionService _speakerNameCorrectionService;
     private readonly MeetingCleanupExecutionService _meetingCleanupExecutionService;
     private readonly AutoStartRegistrationService _autoStartRegistrationService;
     private readonly AppUpdateService _appUpdateService;
@@ -175,6 +178,7 @@ public partial class MainWindow : Window
     private DateTimeOffset? _quietTeamsAutoStartFirstObservedUtc;
     private string? _quietGoogleMeetAutoStartFingerprint;
     private DateTimeOffset? _quietGoogleMeetAutoStartFirstObservedUtc;
+    private DateTimeOffset? _recordingStorageBackoffUntilUtc;
     private string? _lastTeamsProbeBaselineSummary;
     private string? _pendingMeetingsRefreshSelectedStem;
     private AppUpdateCheckResult? _lastUpdateCheckResult;
@@ -210,6 +214,13 @@ public partial class MainWindow : Window
         _pathBuilder = new ArtifactPathBuilder();
         _manifestStore = new SessionManifestStore(_pathBuilder);
         _meetingOutputCatalogService = new MeetingOutputCatalogService(_pathBuilder);
+        _voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+        _speakerNameCorrectionService = new SpeakerNameCorrectionService(
+            _meetingOutputCatalogService,
+            _manifestStore,
+            new SpeakerNameLearningService(_voiceProfileStore),
+            new VoiceProfileMatcher(),
+            _voiceProfileStore);
         _meetingCleanupExecutionService = new MeetingCleanupExecutionService(_pathBuilder, _meetingOutputCatalogService);
         _autoStartRegistrationService = new AutoStartRegistrationService();
         _appUpdateService = new AppUpdateService();
@@ -274,10 +285,11 @@ public partial class MainWindow : Window
         _summarySecretStore = FileSummarySecretStore.CreateDefault();
         _summaryProviderHttpClient = new HttpClient();
         var summaryChatClient = new SummaryChatClient(_summaryProviderHttpClient);
+        var modelProxyClient = new ModelProxyClient(_summaryProviderHttpClient);
         _summaryProviderValidationService = new SummaryProviderValidationService(
             summaryChatClient);
         _publishedMeetingSummaryService = new PublishedMeetingSummaryService(
-            new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient),
+            new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient, modelProxyClient),
             _manifestStore);
         _sessionTitleDraftTracker = new SessionTitleDraftTracker();
         _sessionProjectDraftTracker = new SessionTitleDraftTracker();
@@ -587,6 +599,11 @@ public partial class MainWindow : Window
         }
     }
 
+    internal async Task ResumePendingProcessingAfterMaintenanceAsync(CancellationToken cancellationToken)
+    {
+        await _processingQueue.ResumePendingSessionsAsync(cancellationToken);
+    }
+
     private void ScheduleDeferredMeetingsRefresh()
     {
         if (_hasCompletedFullMeetingsRefresh || IsShutdownRequested)
@@ -775,6 +792,7 @@ public partial class MainWindow : Window
         {
             _recentAutoStopContext = null;
             _manualStopSuppressionContext = null;
+            _recordingStorageBackoffUntilUtc = null;
             ClearAutoStopVisualState();
             await _recordingCoordinator.StartAsync(
                 MeetingPlatform.Manual,
@@ -1471,7 +1489,10 @@ public partial class MainWindow : Window
                 }
 
                 var shouldSuppressManualRestart = manualStopSuppressionDisposition == ManualStopSuppressionDisposition.SuppressAutoStart;
+                var isRecordingStorageBackoffActive = _recordingStorageBackoffUntilUtc is { } storageBackoffUntilUtc &&
+                    nowUtc < storageBackoffUntilUtc;
                 if (!shouldSuppressManualRestart &&
+                    !isRecordingStorageBackoffActive &&
                     (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))
                 {
                     ClearAutoStopVisualState();
@@ -1484,6 +1505,7 @@ public partial class MainWindow : Window
                     _lastPositiveDetectionUtc = nowUtc;
                     _recentAutoStopContext = null;
                     _manualStopSuppressionContext = null;
+                    _recordingStorageBackoffUntilUtc = null;
                     _lastAutoStopFingerprint = null;
                     UpdateCurrentMeetingEditor();
                     UpdateUi("Recording in progress.", DetectionTextBlock.Text);
@@ -1635,6 +1657,12 @@ public partial class MainWindow : Window
         {
             _logger.Log("Detection scan canceled because detection was paused or shutdown started.");
         }
+        catch (InsufficientRecordingStorageException exception)
+        {
+            _recordingStorageBackoffUntilUtc = DateTimeOffset.UtcNow.Add(RecordingStorageAutoStartBackoff);
+            AppendActivity(exception.Message);
+            UpdateUi("Recording paused until disk space is available.", DetectionTextBlock.Text);
+        }
         catch (Exception exception)
         {
             AppendActivity($"Detection error: {exception.Message}");
@@ -1778,6 +1806,7 @@ public partial class MainWindow : Window
             _lastPositiveDetectionUtc = nowUtc;
             _recentAutoStopContext = null;
             _manualStopSuppressionContext = null;
+            _recordingStorageBackoffUntilUtc = null;
             _lastAutoStopFingerprint = null;
             UpdateCurrentMeetingEditor();
             UpdateDetectedAudioSourceSurface(decision);
@@ -2840,13 +2869,18 @@ public partial class MainWindow : Window
 
         try
         {
-            await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(
+            var result = await _speakerNameCorrectionService.ApplyCorrectionsAsync(
                 selectedMeeting.Source,
                 labelMap,
+                _liveConfig.Current.SpeakerNameLearningMode,
+                DateTimeOffset.UtcNow,
                 _lifetimeCts.Token);
 
             UpdateSelectedMeetingEditor(selectedMeeting);
-            SpeakerNamesStatusTextBlock.Text = $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'.";
+            await RefreshVoiceProfileSettingsAsync();
+            SpeakerNamesStatusTextBlock.Text = result.LearningWarning is null
+                ? $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'. Learned {result.LearningResult.CreatedCount + result.LearningResult.UpdatedCount} voice profile sample(s)."
+                : $"Updated {labelMap.Count} speaker label(s) for '{selectedMeeting.Title}'. {result.LearningWarning}";
             AppendActivity($"Updated speaker labels for '{selectedMeeting.Title}'.");
         }
         catch (Exception exception)
@@ -2869,6 +2903,7 @@ public partial class MainWindow : Window
             meeting,
             "Queued to re-generate the transcript.",
             forceSpeakerLabeling: false,
+            forceTranscription: true,
             cancellationToken);
     }
 
@@ -2880,6 +2915,19 @@ public partial class MainWindow : Window
             meeting,
             "Queued to add speaker labels.",
             forceSpeakerLabeling: true,
+            forceTranscription: false,
+            cancellationToken);
+    }
+
+    private async Task<string> QueueSpeakerLabelRepairAsync(
+        MeetingOutputRecord meeting,
+        CancellationToken cancellationToken)
+    {
+        return await QueueMeetingReprocessingAsync(
+            meeting,
+            "Queued to repair speaker labels.",
+            forceSpeakerLabeling: true,
+            forceTranscription: false,
             cancellationToken);
     }
 
@@ -2887,6 +2935,7 @@ public partial class MainWindow : Window
         MeetingOutputRecord meeting,
         string transcriptionQueuedMessage,
         bool forceSpeakerLabeling,
+        bool forceTranscription,
         CancellationToken cancellationToken)
     {
         var manifestPath = meeting.ManifestPath;
@@ -2899,13 +2948,23 @@ public partial class MainWindow : Window
             AppendActivity($"Created a synthetic work manifest for '{meeting.Title}' from the published audio file.");
         }
 
+        if (forceSpeakerLabeling &&
+            await _meetingOutputCatalogService.TrySeedTranscriptionSnapshotForPublishedMeetingAsync(
+                meeting,
+                manifestPath,
+                cancellationToken))
+        {
+            AppendActivity($"Loaded existing transcript text for speaker labeling on '{meeting.Title}'.");
+        }
+
         var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
         var now = DateTimeOffset.UtcNow;
         var queuedManifest = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
             manifest,
             now,
             transcriptionQueuedMessage,
-            forceSpeakerLabeling);
+            forceSpeakerLabeling,
+            forceTranscription);
 
         await _manifestStore.SaveAsync(queuedManifest, manifestPath, cancellationToken);
         await _processingQueue.EnqueueAsync(manifestPath, cancellationToken);
@@ -3099,6 +3158,12 @@ public partial class MainWindow : Window
                     : InferenceAccelerationPreference.CpuOnly,
                 DiarizationAccelerationSecurityPromptMigrationApplied = true,
                 MicCaptureEnabled = ConfigMicCaptureCheckBox.IsChecked == true,
+                SpeakerNameLearningMode = ConfigSpeakerNameLearningCheckBox.IsChecked == true
+                    ? SpeakerNameLearningMode.LocalAutoLearn
+                    : SpeakerNameLearningMode.Disabled,
+                SpeakerNameAutoApplyConfidenceThreshold = currentConfig.SpeakerNameAutoApplyConfidenceThreshold,
+                SpeakerNameSuggestionConfidenceThreshold = currentConfig.SpeakerNameSuggestionConfidenceThreshold,
+                SpeakerNameMatchMarginThreshold = currentConfig.SpeakerNameMatchMarginThreshold,
                 LaunchOnLoginEnabled = ConfigLaunchOnLoginCheckBox.IsChecked == true,
                 AutoDetectEnabled = ConfigAutoDetectCheckBox.IsChecked == true,
                 AutoDetectSecurityPromptMigrationApplied = currentConfig.AutoDetectSecurityPromptMigrationApplied,
@@ -4981,6 +5046,8 @@ public partial class MainWindow : Window
             _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
+            _meetingDetailWindow.RefreshSpeakerNamesRequested += async (_, _) => await RefreshOpenMeetingDetailSpeakerNamesAsync();
+            _meetingDetailWindow.UndoSpeakerNameRecognitionRequested += async (_, _) => await UndoOpenMeetingDetailSpeakerNameRecognitionAsync();
             _meetingDetailWindow.ArchiveRequested += async (_, _) => await ArchiveOpenMeetingDetailAsync();
             _meetingDetailWindow.DeleteRequested += async (_, _) => await DeleteOpenMeetingDetailAsync();
         }
@@ -5043,8 +5110,14 @@ public partial class MainWindow : Window
                 summaryProviderConfiguration: summaryProviderConfiguration,
                 isGeneratingSummary: _isGeneratingMeetingSummary);
             var speakerRows = _meetingOutputCatalogService
-                .ListSpeakerLabels(row.Source)
-                .Select(label => new MeetingDetailSpeakerLabelEditorRow(label))
+                .ListSpeakerLabelDetails(row.Source)
+                .Select(label => new MeetingDetailSpeakerLabelEditorRow(
+                    label.DisplayName,
+                    BuildSpeakerNameProvenanceText(label),
+                    label.SuggestedDisplayName,
+                    label.SpeakerId,
+                    label.ProfileId,
+                    HasProfileSpeakerNameAttribution(label)))
                 .ToArray();
 
             _meetingDetailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
@@ -5433,7 +5506,9 @@ public partial class MainWindow : Window
 
         var labelMap = MainWindowInteractionLogic.BuildSpeakerLabelMap(
             rows.Select(labelRow => new SpeakerLabelDraft(labelRow.OriginalLabel, labelRow.EditedLabel)));
-        if (labelMap.Count == 0)
+        var sessionId = await TryReadSessionIdAsync(row.Source.ManifestPath, _lifetimeCts.Token);
+        var rejectedMatches = BuildRejectedSpeakerNameMatches(rows, sessionId);
+        if (labelMap.Count == 0 && rejectedMatches.Count == 0)
         {
             _meetingDetailWindow?.SetMaintenanceStatus("No speaker name changes are pending.");
             return;
@@ -5444,9 +5519,36 @@ public partial class MainWindow : Window
         _meetingDetailWindow?.SetMaintenanceStatus("Applying speaker name changes...");
         try
         {
-            await _meetingOutputCatalogService.RenameSpeakerLabelsAsync(row.Source, labelMap, _lifetimeCts.Token);
+            SpeakerNameRejectionResult? rejectionResult = null;
+            if (rejectedMatches.Count > 0)
+            {
+                rejectionResult = await _speakerNameCorrectionService.RejectMatchesAsync(
+                    row.Source,
+                    rejectedMatches,
+                    DateTimeOffset.UtcNow,
+                    _lifetimeCts.Token);
+            }
+
+            SpeakerNameCorrectionResult? correctionResult = null;
+            if (labelMap.Count > 0)
+            {
+                correctionResult = await _speakerNameCorrectionService.ApplyCorrectionsAsync(
+                    row.Source,
+                    labelMap,
+                    _liveConfig.Current.SpeakerNameLearningMode,
+                    DateTimeOffset.UtcNow,
+                    _lifetimeCts.Token);
+            }
+
             await RefreshMeetingListAsync(row.Source.Stem);
-            _meetingDetailWindow?.SetMaintenanceStatus($"Updated {labelMap.Count} speaker label(s).");
+            await RefreshVoiceProfileSettingsAsync();
+            var warning = correctionResult?.LearningWarning ?? rejectionResult?.Warning;
+            var rejectedText = rejectionResult is { RejectedCount: > 0 }
+                ? $" Rejected {rejectionResult.RejectedCount} suggestion(s)."
+                : string.Empty;
+            _meetingDetailWindow?.SetMaintenanceStatus(warning is null
+                ? $"Updated {labelMap.Count} speaker label(s).{rejectedText}"
+                : $"Updated {labelMap.Count} speaker label(s).{rejectedText} {warning}");
             AppendActivity($"Updated speaker labels for '{row.Title}'.");
         }
         catch (Exception exception)
@@ -5459,6 +5561,130 @@ public partial class MainWindow : Window
             _isApplyingSpeakerNames = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async Task RefreshOpenMeetingDetailSpeakerNamesAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus("Refreshing speaker-name suggestions...");
+        try
+        {
+            var result = await _speakerNameCorrectionService.RefreshSpeakerNameAttributionAsync(
+                row.Source,
+                _liveConfig.Current.SpeakerNameLearningMode,
+                BuildSpeakerNameRecognitionOptions(_liveConfig.Current),
+                DateTimeOffset.UtcNow,
+                _lifetimeCts.Token);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            RefreshOpenMeetingDetailWindow();
+            _meetingDetailWindow?.SetMaintenanceStatus(MainWindowInteractionLogic.BuildSpeakerNameRefreshStatusText(result));
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Failed to refresh speaker names: {exception.Message}");
+            AppendActivity($"Failed to refresh speaker names: {exception.Message}");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task UndoOpenMeetingDetailSpeakerNameRecognitionAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null)
+        {
+            return;
+        }
+
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus("Undoing voice-profile speaker names...");
+        try
+        {
+            var result = await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
+                row.Source,
+                DateTimeOffset.UtcNow,
+                _lifetimeCts.Token);
+            var statusText = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(result);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshVoiceProfileSettingsAsync();
+            RefreshOpenMeetingDetailWindow();
+            _meetingDetailWindow?.SetMaintenanceStatus(statusText);
+            AppendActivity($"Speaker-name recognition undo for '{row.Title}': {statusText}");
+        }
+        catch (Exception exception)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus($"Failed to undo speaker-name recognition: {exception.Message}");
+            AppendActivity($"Failed to undo speaker-name recognition: {exception.Message}");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task<string?> TryReadSessionIdAsync(string? manifestPath, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+            return manifest.SessionId;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<SpeakerNameRejectedMatch> BuildRejectedSpeakerNameMatches(
+        IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows,
+        string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return Array.Empty<SpeakerNameRejectedMatch>();
+        }
+
+        return rows
+            .Where(row =>
+                row.IsSuggestionRejected &&
+                !string.IsNullOrWhiteSpace(row.ProfileId) &&
+                !string.IsNullOrWhiteSpace(row.SpeakerId))
+            .Select(row => new SpeakerNameRejectedMatch(
+                row.ProfileId!,
+                sessionId,
+                row.SpeakerId!))
+            .ToArray();
+    }
+
+    private static SpeakerNameRecognitionOptions BuildSpeakerNameRecognitionOptions(AppConfig config)
+    {
+        return new SpeakerNameRecognitionOptions(
+            config.SpeakerNameAutoApplyConfidenceThreshold,
+            config.SpeakerNameSuggestionConfidenceThreshold,
+            config.SpeakerNameMatchMarginThreshold);
+    }
+
+    private static bool HasProfileSpeakerNameAttribution(SpeakerLabelInfo label)
+    {
+        return !string.IsNullOrWhiteSpace(label.ProfileId) &&
+            label.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile;
     }
 
     private async Task ArchiveOpenMeetingDetailAsync()
@@ -5766,7 +5992,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var labels = _meetingOutputCatalogService.ListSpeakerLabels(row.Source);
+        var labels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
         var labelRows = labels
             .Select(label => new SpeakerLabelEditorRow(label, UpdateMeetingActionState))
             .ToArray();
@@ -5997,6 +6223,40 @@ public partial class MainWindow : Window
         return $"{selectedMeetings[0].Title} merged";
     }
 
+    private static string BuildSpeakerNameProvenanceText(SpeakerLabelInfo label)
+    {
+        var confidenceText = label.Confidence is { } confidence
+            ? $" {confidence:P0}"
+            : string.Empty;
+        var reasonText = label.DecisionReason is { } reason && reason != SpeakerNameDecisionReason.None
+            ? $" - {FormatSpeakerNameDecisionReason(reason)}"
+            : string.Empty;
+
+        return label.NameSource switch
+        {
+            SpeakerNameSource.UserEdited => "User edited",
+            SpeakerNameSource.AutoAppliedVoiceProfile => $"Auto-applied{confidenceText}{reasonText}",
+            SpeakerNameSource.SuggestedVoiceProfile when !string.IsNullOrWhiteSpace(label.SuggestedDisplayName) =>
+                $"Suggested {label.SuggestedDisplayName}{confidenceText}{reasonText}",
+            SpeakerNameSource.SuggestedVoiceProfile => $"Suggested{confidenceText}{reasonText}",
+            _ => string.Empty,
+        };
+    }
+
+    private static string FormatSpeakerNameDecisionReason(SpeakerNameDecisionReason reason)
+    {
+        return reason switch
+        {
+            SpeakerNameDecisionReason.AutoAppliedHighConfidence => "high confidence",
+            SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold => "below auto-apply threshold",
+            SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin => "ambiguous profile margin",
+            SpeakerNameDecisionReason.SuggestedProfileNeedsMoreSamples => "needs more confirmed samples",
+            SpeakerNameDecisionReason.SuggestedSampleTooShort => "sample too short",
+            SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate => "same profile already matched another speaker",
+            _ => "review needed",
+        };
+    }
+
     private void LoadConfigEditorValues(AppConfig config)
     {
         ConfigAudioOutputDirTextBox.Text = config.AudioOutputDir;
@@ -6009,6 +6269,7 @@ public partial class MainWindow : Window
         ConfigAutoDetectThresholdTextBox.Text = config.AutoDetectAudioPeakThreshold.ToString("0.###", CultureInfo.InvariantCulture);
         ConfigMeetingStopTimeoutTextBox.Text = config.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigMicCaptureCheckBox.IsChecked = config.MicCaptureEnabled;
+        ConfigSpeakerNameLearningCheckBox.IsChecked = config.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn;
         ConfigLaunchOnLoginCheckBox.IsChecked = config.LaunchOnLoginEnabled;
         ConfigAutoDetectCheckBox.IsChecked = config.AutoDetectEnabled;
         ConfigCalendarTitleFallbackCheckBox.IsChecked = config.CalendarTitleFallbackEnabled;
@@ -6031,6 +6292,7 @@ public partial class MainWindow : Window
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
         UpdateTeamsIntegrationProbePresentation(config);
         _ = RefreshSummaryProviderSecretStatusAsync();
+        _ = RefreshVoiceProfileSettingsAsync();
     }
 
     private void InitializeConfigEditorSelectionControls()
@@ -6099,6 +6361,7 @@ public partial class MainWindow : Window
                  {
                      ConfigMicCaptureCheckBox,
                      ConfigDiarizationGpuAccelerationCheckBox,
+                     ConfigSpeakerNameLearningCheckBox,
                      ConfigLaunchOnLoginCheckBox,
                      ConfigAutoDetectCheckBox,
                      ConfigCalendarTitleFallbackCheckBox,
@@ -6195,6 +6458,108 @@ public partial class MainWindow : Window
         {
             ConfigSummaryProviderStatusTextBlock.Text = $"Summary credential status unavailable: {exception.Message}";
         }
+    }
+
+    private async Task RefreshVoiceProfileSettingsAsync()
+    {
+        try
+        {
+            var document = await _voiceProfileStore.LoadOrCreateAsync(_lifetimeCts.Token);
+            var rows = document.Profiles
+                .Select(profile => new VoiceProfileSettingsRow(profile))
+                .ToArray();
+            VoiceProfilesDataGrid.ItemsSource = rows;
+            ConfigSpeakerNameLearningStatusTextBlock.Text = rows.Length == 0
+                ? "No local voice profiles have been taught yet."
+                : $"Stored {rows.Length} local voice profile(s). Voice embeddings stay on this PC.";
+            UpdateVoiceProfileActionState();
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Ignore shutdown.
+        }
+        catch (Exception exception)
+        {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Voice profile status unavailable: {exception.Message}";
+            UpdateVoiceProfileActionState();
+        }
+    }
+
+    private async void DisableVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileSettingsRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            await _voiceProfileStore.DisableProfileAsync(row.ProfileId, _lifetimeCts.Token);
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Disabled voice profile for {row.DisplayName}.";
+            await RefreshVoiceProfileSettingsAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Disable profile failed: {exception.Message}";
+        }
+    }
+
+    private async void DeleteVoiceProfileButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (VoiceProfilesDataGrid.SelectedItem is not VoiceProfileSettingsRow row)
+        {
+            return;
+        }
+
+        try
+        {
+            await _voiceProfileStore.DeleteProfileAsync(row.ProfileId, _lifetimeCts.Token);
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Deleted voice profile for {row.DisplayName}.";
+            await RefreshVoiceProfileSettingsAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Delete profile failed: {exception.Message}";
+        }
+    }
+
+    private async void DeleteAllVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var confirmed = MessageBox.Show(
+            this,
+            "Delete all local speaker-name voice profiles?",
+            AppBranding.ProductName,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await _voiceProfileStore.DeleteAllAsync(_lifetimeCts.Token);
+            ConfigSpeakerNameLearningStatusTextBlock.Text = "Deleted all local voice profiles.";
+            await RefreshVoiceProfileSettingsAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = $"Delete all profiles failed: {exception.Message}";
+        }
+    }
+
+    private void VoiceProfilesDataGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateVoiceProfileActionState();
+    }
+
+    private void UpdateVoiceProfileActionState()
+    {
+        var hasSelectedProfile = VoiceProfilesDataGrid.SelectedItem is VoiceProfileSettingsRow;
+        DisableVoiceProfileButton.IsEnabled = hasSelectedProfile;
+        DeleteVoiceProfileButton.IsEnabled = hasSelectedProfile;
+        DeleteAllVoiceProfilesButton.IsEnabled =
+            VoiceProfilesDataGrid.ItemsSource is IEnumerable<VoiceProfileSettingsRow> rows && rows.Any();
     }
 
     private void ConfigSummaryProviderPasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
@@ -6477,6 +6842,9 @@ public partial class MainWindow : Window
             ConfigAutoDetectThresholdTextBox.Text,
             ConfigMeetingStopTimeoutTextBox.Text,
             ConfigMicCaptureCheckBox.IsChecked == true,
+            ConfigSpeakerNameLearningCheckBox.IsChecked == true
+                ? SpeakerNameLearningMode.LocalAutoLearn
+                : SpeakerNameLearningMode.Disabled,
             ConfigLaunchOnLoginCheckBox.IsChecked == true,
             ConfigAutoDetectCheckBox.IsChecked == true,
             ConfigCalendarTitleFallbackCheckBox.IsChecked == true,
@@ -6517,6 +6885,7 @@ public partial class MainWindow : Window
         ConfigAutoDetectThresholdTextBox.Text = snapshot.AutoDetectThresholdText;
         ConfigMeetingStopTimeoutTextBox.Text = snapshot.MeetingStopTimeoutText;
         ConfigMicCaptureCheckBox.IsChecked = snapshot.MicCaptureEnabled;
+        ConfigSpeakerNameLearningCheckBox.IsChecked = snapshot.SpeakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn;
         ConfigLaunchOnLoginCheckBox.IsChecked = snapshot.LaunchOnLoginEnabled;
         ConfigAutoDetectCheckBox.IsChecked = snapshot.AutoDetectEnabled;
         ConfigCalendarTitleFallbackCheckBox.IsChecked = snapshot.CalendarTitleFallbackEnabled;
@@ -8618,6 +8987,15 @@ public partial class MainWindow : Window
                     await QueueSpeakerLabelGenerationAsync(speakerLabelMeeting, cancellationToken);
                     break;
 
+                case MeetingCleanupAction.RepairSpeakerLabels:
+                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var repairSpeakerLabelMeeting))
+                    {
+                        continue;
+                    }
+
+                    await QueueSpeakerLabelRepairAsync(repairSpeakerLabelMeeting, cancellationToken);
+                    break;
+
                 case MeetingCleanupAction.Split:
                     if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var splitMeeting) ||
                         recommendation.SuggestedSplitPoint is not { } suggestedSplitPoint)
@@ -10302,7 +10680,7 @@ public partial class MainWindow : Window
             ?? _diarizationAssetCatalogService.InspectInstalledAssets(_liveConfig.Current.DiarizationAssetPath).IsReady;
         return diarizationReady &&
                row.CanRegenerateTranscript &&
-               !row.Source.HasSpeakerLabels;
+               (!row.Source.HasSpeakerLabels || row.Source.HasSuspiciousSpeakerLabels);
     }
 
     private bool CanChangeRushProcessing(MeetingListRow row)
@@ -11298,6 +11676,7 @@ public partial class MainWindow : Window
                 MeetingCleanupAction.Rename => "Rename",
                 MeetingCleanupAction.RegenerateTranscript => "Retry Transcript",
                 MeetingCleanupAction.GenerateSpeakerLabels => "Add Speaker Labels",
+                MeetingCleanupAction.RepairSpeakerLabels => "Repair Speaker Labels",
                 _ => "Review",
             };
             ConfidenceLabel = source.Confidence.ToString();
@@ -11375,19 +11754,46 @@ public partial class MainWindow : Window
             (Source.FileSizeBytes.HasValue ? $" | {FormatBytes(Source.FileSizeBytes.Value)}" : string.Empty);
     }
 
+    private sealed class VoiceProfileSettingsRow
+    {
+        public VoiceProfileSettingsRow(VoiceProfile profile)
+        {
+            ProfileId = profile.ProfileId;
+            DisplayName = profile.DisplayName;
+            SampleCount = profile.SampleCount;
+            Status = profile.Status.ToString();
+            LastMatchedText = profile.LastMatchedAtUtc is { } lastMatched
+                ? lastMatched.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
+                : "Never";
+        }
+
+        public string ProfileId { get; }
+
+        public string DisplayName { get; }
+
+        public int SampleCount { get; }
+
+        public string Status { get; }
+
+        public string LastMatchedText { get; }
+    }
+
     private sealed class SpeakerLabelEditorRow
     {
         private readonly Action _onEditedLabelChanged;
         private string _editedLabel;
 
-        public SpeakerLabelEditorRow(string originalLabel, Action onEditedLabelChanged)
+        public SpeakerLabelEditorRow(SpeakerLabelInfo label, Action onEditedLabelChanged)
         {
-            OriginalLabel = originalLabel;
-            _editedLabel = originalLabel;
+            OriginalLabel = label.DisplayName;
+            Provenance = BuildSpeakerNameProvenanceText(label);
+            _editedLabel = label.DisplayName;
             _onEditedLabelChanged = onEditedLabelChanged;
         }
 
         public string OriginalLabel { get; }
+
+        public string Provenance { get; }
 
         public string EditedLabel
         {

@@ -217,6 +217,42 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Returns_RegenerateTranscript_When_Published_Transcript_Is_Sparse()
+    {
+        var stem = "2026-05-13_185954_teams_data-role-connect";
+        var audioPath = Path.Combine(_root, $"{stem}.wav");
+        var jsonPath = Path.Combine(_root, $"{stem}.json");
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromMinutes(32) + TimeSpan.FromSeconds(37));
+        await File.WriteAllTextAsync(
+            jsonPath,
+            """
+            {
+              "segments": [
+                { "start": "00:00:03", "end": "00:00:08", "text": "Hello." },
+                { "start": "00:12:20", "end": "00:12:25", "text": "Yes, thanks." },
+                { "start": "00:29:01", "end": "00:29:04", "text": "Okay." }
+              ]
+            }
+            """);
+
+        var recommendation = AnalyzeSingle(
+            CreateInspection(
+                stem,
+                "Data Role: Connect",
+                DateTimeOffset.Parse("2026-05-13T18:59:54Z"),
+                MeetingPlatform.Teams,
+                TimeSpan.FromMinutes(32) + TimeSpan.FromSeconds(37),
+                audioPath: audioPath,
+                markdownPath: null,
+                jsonPath: jsonPath));
+
+        Assert.Equal(MeetingCleanupAction.RegenerateTranscript, recommendation.Action);
+        Assert.Equal(MeetingCleanupConfidence.Medium, recommendation.Confidence);
+        Assert.False(recommendation.CanApplyAutomatically);
+        Assert.Equal("regenerate-sparse-transcript", recommendation.ReasonCode);
+    }
+
+    [Fact]
     public async Task Analyze_Returns_GenerateSpeakerLabels_When_Diarization_Is_Ready_And_Speaker_Labels_Are_Missing()
     {
         var stem = "2026-03-20_214258_teams_quarterly-review";
@@ -239,6 +275,63 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         Assert.Equal(MeetingCleanupAction.GenerateSpeakerLabels, recommendation.Action);
         Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
         Assert.True(recommendation.CanApplyAutomatically);
+    }
+
+    [Fact]
+    public async Task Analyze_Returns_RepairSpeakerLabels_When_Diarization_Is_Ready_And_Existing_Labels_Are_Suspicious()
+    {
+        var stem = "2026-05-21_220300_teams_google-cloud-vmo-daily-touchpoints";
+        var audioPath = Path.Combine(_root, $"{stem}.wav");
+        var markdownPath = Path.Combine(_root, $"{stem}.md");
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12));
+        await File.WriteAllTextAsync(markdownPath, "# Google Cloud VMO - daily touchpoints");
+
+        var recommendation = AnalyzeSingle(
+            CreateInspection(
+                stem,
+                "Google Cloud VMO - daily touchpoints",
+                DateTimeOffset.Parse("2026-05-21T22:03:00Z"),
+                MeetingPlatform.Teams,
+                TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12),
+                audioPath: audioPath,
+                markdownPath: markdownPath,
+                diarizationReady: true,
+                hasSpeakerLabels: true,
+                hasSuspiciousSpeakerLabels: true));
+
+        Assert.Equal(MeetingCleanupAction.RepairSpeakerLabels, recommendation.Action);
+        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
+        Assert.True(recommendation.CanApplyAutomatically);
+        Assert.Equal("repair-speaker-labels", recommendation.ReasonCode);
+    }
+
+    [Fact]
+    public async Task Analyze_Does_Not_Return_RepairSpeakerLabels_When_Repair_Is_Already_Queued()
+    {
+        var stem = "2026-05-21_220300_teams_google-cloud-vmo-daily-touchpoints";
+        var audioPath = Path.Combine(_root, $"{stem}.wav");
+        var markdownPath = Path.Combine(_root, $"{stem}.md");
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12));
+        await File.WriteAllTextAsync(markdownPath, "# Google Cloud VMO - daily touchpoints");
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    stem,
+                    "Google Cloud VMO - daily touchpoints",
+                    DateTimeOffset.Parse("2026-05-21T22:03:00Z"),
+                    MeetingPlatform.Teams,
+                    TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12),
+                    audioPath: audioPath,
+                    markdownPath: markdownPath,
+                    manifestState: SessionState.Queued,
+                    diarizationReady: true,
+                    hasSpeakerLabels: true,
+                    hasSuspiciousSpeakerLabels: true),
+            });
+
+        Assert.Empty(recommendations);
     }
 
     [Fact]
@@ -333,11 +426,14 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         TimeSpan? duration,
         string? audioPath,
         string? markdownPath,
+        string? jsonPath = null,
         MeetingSessionManifest? manifest = null,
         string? suggestedTitle = null,
         string? suggestedTitleSource = null,
+        SessionState? manifestState = null,
         bool diarizationReady = false,
-        bool hasSpeakerLabels = false)
+        bool hasSpeakerLabels = false,
+        bool hasSuspiciousSpeakerLabels = false)
     {
         return new MeetingInspectionRecord(
             new MeetingOutputRecord(
@@ -348,13 +444,14 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                 duration,
                 audioPath,
                 markdownPath,
+                jsonPath,
                 null,
                 null,
-                null,
-                manifest?.State,
+                manifestState ?? manifest?.State,
                 Array.Empty<MeetingAttendee>(),
                 hasSpeakerLabels,
-                null),
+                null,
+                HasSuspiciousSpeakerLabels: hasSuspiciousSpeakerLabels),
             manifest,
             suggestedTitle,
             suggestedTitleSource,

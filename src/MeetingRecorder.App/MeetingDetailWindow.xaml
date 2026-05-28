@@ -398,14 +398,58 @@
                                         <DataGridTextColumn Header="Display Name"
                                                             Binding="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                             Width="1.2*" />
+                                        <DataGridTextColumn Header="Voice Profile"
+                                                            Binding="{Binding Provenance, Mode=OneWay}"
+                                                            IsReadOnly="True"
+                                                            Width="1.2*" />
+                                        <DataGridTextColumn Header="Suggestion"
+                                                            Binding="{Binding SuggestionText, Mode=OneWay}"
+                                                            IsReadOnly="True"
+                                                            Width="1.1*" />
+                                        <DataGridTemplateColumn Header="Review"
+                                                                Width="150">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Button MinWidth="48"
+                                                                Height="26"
+                                                                Margin="0,0,6,0"
+                                                                Click="UseSpeakerSuggestionButton_OnClick"
+                                                                IsEnabled="{Binding HasSuggestion}"
+                                                                Content="Use" />
+                                                        <Button MinWidth="58"
+                                                                Height="26"
+                                                                Click="RejectSpeakerSuggestionButton_OnClick"
+                                                                IsEnabled="{Binding HasSuggestion}"
+                                                                Content="Reject" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                     </DataGrid.Columns>
                                 </DataGrid>
-                                <Button x:Name="ApplySpeakerNamesButton"
-                                        Margin="0,10,0,0"
-                                        HorizontalAlignment="Left"
-                                        Style="{StaticResource SecondaryActionButtonStyle}"
-                                        Click="ApplySpeakerNamesButton_OnClick"
-                                        Content="Apply Speaker Names" />
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="ApplySpeakerNamesButton"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="ApplySpeakerNamesButton_OnClick"
+                                            Content="Apply Speaker Names" />
+                                    <Button x:Name="RefreshSpeakerNamesButton"
+                                            Margin="10,0,0,0"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="RefreshSpeakerNamesButton_OnClick"
+                                            Content="Refresh Suggestions" />
+                                    <Button x:Name="UndoSpeakerNameRecognitionButton"
+                                            Margin="10,0,0,0"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            Click="UndoSpeakerNameRecognitionButton_OnClick"
+                                            Content="Undo Name Recognition" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,8,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}"
+                                           Text="Refresh Suggestions checks local voice profiles from stored speaker samples only. Use Repair Speaker Labels above for suspicious speaker-label splits." />
 
                                 <TextBlock x:Name="MaintenanceStatusTextBlock"
                                            Margin="0,12,0,0"

@@ -339,6 +339,27 @@ public sealed class SessionManifestStoreTests
     }
 
     [Fact]
+    public async Task FindPendingManifestPathsAsync_Skips_Unreadable_Manifests()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var validManifest = await store.CreateAsync(
+            workDir,
+            MeetingPlatform.Teams,
+            "Valid queued",
+            Array.Empty<DetectionSignal>());
+        var validManifestPath = Path.Combine(workDir, validManifest.SessionId, "manifest.json");
+        var badManifestDir = Path.Combine(workDir, "empty-manifest");
+        Directory.CreateDirectory(badManifestDir);
+        await File.WriteAllTextAsync(Path.Combine(badManifestDir, "manifest.json"), string.Empty);
+
+        var pending = await store.FindPendingManifestPathsAsync(workDir);
+
+        Assert.Equal([validManifestPath], pending);
+    }
+
+    [Fact]
     public void GetPendingResumePriority_Prefers_Already_Transcribed_Work_That_Only_Needs_Publish_Completion()
     {
         var now = DateTimeOffset.UtcNow;

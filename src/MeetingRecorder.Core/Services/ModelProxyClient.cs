@@ -66,13 +66,16 @@ public sealed record SummaryChatProviderOptions(
         string? backend = null,
         bool webSearchEnabled = false)
     {
+        var normalizedBackend = string.IsNullOrWhiteSpace(backend)
+            ? webSearchEnabled ? null : "app-server"
+            : backend.Trim();
         return new SummaryChatProviderOptions(
             SummaryChatProviderKind.ModelProxy,
             "ModelProxy",
             baseUrl,
             apiKey)
         {
-            ModelProxyBackend = string.IsNullOrWhiteSpace(backend) ? null : backend.Trim(),
+            ModelProxyBackend = normalizedBackend,
             ModelProxyWebSearchEnabled = webSearchEnabled,
         };
     }
@@ -154,6 +157,13 @@ public interface ISummaryChatClient
     Task<SummaryChatResponse> CompleteAsync(
         SummaryChatProviderOptions providerOptions,
         SummaryChatRequest request,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IModelProxyModelCatalogClient
+{
+    Task<ModelProxyModelCatalog> GetModelsAsync(
+        SummaryChatProviderOptions providerOptions,
         CancellationToken cancellationToken = default);
 }
 
@@ -308,6 +318,8 @@ public sealed class SummaryChatClient : ISummaryChatClient
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan MinimumModelProxyWebSearchTimeout = TimeSpan.FromSeconds(60);
+    private const int MaxBackendBusyAttempts = 3;
+    private static readonly TimeSpan BackendBusyRetryDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly HttpClient _httpClient;
 
@@ -328,7 +340,68 @@ public sealed class SummaryChatClient : ISummaryChatClient
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(effectiveTimeout);
         var endpoint = new Uri(new Uri(NormalizeBaseUrl(providerOptions.BaseUrl)), "chat/completions");
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        var payload = new SummaryChatCompletionPayload(
+            request.Model.Trim(),
+            request.Messages.Select(message => new SummaryChatCompletionMessagePayload(
+                ConvertRole(message.Role),
+                message.Content)).ToArray())
+        {
+            Stream = request.Stream,
+        };
+        var json = JsonSerializer.Serialize(payload, SerializerOptions);
+
+        try
+        {
+            var completionOption = request.Stream
+                ? HttpCompletionOption.ResponseHeadersRead
+                : HttpCompletionOption.ResponseContentRead;
+            for (var attempt = 1; attempt <= MaxBackendBusyAttempts; attempt++)
+            {
+                using var httpRequest = BuildChatCompletionRequest(providerOptions, endpoint, json);
+                using var response = await _httpClient.SendAsync(httpRequest, completionOption, timeoutCts.Token);
+                var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var modelProxyError = TryExtractModelProxyStructuredError(responseBody);
+                    if (ShouldRetryBackendBusy(providerOptions, modelProxyError, attempt))
+                    {
+                        await Task.Delay(BackendBusyRetryDelay, timeoutCts.Token);
+                        continue;
+                    }
+
+                    throw new HttpRequestException(BuildHttpFailureMessage(
+                        providerOptions,
+                        response,
+                        responseBody,
+                        modelProxyError,
+                        IsBackendBusy(modelProxyError) && providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy));
+                }
+
+                var content = request.Stream
+                    ? ExtractStreamingAssistantContent(providerOptions.ProviderName, responseBody)
+                    : ExtractAssistantContent(providerOptions.ProviderName, responseBody);
+                return new SummaryChatResponse(content, providerOptions.ProviderName, request.Model.Trim())
+                {
+                    ProviderKind = providerOptions.ProviderKind,
+                    ModelProxyRouting = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers),
+                };
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"{providerOptions.ProviderName} summary request timed out after {effectiveTimeout.TotalSeconds:0} seconds.");
+        }
+
+        throw new InvalidOperationException($"{providerOptions.ProviderName} summary request did not complete.");
+    }
+
+    private static HttpRequestMessage BuildChatCompletionRequest(
+        SummaryChatProviderOptions providerOptions,
+        Uri endpoint,
+        string json)
+    {
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerOptions.ApiKey.Trim());
         if (providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy)
         {
@@ -341,43 +414,18 @@ public sealed class SummaryChatClient : ISummaryChatClient
             }
         }
 
-        var payload = new SummaryChatCompletionPayload(
-            request.Model.Trim(),
-            request.Messages.Select(message => new SummaryChatCompletionMessagePayload(
-                ConvertRole(message.Role),
-                message.Content)).ToArray())
-        {
-            Stream = request.Stream,
-        };
-        var json = JsonSerializer.Serialize(payload, SerializerOptions);
         httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        return httpRequest;
+    }
 
-        try
-        {
-            var completionOption = request.Stream
-                ? HttpCompletionOption.ResponseHeadersRead
-                : HttpCompletionOption.ResponseContentRead;
-            using var response = await _httpClient.SendAsync(httpRequest, completionOption, timeoutCts.Token);
-            var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException(BuildHttpFailureMessage(providerOptions, response, responseBody));
-            }
-
-            var content = request.Stream
-                ? ExtractStreamingAssistantContent(providerOptions.ProviderName, responseBody)
-                : ExtractAssistantContent(providerOptions.ProviderName, responseBody);
-            return new SummaryChatResponse(content, providerOptions.ProviderName, request.Model.Trim())
-            {
-                ProviderKind = providerOptions.ProviderKind,
-                ModelProxyRouting = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers),
-            };
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                $"{providerOptions.ProviderName} summary request timed out after {effectiveTimeout.TotalSeconds:0} seconds.");
-        }
+    private static bool ShouldRetryBackendBusy(
+        SummaryChatProviderOptions providerOptions,
+        ModelProxyStructuredError? modelProxyError,
+        int attempt)
+    {
+        return providerOptions.ProviderKind == SummaryChatProviderKind.ModelProxy &&
+               IsBackendBusy(modelProxyError) &&
+               attempt < MaxBackendBusyAttempts;
     }
 
     private static TimeSpan GetEffectiveTimeout(
@@ -545,10 +593,16 @@ public sealed class SummaryChatClient : ISummaryChatClient
         string providerName,
         string errorPayload)
     {
+        var modelProxyError = TryExtractModelProxyStructuredError(errorPayload);
+        var classificationMessage = BuildStructuredErrorClassificationMessage(
+            SummaryChatProviderKind.ModelProxy,
+            modelProxyError,
+            backendBusyRetriesExhausted: false,
+            webSearchEnabled: modelProxyError?.WebSearch == true);
         var safeDetails = TryExtractSafeErrorDetails(errorPayload);
-        return string.IsNullOrWhiteSpace(safeDetails)
-            ? $"{providerName} streaming request failed."
-            : $"{providerName} streaming request failed. {safeDetails}";
+        var parts = new[] { $"{providerName} streaming request failed.", classificationMessage, safeDetails }
+            .Where(part => !string.IsNullOrWhiteSpace(part));
+        return string.Join(" ", parts);
     }
 
     private static string ExtractStreamingChunkContent(string providerName, string json)
@@ -591,12 +645,20 @@ public sealed class SummaryChatClient : ISummaryChatClient
     private static string BuildHttpFailureMessage(
         SummaryChatProviderOptions providerOptions,
         HttpResponseMessage response,
-        string responseBody)
+        string responseBody,
+        ModelProxyStructuredError? modelProxyError = null,
+        bool backendBusyRetriesExhausted = false)
     {
         var reason = string.IsNullOrWhiteSpace(response.ReasonPhrase)
             ? response.StatusCode.ToString()
             : response.ReasonPhrase;
         var message = $"{providerOptions.ProviderName} returned HTTP {(int)response.StatusCode} {reason}.";
+        modelProxyError ??= TryExtractModelProxyStructuredError(responseBody);
+        var classificationMessage = BuildStructuredErrorClassificationMessage(
+            providerOptions.ProviderKind,
+            modelProxyError,
+            backendBusyRetriesExhausted,
+            providerOptions.ModelProxyWebSearchEnabled);
         var safeDetails = TryExtractSafeErrorDetails(responseBody);
         var routingInfo = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers);
         var routingDetails = BuildSafeRoutingDetails(routingInfo);
@@ -604,12 +666,47 @@ public sealed class SummaryChatClient : ISummaryChatClient
         var parts = new[]
             {
                 message,
+                classificationMessage,
                 capabilityMessage,
                 routingDetails,
                 safeDetails,
             }
             .Where(part => !string.IsNullOrWhiteSpace(part));
         return string.Join(" ", parts);
+    }
+
+    private static string BuildStructuredErrorClassificationMessage(
+        SummaryChatProviderKind providerKind,
+        ModelProxyStructuredError? modelProxyError,
+        bool backendBusyRetriesExhausted,
+        bool webSearchEnabled)
+    {
+        if (providerKind != SummaryChatProviderKind.ModelProxy || modelProxyError is null)
+        {
+            return string.Empty;
+        }
+
+        if (IsBackendBusy(modelProxyError))
+        {
+            return backendBusyRetriesExhausted
+                ? "ModelProxy app-server is temporarily saturated after retry attempts; retry shortly."
+                : "ModelProxy app-server is temporarily saturated; retry shortly.";
+        }
+
+        if (HasErrorKind(modelProxyError, "cli_timeout"))
+        {
+            return webSearchEnabled || modelProxyError.WebSearch == true
+                ? "ModelProxy web-search request timed out; narrow the query or retry without web search."
+                : "ModelProxy request timed out inside the selected backend; retry shortly or simplify the request.";
+        }
+
+        if (HasErrorKind(modelProxyError, "unsupported_capability") ||
+            ErrorKindContains(modelProxyError, "capability"))
+        {
+            return "ModelProxy rejected an unsupported capability; adjust the request shape or disable the unsupported feature.";
+        }
+
+        return string.Empty;
     }
 
     private static string BuildSafeRoutingDetails(ModelProxyRoutingInfo? routingInfo)
@@ -684,6 +781,102 @@ public sealed class SummaryChatClient : ISummaryChatClient
         }
 
         return string.Empty;
+    }
+
+    private static ModelProxyStructuredError? TryExtractModelProxyStructuredError(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+            if (root.TryGetProperty("detail", out var detail) &&
+                detail.ValueKind == JsonValueKind.Object)
+            {
+                return BuildModelProxyStructuredError(detail);
+            }
+
+            if (root.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.Object)
+            {
+                return BuildModelProxyStructuredError(error);
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static ModelProxyStructuredError BuildModelProxyStructuredError(JsonElement error)
+    {
+        return new ModelProxyStructuredError(
+            GetSafeJsonString(error, "type"),
+            GetSafeJsonString(error, "category"),
+            GetSafeJsonString(error, "code"),
+            GetSafeJsonBoolean(error, "web_search"));
+    }
+
+    private static string? GetSafeJsonString(JsonElement source, string propertyName)
+    {
+        return source.TryGetProperty(propertyName, out var property) &&
+               property.ValueKind == JsonValueKind.String &&
+               !string.IsNullOrWhiteSpace(property.GetString())
+            ? property.GetString()!.Trim()
+            : null;
+    }
+
+    private static bool? GetSafeJsonBoolean(JsonElement source, string propertyName)
+    {
+        if (!source.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.True)
+        {
+            return true;
+        }
+
+        if (property.ValueKind == JsonValueKind.False)
+        {
+            return false;
+        }
+
+        return property.ValueKind == JsonValueKind.String &&
+               bool.TryParse(property.GetString(), out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static bool IsBackendBusy(ModelProxyStructuredError? modelProxyError)
+    {
+        return HasErrorKind(modelProxyError, "backend_busy");
+    }
+
+    private static bool HasErrorKind(ModelProxyStructuredError? modelProxyError, string expectedKind)
+    {
+        return string.Equals(modelProxyError?.Type, expectedKind, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(modelProxyError?.Category, expectedKind, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(modelProxyError?.Code, expectedKind, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ErrorKindContains(ModelProxyStructuredError modelProxyError, string text)
+    {
+        return Contains(modelProxyError.Type) ||
+               Contains(modelProxyError.Category) ||
+               Contains(modelProxyError.Code);
+
+        bool Contains(string? value)
+        {
+            return value?.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
     }
 
     private static string BuildSafeErrorDetails(JsonElement error)
@@ -808,6 +1001,12 @@ public sealed class SummaryChatClient : ISummaryChatClient
     private sealed record SummaryChatCompletionMessagePayload(
         [property: JsonPropertyName("role")] string Role,
         [property: JsonPropertyName("content")] string Content);
+
+    private sealed record ModelProxyStructuredError(
+        string? Type,
+        string? Category,
+        string? Code,
+        bool? WebSearch);
 }
 
 public sealed class SummaryProviderValidationService
@@ -913,7 +1112,7 @@ public sealed record SummaryProviderValidationResult(
     }
 }
 
-public sealed class ModelProxyClient
+public sealed class ModelProxyClient : IModelProxyModelCatalogClient
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -930,11 +1129,25 @@ public sealed class ModelProxyClient
 
     public async Task<ModelProxyModelCatalog> GetModelsAsync(CancellationToken cancellationToken = default)
     {
+        var providerOptions = SummaryChatProviderOptions.ForModelProxy(
+            _options.ApiKey,
+            _options.BaseUrl);
+        return await GetModelsAsync(providerOptions, cancellationToken);
+    }
+
+    public async Task<ModelProxyModelCatalog> GetModelsAsync(
+        SummaryChatProviderOptions providerOptions,
+        CancellationToken cancellationToken = default)
+    {
+        if (providerOptions.ProviderKind != SummaryChatProviderKind.ModelProxy)
+        {
+            throw new ArgumentException("ModelProxy provider options are required.", nameof(providerOptions));
+        }
+
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
-            new Uri(new Uri(NormalizeBaseUrl(_options.BaseUrl)), "models"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey.Trim());
-
+            new Uri(new Uri(NormalizeBaseUrl(providerOptions.BaseUrl)), "models"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerOptions.ApiKey.Trim());
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)

@@ -21,6 +21,32 @@ public sealed class TranscriptRendererTests
     }
 
     [Fact]
+    public void RenderMarkdown_Coalesces_Consecutive_Segments_For_The_Same_Speaker()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest();
+
+        var markdown = renderer.RenderMarkdown(
+            manifest,
+            [
+                new TranscriptSegment(TimeSpan.FromSeconds(659), TimeSpan.FromSeconds(661), "Speaker 1", "if we were presenting this,"),
+                new TranscriptSegment(TimeSpan.FromSeconds(661), TimeSpan.FromSeconds(662), "Speaker 1", "would we,"),
+                new TranscriptSegment(TimeSpan.FromSeconds(662), TimeSpan.FromSeconds(668), "Speaker 1", "the way I was thinking about it was just creating a script."),
+                new TranscriptSegment(TimeSpan.FromSeconds(669), TimeSpan.FromSeconds(672), "Speaker 2", "Yes, that makes sense."),
+            ]);
+
+        Assert.Contains(
+            "[00:10:59 - 00:11:08] **Speaker 1:** if we were presenting this, would we, the way I was thinking about it was just creating a script.",
+            markdown,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "[00:11:09 - 00:11:12] **Speaker 2:** Yes, that makes sense.",
+            markdown,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("[00:11:01 - 00:11:02]", markdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RenderJson_Preserves_Speaker_Labels_And_Status_Metadata()
     {
         var renderer = new TranscriptRenderer();
@@ -171,6 +197,41 @@ public sealed class TranscriptRendererTests
         Assert.Equal((int)StageExecutionState.Succeeded, document["summarizationStatus"]?["State"]?.GetValue<int>());
         Assert.Equal("The team aligned on launch readiness.", document["summary"]?["overview"]?.GetValue<string>());
         Assert.Equal("OpenAI", document["summary"]?["provider"]?["providerName"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void RenderJson_Preserves_ModelProxy_Routing_Metadata()
+    {
+        var renderer = new TranscriptRenderer();
+        var manifest = CreateManifest() with
+        {
+            SummarizationStatus = new ProcessingStageStatus(
+                "summarization",
+                StageExecutionState.Succeeded,
+                DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                "Summary generated."),
+            Summary = CreateSummary() with
+            {
+                Provider = new MeetingSummaryProviderInfo(
+                    SummaryChatProviderKind.ModelProxy,
+                    "ModelProxy",
+                    "gpt-5.4-mini",
+                    false,
+                    new ModelProxyRoutingInfo("mp-summary", "app-server", "app-server", null, false, null)),
+            },
+        };
+
+        var json = renderer.RenderJson(
+            manifest,
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), null, null, "Hello team")]);
+        var document = JsonNode.Parse(json)?.AsObject()
+            ?? throw new InvalidOperationException("Transcript JSON was not an object.");
+
+        var routing = document["summary"]?["provider"]?["modelProxyRouting"];
+        Assert.Equal("mp-summary", routing?["requestId"]?.GetValue<string>());
+        Assert.Equal("app-server", routing?["requestedBackend"]?.GetValue<string>());
+        Assert.Equal("app-server", routing?["effectiveBackend"]?.GetValue<string>());
+        Assert.False(routing?["appServerWebSearchSupported"]?.GetValue<bool>());
     }
 
     [Fact]

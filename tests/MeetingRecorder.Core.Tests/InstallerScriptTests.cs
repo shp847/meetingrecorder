@@ -5,6 +5,27 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class InstallerScriptTests
 {
     [Fact]
+    public void TestModelProxyScript_Uses_AppServer_NoSearch_Parallel_Smoke_Without_Printing_Response_Text()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Test-ModelProxy.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected ModelProxy smoke script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("\"X-ModelProxy-Backend\", \"app-server\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("\"X-ModelProxy-Web-Search\", \"false\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$parallelRequestCount = 5", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("backend_busy", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("retryable", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("synthetic smoke response: $content", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("synthetic smoke response matched expected marker", scriptContents, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void InstallMeetingRecorderScript_Delegates_Bundle_Install_Work_To_AppPlatformDeploymentCli()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -146,7 +167,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void DeployLocalScript_Is_Disabled_To_Force_Msi_And_InApp_Update_Testing()
+    public void DeployLocalScript_Delegates_Managed_Local_Deployment_To_AppPlatformDeploymentCli()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -157,10 +178,12 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains("Local repo deployments are disabled", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("in-app update path", scriptContents, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"install-bundle\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("AppPlatform.Deployment.Cli.exe", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("\"install-bundle\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("\"--install-channel\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("\"DirectCli\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("[string]$InstallRoot = \"\"", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("Local repo deployments are disabled", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -878,7 +901,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void DeployLocalCommandWrapper_Runs_The_Disabled_Local_Deploy_Script_With_ExecutionPolicy_Bypass()
+    public void DeployLocalCommandWrapper_Runs_The_Local_Deploy_Script_With_ExecutionPolicy_Bypass()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -894,7 +917,7 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
-    public void DeployLocalScript_Explains_Which_Paths_To_Use_Instead()
+    public void DeployLocalScript_Can_Build_The_Portable_Bundle_Before_Delegating()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -905,13 +928,15 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.Contains("Use MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("use the in-app update path", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("publishing validation", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("[switch]$BuildFirst", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Publish-Portable.ps1", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$publishArguments = @", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("OutputRoot = (ConvertTo-RepoRelativePath -ResolvedPath $publishOutputRoot)", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("FrameworkDependent", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void DeployLocalScript_Removes_The_Previous_Local_Deploy_Implementation()
+    public void DeployLocalScript_Does_Not_Restore_The_Previous_Direct_Copy_And_Shortcut_Implementation()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -922,9 +947,10 @@ public sealed class InstallerScriptTests
 
         var scriptContents = File.ReadAllText(scriptPath);
 
-        Assert.DoesNotContain("Get-FileHash", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("WScript.Shell", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CreateShortcut($ShortcutPath)", scriptContents, StringComparison.Ordinal);
         Assert.DoesNotContain("Get-Process -Name \"MeetingRecorder.App\"", scriptContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("$process.ExecutablePath", scriptContents, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -42,7 +42,7 @@ public sealed class ModelProxyClientTests
         Assert.Equal("http://127.0.0.1:8645/v1/chat/completions", handler.Request.RequestUri!.ToString());
         Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
         Assert.Equal("sk-modelproxy", handler.Request.Headers.Authorization.Parameter);
-        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Backend"));
+        Assert.Equal("app-server", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
         Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
         Assert.Contains("\"model\":\"gpt-5.4-mini\"", handler.Body, StringComparison.Ordinal);
@@ -515,13 +515,99 @@ public sealed class ModelProxyClientTests
         Assert.Equal(SummaryChatProviderKind.ModelProxy, result.ProviderKind);
         Assert.NotNull(handler.Request);
         Assert.Equal("sk-modelproxy", handler.Request!.Headers.Authorization!.Parameter);
-        Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Backend"));
+        Assert.Equal("app-server", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
         Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Contains("summary-provider-ok", handler.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("transcript", handler.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("attendee", handler.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("client", handler.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("meeting", handler.Body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Retries_BackendBusy_Then_Succeeds()
+    {
+        using var handler = new QueueingHandler(
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                ReasonPhrase = "Service Unavailable",
+                Content = new StringContent(
+                    """
+                    {
+                      "detail": {
+                        "category": "backend_busy",
+                        "type": "backend_busy",
+                        "message": "Private prompt content should not leak.",
+                        "request_id": "mp-busy-1",
+                        "backend": "app-server",
+                        "requested_backend": "app-server",
+                        "next_step": "Retry shortly."
+                      }
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json"),
+            },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "choices": [
+                        {
+                          "message": {
+                            "content": "summary-provider-ok"
+                          }
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
+            TimeSpan.FromSeconds(120));
+
+        var result = await client.CompleteAsync(SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"), request);
+
+        Assert.Equal("summary-provider-ok", result.Content);
+        Assert.Equal(2, handler.Requests.Count);
+        foreach (var capturedRequest in handler.Requests)
+        {
+            Assert.Equal("app-server", Assert.Single(capturedRequest.Request.Headers.GetValues("X-ModelProxy-Backend")));
+            Assert.Equal("false", Assert.Single(capturedRequest.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
+            Assert.DoesNotContain("transcript", capturedRequest.Body, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Exhausted_BackendBusy_Is_Temporary_Saturation_Not_Endpoint_Down()
+    {
+        using var handler = new QueueingHandler(
+            CreateBackendBusyResponse("mp-busy-1"),
+            CreateBackendBusyResponse("mp-busy-2"),
+            CreateBackendBusyResponse("mp-busy-3"));
+        using var httpClient = new HttpClient(handler);
+        var client = new SummaryChatClient(httpClient);
+        var request = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
+            TimeSpan.FromSeconds(120));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.CompleteAsync(SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"), request));
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Contains("temporarily saturated", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("backend_busy", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("endpoint unreachable", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("could not reach", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private prompt marker", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-modelproxy-test", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -539,7 +625,7 @@ public sealed class ModelProxyClientTests
                     """
                     {
                       "detail": {
-                        "category": "backend_busy",
+                        "category": "provider_error",
                         "message": "safe next step only",
                         "request_id": "mp-test"
                       },
@@ -560,9 +646,37 @@ public sealed class ModelProxyClientTests
             client.CompleteAsync(SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"), request));
 
         Assert.Contains($"HTTP {(int)statusCode}", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("backend_busy", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("provider_error", exception.Message, StringComparison.Ordinal);
         Assert.Contains("mp-test", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret body should not leak", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static HttpResponseMessage CreateBackendBusyResponse(string requestId)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            ReasonPhrase = "Service Unavailable",
+            Content = new StringContent(
+                $$"""
+                {
+                  "detail": {
+                    "category": "backend_busy",
+                    "type": "backend_busy",
+                    "message": "Private prompt content should not leak.",
+                    "request_id": "{{requestId}}",
+                    "backend": "app-server",
+                    "requested_backend": "app-server",
+                    "next_step": "Retry shortly."
+                  }
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", requestId);
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "app-server");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "app-server");
+        return response;
     }
 
     [Fact]
@@ -614,6 +728,46 @@ public sealed class ModelProxyClientTests
             _response.Dispose();
         }
     }
+
+    private sealed class QueueingHandler : HttpMessageHandler
+    {
+        private readonly Queue<HttpResponseMessage> _responses;
+
+        public QueueingHandler(params HttpResponseMessage[] responses)
+        {
+            _responses = new Queue<HttpResponseMessage>(responses);
+        }
+
+        public List<CapturedRequest> Requests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            Requests.Add(new CapturedRequest(request, body));
+            return _responses.Count > 0
+                ? _responses.Dequeue()
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                foreach (var response in _responses)
+                {
+                    response.Dispose();
+                }
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed record CapturedRequest(HttpRequestMessage Request, string Body);
 
     private sealed class DelayingHandler : HttpMessageHandler
     {

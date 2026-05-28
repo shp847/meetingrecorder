@@ -104,7 +104,7 @@ internal sealed class ProcessingQueueService
         if (publishedWorkCleanupResult.SessionsPruned > 0)
         {
             _logger.Log(
-                $"Pruned raw work artifacts from {publishedWorkCleanupResult.SessionsPruned} published session(s), reclaiming {publishedWorkCleanupResult.BytesReclaimed} bytes.");
+                $"Pruned published work artifacts from {publishedWorkCleanupResult.SessionsPruned} published session(s), reclaiming {publishedWorkCleanupResult.BytesReclaimed} bytes.");
         }
 
         var interruptedRecordingRecoveryCount = await RecoverInterruptedRecordingSessionsAsync(_config.Current.WorkDir, cancellationToken);
@@ -694,11 +694,10 @@ internal sealed class ProcessingQueueService
 
         var recoveredCount = 0;
         var now = DateTimeOffset.UtcNow;
-        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        foreach (var (manifestPath, manifest) in await LoadReadableManifestsAsync(workDir, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
             if (!TryResolveInterruptedRecordingEndTime(manifest, now, out var endedAtUtc))
             {
                 continue;
@@ -734,11 +733,10 @@ internal sealed class ProcessingQueueService
         }
 
         var repairedCount = 0;
-        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        foreach (var (manifestPath, manifest) in await LoadReadableManifestsAsync(workDir, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
             if (!ShouldRepairRecoverableDiarizationCrash(manifest, manifestPath))
             {
                 continue;
@@ -811,10 +809,9 @@ internal sealed class ProcessingQueueService
         }
 
         var repairedCount = 0;
-        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        foreach (var (manifestPath, manifest) in await LoadReadableManifestsAsync(workDir, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
             if (!ShouldApplyDeferredSpeakerLabelingOverride(manifest))
             {
                 continue;
@@ -829,6 +826,37 @@ internal sealed class ProcessingQueueService
         }
 
         return repairedCount;
+    }
+
+    private async Task<IReadOnlyList<(string Path, MeetingSessionManifest Manifest)>> LoadReadableManifestsAsync(
+        string workDir,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(workDir))
+        {
+            return Array.Empty<(string, MeetingSessionManifest)>();
+        }
+
+        var manifests = new List<(string Path, MeetingSessionManifest Manifest)>();
+        foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+                manifests.Add((manifestPath, manifest));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.Log($"Skipped unreadable session manifest '{manifestPath}' during startup maintenance: {exception.Message}");
+            }
+        }
+
+        return manifests;
     }
 
     private async Task<WorkerRecoveryConfig> CreateCpuOnlyDiarizationConfigAsync(

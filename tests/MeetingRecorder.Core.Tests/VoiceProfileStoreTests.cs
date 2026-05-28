@@ -58,4 +58,71 @@ public sealed class VoiceProfileStoreTests : IDisposable
         Assert.Equal([1f, 0f, 0f], profile.Centroid);
         Assert.False(File.Exists(path + ".tmp"));
     }
+
+    [Fact]
+    public async Task DisableProfileAsync_Disables_Selected_Profile()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        await store.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            now,
+            [Profile("voice_1", "Pranav Sharma", now)]));
+
+        await store.DisableProfileAsync("voice_1");
+
+        var profile = Assert.Single((await store.LoadOrCreateAsync()).Profiles);
+        Assert.Equal(VoiceProfileStatus.Disabled, profile.Status);
+    }
+
+    [Fact]
+    public async Task DeleteProfileAsync_Removes_Selected_Profile()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        await store.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            now,
+            [
+                Profile("voice_1", "Pranav Sharma", now),
+                Profile("voice_2", "Terry Jones", now),
+            ]));
+
+        await store.DeleteProfileAsync("voice_1");
+
+        var profile = Assert.Single((await store.LoadOrCreateAsync()).Profiles);
+        Assert.Equal("voice_2", profile.ProfileId);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Recovers_From_Corrupt_Profile_Store()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, "{ not json");
+        var store = new VoiceProfileStore(path);
+
+        var document = await store.LoadOrCreateAsync();
+
+        Assert.Empty(document.Profiles);
+        Assert.True(File.Exists(path));
+        Assert.NotEmpty(Directory.GetFiles(Path.GetDirectoryName(path)!, "voice-profiles.json.corrupt-*"));
+    }
+
+    private static VoiceProfile Profile(string profileId, string displayName, DateTimeOffset now)
+    {
+        return new VoiceProfile(
+            profileId,
+            displayName,
+            "embedding.onnx",
+            3,
+            [1f, 0f, 0f],
+            2,
+            ["meeting-a"],
+            now,
+            VoiceProfileStatus.Active,
+            []);
+    }
 }

@@ -10,6 +10,11 @@ public enum VoiceProfileStatus
     Disabled = 1,
 }
 
+public sealed record VoiceProfileRejectedMatch(
+    string MeetingId,
+    string SpeakerId,
+    DateTimeOffset RejectedAtUtc);
+
 public sealed record VoiceProfile(
     string ProfileId,
     string DisplayName,
@@ -19,7 +24,8 @@ public sealed record VoiceProfile(
     int SampleCount,
     IReadOnlyList<string> ConfirmedMeetingIds,
     DateTimeOffset? LastMatchedAtUtc,
-    VoiceProfileStatus Status);
+    VoiceProfileStatus Status,
+    IReadOnlyList<VoiceProfileRejectedMatch>? RejectedMatches = null);
 
 public sealed record VoiceProfileStoreDocument(
     int SchemaVersion,
@@ -117,6 +123,38 @@ public sealed class VoiceProfileStore
         return updated;
     }
 
+    public async Task<VoiceProfileStoreDocument> DisableProfileAsync(
+        string profileId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedProfileId = NormalizeProfileId(profileId);
+        return await UpdateAsync(
+            document => document with
+            {
+                Profiles = document.Profiles
+                    .Select(profile => string.Equals(profile.ProfileId, normalizedProfileId, StringComparison.Ordinal)
+                        ? profile with { Status = VoiceProfileStatus.Disabled }
+                        : profile)
+                    .ToArray(),
+            },
+            cancellationToken);
+    }
+
+    public async Task<VoiceProfileStoreDocument> DeleteProfileAsync(
+        string profileId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedProfileId = NormalizeProfileId(profileId);
+        return await UpdateAsync(
+            document => document with
+            {
+                Profiles = document.Profiles
+                    .Where(profile => !string.Equals(profile.ProfileId, normalizedProfileId, StringComparison.Ordinal))
+                    .ToArray(),
+            },
+            cancellationToken);
+    }
+
     public Task DeleteAllAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -172,7 +210,7 @@ public sealed class VoiceProfileStore
     {
         return profile with
         {
-            ProfileId = profile.ProfileId.Trim(),
+            ProfileId = NormalizeProfileId(profile.ProfileId),
             DisplayName = NormalizeDisplayName(profile.DisplayName),
             EmbeddingModelFileName = profile.EmbeddingModelFileName.Trim(),
             Centroid = NormalizeVector(profile.Centroid),
@@ -184,7 +222,29 @@ public sealed class VoiceProfileStore
                 .Order(StringComparer.Ordinal)
                 .ToArray() ?? Array.Empty<string>(),
             Status = Enum.IsDefined(profile.Status) ? profile.Status : VoiceProfileStatus.Active,
+            RejectedMatches = profile.RejectedMatches?
+                .Where(match =>
+                    !string.IsNullOrWhiteSpace(match.MeetingId) &&
+                    !string.IsNullOrWhiteSpace(match.SpeakerId))
+                .Select(match => match with
+                {
+                    MeetingId = match.MeetingId.Trim(),
+                    SpeakerId = match.SpeakerId.Trim(),
+                    RejectedAtUtc = match.RejectedAtUtc == default
+                        ? DateTimeOffset.UtcNow
+                        : match.RejectedAtUtc,
+                })
+                .GroupBy(match => $"{match.MeetingId}\n{match.SpeakerId}", StringComparer.Ordinal)
+                .Select(group => group.OrderByDescending(match => match.RejectedAtUtc).First())
+                .OrderBy(match => match.MeetingId, StringComparer.Ordinal)
+                .ThenBy(match => match.SpeakerId, StringComparer.Ordinal)
+                .ToArray() ?? Array.Empty<VoiceProfileRejectedMatch>(),
         };
+    }
+
+    private static string NormalizeProfileId(string profileId)
+    {
+        return profileId.Trim();
     }
 
     private static string NormalizeDisplayName(string displayName)

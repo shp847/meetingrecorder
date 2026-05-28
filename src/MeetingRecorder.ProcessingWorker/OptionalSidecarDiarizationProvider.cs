@@ -9,7 +9,6 @@ namespace MeetingRecorder.ProcessingWorker;
 
 internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
-    private const float DefaultClusteringThreshold = 0.5f;
     private const string DirectMlFallbackMessage =
         "DirectML GPU initialization failed; speaker labeling retried on CPU.";
     private const string DirectMlUnsupportedClusterFallbackMessage =
@@ -20,8 +19,6 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     private const string SherpaDirectMlEnabledMarker = "Failed to enable DirectML";
     private const string UnsupportedClusterMessagePrefix =
         "Speaker labeling skipped because clustering detected";
-    private static readonly float[] CollapsedSpeakerClusteringThresholds = [0.45f, 0.4f, 0.35f, 0.3f, 0.25f];
-    private static readonly float[] OverSegmentedSpeakerClusteringThresholds = [0.55f, 0.6f, 0.65f, 0.7f, 0.75f, 0.8f];
 
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
@@ -34,6 +31,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     private readonly TranscriptSpeakerAttributionService _speakerAttributionService;
     private readonly DiarizationClusterSelectionService _clusterSelectionService;
     private readonly SherpaSpeakerEmbeddingService _speakerEmbeddingService;
+    private readonly SpeakerClusterMergeService _speakerClusterMergeService;
+    private readonly DiarizationOversegmentedClusterRecoveryService _oversegmentedClusterRecoveryService;
     private readonly VoiceProfileMatcher _voiceProfileMatcher;
     private readonly VoiceProfileStore _voiceProfileStore;
     private readonly SpeakerNameLearningService _speakerNameLearningService;
@@ -58,6 +57,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             new TranscriptSpeakerAttributionService(),
             new DiarizationClusterSelectionService(),
             new SherpaSpeakerEmbeddingService(),
+            new SpeakerClusterMergeService(),
             new VoiceProfileMatcher(),
             new VoiceProfileStore(voiceProfileStorePath ?? AppDataPaths.GetVoiceProfileStorePath()))
     {
@@ -75,6 +75,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         TranscriptSpeakerAttributionService speakerAttributionService,
         DiarizationClusterSelectionService clusterSelectionService,
         SherpaSpeakerEmbeddingService speakerEmbeddingService,
+        SpeakerClusterMergeService speakerClusterMergeService,
         VoiceProfileMatcher voiceProfileMatcher,
         VoiceProfileStore voiceProfileStore)
     {
@@ -89,6 +90,10 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         _speakerAttributionService = speakerAttributionService;
         _clusterSelectionService = clusterSelectionService;
         _speakerEmbeddingService = speakerEmbeddingService;
+        _speakerClusterMergeService = speakerClusterMergeService;
+        _oversegmentedClusterRecoveryService = new DiarizationOversegmentedClusterRecoveryService(
+            _clusterSelectionService,
+            _speakerClusterMergeService);
         _voiceProfileMatcher = voiceProfileMatcher;
         _voiceProfileStore = voiceProfileStore;
         _speakerNameLearningService = new SpeakerNameLearningService(_voiceProfileStore);
@@ -275,43 +280,15 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             _threadCount,
             _clusterSelectionService,
             cancellationToken);
-        var baseDiagnosticMessage = CombineDiagnosticMessages(diagnosticMessage, clusterSelection.DiagnosticMessage);
-        if (!clusterSelection.IsAutomaticSpeakerCountSupported)
-        {
-            var skippedMetadata = new DiarizationMetadata(
-                provider: "sherpa-onnx",
-                segmentationModelFileName: segmentationModelFileName,
-                embeddingModelFileName: embeddingModelFileName,
-                bundleVersion: installedAssets.BundleVersion ?? "unknown",
-                attributionMode: DiarizationAttributionMode.SegmentOverlap,
-                executionProvider: executionProvider,
-                gpuAccelerationRequested: gpuAccelerationRequested,
-                gpuAccelerationAvailable: gpuAccelerationAvailable,
-                diagnosticMessage: baseDiagnosticMessage);
-            var skippedMessage =
-                $"{UnsupportedClusterMessagePrefix} {clusterSelection.SupportedSpeakerCount} supported speakers, outside the supported automatic range of " +
-                $"{DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount}-{DiarizationClusterSelectionService.MaximumAutomaticSpeakerCount}.";
-
-            _logger.Log(
-                $"Speaker labeling skipped. Provider={executionProvider}. SupportedSpeakers={clusterSelection.SupportedSpeakerCount}. " +
-                $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{baseDiagnosticMessage ?? "<none>"}'.");
-
-            return new DiarizationResult(
-                transcriptSegments,
-                false,
-                skippedMessage,
-                Array.Empty<SpeakerIdentity>(),
-                Array.Empty<SpeakerTurn>(),
-                skippedMetadata,
-                Array.Empty<SpeakerVoiceSample>());
-        }
+        var baseDiagnosticMessage = CombineDiagnosticMessages(
+            diagnosticMessage,
+            clusterSelection.DiagnosticMessage);
 
         var speakerTurns = clusterSelection.Candidate.SpeakerTurns;
-        var speakers = _speakerAttributionService.BuildSpeakerCatalog(speakerTurns);
         IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
         string? voiceProfileDiagnosticMessage = null;
-        if (_speakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn &&
-            speakerTurns.Count > 0)
+        if (speakerTurns.Count > 0 &&
+            ShouldExtractSpeakerVoiceSamples(clusterSelection))
         {
             try
             {
@@ -323,19 +300,92 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
                     _threadCount,
                     DateTimeOffset.UtcNow,
                     cancellationToken);
-                if (speakerVoiceSamples.Count > 0)
-                {
-                    var profileDocument = await _voiceProfileStore.LoadOrCreateAsync(cancellationToken);
-                    var predictions = _voiceProfileMatcher.Match(
-                        speakerVoiceSamples,
-                        profileDocument.Profiles,
-                        _speakerNameRecognitionOptions);
-                    speakers = _voiceProfileMatcher.ApplyPredictions(speakers, predictions);
-                    await _speakerNameLearningService.UpdateLastMatchedAsync(
-                        predictions,
-                        DateTimeOffset.UtcNow,
-                        cancellationToken);
-                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                voiceProfileDiagnosticMessage = $"Speaker cluster embedding extraction skipped: {exception.Message}";
+                _logger.Log(voiceProfileDiagnosticMessage);
+            }
+        }
+
+        var speakerClusterMergeDiagnosticMessage = default(string);
+        var oversegmentedRecovery = _oversegmentedClusterRecoveryService.TryRecover(
+            clusterSelection,
+            speakerVoiceSamples);
+        if (oversegmentedRecovery.Recovered)
+        {
+            clusterSelection = oversegmentedRecovery.Selection;
+            speakerTurns = clusterSelection.Candidate.SpeakerTurns;
+            speakerVoiceSamples = oversegmentedRecovery.VoiceSamples;
+            speakerClusterMergeDiagnosticMessage = oversegmentedRecovery.DiagnosticMessage;
+        }
+        else if (clusterSelection.IsAutomaticSpeakerCountSupported)
+        {
+            var mergeResult = _speakerClusterMergeService.MergeSimilarClusters(speakerTurns, speakerVoiceSamples);
+            speakerTurns = mergeResult.SpeakerTurns;
+            speakerVoiceSamples = RemapVoiceSamples(speakerVoiceSamples, mergeResult.SpeakerIdMap);
+            speakerClusterMergeDiagnosticMessage = mergeResult.DiagnosticMessage;
+        }
+        else
+        {
+            speakerClusterMergeDiagnosticMessage = oversegmentedRecovery.DiagnosticMessage;
+        }
+
+        if (!clusterSelection.IsAutomaticSpeakerCountSupported)
+        {
+            var skippedDiagnosticMessage = CombineDiagnosticMessages(
+                baseDiagnosticMessage,
+                speakerClusterMergeDiagnosticMessage,
+                voiceProfileDiagnosticMessage);
+            var skippedMetadata = new DiarizationMetadata(
+                provider: "sherpa-onnx",
+                segmentationModelFileName: segmentationModelFileName,
+                embeddingModelFileName: embeddingModelFileName,
+                bundleVersion: installedAssets.BundleVersion ?? "unknown",
+                attributionMode: DiarizationAttributionMode.SegmentOverlap,
+                executionProvider: executionProvider,
+                gpuAccelerationRequested: gpuAccelerationRequested,
+                gpuAccelerationAvailable: gpuAccelerationAvailable,
+                diagnosticMessage: skippedDiagnosticMessage);
+            var skippedMessage =
+                $"{UnsupportedClusterMessagePrefix} {clusterSelection.SupportedSpeakerCount} supported speakers, outside the supported automatic range of " +
+                $"{DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount}-{DiarizationClusterSelectionService.MaximumAutomaticSpeakerCount}.";
+
+            _logger.Log(
+                $"Speaker labeling skipped. Provider={executionProvider}. SupportedSpeakers={clusterSelection.SupportedSpeakerCount}. " +
+                $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{skippedDiagnosticMessage ?? "<none>"}'.");
+
+            return new DiarizationResult(
+                transcriptSegments,
+                false,
+                skippedMessage,
+                Array.Empty<SpeakerIdentity>(),
+                Array.Empty<SpeakerTurn>(),
+                skippedMetadata,
+                Array.Empty<SpeakerVoiceSample>());
+        }
+
+        var speakers = _speakerAttributionService.BuildSpeakerCatalog(speakerTurns);
+        if (!string.IsNullOrWhiteSpace(speakerClusterMergeDiagnosticMessage))
+        {
+            _logger.Log(speakerClusterMergeDiagnosticMessage);
+        }
+
+        if (_speakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn &&
+            speakerVoiceSamples.Count > 0)
+        {
+            try
+            {
+                var profileDocument = await _voiceProfileStore.LoadOrCreateAsync(cancellationToken);
+                var predictions = _voiceProfileMatcher.Match(
+                    speakerVoiceSamples,
+                    profileDocument.Profiles,
+                    _speakerNameRecognitionOptions);
+                speakers = _voiceProfileMatcher.ApplyPredictions(speakers, predictions);
+                await _speakerNameLearningService.UpdateLastMatchedAsync(
+                    predictions,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -349,7 +399,10 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             transcriptSegments,
             speakerTurns,
             displayNamesBySpeakerId);
-        var combinedDiagnosticMessage = CombineDiagnosticMessages(baseDiagnosticMessage, voiceProfileDiagnosticMessage);
+        var combinedDiagnosticMessage = CombineDiagnosticMessages(
+            baseDiagnosticMessage,
+            speakerClusterMergeDiagnosticMessage,
+            voiceProfileDiagnosticMessage);
 
         var metadata = new DiarizationMetadata(
             provider: "sherpa-onnx",
@@ -375,6 +428,10 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             $"Speaker labeling completed. Provider={executionProvider}. Speakers={speakers.Count}. Turns={speakerTurns.Count}. " +
             $"GpuRequested={gpuAccelerationRequested}. GpuAvailable={gpuAccelerationAvailable}. Diagnostic='{combinedDiagnosticMessage ?? "<none>"}'.");
 
+        var speakerVoiceSamplesForMetadata = _speakerNameLearningMode == SpeakerNameLearningMode.LocalAutoLearn
+            ? speakerVoiceSamples
+            : Array.Empty<SpeakerVoiceSample>();
+
         return new DiarizationResult(
             attributedSegments,
             appliedSpeakerLabels,
@@ -382,7 +439,34 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             speakers,
             speakerTurns,
             metadata,
-            speakerVoiceSamples);
+            speakerVoiceSamplesForMetadata);
+    }
+
+    private static bool ShouldExtractSpeakerVoiceSamples(DiarizationClusterSelection clusterSelection)
+    {
+        return clusterSelection.IsAutomaticSpeakerCountSupported ||
+            DiarizationOversegmentedClusterRecoveryService.ShouldAttemptRecovery(clusterSelection);
+    }
+
+    private static IReadOnlyList<SpeakerVoiceSample> RemapVoiceSamples(
+        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples,
+        IReadOnlyDictionary<string, string> speakerIdMap)
+    {
+        if (speakerVoiceSamples.Count == 0 || speakerIdMap.Count == 0)
+        {
+            return speakerVoiceSamples;
+        }
+
+        return speakerVoiceSamples
+            .Select(sample => speakerIdMap.TryGetValue(sample.SpeakerId, out var speakerId)
+                ? sample with { SpeakerId = speakerId }
+                : sample)
+            .GroupBy(static sample => sample.SpeakerId, StringComparer.Ordinal)
+            .Select(static group => group
+                .OrderByDescending(static sample => sample.SpeechDuration)
+                .First())
+            .OrderBy(static sample => sample.SpeakerId, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static DiarizationClusterSelection ProcessSpeakerTurns(
@@ -393,6 +477,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         DiarizationClusterSelectionService clusterSelectionService,
         CancellationToken cancellationToken)
     {
+        var thresholdOptions = DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions();
+        var selectionOptions = DiarizationCalibrationEnvironment.LoadClusterSelectionOptions();
         using var reader = new AudioFileReader(preparedAudioPath);
         var samples = ReadSamples(reader, cancellationToken);
         var candidates = new List<DiarizationClusterCandidate>();
@@ -403,29 +489,23 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             installedAssets,
             provider,
             threadCount,
-            DefaultClusteringThreshold);
+            thresholdOptions.DefaultClusteringThreshold);
         candidates.Add(defaultCandidate);
         var defaultSelection = clusterSelectionService.SelectBestCandidate(candidates);
-        if (defaultSelection.IsAutomaticSpeakerCountSupported)
+        if (defaultSelection.IsAutomaticSpeakerCountSupported &&
+            defaultSelection.SupportedSpeakerCount <= selectionOptions.MaximumPreferredAutomaticSpeakerCount)
         {
             return defaultSelection;
         }
 
         var thresholds = defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount
-            ? CollapsedSpeakerClusteringThresholds
-            : OverSegmentedSpeakerClusteringThresholds;
+            ? thresholdOptions.CollapsedSpeakerClusteringThresholds
+            : thresholdOptions.OverSegmentedSpeakerClusteringThresholds;
         foreach (var threshold in thresholds)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var candidate = BuildClusterCandidate(samples, reader.WaveFormat.SampleRate, installedAssets, provider, threadCount, threshold);
             candidates.Add(candidate);
-
-            var currentSelection = clusterSelectionService.SelectBestCandidate(candidates);
-            if (ReferenceEquals(currentSelection.Candidate, candidate) &&
-                currentSelection.IsAutomaticSpeakerCountSupported)
-            {
-                return currentSelection;
-            }
         }
 
         return clusterSelectionService.SelectBestCandidate(candidates);
@@ -477,7 +557,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             installedAssets,
             "directml",
             Math.Max(1, threadCount),
-            DefaultClusteringThreshold);
+            DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions().DefaultClusteringThreshold);
     }
 
     internal static bool IsSherpaDirectMlRuntimeEnabled()

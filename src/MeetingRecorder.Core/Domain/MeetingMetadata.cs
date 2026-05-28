@@ -43,7 +43,8 @@ public sealed record DetectedAudioSource(
 public sealed record MeetingProcessingOverrides(
     string? TranscriptionModelPath,
     string? TranscriptionModelFileName,
-    bool SkipSpeakerLabeling = false);
+    bool SkipSpeakerLabeling = false,
+    bool ForceTranscription = false);
 
 public enum DiarizationAttributionMode
 {
@@ -66,6 +67,18 @@ public enum SpeakerNameSource
     SuggestedVoiceProfile = 3,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<SpeakerNameDecisionReason>))]
+public enum SpeakerNameDecisionReason
+{
+    None = 0,
+    AutoAppliedHighConfidence = 1,
+    SuggestedBelowAutoApplyThreshold = 2,
+    SuggestedAmbiguousProfileMargin = 3,
+    SuggestedProfileNeedsMoreSamples = 4,
+    SuggestedSampleTooShort = 5,
+    SuggestedDuplicateProfileCandidate = 6,
+}
+
 public sealed record SpeakerIdentity(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("displayName")] string DisplayName,
@@ -73,7 +86,8 @@ public sealed record SpeakerIdentity(
     [property: JsonPropertyName("profileId")] string? ProfileId = null,
     [property: JsonPropertyName("nameSource")] SpeakerNameSource NameSource = SpeakerNameSource.None,
     [property: JsonPropertyName("confidence")] double? Confidence = null,
-    [property: JsonPropertyName("suggestedDisplayName")] string? SuggestedDisplayName = null);
+    [property: JsonPropertyName("suggestedDisplayName")] string? SuggestedDisplayName = null,
+    [property: JsonPropertyName("decisionReason")] SpeakerNameDecisionReason? DecisionReason = null);
 
 public sealed record SpeakerTurn(
     [property: JsonPropertyName("speakerId")] string SpeakerId,

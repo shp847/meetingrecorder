@@ -816,6 +816,90 @@ public sealed class MeetingOutputCatalogServiceTests
     }
 
     [Fact]
+    public async Task ListMeetings_Flags_SuspiciousSpeakerLabels_When_Json_Has_Many_Fragment_Speakers()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var stem = "2026-05-21_220300_teams_google-cloud-vmo-daily-touchpoints";
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Google Cloud VMO - daily touchpoints",
+                hasSpeakerLabels = true,
+                speakers = Enumerable.Range(1, 12)
+                    .Select(index => new
+                    {
+                        id = $"speaker-{index}",
+                        displayName = $"Speaker {index}",
+                    })
+                    .ToArray(),
+                segments = Enumerable.Range(1, 12)
+                    .Select(index => new
+                    {
+                        start = TimeSpan.FromSeconds(index).ToString("c"),
+                        end = TimeSpan.FromSeconds(index + 1).ToString("c"),
+                        speakerId = $"speaker-{index}",
+                        speakerLabel = $"Speaker {index}",
+                        text = index == 1 ? "the way I was thinking about it was just creating a script" : "um",
+                    })
+                    .ToArray(),
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
+
+        Assert.True(meeting.HasSpeakerLabels);
+        Assert.True(meeting.HasSuspiciousSpeakerLabels);
+    }
+
+    [Fact]
+    public async Task ListMeetings_Does_Not_Flag_SuspiciousSpeakerLabels_For_Compact_TwoSpeaker_Json()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var stem = "2026-05-21_220300_teams_terry-one-on-one";
+        await File.WriteAllTextAsync(Path.Combine(audioDir, $"{stem}.wav"), "audio");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{stem}.json"),
+            JsonSerializer.Serialize(new
+            {
+                title = "Terry one on one",
+                hasSpeakerLabels = true,
+                speakers = new[]
+                {
+                    new { id = "speaker-1", displayName = "Speaker 1" },
+                    new { id = "speaker-2", displayName = "Speaker 2" },
+                },
+                segments = new[]
+                {
+                    new { start = "00:00:00", end = "00:00:04", speakerId = "speaker-1", speakerLabel = "Speaker 1", text = "I was thinking we should do this" },
+                    new { start = "00:00:04", end = "00:00:07", speakerId = "speaker-2", speakerLabel = "Speaker 2", text = "That sounds right to me" },
+                    new { start = "00:00:07", end = "00:00:10", speakerId = "speaker-1", speakerLabel = "Speaker 1", text = "Great I will write it up" },
+                },
+            }));
+
+        var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
+
+        Assert.True(meeting.HasSpeakerLabels);
+        Assert.False(meeting.HasSuspiciousSpeakerLabels);
+    }
+
+    [Fact]
     public async Task ListMeetings_Returns_Audio_Only_Records_When_Transcript_Files_Are_Missing()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -1012,6 +1096,10 @@ public sealed class MeetingOutputCatalogServiceTests
 
         var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
         Assert.Equal(new[] { "Speaker 1", "Speaker 2" }, service.ListSpeakerLabels(meeting));
+        var speakerDetails = service.ListSpeakerLabelDetails(meeting);
+        Assert.Equal("voice_wrong", speakerDetails[0].ProfileId);
+        Assert.Equal("Pranav", speakerDetails[0].SuggestedDisplayName);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, speakerDetails[0].NameSource);
 
         await service.RenameSpeakerLabelsAsync(
             meeting,

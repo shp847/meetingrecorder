@@ -63,6 +63,55 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
     }
 
     [Fact]
+    public void Read_Coalesces_Consecutive_Json_Segments_For_The_Same_Speaker_Display()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(
+            jsonPath,
+            """
+            {
+              "segments": [
+                {
+                  "start": "00:10:59",
+                  "end": "00:11:01",
+                  "speakerLabel": "Speaker 1",
+                  "text": "if we were presenting this,"
+                },
+                {
+                  "start": "00:11:01",
+                  "end": "00:11:02",
+                  "speakerLabel": "Speaker 1",
+                  "text": "would we,"
+                },
+                {
+                  "start": "00:11:02",
+                  "end": "00:11:08",
+                  "speakerLabel": "Speaker 1",
+                  "text": "the way I was thinking about it was just creating a script."
+                },
+                {
+                  "start": "00:11:09",
+                  "end": "00:11:12",
+                  "speakerLabel": "Speaker 2",
+                  "text": "Yes, that makes sense."
+                }
+              ]
+            }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        Assert.Equal("Showing 2 transcript paragraph(s) from JSON sidecar (merged from 4 segment(s)).", result.StatusText);
+        Assert.Equal(2, result.Segments.Count);
+        Assert.Equal("10:59", result.Segments[0].Timestamp);
+        Assert.Equal("Speaker 1", result.Segments[0].SpeakerLabel);
+        Assert.Equal(
+            "if we were presenting this, would we, the way I was thinking about it was just creating a script.",
+            result.Segments[0].Text);
+        Assert.Equal(4, result.StructuredSegments.Count);
+    }
+
+    [Fact]
     public void Read_Parses_Summary_Status_And_Content_From_Json_Sidecar()
     {
         var jsonPath = Path.Combine(_root, "meeting.json");
@@ -129,6 +178,62 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.True(result.Summary.Provider.FallbackUsed);
         Assert.Equal("fingerprint-123", result.Summary.TranscriptFingerprint);
         Assert.Equal("speaker_00", result.StructuredSegments[0].SpeakerId);
+    }
+
+    [Fact]
+    public void Read_Preserves_ModelProxy_Routing_Metadata_From_Summary_Provider()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(
+            jsonPath,
+            """
+            {
+              "summarizationStatus": {
+                "stageName": "summarization",
+                "state": 3,
+                "updatedAtUtc": "2026-05-22T14:30:00Z",
+                "message": "Summary generated."
+              },
+              "summary": {
+                "overview": "The team aligned on launch readiness.",
+                "keyPoints": [],
+                "decisions": [],
+                "actionItems": [],
+                "risksAndOpenQuestions": [],
+                "provider": {
+                  "providerKind": "ModelProxy",
+                  "providerName": "ModelProxy",
+                  "model": "gpt-5.4-mini",
+                  "fallbackUsed": false,
+                  "modelProxyRouting": {
+                    "requestId": "mp-summary",
+                    "requestedBackend": "app-server",
+                    "effectiveBackend": "app-server",
+                    "appServerWebSearchSupported": false
+                  }
+                },
+                "generatedAtUtc": "2026-05-22T14:30:00Z",
+                "transcriptFingerprint": "fingerprint-123"
+              },
+              "segments": [
+                {
+                  "start": "00:00:04",
+                  "end": "00:00:08",
+                  "speakerId": "speaker_00",
+                  "speakerLabel": "Speaker 1",
+                  "text": "What are the objectives?"
+                }
+              ]
+            }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        Assert.NotNull(result.Summary);
+        Assert.Equal("mp-summary", result.Summary.Provider.ModelProxyRouting?.RequestId);
+        Assert.Equal("app-server", result.Summary.Provider.ModelProxyRouting?.RequestedBackend);
+        Assert.Equal("app-server", result.Summary.Provider.ModelProxyRouting?.EffectiveBackend);
+        Assert.False(result.Summary.Provider.ModelProxyRouting?.AppServerWebSearchSupported);
     }
 
     [Fact]
