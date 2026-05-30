@@ -161,12 +161,17 @@ Avoid in installer/update/bootstrap code:
 - UI Automation against unrelated app windows
 - `CloseMainWindow`
 - force-kill behavior as a normal install strategy
+- process-tree kills for app-owned background workers; on locked-down Windows laptops,
+  walking a worker's child `conhost.exe` can surface as a restricted process-memory
+  access prompt even when the app is only trying to interrupt queued work
 - resolving process names for every Windows audio session before filtering out system sounds, inactive sessions, or the app's own session
 
 Prefer instead:
 
 - cooperative shutdown signals
 - bounded waiting
+- direct termination of only the app-owned worker process when an unavoidable
+  cancellation or rush-preemption path needs to stop background work
 - normal file-replacement retries
 - a clear retry message when the app still will not release the install path
 - classifying audio-session state and metadata first, then resolving process names only for active non-system sessions that can affect meeting detection

@@ -78,6 +78,7 @@ public sealed class ProcessingQueueServiceTests
         await Task.Delay(50);
 
         Assert.True(process.KillCalled);
+        Assert.False(process.LastKillEntireProcessTree);
         Assert.False(stopTask.IsCompleted);
 
         process.CompleteExit();
@@ -277,6 +278,8 @@ public sealed class ProcessingQueueServiceTests
         await service.RequestRushProcessingAsync(secondManifestPath, RushProcessingBehavior.RunNextOnly);
         await WaitForConditionAsync(() => firstProcess.KillCalled);
 
+        Assert.False(firstProcess.LastKillEntireProcessTree);
+
         var secondProcess = await processFactory.WaitForStartAsync(1);
         await WaitForConditionAsync(() =>
             string.Equals(service.GetStatusSnapshot().CurrentManifestPath, secondManifestPath, StringComparison.Ordinal));
@@ -468,6 +471,8 @@ public sealed class ProcessingQueueServiceTests
         var result = await service.RushBacklogAsync(deferFutureMeetings: false);
 
         await WaitForConditionAsync(() => firstProcess.KillCalled);
+        Assert.False(firstProcess.LastKillEntireProcessTree);
+
         var secondProcess = await processFactory.WaitForStartAsync(1);
         await WaitForConditionAsync(() =>
             string.Equals(service.GetStatusSnapshot().CurrentManifestPath, manifestPath, StringComparison.Ordinal));
@@ -1700,6 +1705,8 @@ public sealed class ProcessingQueueServiceTests
 
         public bool KillCalled { get; private set; }
 
+        public bool? LastKillEntireProcessTree { get; private set; }
+
         public bool AutoCompleteOnKill { get; set; }
 
         public ProcessPriorityClass? PriorityClass { get; private set; }
@@ -1726,6 +1733,7 @@ public sealed class ProcessingQueueServiceTests
         public void Kill(bool entireProcessTree)
         {
             KillCalled = true;
+            LastKillEntireProcessTree = entireProcessTree;
             if (AutoCompleteOnKill)
             {
                 CompleteExit();

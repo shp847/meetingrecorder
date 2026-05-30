@@ -239,7 +239,7 @@ internal sealed class ProcessingQueueService
         if (workerToKill is not null)
         {
             _logger.Log($"Preempting '{_preemptedManifestPath}' so ASAP processing can start for '{manifestPath}'.");
-            workerToKill.Kill(entireProcessTree: true);
+            KillWorkerProcess(workerToKill);
         }
     }
 
@@ -328,7 +328,7 @@ internal sealed class ProcessingQueueService
         if (workerToKill is not null && interruptedCurrentDiarization)
         {
             _logger.Log($"Interrupting diarization for '{currentDiarizationManifestPath}' so the rushed backlog can publish transcripts without speaker labels.");
-            workerToKill.Kill(entireProcessTree: true);
+            KillWorkerProcess(workerToKill);
         }
 
         return new BacklogRushResult(
@@ -357,7 +357,7 @@ internal sealed class ProcessingQueueService
                 if (!worker.HasExited)
                 {
                     _logger.Log($"Stopping worker for '{manifestPath}' because the application is shutting down.");
-                    worker.Kill(entireProcessTree: true);
+                    KillWorkerProcess(worker);
                 }
 
                 await worker.WaitForExitAsync(cancellationToken);
@@ -529,7 +529,7 @@ internal sealed class ProcessingQueueService
         {
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
+                KillWorkerProcess(process);
                 await process.WaitForExitAsync(CancellationToken.None);
             }
 
@@ -2117,6 +2117,13 @@ internal sealed class ProcessingQueueService
         {
             _logger.Log($"Unable to set worker priority for '{manifestPath}' to {priority}: {exception.Message}");
         }
+    }
+
+    private static void KillWorkerProcess(IWorkerProcess process)
+    {
+        // Process-tree kills can inspect the worker's console host on managed Windows laptops.
+        // Kill the app-owned worker directly and let Windows clean up its private conhost.exe.
+        process.Kill(entireProcessTree: false);
     }
 
     private void TryDeleteRecoveryConfig(string? configPath)
