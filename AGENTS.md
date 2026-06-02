@@ -89,8 +89,8 @@ instructions.
   Defined in `scripts\Test-ModelProxy.ps1`; it posts a synthetic
   `summary-provider-ok` prompt to `http://127.0.0.1:8645/v1/chat/completions`,
   uses `MODELPROXY_MEETING_RECORDER_API_KEY` or local fallback `sk-modelproxy`,
-  disables web search with `X-ModelProxy-Web-Search: false`, and does not
-  require backend-specific headers.
+  forces the no-search app-server path with `X-ModelProxy-Backend: app-server`
+  and `X-ModelProxy-Web-Search: false`, and prints only safe routing metadata.
 - Speaker-name learning stores local voice-profile embeddings under
   `%LOCALAPPDATA%\MeetingRecorder\speaker-profiles\voice-profiles.json` or
   portable `data\speaker-profiles`; changes in this area should preserve
@@ -102,6 +102,10 @@ instructions.
   DirectML only when acceleration is `Auto`, fall back safely to CPU, and cover
   `OptionalSidecarDiarizationProviderSourceTests`,
   `DiarizationClusterSelectionServiceTests`, and related config/UI tests.
+- Maintain `docs/dependency-api-tracker.md` during recurring maintenance runs.
+  Keep it limited to dependency ecosystems, key local/external contracts,
+  latest checked versions or revisions, deferred updates, and the verification
+  command used; do not duplicate the tracker contents in this file.
 
 ## Release Hygiene
 
