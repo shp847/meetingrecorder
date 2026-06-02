@@ -2,7 +2,6 @@ using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using NAudio.CoreAudioApi;
 using System.Globalization;
-using System.Diagnostics;
 using System.Threading;
 
 namespace MeetingRecorder.App.Services;
@@ -233,7 +232,7 @@ internal sealed class WindowMeetingDetector
     {
         return TopLevelWindowEnumerator.EnumerateVisibleWindowsByClass(SupportedMeetingWindowClasses)
             .Select(window => new MeetingWindowCandidate(
-                TryGetProcessName(window.ProcessId),
+                string.Empty,
                 window.WindowTitle,
                 window.WindowClassName,
                 window.WindowHandle,
@@ -451,7 +450,7 @@ internal sealed class WindowMeetingDetector
         }
 
         var candidateProcessName = NormalizeProcessName(candidateWindow.ProcessName);
-        if (string.IsNullOrWhiteSpace(candidateProcessName))
+        if (string.IsNullOrWhiteSpace(candidateProcessName) && candidateWindow.ProcessId <= 0)
         {
             return Array.Empty<string>();
         }
@@ -472,10 +471,19 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(sessionProcessName) &&
-                !IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
+            var sameProcessSession = candidateWindow.ProcessId > 0 && candidateWindow.ProcessId == session.ProcessId;
+            if (!sameProcessSession)
             {
-                continue;
+                if (!string.IsNullOrWhiteSpace(sessionProcessName) &&
+                    !IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(sessionProcessName) && string.IsNullOrWhiteSpace(candidateProcessName))
+                {
+                    continue;
+                }
             }
 
             if (seen.Add(title))
@@ -617,7 +625,7 @@ internal sealed class WindowMeetingDetector
         }
 
         var candidateProcessName = NormalizeProcessName(candidateWindow.ProcessName);
-        if (string.IsNullOrWhiteSpace(candidateProcessName))
+        if (string.IsNullOrWhiteSpace(candidateProcessName) && candidateWindow.ProcessId <= 0)
         {
             return false;
         }
@@ -902,7 +910,8 @@ internal sealed class WindowMeetingDetector
             return true;
         }
 
-        if (!LooksLikeTeamsProcessName(candidateWindow.ProcessName))
+        if (!LooksLikeTeamsProcessName(candidateWindow.ProcessName) &&
+            !string.Equals(candidateWindow.WindowClassName, "TeamsWebView", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -1227,23 +1236,6 @@ internal sealed class WindowMeetingDetector
         };
     }
 
-    private static string TryGetProcessName(int processId)
-    {
-        if (processId <= 0)
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return process.ProcessName ?? string.Empty;
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
 }
 
 internal readonly record struct CandidatePriority(

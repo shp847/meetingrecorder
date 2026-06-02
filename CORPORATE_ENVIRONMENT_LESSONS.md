@@ -168,6 +168,9 @@ Avoid in installer/update/bootstrap code:
 - resolving process names for service-hosted Windows audio sessions such as
   `svchost.exe`; meeting audio attribution should derive Teams/browser labels
   from session metadata instead of looking up session PIDs
+- resolving process names for every visible browser or Teams host window; window
+  detection should use title, class, handle, and render-session PID correlation
+  before any cross-process metadata is considered
 
 Prefer instead:
 

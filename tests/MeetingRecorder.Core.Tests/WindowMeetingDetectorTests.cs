@@ -260,6 +260,46 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Uses_TeamsWebView_When_Process_Metadata_Is_Unavailable()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "Jain, Himanshu",
+                    "TeamsWebView",
+                    (nint)200,
+                    2000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Bluetooth Headset",
+                0.24d,
+                true,
+                "active",
+                [
+                    new AudioSourceSessionSnapshot(
+                        2000,
+                        string.Empty,
+                        0.24d,
+                        true,
+                        false,
+                        false,
+                        "Microsoft Teams",
+                        "teams-session"),
+                ],
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.Equal("Jain, Himanshu", result.SessionTitle);
+        Assert.DoesNotContain(result.Signals, signal => signal.Source.Equals("process-name", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Signals, signal => signal.Source.Equals("teams-host", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Signals, signal => signal.Source.Equals("audio-window", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Uses_GoogleMeet_Audio_Metadata_When_Browser_Window_Title_Is_Shared_Content()
     {
         var detector = await CreateDetectorAsync(
@@ -298,6 +338,46 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Uses_GoogleMeet_Audio_Metadata_When_Browser_Process_Metadata_Is_Unavailable()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "L2 Integration Categories Repository.pptx - Google Slides and 7 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)8124,
+                    8124),
+            ],
+            audioActivityProbe: new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.32d,
+                true,
+                "active",
+                [
+                    new AudioSourceSessionSnapshot(
+                        8124,
+                        string.Empty,
+                        0.32d,
+                        true,
+                        false,
+                        false,
+                        "Meet - yzz-yeqg-mdc",
+                        "https://meet.google.com/yzz-yeqg-mdc"),
+                ],
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
+        Assert.True(result.ShouldStart);
+        Assert.Equal("Meet - yzz-yeqg-mdc", result.SessionTitle);
+        Assert.DoesNotContain(result.Signals, signal => signal.Source.Equals("process-name", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Signals, signal => signal.Source.Equals("audio-browser-tab", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void DetectBestCandidate_Does_Not_Inspect_Browser_Tab_Ui_For_GoogleMeet_Detection()
     {
         var assemblyDirectory = Path.GetDirectoryName(typeof(WindowMeetingDetectorTests).Assembly.Location)
@@ -333,6 +413,21 @@ public sealed class WindowMeetingDetectorTests
 
         var audioProbeSource = source[audioProbeStart..audioProbeEnd];
         Assert.DoesNotContain("Process.GetProcessById", audioProbeSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WindowMeetingDetector_Does_Not_Resolve_Window_Process_Pids()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(typeof(WindowMeetingDetectorTests).Assembly.Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var detectorPath = Path.Combine(repoRoot, "src", "MeetingRecorder.App", "Services", "WindowMeetingDetector.cs");
+
+        Assert.True(File.Exists(detectorPath), $"Expected detector source at '{detectorPath}'.");
+
+        var source = File.ReadAllText(detectorPath);
+
+        Assert.DoesNotContain("Process.GetProcessById", source, StringComparison.Ordinal);
     }
 
     [Fact]
