@@ -315,6 +315,27 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public void AudioActivityProbeSupport_Does_Not_Resolve_Audio_Session_Process_Pids()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(typeof(WindowMeetingDetectorTests).Assembly.Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var detectorPath = Path.Combine(repoRoot, "src", "MeetingRecorder.App", "Services", "WindowMeetingDetector.cs");
+
+        Assert.True(File.Exists(detectorPath), $"Expected detector source at '{detectorPath}'.");
+
+        var source = File.ReadAllText(detectorPath);
+        var audioProbeStart = source.IndexOf("internal sealed class SystemAudioActivityProbe", StringComparison.Ordinal);
+        var audioProbeEnd = source.IndexOf("private static bool TryGetSystemSoundsFlag", StringComparison.Ordinal);
+
+        Assert.True(audioProbeStart >= 0, "Expected the audio activity probe source block.");
+        Assert.True(audioProbeEnd > audioProbeStart, "Expected the audio activity probe support boundary.");
+
+        var audioProbeSource = source[audioProbeStart..audioProbeEnd];
+        Assert.DoesNotContain("Process.GetProcessById", audioProbeSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Ignores_Unsupported_Window_Classes_Even_When_Their_Window_Title_Looks_Like_A_Meeting()
     {
         var detector = await CreateDetectorAsync(
@@ -721,8 +742,6 @@ public sealed class WindowMeetingDetectorTests
     [Fact]
     public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_System_Sounds()
     {
-        var resolverWasCalled = false;
-
         var result = AudioActivityProbeSupport.BuildSessionSnapshot(
             processId: 4242,
             peakLevel: 0.65d,
@@ -731,14 +750,8 @@ public sealed class WindowMeetingDetectorTests
             isCurrentProcess: false,
             displayName: "System Sounds",
             sessionIdentifier: "system-sounds",
-            stateText: "Active",
-            resolveProcessName: _ =>
-            {
-                resolverWasCalled = true;
-                return "svchost";
-            });
+            stateText: "Active");
 
-        Assert.False(resolverWasCalled);
         Assert.Equal(string.Empty, result.ProcessName);
         Assert.True(result.IsSystemSounds);
     }
@@ -746,8 +759,6 @@ public sealed class WindowMeetingDetectorTests
     [Fact]
     public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_Inactive_Sessions()
     {
-        var resolverWasCalled = false;
-
         var result = AudioActivityProbeSupport.BuildSessionSnapshot(
             processId: 4242,
             peakLevel: 0d,
@@ -756,20 +767,31 @@ public sealed class WindowMeetingDetectorTests
             isCurrentProcess: false,
             displayName: null,
             sessionIdentifier: null,
-            stateText: "AudioSessionStateInactive",
-            resolveProcessName: _ =>
-            {
-                resolverWasCalled = true;
-                return "svchost";
-            });
+            stateText: "AudioSessionStateInactive");
 
-        Assert.False(resolverWasCalled);
         Assert.Equal(string.Empty, result.ProcessName);
         Assert.False(result.IsActive);
     }
 
     [Fact]
-    public void BuildSessionSnapshot_Resolves_Process_Name_For_Active_NonSystem_Sessions()
+    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_Active_Service_Sessions_Without_Meeting_Metadata()
+    {
+        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
+            processId: 4242,
+            peakLevel: 0.65d,
+            activityThreshold: 0.05d,
+            isSystemSounds: false,
+            isCurrentProcess: false,
+            displayName: "Windows Audio Service",
+            sessionIdentifier: @"@%SystemRoot%\System32\AudioSrv.dll,-202",
+            stateText: "Active");
+
+        Assert.Equal(string.Empty, result.ProcessName);
+        Assert.True(result.IsActive);
+    }
+
+    [Fact]
+    public void BuildSessionSnapshot_Derives_Process_Name_From_Active_Meeting_Audio_Metadata()
     {
         var result = AudioActivityProbeSupport.BuildSessionSnapshot(
             processId: 4242,
@@ -779,11 +801,47 @@ public sealed class WindowMeetingDetectorTests
             isCurrentProcess: false,
             displayName: "Microsoft Teams",
             sessionIdentifier: "teams-session",
-            stateText: "Active",
-            resolveProcessName: _ => "ms-teams");
+            stateText: "Active");
 
         Assert.Equal("ms-teams", result.ProcessName);
         Assert.True(result.IsActive);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Trusts_Explicit_GoogleMeet_Audio_When_The_Session_Process_Name_Was_Not_Resolved()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "msedge",
+                    "Meet - vwt-vyrn-bas and 14 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)8124,
+                    8124),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.34d,
+                true,
+                "active",
+                [
+                    new AudioSourceSessionSnapshot(
+                        8124,
+                        string.Empty,
+                        0.34d,
+                        true,
+                        false,
+                        false,
+                        null,
+                        null),
+                ],
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
+        Assert.True(result.ShouldStart);
     }
 
     private static Task<WindowMeetingDetector> CreateDetectorAsync(params MeetingWindowCandidate[] candidates)

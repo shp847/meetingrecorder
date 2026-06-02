@@ -165,6 +165,9 @@ Avoid in installer/update/bootstrap code:
   walking a worker's child `conhost.exe` can surface as a restricted process-memory
   access prompt even when the app is only trying to interrupt queued work
 - resolving process names for every Windows audio session before filtering out system sounds, inactive sessions, or the app's own session
+- resolving process names for service-hosted Windows audio sessions such as
+  `svchost.exe`; meeting audio attribution should derive Teams/browser labels
+  from session metadata instead of looking up session PIDs
 
 Prefer instead:
 
@@ -174,7 +177,9 @@ Prefer instead:
   cancellation or rush-preemption path needs to stop background work
 - normal file-replacement retries
 - a clear retry message when the app still will not release the install path
-- classifying audio-session state and metadata first, then resolving process names only for active non-system sessions that can affect meeting detection
+- classifying audio-session state and metadata first, then deriving meeting
+  process labels from trusted Teams/browser/Meet metadata without probing the
+  owning process
 
 Reason:
 

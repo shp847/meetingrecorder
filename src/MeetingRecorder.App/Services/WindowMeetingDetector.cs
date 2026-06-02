@@ -465,13 +465,15 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
-            if (!IsBrowserFamilyMatch(candidateProcessName, NormalizeProcessName(session.ProcessName)))
+            var sessionProcessName = NormalizeProcessName(session.ProcessName);
+            var title = TryExtractGoogleMeetTitleFromSession(session);
+            if (string.IsNullOrWhiteSpace(title) || !LooksLikeGoogleMeetWindowTitle(title))
             {
                 continue;
             }
 
-            var title = TryExtractGoogleMeetTitleFromSession(session);
-            if (string.IsNullOrWhiteSpace(title) || !LooksLikeGoogleMeetWindowTitle(title))
+            if (!string.IsNullOrWhiteSpace(sessionProcessName) &&
+                !IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
             {
                 continue;
             }
@@ -627,6 +629,11 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
+            if (candidateWindow.ProcessId > 0 && candidateWindow.ProcessId == session.ProcessId)
+            {
+                return true;
+            }
+
             if (IsBrowserFamilyMatch(candidateProcessName, NormalizeProcessName(session.ProcessName)))
             {
                 return true;
@@ -643,14 +650,22 @@ internal sealed class WindowMeetingDetector
         string candidateProcessName,
         string sessionProcessName)
     {
-        if (!IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
+        if (!detectionTitle.FromBrowserTab &&
+            candidateWindow.ProcessId > 0 &&
+            candidateWindow.ProcessId == session.ProcessId &&
+            LooksLikeGoogleMeetWindowTitle(candidateWindow.MainWindowTitle))
         {
-            return false;
+            return true;
         }
 
         if (HasGoogleMeetSessionMetadata(session, detectionTitle))
         {
             return true;
+        }
+
+        if (!IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
+        {
+            return false;
         }
 
         return !detectionTitle.FromBrowserTab &&
@@ -1363,8 +1378,7 @@ internal static class AudioActivityProbeSupport
                     isCurrentProcess,
                     displayName,
                     sessionIdentifier,
-                    stateText,
-                    TryGetSessionProcessName));
+                    stateText));
             }
 
             return results;
@@ -1383,21 +1397,18 @@ internal static class AudioActivityProbeSupport
         bool isCurrentProcess,
         string? displayName,
         string? sessionIdentifier,
-        string? stateText,
-        Func<int, string> resolveProcessName)
+        string? stateText)
     {
-        ArgumentNullException.ThrowIfNull(resolveProcessName);
-
         var isActive = peakLevel >= activityThreshold ||
             string.Equals(stateText, "AudioSessionStateActive", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase);
-        var processName = ShouldResolveAudioSessionProcessName(
-                processId,
-                isActive,
-                isSystemSounds,
-                isCurrentProcess)
-            ? resolveProcessName(processId)
-            : string.Empty;
+        var processName = DeriveAudioSessionProcessName(
+            processId,
+            isActive,
+            isSystemSounds,
+            isCurrentProcess,
+            displayName,
+            sessionIdentifier);
 
         return new AudioSourceSessionSnapshot(
             processId,
@@ -1410,34 +1421,72 @@ internal static class AudioActivityProbeSupport
             sessionIdentifier);
     }
 
-    private static bool ShouldResolveAudioSessionProcessName(
+    private static string DeriveAudioSessionProcessName(
         int processId,
         bool isActive,
         bool isSystemSounds,
-        bool isCurrentProcess)
+        bool isCurrentProcess,
+        string? displayName,
+        string? sessionIdentifier)
     {
-        return processId > 0 &&
-            isActive &&
-            !isSystemSounds &&
-            !isCurrentProcess;
+        if (processId <= 0 || !isActive || isSystemSounds || isCurrentProcess)
+        {
+            return string.Empty;
+        }
+
+        return TryDeriveMeetingAudioProcessName(displayName) ??
+            TryDeriveMeetingAudioProcessName(sessionIdentifier) ??
+            string.Empty;
     }
 
-    private static string TryGetSessionProcessName(int processId)
+    private static string? TryDeriveMeetingAudioProcessName(string? metadataValue)
     {
-        if (processId <= 0)
+        if (string.IsNullOrWhiteSpace(metadataValue))
         {
-            return string.Empty;
+            return null;
         }
 
-        try
+        var normalized = metadataValue.Trim();
+        if (normalized.Contains("microsoft teams", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("ms-teams", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("msteams", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("teams-session", StringComparison.OrdinalIgnoreCase))
         {
-            using var process = Process.GetProcessById(processId);
-            return process.ProcessName ?? string.Empty;
+            return "ms-teams";
         }
-        catch
+
+        if (normalized.Contains("msedge", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("microsoft edge", StringComparison.OrdinalIgnoreCase))
         {
-            return string.Empty;
+            return "msedge";
         }
+
+        if (normalized.Contains("chrome", StringComparison.OrdinalIgnoreCase))
+        {
+            return "chrome";
+        }
+
+        if (normalized.Contains("brave", StringComparison.OrdinalIgnoreCase))
+        {
+            return "brave";
+        }
+
+        if (normalized.Contains("vivaldi", StringComparison.OrdinalIgnoreCase))
+        {
+            return "vivaldi";
+        }
+
+        if (normalized.Contains("opera", StringComparison.OrdinalIgnoreCase))
+        {
+            return "opera";
+        }
+
+        if (normalized.Contains("firefox", StringComparison.OrdinalIgnoreCase))
+        {
+            return "firefox";
+        }
+
+        return null;
     }
 
     private static bool TryGetSystemSoundsFlag(AudioSessionControl session)
