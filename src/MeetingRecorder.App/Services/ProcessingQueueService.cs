@@ -697,13 +697,15 @@ internal sealed class ProcessingQueueService
         foreach (var (manifestPath, manifest) in await LoadReadableManifestsAsync(workDir, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var recoveredChunkManifest = RecoverCaptureChunksFromRawDirectory(manifestPath, manifest);
 
-            if (!TryResolveInterruptedRecordingEndTime(manifest, now, out var endedAtUtc))
+            if (!TryResolveInterruptedRecordingEndTime(recoveredChunkManifest, now, out var endedAtUtc))
             {
                 continue;
             }
 
-            var updatedManifest = manifest with
+            var closedManifest = CloseOpenCaptureSegments(recoveredChunkManifest, endedAtUtc);
+            var updatedManifest = closedManifest with
             {
                 State = SessionState.Queued,
                 EndedAtUtc = endedAtUtc,
@@ -937,13 +939,54 @@ internal sealed class ProcessingQueueService
         await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
     }
 
+    private static MeetingSessionManifest RecoverCaptureChunksFromRawDirectory(
+        string manifestPath,
+        MeetingSessionManifest manifest)
+    {
+        var sessionRoot = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(sessionRoot))
+        {
+            return manifest;
+        }
+
+        var rawDir = Path.Combine(sessionRoot, "raw");
+        if (!Directory.Exists(rawDir))
+        {
+            return manifest;
+        }
+
+        var loopbackGroups = DiscoverCapturedChunkGroups(rawDir, "loopback");
+        var microphoneGroups = DiscoverCapturedChunkGroups(rawDir, "microphone");
+        if (loopbackGroups.Count == 0 && microphoneGroups.Count == 0)
+        {
+            return manifest;
+        }
+
+        var loopbackCaptureSegments = loopbackGroups.Count > 0
+            ? RebuildLoopbackCaptureSegments(manifest, loopbackGroups)
+            : manifest.LoopbackCaptureSegments;
+        var microphoneCaptureSegments = microphoneGroups.Count > 0
+            ? RebuildMicrophoneCaptureSegments(manifest, microphoneGroups)
+            : manifest.MicrophoneCaptureSegments;
+
+        return manifest with
+        {
+            LoopbackCaptureSegments = loopbackCaptureSegments,
+            RawChunkPaths = loopbackCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+            MicrophoneCaptureSegments = microphoneCaptureSegments,
+            MicrophoneChunkPaths = microphoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+        };
+    }
+
     private static bool TryResolveInterruptedRecordingEndTime(
         MeetingSessionManifest manifest,
         DateTimeOffset now,
         out DateTimeOffset endedAtUtc)
     {
         endedAtUtc = default;
-        if (manifest.State != SessionState.Recording || manifest.EndedAtUtc is not null)
+        if (manifest.State is not (SessionState.Recording or SessionState.Queued) ||
+            (manifest.EndedAtUtc is not null &&
+             !HasStaleRecoveredEndTime(manifest, out _)))
         {
             return false;
         }
@@ -953,9 +996,14 @@ internal sealed class ProcessingQueueService
             return false;
         }
 
-        if (latestChunkWriteUtc > now ||
-            now - latestChunkWriteUtc < RecoverablePendingSessionStalenessThreshold ||
-            latestChunkWriteUtc <= manifest.StartedAtUtc)
+        if (latestChunkWriteUtc > now || latestChunkWriteUtc <= manifest.StartedAtUtc)
+        {
+            return false;
+        }
+
+        if (manifest.State == SessionState.Recording &&
+            manifest.EndedAtUtc is null &&
+            now - latestChunkWriteUtc < RecoverablePendingSessionStalenessThreshold)
         {
             return false;
         }
@@ -964,13 +1012,242 @@ internal sealed class ProcessingQueueService
         return true;
     }
 
+    private static bool HasStaleRecoveredEndTime(MeetingSessionManifest manifest, out DateTimeOffset latestChunkWriteUtc)
+    {
+        latestChunkWriteUtc = default;
+        if (manifest.EndedAtUtc is not { } endedAtUtc)
+        {
+            return false;
+        }
+
+        return TryGetLatestRecoverableChunkWriteTime(manifest, out latestChunkWriteUtc) &&
+               latestChunkWriteUtc > endedAtUtc.AddSeconds(1);
+    }
+
+    private static IReadOnlyList<LoopbackCaptureSegment> RebuildLoopbackCaptureSegments(
+        MeetingSessionManifest manifest,
+        IReadOnlyList<CapturedChunkGroup> discoveredGroups)
+    {
+        var existingSegments = manifest.LoopbackCaptureSegments
+            .Select(segment => new
+            {
+                Prefix = TryGetCaptureChunkPrefix(segment.ChunkPaths.FirstOrDefault(), "loopback", out var prefix)
+                    ? prefix
+                    : null,
+                Segment = segment,
+            })
+            .Where(candidate => candidate.Prefix is not null)
+            .GroupBy(candidate => candidate.Prefix!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Segment, StringComparer.OrdinalIgnoreCase);
+
+        return discoveredGroups
+            .Select(group => existingSegments.TryGetValue(group.Prefix, out var existingSegment)
+                ? existingSegment with
+                {
+                    ChunkPaths = group.ChunkPaths,
+                }
+                : new LoopbackCaptureSegment(
+                    InferCaptureSegmentStartTime(group.ChunkPaths, manifest.StartedAtUtc),
+                    null,
+                    group.ChunkPaths,
+                    string.Empty,
+                    "Unknown endpoint",
+                    "Unknown"))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<MicrophoneCaptureSegment> RebuildMicrophoneCaptureSegments(
+        MeetingSessionManifest manifest,
+        IReadOnlyList<CapturedChunkGroup> discoveredGroups)
+    {
+        var existingSegments = manifest.MicrophoneCaptureSegments
+            .Select(segment => new
+            {
+                Prefix = TryGetCaptureChunkPrefix(segment.ChunkPaths.FirstOrDefault(), "microphone", out var prefix)
+                    ? prefix
+                    : null,
+                Segment = segment,
+            })
+            .Where(candidate => candidate.Prefix is not null)
+            .GroupBy(candidate => candidate.Prefix!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Segment, StringComparer.OrdinalIgnoreCase);
+
+        return discoveredGroups
+            .Select(group => existingSegments.TryGetValue(group.Prefix, out var existingSegment)
+                ? existingSegment with
+                {
+                    ChunkPaths = group.ChunkPaths,
+                }
+                : new MicrophoneCaptureSegment(
+                    InferCaptureSegmentStartTime(group.ChunkPaths, manifest.StartedAtUtc),
+                    null,
+                    group.ChunkPaths))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CapturedChunkGroup> DiscoverCapturedChunkGroups(
+        string rawDir,
+        string captureKind)
+    {
+        return Directory.EnumerateFiles(rawDir, $"{captureKind}-*-chunk-*.wav", SearchOption.TopDirectoryOnly)
+            .Where(path => new FileInfo(path) is { Exists: true, Length: > MinimumRecoverableWaveChunkBytes })
+            .Select(path => new
+            {
+                Path = path,
+                HasPrefix = TryGetCaptureChunkPrefix(path, captureKind, out var prefix),
+                Prefix = prefix,
+            })
+            .Where(candidate => candidate.HasPrefix)
+            .GroupBy(candidate => candidate.Prefix, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new CapturedChunkGroup(
+                group.Key,
+                group
+                    .Select(candidate => candidate.Path)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static bool TryGetCaptureChunkPrefix(
+        string? chunkPath,
+        string captureKind,
+        out string prefix)
+    {
+        prefix = string.Empty;
+        if (string.IsNullOrWhiteSpace(chunkPath))
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileNameWithoutExtension(chunkPath);
+        var expectedStart = $"{captureKind}-";
+        if (!fileName.StartsWith(expectedStart, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var chunkMarkerIndex = fileName.IndexOf("-chunk-", StringComparison.OrdinalIgnoreCase);
+        if (chunkMarkerIndex <= expectedStart.Length)
+        {
+            return false;
+        }
+
+        prefix = fileName[..chunkMarkerIndex];
+        return true;
+    }
+
+    private static DateTimeOffset InferCaptureSegmentStartTime(
+        IReadOnlyList<string> chunkPaths,
+        DateTimeOffset fallbackStartedAtUtc)
+    {
+        var firstChunkPath = chunkPaths.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstChunkPath))
+        {
+            return fallbackStartedAtUtc;
+        }
+
+        try
+        {
+            var firstChunk = new FileInfo(firstChunkPath);
+            if (!firstChunk.Exists || firstChunk.Length <= MinimumRecoverableWaveChunkBytes)
+            {
+                return fallbackStartedAtUtc;
+            }
+
+            using var reader = new AudioFileReader(firstChunkPath);
+            var inferredStartedAtUtc = new DateTimeOffset(firstChunk.LastWriteTimeUtc) - reader.TotalTime;
+            return inferredStartedAtUtc < fallbackStartedAtUtc ? fallbackStartedAtUtc : inferredStartedAtUtc;
+        }
+        catch
+        {
+            return fallbackStartedAtUtc;
+        }
+    }
+
+    private static MeetingSessionManifest CloseOpenCaptureSegments(
+        MeetingSessionManifest manifest,
+        DateTimeOffset endedAtUtc)
+    {
+        var loopbackCaptureSegments = manifest.LoopbackCaptureSegments
+            .Select(segment => segment.EndedAtUtc is null
+                ? segment with
+                {
+                    EndedAtUtc = ResolveCaptureSegmentEndTime(
+                        segment.StartedAtUtc,
+                        segment.ChunkPaths,
+                        endedAtUtc),
+                }
+                : segment)
+            .ToArray();
+        var microphoneCaptureSegments = manifest.MicrophoneCaptureSegments
+            .Select(segment => segment.EndedAtUtc is null
+                ? segment with
+                {
+                    EndedAtUtc = ResolveCaptureSegmentEndTime(
+                        segment.StartedAtUtc,
+                        segment.ChunkPaths,
+                        endedAtUtc),
+                }
+                : segment)
+            .ToArray();
+        var captureTimeline = manifest.CaptureTimeline.ToList();
+        if (captureTimeline.Count > 0 && captureTimeline[^1].Kind == CaptureTimelineEventKind.Stopped)
+        {
+            captureTimeline[^1] = captureTimeline[^1] with
+            {
+                OccurredAtUtc = endedAtUtc,
+                Summary = "Recovered interrupted recording stop from preserved raw chunks.",
+                Detail = "The app sealed an open capture manifest during startup recovery.",
+            };
+        }
+        else
+        {
+            captureTimeline.Add(
+                new CaptureTimelineEntry(
+                    endedAtUtc,
+                    CaptureTimelineEventKind.Stopped,
+                    "Recovered interrupted recording stop from preserved raw chunks.",
+                    "The app sealed an open capture manifest during startup recovery."));
+        }
+
+        return manifest with
+        {
+            LoopbackCaptureSegments = loopbackCaptureSegments,
+            RawChunkPaths = loopbackCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+            MicrophoneCaptureSegments = microphoneCaptureSegments,
+            MicrophoneChunkPaths = microphoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
+            CaptureTimeline = captureTimeline.ToArray(),
+        };
+    }
+
+    private static DateTimeOffset ResolveCaptureSegmentEndTime(
+        DateTimeOffset segmentStartedAtUtc,
+        IReadOnlyList<string> chunkPaths,
+        DateTimeOffset fallbackEndedAtUtc)
+    {
+        return TryGetLatestRecoverableChunkWriteTime(chunkPaths, out var latestChunkWriteUtc) &&
+               latestChunkWriteUtc > segmentStartedAtUtc
+            ? latestChunkWriteUtc
+            : fallbackEndedAtUtc;
+    }
+
     private static bool TryGetLatestRecoverableChunkWriteTime(
         MeetingSessionManifest manifest,
         out DateTimeOffset latestChunkWriteUtc)
     {
+        return TryGetLatestRecoverableChunkWriteTime(
+            EnumerateCapturedAudioChunkPaths(manifest),
+            out latestChunkWriteUtc);
+    }
+
+    private static bool TryGetLatestRecoverableChunkWriteTime(
+        IEnumerable<string> chunkPaths,
+        out DateTimeOffset latestChunkWriteUtc)
+    {
         latestChunkWriteUtc = default;
         var foundRecoverableChunk = false;
-        foreach (var chunkPath in EnumerateCapturedAudioChunkPaths(manifest))
+        foreach (var chunkPath in chunkPaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var chunk = new FileInfo(chunkPath);
             if (!chunk.Exists || chunk.Length <= MinimumRecoverableWaveChunkBytes)
@@ -2228,6 +2505,10 @@ internal sealed record StageTimingAverage(
     int ObservationCount,
     double AverageSecondsPerAudioSecond,
     TimeSpan AverageDuration);
+
+internal sealed record CapturedChunkGroup(
+    string Prefix,
+    IReadOnlyList<string> ChunkPaths);
 
 internal interface IWorkerProcessFactory
 {

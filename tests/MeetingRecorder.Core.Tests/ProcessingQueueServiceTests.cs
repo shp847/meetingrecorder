@@ -1339,9 +1339,86 @@ public sealed class ProcessingQueueServiceTests
 
             Assert.Equal(SessionState.Queued, recoveredManifest.State);
             Assert.Equal(lastChunkWriteUtc, recoveredManifest.EndedAtUtc);
+            Assert.All(recoveredManifest.LoopbackCaptureSegments, segment => Assert.NotNull(segment.EndedAtUtc));
+            Assert.All(recoveredManifest.MicrophoneCaptureSegments, segment => Assert.NotNull(segment.EndedAtUtc));
+            Assert.Equal(CaptureTimelineEventKind.Stopped, recoveredManifest.CaptureTimeline[^1].Kind);
             Assert.Equal(StageExecutionState.Queued, recoveredManifest.TranscriptionStatus.State);
             Assert.Equal(StageExecutionState.NotStarted, recoveredManifest.DiarizationStatus.State);
             Assert.Equal(StageExecutionState.NotStarted, recoveredManifest.PublishStatus.State);
+            Assert.Equal(1, processFactory.StartCount);
+            Assert.Contains(manifestPath, processFactory.StartInfos[0].Arguments, StringComparison.Ordinal);
+
+            process.CompleteExit();
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ResumePendingSessionsAsync_Repairs_Stale_Queued_Manifest_With_Open_Capture_Segments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new FakeWorkerProcessFactory();
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+
+            var firstChunkWriteUtc = DateTimeOffset.UtcNow.AddMinutes(-12);
+            var lastChunkWriteUtc = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var manifestPath = await CreateInterruptedRecordingManifestAsync(
+                manifestStore,
+                liveConfig.Current.WorkDir,
+                firstChunkWriteUtc);
+            var rawDir = Path.Combine(Path.GetDirectoryName(manifestPath)!, "raw");
+            var extraLoopbackChunkPath = Path.Combine(rawDir, "loopback-0001-chunk-0002.wav");
+            var extraMicrophoneChunkPath = Path.Combine(rawDir, "microphone-0001-chunk-0002.wav");
+            CreateWaveFile(extraLoopbackChunkPath, TimeSpan.FromSeconds(1));
+            CreateWaveFile(extraMicrophoneChunkPath, TimeSpan.FromSeconds(1));
+            File.SetLastWriteTimeUtc(extraLoopbackChunkPath, lastChunkWriteUtc.UtcDateTime);
+            File.SetLastWriteTimeUtc(extraMicrophoneChunkPath, lastChunkWriteUtc.UtcDateTime);
+            var malformedQueuedManifest = await manifestStore.LoadAsync(manifestPath);
+            await manifestStore.SaveAsync(
+                malformedQueuedManifest with
+                {
+                    State = SessionState.Queued,
+                    EndedAtUtc = firstChunkWriteUtc,
+                },
+                manifestPath);
+
+            await service.ResumePendingSessionsAsync();
+
+            var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var recoveredManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(SessionState.Queued, recoveredManifest.State);
+            Assert.Equal(lastChunkWriteUtc, recoveredManifest.EndedAtUtc);
+            Assert.Equal(2, recoveredManifest.RawChunkPaths.Count);
+            Assert.Equal(2, recoveredManifest.MicrophoneChunkPaths.Count);
+            Assert.All(recoveredManifest.LoopbackCaptureSegments, segment => Assert.NotNull(segment.EndedAtUtc));
+            Assert.All(recoveredManifest.MicrophoneCaptureSegments, segment => Assert.NotNull(segment.EndedAtUtc));
+            Assert.Equal(CaptureTimelineEventKind.Stopped, recoveredManifest.CaptureTimeline[^1].Kind);
+            Assert.Equal(StageExecutionState.Queued, recoveredManifest.TranscriptionStatus.State);
             Assert.Equal(1, processFactory.StartCount);
             Assert.Contains(manifestPath, processFactory.StartInfos[0].Arguments, StringComparison.Ordinal);
 
