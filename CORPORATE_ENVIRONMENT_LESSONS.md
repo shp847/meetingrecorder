@@ -171,6 +171,10 @@ Avoid in installer/update/bootstrap code:
 - resolving process names for every visible browser or Teams host window; window
   detection should use title, class, handle, and render-session PID correlation
   before any cross-process metadata is considered
+- treating Windows audio default-role churn as a real device change; the same
+  capture device can appear alternately under `Multimedia` and `Communications`,
+  and restarting capture for that metadata-only flip can repeatedly re-enter
+  Core Audio paths hosted by `svchost.exe`
 
 Prefer instead:
 
@@ -183,6 +187,8 @@ Prefer instead:
 - classifying audio-session state and metadata first, then deriving meeting
   process labels from trusted Teams/browser/Meet metadata without probing the
   owning process
+- comparing live microphone capture identity by stable endpoint ID plus fallback
+  state, while ignoring role-only changes for the same physical microphone
 
 Reason:
 

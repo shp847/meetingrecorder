@@ -859,6 +859,96 @@ public sealed class RecordingSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshMicrophoneCaptureAsync_Does_Not_Swap_When_Default_Roles_Refer_To_The_Same_Input()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-same-device-role-flip-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var microphoneFactory = new SpyMicrophoneCaptureFactory(
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-shared",
+                        "Insta360 Link",
+                        0.05d,
+                        true,
+                        "Using shared microphone endpoint.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Communications,
+                        "mic-shared",
+                        "Insta360 Link",
+                        0.31d,
+                        true,
+                        "Using shared microphone endpoint.",
+                        false),
+                    Multimedia: null,
+                    Communications: null),
+                new MicrophoneCaptureEvaluation(
+                    new MicrophoneCaptureSelection(
+                        Role.Multimedia,
+                        "mic-shared",
+                        "Insta360 Link",
+                        0.22d,
+                        true,
+                        "Using shared microphone endpoint.",
+                        false),
+                    Multimedia: null,
+                    Communications: null));
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                loopbackCaptureFactory: new SpyLoopbackCaptureFactory(
+                    new LoopbackCaptureEvaluation(
+                        new LoopbackCaptureSelection(
+                            Role.Multimedia,
+                            "device-1",
+                            "Laptop speakers",
+                            0.15d,
+                            true,
+                            0,
+                            0,
+                            "Preferred multimedia render endpoint.",
+                            false),
+                        Multimedia: null,
+                        Communications: null)),
+                microphoneCaptureFactory: microphoneFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var firstRefresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var secondRefresh = await coordinator.RefreshMicrophoneCaptureAsync();
+            var manifestPath = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession).ManifestPath;
+            var reloadedManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.False(firstRefresh.SwapPerformed);
+            Assert.False(secondRefresh.SwapPerformed);
+            Assert.Single(microphoneFactory.CreatedCaptures);
+            Assert.Single(reloadedManifest.MicrophoneCaptureSegments);
+            Assert.DoesNotContain(
+                reloadedManifest.CaptureTimeline,
+                entry => entry.Kind == CaptureTimelineEventKind.Swapped &&
+                    entry.Summary.Contains("microphone", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RefreshMicrophoneCaptureAsync_Does_Not_Overlap_The_Previous_And_Next_Input_Capture_Clients()
     {
         var root = Path.Combine(Path.GetTempPath(), $"meeting-microphone-no-overlap-{Guid.NewGuid():N}");

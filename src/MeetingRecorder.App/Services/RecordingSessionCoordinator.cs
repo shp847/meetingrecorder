@@ -933,7 +933,6 @@ internal sealed class RecordingSessionCoordinator
     private static bool MicrophoneSelectionsEqual(MicrophoneCaptureSelection? left, MicrophoneCaptureSelection right)
     {
         return left is not null &&
-               left.Role == right.Role &&
                left.IsFallbackCapture == right.IsFallbackCapture &&
                string.Equals(left.DeviceId, right.DeviceId, StringComparison.OrdinalIgnoreCase);
     }
