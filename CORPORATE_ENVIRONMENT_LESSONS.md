@@ -187,6 +187,9 @@ Prefer instead:
 - classifying audio-session state and metadata first, then deriving meeting
   process labels from trusted Teams/browser/Meet metadata without probing the
   owning process
+- avoiding Core Audio session-owner PID lookups during live detection; if the
+  meeting match can be made from session metadata, titles, and trusted browser
+  or Teams families, that path is materially safer on endpoint-protected laptops
 - comparing live microphone capture identity by stable endpoint ID plus fallback
   state, while ignoring role-only changes for the same physical microphone
 

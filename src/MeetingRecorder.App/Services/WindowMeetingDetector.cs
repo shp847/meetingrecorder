@@ -464,7 +464,7 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
-            var sessionProcessName = NormalizeProcessName(session.ProcessName);
+            var sessionProcessName = GetEffectiveSessionProcessName(session);
             var title = TryExtractGoogleMeetTitleFromSession(session);
             if (string.IsNullOrWhiteSpace(title) || !LooksLikeGoogleMeetWindowTitle(title))
             {
@@ -476,11 +476,6 @@ internal sealed class WindowMeetingDetector
             {
                 if (!string.IsNullOrWhiteSpace(sessionProcessName) &&
                     !IsBrowserFamilyMatch(candidateProcessName, sessionProcessName))
-                {
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(sessionProcessName) && string.IsNullOrWhiteSpace(candidateProcessName))
                 {
                     continue;
                 }
@@ -533,7 +528,7 @@ internal sealed class WindowMeetingDetector
         CandidateDetectionTitle detectionTitle,
         AudioSourceSessionSnapshot session)
     {
-        var sessionProcessName = NormalizeProcessName(session.ProcessName);
+        var sessionProcessName = GetEffectiveSessionProcessName(session);
         var candidateProcessName = NormalizeProcessName(candidateWindow.ProcessName);
         var isGoogleMeetCandidate = LooksLikeGoogleMeetWindowTitle(detectionTitle.Title);
         var isTeamsCandidate = LooksLikeTeamsMeetingSurface(candidateWindow, detectionTitle.Title);
@@ -642,7 +637,7 @@ internal sealed class WindowMeetingDetector
                 return true;
             }
 
-            if (IsBrowserFamilyMatch(candidateProcessName, NormalizeProcessName(session.ProcessName)))
+            if (IsBrowserFamilyMatch(candidateProcessName, GetEffectiveSessionProcessName(session)))
             {
                 return true;
             }
@@ -772,7 +767,7 @@ internal sealed class WindowMeetingDetector
         return new AudioSourceAttributionMatch(
             source,
             session.ProcessId,
-            session.ProcessName,
+            GetEffectiveSessionProcessName(session),
             session.PeakLevel);
     }
 
@@ -979,6 +974,19 @@ internal sealed class WindowMeetingDetector
             "msedge" or "chrome" or "brave" or "vivaldi" or "opera" => string.Equals(candidateProcessName, sessionProcessName, StringComparison.OrdinalIgnoreCase),
             _ => false,
         };
+    }
+
+    private static string GetEffectiveSessionProcessName(AudioSourceSessionSnapshot session)
+    {
+        var processName = NormalizeProcessName(session.ProcessName);
+        if (!string.IsNullOrWhiteSpace(processName))
+        {
+            return processName;
+        }
+
+        return NormalizeProcessName(
+            AudioActivityProbeSupport.TryDeriveMeetingAudioProcessName(session.DisplayName) ??
+            AudioActivityProbeSupport.TryDeriveMeetingAudioProcessName(session.SessionIdentifier));
     }
 
     private static string? TryExtractGoogleMeetTitle(string? metadataValue)
@@ -1354,16 +1362,15 @@ internal static class AudioActivityProbeSupport
             for (var index = 0; index < sessions.Count; index++)
             {
                 using var session = sessions[index];
-                var processId = unchecked((int)session.GetProcessID);
                 var peakLevel = session.AudioMeterInformation.MasterPeakValue;
                 var isSystemSounds = TryGetSystemSoundsFlag(session);
-                var isCurrentProcess = processId == Environment.ProcessId;
                 var displayName = TryGetSessionDisplayName(session);
                 var sessionIdentifier = TryGetSessionIdentifier(session);
                 var stateText = TryGetSessionStateText(session);
+                var isCurrentProcess = LooksLikeCurrentProcessSession(displayName, sessionIdentifier);
 
                 results.Add(BuildSessionSnapshot(
-                    processId,
+                    0,
                     peakLevel,
                     threshold,
                     isSystemSounds,
@@ -1395,7 +1402,6 @@ internal static class AudioActivityProbeSupport
             string.Equals(stateText, "AudioSessionStateActive", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase);
         var processName = DeriveAudioSessionProcessName(
-            processId,
             isActive,
             isSystemSounds,
             isCurrentProcess,
@@ -1414,14 +1420,13 @@ internal static class AudioActivityProbeSupport
     }
 
     private static string DeriveAudioSessionProcessName(
-        int processId,
         bool isActive,
         bool isSystemSounds,
         bool isCurrentProcess,
         string? displayName,
         string? sessionIdentifier)
     {
-        if (processId <= 0 || !isActive || isSystemSounds || isCurrentProcess)
+        if (!isActive || isSystemSounds || isCurrentProcess)
         {
             return string.Empty;
         }
@@ -1431,7 +1436,24 @@ internal static class AudioActivityProbeSupport
             string.Empty;
     }
 
-    private static string? TryDeriveMeetingAudioProcessName(string? metadataValue)
+    private static bool LooksLikeCurrentProcessSession(string? displayName, string? sessionIdentifier)
+    {
+        return ContainsCurrentProcessMarker(displayName) ||
+            ContainsCurrentProcessMarker(sessionIdentifier);
+    }
+
+    private static bool ContainsCurrentProcessMarker(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("meetingrecorder", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("meeting recorder", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? TryDeriveMeetingAudioProcessName(string? metadataValue)
     {
         if (string.IsNullOrWhiteSpace(metadataValue))
         {
@@ -1623,7 +1645,7 @@ internal static class AudioActivityProbeSupport
     private static bool AreEquivalentSessions(AudioSourceSessionSnapshot left, AudioSourceSessionSnapshot right)
     {
         return left.ProcessId == right.ProcessId &&
-            string.Equals(left.ProcessName, right.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(GetEquivalentSessionProcessName(left), GetEquivalentSessionProcessName(right), StringComparison.OrdinalIgnoreCase) &&
             string.Equals(left.DisplayName, right.DisplayName, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(left.SessionIdentifier, right.SessionIdentifier, StringComparison.OrdinalIgnoreCase);
     }
@@ -1647,5 +1669,17 @@ internal static class AudioActivityProbeSupport
         }
 
         return false;
+    }
+
+    private static string GetEquivalentSessionProcessName(AudioSourceSessionSnapshot session)
+    {
+        if (!string.IsNullOrWhiteSpace(session.ProcessName))
+        {
+            return session.ProcessName.Trim();
+        }
+
+        return TryDeriveMeetingAudioProcessName(session.DisplayName) ??
+            TryDeriveMeetingAudioProcessName(session.SessionIdentifier) ??
+            string.Empty;
     }
 }

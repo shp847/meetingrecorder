@@ -356,7 +356,7 @@ public sealed class WindowMeetingDetectorTests
                 "active",
                 [
                     new AudioSourceSessionSnapshot(
-                        8124,
+                        0,
                         string.Empty,
                         0.32d,
                         true,
@@ -413,6 +413,7 @@ public sealed class WindowMeetingDetectorTests
 
         var audioProbeSource = source[audioProbeStart..audioProbeEnd];
         Assert.DoesNotContain("Process.GetProcessById", audioProbeSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetProcessID", audioProbeSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -886,10 +887,10 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
-    public void BuildSessionSnapshot_Derives_Process_Name_From_Active_Meeting_Audio_Metadata()
+    public void BuildSessionSnapshot_Derives_Process_Name_From_Active_Meeting_Audio_Metadata_When_ProcessId_Is_Unavailable()
     {
         var result = AudioActivityProbeSupport.BuildSessionSnapshot(
-            processId: 4242,
+            processId: 0,
             peakLevel: 0.65d,
             activityThreshold: 0.05d,
             isSystemSounds: false,
