@@ -3119,3 +3119,450 @@ Sprint 13 acceptance criteria:
   runtime install is required.
 - If Sprint 1 cannot prove a clean packaged backend and model path, stop the
   track before implementation.
+
+# Meeting Continuity And Split-Healing Reliability Plan
+
+## Summary
+
+Goal: stop the app from swinging between CyberArk-safe detector hardening and
+meeting-fragmentation regressions. The root problem is not a single bad Teams
+heuristic or a single crash; it is that Meeting Recorder currently has several
+different places that answer "is this the same meeting?" differently:
+
+- live detection and auto-stop continuity,
+- recent auto-stop recovery,
+- startup interrupted-session recovery,
+- post-publish cleanup and merge logic,
+- one-time historical repair logic.
+
+That fragmentation creates the pendulum. One tweak makes runtime continuity
+stricter and prevents a CyberArk-sensitive detector path from being used, then
+another tweak tries to recover the lost continuity with title exceptions or
+repair merges, and the app keeps alternating between false splits and
+overfitted exceptions.
+
+The target architecture is a single continuity engine that owns
+continue/stop/roll-over/recover/merge decisions. Platform-specific heuristics
+are still allowed, but only as evidence producers. They must no longer make
+split decisions directly.
+
+This plan is only successful if it solves both recent failure families:
+
+- false auto-stop and re-auto-start splits like `GES Focus Groups: Principals`,
+- crash/restart or recovery-boundary splits like `Americas Virtual AI Co-Lab`.
+
+It must also preserve the current corporate constraint: do not depend on
+process-memory inspection or other CyberArk-sensitive escalation to stay
+accurate.
+
+## Program Invariants
+
+- Only one continuity authority may decide whether work is the same meeting.
+- Heuristics such as title normalization, Teams shell handling, Google Meet
+  code handling, and audio attribution may contribute evidence, but they may
+  not directly split or merge meetings.
+- The continuity engine returns only `SameMeeting`, `DifferentMeeting`, or
+  `Unknown`.
+- `Unknown` may extend a bounded grace period, but it may not create a new
+  meeting row by itself.
+- Auto-heal must require stronger proof than keep-alive grace because a false
+  merge is more damaging than a short recording tail.
+- Every automatic merge must preserve lineage to the original stems/session IDs
+  and leave a durable audit trail in manifests and archives.
+- Historical one-time repair remains historical; future correctness comes from
+  the ongoing runtime, recovery, and publish flows.
+- Every new continuity exception must add a replay fixture and a negative test
+  case before it can ship.
+
+## Success Criteria
+
+- `GES Focus Groups: Principals`-style false auto-stop/restart scenarios remain
+  one meeting.
+- `Americas Virtual AI Co-Lab`-style crash/restart boundaries do not surface as
+  duplicate visible meetings when strong continuity evidence exists.
+- Same-title but different meetings do not auto-merge.
+- Generic Teams shell windows do not create durable meeting rows.
+- Continuity decisions remain explainable from logs and manifests without WER
+  dumps or protected-process access.
+- The codebase contains fewer direct continuity branches after the work, not
+  more.
+
+## Sprint 0: Failure Corpus And Decision Contract
+
+Goal: define the exact problem and prevent future "felt right" continuity
+changes.
+
+Workstream 1 - Incident corpus:
+
+- Capture replayable fixtures for the recent split families:
+  - false auto-stop then re-auto-start for `GES Focus Groups: Principals`,
+  - crash/restart recovery split for `Americas Virtual AI Co-Lab`,
+  - generic Teams false starts,
+  - quiet same-meeting continuation cases,
+  - same-title but actually different meeting negative cases.
+- Store enough manifest, timing, title, and detection evidence to replay the
+  continuity decision path without live repro.
+
+Workstream 2 - Decision contract:
+
+- Write the continuity decision contract in product terms:
+  - what counts as `SameMeeting`,
+  - what counts as `DifferentMeeting`,
+  - what must stay `Unknown`.
+- State the severity order explicitly:
+  - false merge is worst,
+  - false split is next,
+  - bounded extra tail capture is acceptable only to avoid the false split.
+
+Workstream 3 - Program metrics:
+
+- Add baseline metrics for:
+  - split rate per published meeting,
+  - auto-heal count,
+  - auto-heal reversal/manual-correction count,
+  - percent of `Unknown` decisions that enter grace,
+  - percent of crash-recovered sessions that heal into one row.
+
+Sprint 0 acceptance criteria:
+
+- The recent split failures are represented as deterministic replay fixtures.
+- The team has a written continuity decision contract.
+- Future changes can be judged against stable metrics instead of intuition.
+
+## Sprint 1: Observability And Decision Trace Infrastructure
+
+Goal: make every continuity decision inspectable without CyberArk-sensitive
+debugging.
+
+Workstream 1 - Bounded breadcrumb stream:
+
+- Add a bounded `ContinuationDecisionTrace` or equivalent breadcrumb pipeline
+  for:
+  - detection result,
+  - identity extraction result,
+  - continuity verdict,
+  - grace entry/exit,
+  - auto-stop countdown transitions,
+  - roll-over/reclassify decisions,
+  - recent auto-stop recovery decisions,
+  - startup recovery decisions,
+  - post-publish auto-heal decisions.
+
+Workstream 2 - Persisted explanation:
+
+- Persist enough metadata in manifests or adjacent sidecars to explain why a
+  session stopped, resumed, rolled over, or merged.
+- Keep these logs bounded and metadata-only; do not add transcript text or
+  sensitive payloads.
+
+Workstream 3 - Replay harness:
+
+- Add a deterministic replay surface that feeds stored detection/manifests
+  through continuity policy code.
+- Make replay cheap enough that every new continuity fix can run against the
+  corpus.
+
+Sprint 1 acceptance criteria:
+
+- June 12 fixtures produce readable traces that explain the current bad
+  behavior.
+- Replay can run without launching the UI or requiring live Teams windows.
+
+## Sprint 2: Shared Meeting Identity And Evidence Ladder
+
+Goal: create the single identity model all continuity code must use.
+
+Workstream 1 - Persisted identity snapshot:
+
+- Add `MeetingIdentitySnapshot` to `MeetingSessionManifest`.
+- Persist:
+  - platform,
+  - normalized durable meeting title,
+  - normalized durable window title,
+  - detected audio-source app/window identity,
+  - evidence sources used,
+  - identity confidence,
+  - captured-at timestamp,
+  - deterministic fingerprint.
+
+Workstream 2 - Shared matcher:
+
+- Add `MeetingContinuityMatcher` or equivalent in core.
+- Return only:
+  - `SameMeeting`,
+  - `DifferentMeeting`,
+  - `Unknown`.
+- Centralize useful normalization already scattered in the codebase:
+  - punctuation-insensitive title matching,
+  - Teams suppressed-title continuation,
+  - Teams sharing-surface continuation,
+  - Google Meet code continuity where still valid.
+
+Workstream 3 - Evidence ladder:
+
+- Define strong, medium, and weak evidence tiers.
+- Strong evidence should include a specific non-generic title plus attributed
+  audio or durable manifest continuity.
+- Medium evidence should include specific title plus platform-specific
+  host/window evidence.
+- Weak evidence should include shell/navigation/browser context that is useful
+  for grace but not safe for merge.
+- Generic titles such as `Microsoft Teams`, `Teams`, `Sharing control bar`, and
+  equivalent browser shells must never become strong identity by default.
+
+Workstream 4 - Historical compatibility:
+
+- Add lazy backfill so older manifests can derive a `MeetingIdentitySnapshot`
+  from saved evidence at read time.
+- Avoid a giant mandatory manifest rewrite migration.
+
+Sprint 2 acceptance criteria:
+
+- Runtime-to-runtime, runtime-to-manifest, and manifest-to-manifest comparison
+  all use the same matcher.
+- Older manifests still participate in continuity and healing without a one-off
+  bulk rewrite.
+
+## Sprint 3: Shadow Continuity Engine
+
+Goal: prove the new engine before giving it control.
+
+Workstream 1 - Parallel evaluation:
+
+- Run the new continuity engine in parallel with the legacy policy.
+- Keep legacy behavior active for now.
+- Log, for every meaningful decision:
+  - legacy verdict,
+  - new verdict,
+  - divergence reason,
+  - whether the divergence would prevent or cause a split.
+
+Workstream 2 - Divergence review:
+
+- Review divergences across:
+  - active recording continuation,
+  - roll-over/reclassify,
+  - recent auto-stop recovery,
+  - startup recovery,
+  - merge recommendation generation.
+- Classify each divergence as a bug in legacy logic, a bug in the new matcher,
+  or intentional risk reduction.
+
+Workstream 3 - Cutover gate:
+
+- Define required cutover conditions:
+  - June 12 split fixtures are corrected by the new engine,
+  - severe false-merge divergences are absent on negative fixtures,
+  - ordinary recordings do not show alarming divergence volume.
+
+Sprint 3 acceptance criteria:
+
+- The new engine has evidence-backed agreement or justified disagreement with
+  the old engine.
+- Cutover does not require blind trust.
+
+## Sprint 4: Live Continuity Cutover
+
+Goal: stop false splits during recording without creating endless over-recording.
+
+Workstream 1 - Runtime integration:
+
+- Refactor `AutoRecordingContinuityPolicy` and
+  `MainWindowInteractionLogic` to consume the shared matcher.
+- Behavior contract:
+  - `SameMeeting` continues and refreshes positive signal,
+  - `DifferentMeeting` may roll over or reclassify,
+  - `Unknown` enters bounded continuity grace.
+
+Workstream 2 - Bounded uncertainty handling:
+
+- Replace title-driven split behavior with identity-aware grace.
+- Keep the current stop responsiveness for clearly-ended meetings.
+- Add one bounded grace path for ambiguous same-platform continuity.
+- Make grace idempotent so repeated scans do not extend forever without new
+  evidence.
+
+Workstream 3 - Recent auto-stop recovery:
+
+- Extend `RecentAutoStopContext` to include stopped meeting title and identity
+  snapshot/fingerprint rather than only platform and timestamp.
+- Resume after recent auto-stop only when the matcher returns `SameMeeting`.
+- Do not resume solely because the platform matches inside a short time window.
+
+Workstream 4 - Negative-case preservation:
+
+- Preserve non-start behavior for generic Teams shells, weak browser-only
+  noise, and other non-specific windows.
+- Ensure that same-title recurring meetings still roll over when timing and
+  identity evidence indicate a truly different meeting.
+
+Sprint 4 acceptance criteria:
+
+- The GES-style split fixture stays one session.
+- Generic shell false starts remain suppressed.
+- `Unknown` no longer creates new rows by itself.
+
+## Sprint 5: Recovery, Publish-Time Stitching, And Ongoing Auto-Heal
+
+Goal: stop crash or recovery boundaries from becoming permanent meeting
+boundaries.
+
+Workstream 1 - Separate historical from ongoing repair:
+
+- Keep `PublishedMeetingRepairService` for legacy historical migrations only.
+- Introduce a new ongoing healing service that runs on current work:
+  - after startup seals interrupted sessions,
+  - after publish completes,
+  - after recovered queued sessions finish.
+
+Workstream 2 - Strict auto-heal rules:
+
+- Auto-heal only when:
+  - the matcher says `SameMeeting`,
+  - temporal adjacency is within a tight merge window,
+  - artifact ordering is monotonic,
+  - no conflicting evidence exists,
+  - the merge path can preserve lineage safely.
+- Keep weaker cases as visible cleanup recommendations rather than automatic
+  rewrites.
+
+Workstream 3 - Lineage and audit:
+
+- Preserve:
+  - source stems/session IDs,
+  - auto-heal reason,
+  - healed-at timestamp,
+  - archive location for originals.
+- Ensure future users can understand why the visible row history changed.
+
+Workstream 4 - Shared merge implementation:
+
+- Reuse one merge execution path for:
+  - startup healing,
+  - publish-time healing,
+  - safe cleanup merges,
+  - any future deterministic split-chain repair.
+
+Sprint 5 acceptance criteria:
+
+- The Americas-style crash split heals into one visible meeting.
+- Same-title but different-meeting negative fixtures do not auto-merge.
+- Repeated healer passes are idempotent.
+
+## Sprint 6: Crash Root Cause And Callback Topology Hardening
+
+Goal: remove the crash path that creates some split boundaries, without making
+split correctness depend on total crash elimination.
+
+Workstream 1 - Stack-overflow investigation:
+
+- Use breadcrumbs plus code inspection to isolate the `0xc00000fd`
+  stack-overflow path.
+- Focus on detection refresh, meeting refresh requests, title promotion,
+  startup maintenance, recommendation rebuilds, and any healing-triggered
+  refresh cascades.
+
+Workstream 2 - Reentrancy guards:
+
+- Add guards around:
+  - refresh requests,
+  - transition handlers,
+  - startup recovery to refresh loops,
+  - heal-to-refresh-to-recompute cycles.
+- Coalesce repeated refresh requests where possible instead of nesting them.
+
+Workstream 3 - State-machine boundaries:
+
+- Make recording transition state more explicit so stop/start/reclassify/recover
+  paths cannot recursively trigger each other.
+- Ensure crash recovery remains safe even if some other future crash appears.
+
+Sprint 6 acceptance criteria:
+
+- The known stack-overflow path is either eliminated or reduced to a bounded,
+  diagnosable failure path.
+- Continuity correctness still holds even if an unrelated future crash occurs.
+
+## Sprint 7: Heuristic Retirement And Rollout Controls
+
+Goal: prevent the old pendulum from reappearing through future hotfixes.
+
+Workstream 1 - Retire direct continuity heuristics:
+
+- Delete or demote legacy direct split/continuation branches once the matcher
+  cutover is proven.
+- Keep platform-specific heuristics only as evidence extractors.
+
+Workstream 2 - Rollout controls:
+
+- Add feature flags for:
+  - new continuity engine,
+  - ongoing auto-heal,
+  - review-only healing fallback if unexpected merges appear.
+- Make rollback possible without reintroducing old code edits.
+
+Workstream 3 - Fixture-gated future work:
+
+- Add a durable rule to the repo workflow:
+  - any new continuity exception must include a replay fixture and a negative
+    fixture.
+- Keep the fixture corpus small enough to maintain, but broad enough to block
+  the next swing.
+
+Sprint 7 acceptance criteria:
+
+- The continuity engine is the only decision authority left.
+- Future urgency fixes have a controlled place to land without forking the
+  logic again.
+
+## Sprint 8: Packaging, Validation, And Support Readiness
+
+Goal: ship the reliability model as a supported product behavior, not only a
+development refactor.
+
+Workstream 1 - Durable documentation:
+
+- Update `ARCHITECTURE.md` with the new continuity engine, identity model,
+  grace semantics, recovery semantics, and ongoing healing flow.
+- Update relevant troubleshooting and release docs so support can explain split
+  prevention and healing behavior.
+
+Workstream 2 - Validation:
+
+- Run the fixture corpus and focused continuity tests.
+- Run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-All.ps1`.
+- Run `dotnet test .\tests\AppPlatform.Tests\AppPlatform.Tests.csproj
+  -p:NuGetAudit=false` for deployment or manifest-contract changes.
+- If packaging or deployed behavior changes, run
+  `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1`,
+  `powershell -ExecutionPolicy Bypass -File .\scripts\Deploy-Local.ps1`, and
+  `powershell -ExecutionPolicy Bypass -File
+  .\scripts\Smoke-Test-Release.ps1 -Runtime win-x64`.
+
+Workstream 3 - Operational readiness:
+
+- Add support-facing guidance for:
+  - why a meeting was kept alive through grace,
+  - why two rows auto-healed into one,
+  - why a weak same-title case remained review-only,
+  - how to diagnose crash-recovered sessions without protected-process tools.
+
+Sprint 8 acceptance criteria:
+
+- Docs describe the shipped behavior rather than the old heuristic sprawl.
+- Validation proves both runtime behavior and packaged behavior when relevant.
+
+## Continuity Interfaces And Constraints
+
+- Add `MeetingIdentitySnapshot` to `MeetingSessionManifest`.
+- Extend `RecentAutoStopContext` to include stopped title and stopped identity.
+- Introduce a shared continuity matcher that returns `SameMeeting`,
+  `DifferentMeeting`, or `Unknown`.
+- Keep published lineage metadata additive and backward-compatible.
+- Preserve existing artifact formats and `.ready` semantics unless a change is
+  explicitly required.
+- Do not depend on process-memory access, protected-process inspection, or
+  other CyberArk-sensitive escalation to maintain continuity accuracy.
+- If Sprint 2 cannot produce a trustworthy identity model from current allowed
+  evidence, stop and reassess rather than adding another layer of special-case
+  split rules.

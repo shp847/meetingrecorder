@@ -47,8 +47,10 @@ public sealed class PublishedSessionWorkCleanupServiceTests
             var queuedRawFile = Path.Combine(Path.GetDirectoryName(queuedManifestPath)!, "raw", "loopback-chunk-0001.wav");
             var missingMergedRawFile = Path.Combine(Path.GetDirectoryName(missingMergedManifestPath)!, "raw", "loopback-chunk-0001.wav");
             var publishedProcessingAudioPath = Path.Combine(Path.GetDirectoryName(publishedManifestPath)!, "processing", "merged.wav");
+            var publishedProcessingCachePath = Path.Combine(Path.GetDirectoryName(publishedManifestPath)!, "processing", "diarization-cache.bin");
             var retainedPublishedAudioPath = Path.Combine(audioOutputDir, "merged.wav");
             var missingRetainedPublishedAudioPath = Path.Combine(audioOutputDir, "missing.wav");
+            await File.WriteAllTextAsync(publishedProcessingCachePath, "cache");
 
             var result = await PublishedSessionWorkCleanupService.PrunePublishedSessionsAsync(
                 manifestStore,
@@ -63,6 +65,7 @@ public sealed class PublishedSessionWorkCleanupServiceTests
             Assert.Equal(2, result.SessionsPruned);
             Assert.False(File.Exists(publishedRawFile));
             Assert.False(File.Exists(publishedProcessingAudioPath));
+            Assert.False(File.Exists(publishedProcessingCachePath));
             Assert.Equal(Path.GetFullPath(retainedPublishedAudioPath), Path.GetFullPath(publishedManifest.MergedAudioPath!));
             Assert.Empty(publishedManifest.RawChunkPaths);
             Assert.Empty(publishedManifest.LoopbackCaptureSegments);

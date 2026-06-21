@@ -1,6 +1,6 @@
 ﻿# Meeting Recorder Architecture
 
-This document describes the current implementation architecture for the Meeting Recorder app as it exists in the repository today. Product behavior and scope live in [PRODUCT_REQUIREMENTS.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\PRODUCT_REQUIREMENTS.md). Deployment and first-run guidance live in [SETUP.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\SETUP.md).
+This document describes the current implementation architecture for the Meeting Recorder app as it exists in the repository today. Product behavior and scope live in [PRODUCT_REQUIREMENTS.md](C:\code\Meeting Recorder\PRODUCT_REQUIREMENTS.md). Deployment and first-run guidance live in [SETUP.md](C:\code\Meeting Recorder\SETUP.md).
 
 ## 1. Architectural Intent
 
@@ -255,7 +255,7 @@ The durable session lifecycle uses these states:
 14. On startup, the queue first seals stale live-recording manifests that still have preserved raw chunks, stamps the end time from the newest usable audio chunk, requeues them for normal processing, then scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
 15. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
 16. In `Responsive` mode, new background queue work pauses while a live recording is active, worker launches run at reduced OS priority, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`.
-17. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound. Published-session maintenance also normalizes manifests onto the retained published audio and deletes redundant local work-cache WAVs once a matching published recording exists.
+17. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound. Published-session maintenance also normalizes manifests onto the retained published audio and deletes redundant bulky local work-cache files once a matching published recording exists.
 18. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
 19. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
 20. Imported-source reprocessing manifests are keyed back to the original published-audio stem when that source path is known, so a retry manifest with a filename-like title such as `Tyler Colin.wav` cannot appear as a second logical meeting row beside the original published session.
@@ -276,7 +276,7 @@ Each session has a dedicated work folder:
 
 The processing folder carries fixed stage snapshots for repaired retries: `transcription.snapshot.json` whenever transcription finishes successfully, and `summary.snapshot.json` when summary generation succeeds. Repaired retries can continue from saved transcript text even when a later optional diarization or summarization step crashes the worker.
 
-After a session publishes successfully, the retained audio path is the published recording. The `raw` folder and redundant `processing` WAV cache are best-effort cleanup targets on successful publish and on later startup maintenance once the matching published recording exists; published recordings, transcripts, and manifest metadata remain the durable outputs.
+After a session publishes successfully, the retained audio path is the published recording. The `raw` folder and redundant bulky `processing` cache are best-effort cleanup targets on successful publish and on later startup maintenance once the matching published recording exists; published recordings, transcripts, repair snapshots, and manifest metadata remain the durable outputs.
 
 `manifest.json` is the durable source of truth for:
 

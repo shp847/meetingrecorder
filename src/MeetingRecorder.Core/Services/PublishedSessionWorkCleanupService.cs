@@ -98,17 +98,15 @@ internal static class PublishedSessionWorkCleanupService
         var sessionRoot = Path.GetDirectoryName(manifestPath)
             ?? throw new InvalidOperationException("Manifest path must include a session directory.");
         var rawRoot = Path.Combine(sessionRoot, "raw");
+        var processingRoot = Path.Combine(sessionRoot, "processing");
         var hadRetainedCaptureArtifacts = manifest.RawChunkPaths.Count > 0 ||
                                          manifest.MicrophoneChunkPaths.Count > 0 ||
                                          manifest.LoopbackCaptureSegments.Count > 0 ||
                                          manifest.MicrophoneCaptureSegments.Count > 0 ||
                                          Directory.Exists(rawRoot);
-        var supersededProcessingAudioPaths = FindSupersededPublishedProcessingAudioPaths(
-            sessionRoot,
-            publishedAudioOutputDir,
-            retainedAudioPath).ToArray();
+        var hasPrunableProcessingArtifacts = HasPrunableProcessingArtifacts(processingRoot, retainedAudioPath);
         var mergedAudioPathChanged = !AreSamePath(manifest.MergedAudioPath, retainedAudioPath);
-        if (!hadRetainedCaptureArtifacts && supersededProcessingAudioPaths.Length == 0 && !mergedAudioPathChanged)
+        if (!hadRetainedCaptureArtifacts && !hasPrunableProcessingArtifacts && !mergedAudioPathChanged)
         {
             return PublishedSessionWorkCleanupResult.Empty;
         }
@@ -145,14 +143,9 @@ internal static class PublishedSessionWorkCleanupService
             bytesReclaimed += DeleteFileIfPresent(path);
         }
 
-        foreach (var path in supersededProcessingAudioPaths)
-        {
-            bytesReclaimed += DeleteFileIfPresent(path);
-        }
-
-        var processingRoot = Path.Combine(sessionRoot, "processing");
         if (Directory.Exists(processingRoot))
         {
+            bytesReclaimed += DeleteFilesUnderDirectoryExcept(processingRoot, retainedAudioPath);
             TryDeleteEmptyDirectories(processingRoot);
             TryDeleteDirectoryIfEmpty(processingRoot);
         }
@@ -166,6 +159,23 @@ internal static class PublishedSessionWorkCleanupService
 
         foreach (var filePath in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
+            bytesReclaimed += DeleteFileIfPresent(filePath);
+        }
+
+        return bytesReclaimed;
+    }
+
+    private static long DeleteFilesUnderDirectoryExcept(string root, string retainedPath)
+    {
+        long bytesReclaimed = 0;
+
+        foreach (var filePath in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            if (IsRetainedProcessingFile(filePath, retainedPath))
+            {
+                continue;
+            }
+
             bytesReclaimed += DeleteFileIfPresent(filePath);
         }
 
@@ -236,47 +246,22 @@ internal static class PublishedSessionWorkCleanupService
         }
     }
 
-    private static IEnumerable<string> FindSupersededPublishedProcessingAudioPaths(
-        string sessionRoot,
-        string? publishedAudioOutputDir,
-        string retainedAudioPath)
+    private static bool HasPrunableProcessingArtifacts(string processingRoot, string retainedAudioPath)
     {
-        if (string.IsNullOrWhiteSpace(publishedAudioOutputDir) ||
-            string.IsNullOrWhiteSpace(retainedAudioPath) ||
-            !Directory.Exists(publishedAudioOutputDir))
-        {
-            yield break;
-        }
-
-        var processingRoot = Path.Combine(sessionRoot, "processing");
         if (!Directory.Exists(processingRoot))
         {
-            yield break;
+            return false;
         }
 
-        foreach (var processingAudioPath in Directory.EnumerateFiles(processingRoot, "*.wav", SearchOption.AllDirectories))
-        {
-            if (AreSamePath(processingAudioPath, retainedAudioPath))
-            {
-                continue;
-            }
+        return Directory.EnumerateFiles(processingRoot, "*", SearchOption.AllDirectories)
+            .Any(path => !IsRetainedProcessingFile(path, retainedAudioPath));
+    }
 
-            var publishedCandidatePath = Path.Combine(
-                publishedAudioOutputDir,
-                Path.GetFileName(processingAudioPath));
-            if (!File.Exists(publishedCandidatePath) ||
-                AreSamePath(processingAudioPath, publishedCandidatePath))
-            {
-                continue;
-            }
-
-            if (!HasNonEmptyFile(publishedCandidatePath))
-            {
-                continue;
-            }
-
-            yield return processingAudioPath;
-        }
+    private static bool IsRetainedProcessingFile(string path, string retainedAudioPath)
+    {
+        return AreSamePath(path, retainedAudioPath) ||
+               string.Equals(Path.GetFileName(path), "transcription.snapshot.json", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(Path.GetFileName(path), "summary.snapshot.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool AreSamePath(string? left, string? right)
@@ -296,18 +281,6 @@ internal static class PublishedSessionWorkCleanupService
         catch
         {
             return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    private static bool HasNonEmptyFile(string path)
-    {
-        try
-        {
-            return new FileInfo(path).Length > 0;
-        }
-        catch
-        {
-            return false;
         }
     }
 

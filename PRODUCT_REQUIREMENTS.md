@@ -1,6 +1,6 @@
 # Meeting Recorder Product Requirements
 
-This document captures the current product scope and intended behavior of the Meeting Recorder app as implemented in the repository today. Detailed component boundaries and runtime flow live in [ARCHITECTURE.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\ARCHITECTURE.md). Operational setup instructions live in [SETUP.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\SETUP.md).
+This document captures the current product scope and intended behavior of the Meeting Recorder app as implemented in the repository today. Detailed component boundaries and runtime flow live in [ARCHITECTURE.md](C:\code\Meeting Recorder\ARCHITECTURE.md). Operational setup instructions live in [SETUP.md](C:\code\Meeting Recorder\SETUP.md).
 
 ## 1. Product Summary
 
@@ -343,6 +343,6 @@ The current release line is considered successful when:
 
 ## 9. Related Documents
 
-- [README.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\README.md)
-- [ARCHITECTURE.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\ARCHITECTURE.md)
-- [SETUP.md](C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\SETUP.md)
+- [README.md](C:\code\Meeting Recorder\README.md)
+- [ARCHITECTURE.md](C:\code\Meeting Recorder\ARCHITECTURE.md)
+- [SETUP.md](C:\code\Meeting Recorder\SETUP.md)
