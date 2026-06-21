@@ -11,6 +11,16 @@ internal static class Program
             return await RunDirectMlProbeAsync(args);
         }
 
+        if (HasArgument(args, "--probe-transcription-cli"))
+        {
+            return await RunExternalProviderProbeAsync(args, ProviderProbeKind.Transcription);
+        }
+
+        if (HasArgument(args, "--probe-diarization-cli"))
+        {
+            return await RunExternalProviderProbeAsync(args, ProviderProbeKind.Diarization);
+        }
+
         if (!TryParseArguments(args, out var manifestPath, out var configPath, out var parseError))
         {
             Console.Error.WriteLine(parseError);
@@ -44,18 +54,8 @@ internal static class Program
                 manifestStore,
                 pathBuilder,
                 new WaveChunkMerger(),
-                new WhisperNetTranscriptionProvider(config.TranscriptionModelPath, transcriptionThreadCount, logger),
-                new LocalSpeakerDiarizationProvider(
-                    config.DiarizationAssetPath,
-                    config.DiarizationAccelerationPreference,
-                    diarizationThreadCount,
-                    logger,
-                    config.SpeakerNameLearningMode,
-                    new SpeakerNameRecognitionOptions(
-                        config.SpeakerNameAutoApplyConfidenceThreshold,
-                        config.SpeakerNameSuggestionConfidenceThreshold,
-                        config.SpeakerNameMatchMarginThreshold),
-                    AppDataPaths.GetVoiceProfileStorePath()),
+                CreateTranscriptionProvider(config, transcriptionThreadCount, logger),
+                CreateDiarizationProvider(config, diarizationThreadCount, logger),
                 new TranscriptRenderer(),
                 new FilePublishService(),
                 summarizationProvider);
@@ -120,6 +120,86 @@ internal static class Program
             Console.Error.WriteLine("DirectML probe failed.");
             return 2;
         }
+    }
+
+    private static MeetingRecorder.Core.Processing.ITranscriptionProvider CreateTranscriptionProvider(
+        MeetingRecorder.Core.Configuration.AppConfig config,
+        int transcriptionThreadCount,
+        FileLogWriter logger)
+    {
+        if (config.TranscriptionProviderPreference == MeetingRecorder.Core.Configuration.TranscriptionProviderPreference.LocalCli &&
+            CliProviderProcess.HasCurrentSuccessfulProbe(config.TranscriptionCliPath, config.TranscriptionCliProviderProbe) &&
+            CliProviderProcess.ProbeExecutable(config.TranscriptionCliPath, "Transcription", logger))
+        {
+            return new LocalCliTranscriptionProvider(
+                config.TranscriptionCliPath,
+                config.TranscriptionCliArguments,
+                logger);
+        }
+
+        if (config.TranscriptionProviderPreference == MeetingRecorder.Core.Configuration.TranscriptionProviderPreference.LocalCli)
+        {
+            logger.Log("Falling back to Whisper.NET transcription provider because the configured CLI provider has no current successful probe.");
+        }
+
+        return new WhisperNetTranscriptionProvider(config.TranscriptionModelPath, transcriptionThreadCount, logger);
+    }
+
+    private static MeetingRecorder.Core.Processing.IDiarizationProvider CreateDiarizationProvider(
+        MeetingRecorder.Core.Configuration.AppConfig config,
+        int diarizationThreadCount,
+        FileLogWriter logger)
+    {
+        if (config.DiarizationProviderPreference == MeetingRecorder.Core.Configuration.DiarizationProviderPreference.LocalCli &&
+            CliProviderProcess.HasCurrentSuccessfulProbe(config.DiarizationCliPath, config.DiarizationCliProviderProbe) &&
+            CliProviderProcess.ProbeExecutable(config.DiarizationCliPath, "Diarization", logger))
+        {
+            return new LocalCliDiarizationProvider(
+                config.DiarizationCliPath,
+                config.DiarizationCliArguments,
+                logger);
+        }
+
+        if (config.DiarizationProviderPreference == MeetingRecorder.Core.Configuration.DiarizationProviderPreference.LocalCli)
+        {
+            logger.Log("Falling back to local Sherpa diarization provider because the configured CLI provider has no current successful probe.");
+        }
+
+        return new LocalSpeakerDiarizationProvider(
+            config.DiarizationAssetPath,
+            config.DiarizationAccelerationPreference,
+            diarizationThreadCount,
+            logger,
+            config.SpeakerNameLearningMode,
+            new SpeakerNameRecognitionOptions(
+                config.SpeakerNameAutoApplyConfidenceThreshold,
+                config.SpeakerNameSuggestionConfidenceThreshold,
+                config.SpeakerNameMatchMarginThreshold),
+            AppDataPaths.GetVoiceProfileStorePath());
+    }
+
+    private static async Task<int> RunExternalProviderProbeAsync(
+        IReadOnlyList<string> args,
+        ProviderProbeKind kind)
+    {
+        var configPath = TryGetOption(args, "--config") ?? AppDataPaths.GetConfigPath();
+        var logger = new FileLogWriter(AppDataPaths.GetGlobalLogPath());
+        var configStore = new AppConfigStore(configPath);
+        var config = await configStore.LoadOrCreateAsync();
+        var providerName = kind == ProviderProbeKind.Transcription ? "Transcription" : "Diarization";
+        var executablePath = kind == ProviderProbeKind.Transcription
+            ? config.TranscriptionCliPath
+            : config.DiarizationCliPath;
+
+        var snapshot = await CliProviderProcess.ProbeAsync(executablePath, providerName, CancellationToken.None);
+        var nextConfig = kind == ProviderProbeKind.Transcription
+            ? config with { TranscriptionCliProviderProbe = snapshot }
+            : config with { DiarizationCliProviderProbe = snapshot };
+        await configStore.SaveAsync(nextConfig);
+
+        logger.Log($"{providerName} CLI probe result: Succeeded={snapshot.Succeeded}. Message={snapshot.Message}");
+        Console.WriteLine(snapshot.Message);
+        return snapshot.Succeeded ? 0 : 2;
     }
 
     private static async Task TryWriteDirectMlProbeStatusAsync(
@@ -198,5 +278,11 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private enum ProviderProbeKind
+    {
+        Transcription,
+        Diarization,
     }
 }

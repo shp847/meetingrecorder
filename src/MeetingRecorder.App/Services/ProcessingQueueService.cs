@@ -32,11 +32,13 @@ internal sealed class ProcessingQueueService
     private string? _currentManifestPath;
     private bool _isBackgroundWorkPausedForRecording;
     private readonly List<QueuedManifestStatusEntry> _queuedManifestEntries = [];
+    private readonly HashSet<string> _reservedManifestPaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IWorkerProcess> _activeWorkersByManifestPath = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ActiveQueueItemState> _activeItemStatesByManifestPath = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ManifestMonitorState> _manifestMonitorsByPath = new(StringComparer.Ordinal);
     private readonly Dictionary<string, StageTimingAverage> _stageTimingAverages = new(StringComparer.OrdinalIgnoreCase);
     private ActiveQueueItemState? _currentItemState;
     private ProcessingQueueStatusSnapshot _statusSnapshot;
-    private CancellationTokenSource? _currentManifestMonitorCts;
-    private Task? _currentManifestMonitorTask;
     private string? _preemptedManifestPath;
 
     internal event Action<ProcessingQueueStatusSnapshot>? StatusChanged;
@@ -87,7 +89,7 @@ internal sealed class ProcessingQueueService
         {
             lock (_processSyncRoot)
             {
-                return _currentWorker is { HasExited: false };
+                return _activeWorkersByManifestPath.Values.Any(process => !process.HasExited);
             }
         }
     }
@@ -342,15 +344,15 @@ internal sealed class ProcessingQueueService
         _shutdownCts.Cancel();
         _pendingManifestSignal.Release();
 
-        IWorkerProcess? worker;
-        string? manifestPath;
+        List<(IWorkerProcess Worker, string ManifestPath)> workers;
         lock (_processSyncRoot)
         {
-            worker = _currentWorker;
-            manifestPath = _currentManifestPath;
+            workers = _activeWorkersByManifestPath
+                .Select(pair => (pair.Value, pair.Key))
+                .ToList();
         }
 
-        if (worker is not null)
+        foreach (var (worker, manifestPath) in workers)
         {
             try
             {
@@ -385,30 +387,52 @@ internal sealed class ProcessingQueueService
     {
         try
         {
+            var activeTasks = new List<Task>();
             while (!cancellationToken.IsCancellationRequested)
             {
-                await _pendingManifestSignal.WaitAsync(cancellationToken);
-                while (TryDequeueNextManifestPath(out var manifestPath))
+                while (activeTasks.Count < BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current) &&
+                       TryDequeueNextManifestPath(out var manifestPath))
                 {
-                    try
-                    {
-                        await ProcessManifestAsync(manifestPath, cancellationToken);
-                    }
-                    catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-                    {
-                        _logger.Log($"Queued processing failed unexpectedly for '{manifestPath}': {exception}");
-                        await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
-                        RemoveQueuedEntryAfterFailure(manifestPath);
-                    }
+                    activeTasks.Add(ProcessManifestSafelyAsync(manifestPath, cancellationToken));
                 }
+
+                if (activeTasks.Count == 0)
+                {
+                    await _pendingManifestSignal.WaitAsync(cancellationToken);
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+                    continue;
+                }
+
+                var completedTask = await Task.WhenAny(activeTasks.Append(Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken)));
+                if (!activeTasks.Contains(completedTask))
+                {
+                    continue;
+                }
+
+                activeTasks.Remove(completedTask);
+                await completedTask;
             }
         }
         catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
         {
+        }
+    }
+
+    private async Task ProcessManifestSafelyAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ProcessManifestAsync(manifestPath, cancellationToken);
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.Log($"Queued processing failed unexpectedly for '{manifestPath}': {exception}");
+            await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
+            RemoveQueuedEntryAfterFailure(manifestPath);
         }
     }
 
@@ -538,8 +562,7 @@ internal sealed class ProcessingQueueService
         }
         finally
         {
-            await StopCurrentManifestMonitorAsync();
-            ClearCurrentWorker(process);
+            await ClearCurrentWorkerAsync(process);
             process.Dispose();
         }
     }
@@ -1317,7 +1340,9 @@ internal sealed class ProcessingQueueService
 
         await ApplySkipSpeakerLabelingOverrideAsync(
             manifestPath,
-            "Speaker labeling deferred by the responsive background processing mode.",
+            BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(_config.Current)
+                ? "Speaker labeling skipped by transcript-only drain so transcripts can publish sooner."
+                : "Speaker labeling deferred by the responsive background processing mode.",
             resetSessionStateToQueued: false,
             cancellationToken);
     }
@@ -1813,8 +1838,15 @@ internal sealed class ProcessingQueueService
         lock (_processSyncRoot)
         {
             RemoveQueuedEntryLocked(manifestPath);
-            _currentItemState = new ActiveQueueItemState(queueEntry, DateTimeOffset.UtcNow);
-            InitializeRunningStageTrackingLocked(_currentItemState);
+            var activeItem = new ActiveQueueItemState(queueEntry, DateTimeOffset.UtcNow);
+            _activeItemStatesByManifestPath[manifestPath] = activeItem;
+            if (_currentItemState is null || string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
+            {
+                _currentItemState = activeItem;
+                _currentManifestPath = manifestPath;
+            }
+
+            InitializeRunningStageTrackingLocked(activeItem);
             snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
         }
 
@@ -1828,6 +1860,8 @@ internal sealed class ProcessingQueueService
         {
             _queuedManifestEntries.RemoveAt(index);
         }
+
+        _reservedManifestPaths.Remove(manifestPath);
     }
 
     private void RemoveQueuedEntryAfterFailure(string manifestPath)
@@ -1847,8 +1881,7 @@ internal sealed class ProcessingQueueService
         bool preferFront,
         bool markPreempted)
     {
-        if (_currentItemState is not null &&
-            string.Equals(_currentItemState.Summary.ManifestPath, queueEntry.ManifestPath, StringComparison.Ordinal))
+        if (_activeItemStatesByManifestPath.ContainsKey(queueEntry.ManifestPath))
         {
             return false;
         }
@@ -1859,6 +1892,7 @@ internal sealed class ProcessingQueueService
         {
             var existing = _queuedManifestEntries[existingIndex];
             _queuedManifestEntries.RemoveAt(existingIndex);
+            _reservedManifestPaths.Remove(queueEntry.ManifestPath);
             queueEntry = queueEntry with { WasPreempted = existing.WasPreempted || markPreempted };
         }
         else if (markPreempted)
@@ -1911,13 +1945,21 @@ internal sealed class ProcessingQueueService
             var dequeueIndex = rushRequest is null
                 ? 0
                 : _queuedManifestEntries.FindIndex(entry =>
-                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal));
+                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal) &&
+                    !_reservedManifestPaths.Contains(entry.ManifestPath));
             if (dequeueIndex < 0)
             {
-                dequeueIndex = 0;
+                dequeueIndex = _queuedManifestEntries.FindIndex(entry => !_reservedManifestPaths.Contains(entry.ManifestPath));
+            }
+
+            if (dequeueIndex < 0)
+            {
+                manifestPath = string.Empty;
+                return false;
             }
 
             manifestPath = _queuedManifestEntries[dequeueIndex].ManifestPath;
+            _reservedManifestPaths.Add(manifestPath);
             return true;
         }
     }
@@ -1935,11 +1977,15 @@ internal sealed class ProcessingQueueService
 
     private void StartCurrentManifestMonitorLocked(string manifestPath)
     {
-        _currentManifestMonitorCts?.Cancel();
-        _currentManifestMonitorCts?.Dispose();
+        if (_manifestMonitorsByPath.Remove(manifestPath, out var existing))
+        {
+            existing.Cancellation.Cancel();
+            existing.Cancellation.Dispose();
+        }
+
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
-        _currentManifestMonitorCts = cts;
-        _currentManifestMonitorTask = Task.Run(() => MonitorCurrentManifestAsync(manifestPath, cts.Token));
+        var task = Task.Run(() => MonitorCurrentManifestAsync(manifestPath, cts.Token));
+        _manifestMonitorsByPath[manifestPath] = new ManifestMonitorState(cts, task);
     }
 
     private async Task MonitorCurrentManifestAsync(string manifestPath, CancellationToken cancellationToken)
@@ -1953,16 +1999,21 @@ internal sealed class ProcessingQueueService
                 ProcessingQueueStatusSnapshot? snapshotToPublish = null;
                 lock (_processSyncRoot)
                 {
-                    if (_currentItemState is null ||
-                        !string.Equals(_currentItemState.Summary.ManifestPath, manifestPath, StringComparison.Ordinal))
+                    if (!_activeItemStatesByManifestPath.TryGetValue(manifestPath, out var activeItem))
                     {
                         return;
                     }
 
-                    ApplyObservedStageTransitionsLocked(_currentItemState, queueEntry);
-                    if (_currentItemState.Summary != queueEntry)
+                    ApplyObservedStageTransitionsLocked(activeItem, queueEntry);
+                    if (activeItem.Summary != queueEntry)
                     {
-                        _currentItemState = _currentItemState with { Summary = queueEntry };
+                        var updatedItem = activeItem with { Summary = queueEntry };
+                        _activeItemStatesByManifestPath[manifestPath] = updatedItem;
+                        if (string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
+                        {
+                            _currentItemState = updatedItem;
+                        }
+
                         snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
                     }
                 }
@@ -2027,38 +2078,26 @@ internal sealed class ProcessingQueueService
         _stageTimingAverages[stageName] = new StageTimingAverage(1, observedRatio, observedDuration);
     }
 
-    private async Task StopCurrentManifestMonitorAsync()
+    private async Task StopCurrentManifestMonitorAsync(string manifestPath)
     {
-        CancellationTokenSource? cts;
-        Task? task;
+        ManifestMonitorState? monitor;
         lock (_processSyncRoot)
         {
-            cts = _currentManifestMonitorCts;
-            task = _currentManifestMonitorTask;
-            _currentManifestMonitorCts = null;
-            _currentManifestMonitorTask = null;
+            _manifestMonitorsByPath.Remove(manifestPath, out monitor);
         }
 
-        if (cts is null)
+        if (monitor is null)
         {
             return;
         }
 
-        cts.Cancel();
-        try
-        {
-            if (task is not null)
-            {
-                await task;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            cts.Dispose();
-        }
+        monitor.Cancellation.Cancel();
+        _ = monitor.Task.ContinueWith(
+            _ => monitor.Cancellation.Dispose(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        await Task.CompletedTask;
     }
 
     private ProcessingQueueStatusSnapshot? UpdateStatusSnapshot()
@@ -2084,9 +2123,11 @@ internal sealed class ProcessingQueueService
     private ProcessingQueueStatusSnapshot BuildStatusSnapshotLocked(DateTimeOffset nowUtc)
     {
         var queuedCount = _queuedManifestEntries.Count;
-        var totalRemainingCount = queuedCount + (_currentItemState is null ? 0 : 1);
+        var activeItems = _activeItemStatesByManifestPath.Values.ToArray();
+        var displayItem = _currentItemState ?? activeItems.FirstOrDefault();
+        var totalRemainingCount = queuedCount + activeItems.Length;
         var rushRequest = BuildRushedProcessingStateLocked();
-        var runState = _currentItemState is not null
+        var runState = activeItems.Length > 0
             ? ProcessingQueueRunState.Processing
             : _isBackgroundWorkPausedForRecording && queuedCount > 0
                 ? ProcessingQueueRunState.Paused
@@ -2096,37 +2137,55 @@ internal sealed class ProcessingQueueService
         var pauseReason = runState == ProcessingQueueRunState.Paused
             ? ProcessingQueuePauseReason.LiveRecordingResponsiveMode
             : ProcessingQueuePauseReason.None;
-        var currentItemEstimatedRemaining = _currentItemState is null
+        var currentItemEstimatedRemaining = displayItem is null
             ? null
-            : EstimateRemainingLocked(_currentItemState.Summary, nowUtc);
+            : EstimateRemainingLocked(displayItem.Summary, nowUtc);
         var queuedRemaining = EstimateQueuedRemainingLocked(nowUtc);
-        var overallEstimatedRemaining = currentItemEstimatedRemaining is { } currentRemaining && queuedRemaining is { } queuedRemainingEstimate
-            ? currentRemaining + queuedRemainingEstimate
-            : _currentItemState is null
+        var activeRemaining = EstimateActiveRemainingLocked(activeItems, nowUtc);
+        var overallEstimatedRemaining = activeRemaining is { } activeRemainingEstimate && queuedRemaining is { } queuedRemainingEstimate
+            ? activeRemainingEstimate + queuedRemainingEstimate
+            : activeItems.Length == 0
                 ? queuedRemaining
                 : null;
-        var currentStageStatus = _currentItemState is null
+        var currentStageStatus = displayItem is null
             ? null
-            : GetCurrentStageStatus(_currentItemState.Summary);
+            : GetCurrentStageStatus(displayItem.Summary);
 
         return new ProcessingQueueStatusSnapshot(
             runState,
             pauseReason,
             queuedCount,
             totalRemainingCount,
-            _currentItemState?.Summary.ManifestPath,
-            _currentItemState?.Summary.Title,
-            _currentItemState?.Summary.Platform,
+            displayItem?.Summary.ManifestPath,
+            displayItem?.Summary.Title,
+            displayItem?.Summary.Platform,
             currentStageStatus?.StageName,
             currentStageStatus?.State,
             currentStageStatus?.UpdatedAtUtc,
-            _currentItemState?.ProcessingStartedAtUtc,
+            displayItem?.ProcessingStartedAtUtc,
             currentItemEstimatedRemaining,
             overallEstimatedRemaining,
             nowUtc,
             rushRequest,
             IsRushPauseBypassActiveLocked(rushRequest),
             _queuedManifestEntries.Any(entry => entry.WasPreempted));
+    }
+
+    private TimeSpan? EstimateActiveRemainingLocked(IReadOnlyList<ActiveQueueItemState> activeItems, DateTimeOffset nowUtc)
+    {
+        var total = TimeSpan.Zero;
+        foreach (var activeItem in activeItems)
+        {
+            var estimatedRemaining = EstimateRemainingLocked(activeItem.Summary, nowUtc);
+            if (estimatedRemaining is null)
+            {
+                return null;
+            }
+
+            total += estimatedRemaining.Value;
+        }
+
+        return total;
     }
 
     private TimeSpan? EstimateQueuedRemainingLocked(DateTimeOffset nowUtc)
@@ -2162,7 +2221,7 @@ internal sealed class ProcessingQueueService
                 continue;
             }
 
-            if (string.Equals(_currentItemState?.Summary.ManifestPath, queueEntry.ManifestPath, StringComparison.Ordinal) &&
+            if (_activeItemStatesByManifestPath.ContainsKey(queueEntry.ManifestPath) &&
                 stageStatus.State == StageExecutionState.Running)
             {
                 var stageElapsed = nowUtc - stageStatus.UpdatedAtUtc;
@@ -2249,8 +2308,8 @@ internal sealed class ProcessingQueueService
     {
         lock (_processSyncRoot)
         {
-            return string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal) ||
-                   string.Equals(_currentItemState?.Summary.ManifestPath, manifestPath, StringComparison.Ordinal);
+            return _activeWorkersByManifestPath.ContainsKey(manifestPath) ||
+                   _activeItemStatesByManifestPath.ContainsKey(manifestPath);
         }
     }
 
@@ -2283,7 +2342,6 @@ internal sealed class ProcessingQueueService
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            manifestPath = GetNextManifestPathCandidate() ?? manifestPath;
             if (!ShouldPauseBackgroundProcessing(manifestPath))
             {
                 break;
@@ -2306,7 +2364,7 @@ internal sealed class ProcessingQueueService
             PublishStatusSnapshot(UpdateStatusSnapshot());
         }
 
-        return GetNextManifestPathCandidate() ?? manifestPath;
+        return TrySwitchReservedManifestToRush(manifestPath) ?? manifestPath;
     }
 
     private bool ShouldPauseBackgroundProcessing(string manifestPath)
@@ -2384,6 +2442,29 @@ internal sealed class ProcessingQueueService
         }
     }
 
+    private string? TrySwitchReservedManifestToRush(string manifestPath)
+    {
+        lock (_processSyncRoot)
+        {
+            var rushRequest = _config.Current.RushProcessingRequest;
+            if (rushRequest is null ||
+                string.Equals(rushRequest.ManifestPath, manifestPath, StringComparison.Ordinal) ||
+                _reservedManifestPaths.Contains(rushRequest.ManifestPath))
+            {
+                return null;
+            }
+
+            if (_queuedManifestEntries.Any(entry => string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal)))
+            {
+                _reservedManifestPaths.Remove(manifestPath);
+                _reservedManifestPaths.Add(rushRequest.ManifestPath);
+                return rushRequest.ManifestPath;
+            }
+
+            return null;
+        }
+    }
+
     private void TryApplyWorkerPriority(IWorkerProcess process, ProcessPriorityClass priority, string manifestPath)
     {
         try
@@ -2433,24 +2514,48 @@ internal sealed class ProcessingQueueService
     {
         lock (_processSyncRoot)
         {
-            _currentWorker = process;
-            _currentManifestPath = manifestPath;
+            _activeWorkersByManifestPath[manifestPath] = process;
+            if (_currentWorker is null)
+            {
+                _currentWorker = process;
+                _currentManifestPath = manifestPath;
+            }
+
             StartCurrentManifestMonitorLocked(manifestPath);
         }
     }
 
-    private void ClearCurrentWorker(IWorkerProcess process)
+    private async Task ClearCurrentWorkerAsync(IWorkerProcess process)
     {
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
+        string? manifestPath = null;
         lock (_processSyncRoot)
         {
-            if (ReferenceEquals(_currentWorker, process))
+            manifestPath = _activeWorkersByManifestPath
+                .FirstOrDefault(pair => ReferenceEquals(pair.Value, process))
+                .Key;
+            if (!string.IsNullOrWhiteSpace(manifestPath))
             {
-                _currentWorker = null;
-                _currentManifestPath = null;
-                _currentItemState = null;
+                _activeWorkersByManifestPath.Remove(manifestPath);
+                _activeItemStatesByManifestPath.Remove(manifestPath);
+            }
+
+            if (ReferenceEquals(_currentWorker, process) || string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
+            {
+                var nextWorker = _activeWorkersByManifestPath.FirstOrDefault();
+                _currentManifestPath = string.IsNullOrWhiteSpace(nextWorker.Key) ? null : nextWorker.Key;
+                _currentWorker = string.IsNullOrWhiteSpace(nextWorker.Key) ? null : nextWorker.Value;
+                _currentItemState = _currentManifestPath is not null &&
+                    _activeItemStatesByManifestPath.TryGetValue(_currentManifestPath, out var activeItem)
+                        ? activeItem
+                        : null;
                 snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestPath))
+        {
+            await StopCurrentManifestMonitorAsync(manifestPath);
         }
 
         PublishStatusSnapshot(snapshotToPublish);
@@ -2500,6 +2605,8 @@ internal sealed record ActiveQueueItemState(
 {
     public Dictionary<string, DateTimeOffset> RunningStageStartedAtUtc { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
+
+internal sealed record ManifestMonitorState(CancellationTokenSource Cancellation, Task Task);
 
 internal sealed record StageTimingAverage(
     int ObservationCount,

@@ -45,6 +45,36 @@ public enum BackgroundSpeakerLabelingMode
     Inline = 2,
 }
 
+public enum ProcessingSpeedProfile
+{
+    Normal = 0,
+    TranscriptOnlyDrain = 1,
+    OvernightDrain = 2,
+}
+
+public enum TranscriptionProviderPreference
+{
+    WhisperNet = 0,
+    LocalCli = 1,
+}
+
+public enum DiarizationProviderPreference
+{
+    LocalSherpa = 0,
+    LocalCli = 1,
+}
+
+public sealed record ExternalProviderProbeSnapshot
+{
+    public bool Succeeded { get; init; }
+
+    public DateTimeOffset? LastProbeUtc { get; init; }
+
+    public string ExecutablePath { get; init; } = string.Empty;
+
+    public string Message { get; init; } = string.Empty;
+}
+
 public enum SpeakerNameLearningMode
 {
     Disabled = 0,
@@ -221,10 +251,28 @@ public sealed record AppConfig
     public TranscriptionModelProfilePreference TranscriptionModelProfilePreference { get; init; } =
         TranscriptionModelProfilePreference.Standard;
 
+    public TranscriptionProviderPreference TranscriptionProviderPreference { get; init; } =
+        TranscriptionProviderPreference.WhisperNet;
+
+    public string TranscriptionCliPath { get; init; } = string.Empty;
+
+    public string TranscriptionCliArguments { get; init; } = string.Empty;
+
+    public ExternalProviderProbeSnapshot TranscriptionCliProviderProbe { get; init; } = new();
+
     public string DiarizationAssetPath { get; init; } = string.Empty;
 
     public SpeakerLabelingModelProfilePreference SpeakerLabelingModelProfilePreference { get; init; } =
         SpeakerLabelingModelProfilePreference.Standard;
+
+    public DiarizationProviderPreference DiarizationProviderPreference { get; init; } =
+        DiarizationProviderPreference.LocalSherpa;
+
+    public string DiarizationCliPath { get; init; } = string.Empty;
+
+    public string DiarizationCliArguments { get; init; } = string.Empty;
+
+    public ExternalProviderProbeSnapshot DiarizationCliProviderProbe { get; init; } = new();
 
     public InferenceAccelerationPreference DiarizationAccelerationPreference { get; init; } =
         InferenceAccelerationPreference.CpuOnly;
@@ -254,6 +302,16 @@ public sealed record AppConfig
 
     public BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode { get; init; } =
         BackgroundSpeakerLabelingMode.Deferred;
+
+    public ProcessingSpeedProfile ProcessingSpeedProfile { get; init; } =
+        ProcessingSpeedProfile.Normal;
+
+    public string OvernightDrainStartLocal { get; init; } = "22:00";
+
+    public string OvernightDrainEndLocal { get; init; } = "06:00";
+
+    public ProcessingSpeedProfile PreviousProcessingSpeedProfile { get; init; } =
+        ProcessingSpeedProfile.Normal;
 
     public SpeakerNameLearningMode SpeakerNameLearningMode { get; init; } =
         SpeakerNameLearningMode.LocalAutoLearn;

@@ -72,6 +72,8 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
 
         Assert.True(recoveryIndex > 0);
         Assert.True(skipIndex > recoveryIndex);
+        Assert.Contains("skipped without CPU retry", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DirectML speaker clustering was outside the supported automatic range; speaker labeling retried on CPU.", source, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -5,14 +5,40 @@ namespace MeetingRecorder.Core.Services;
 
 public static class BackgroundProcessingPolicy
 {
+    public static readonly TimeSpan DiarizationTimeout = TimeSpan.FromMinutes(45);
+
+    public const int TranscriptOnlyDrainWorkerCount = 2;
+
+    public static ProcessingSpeedProfile GetEffectiveSpeedProfile(AppConfig config)
+    {
+        if (config.ProcessingSpeedProfile == ProcessingSpeedProfile.OvernightDrain)
+        {
+            return IsOvernightDrainWindowActive(config, DateTimeOffset.Now.TimeOfDay)
+                ? ProcessingSpeedProfile.TranscriptOnlyDrain
+                : ProcessingSpeedProfile.Normal;
+        }
+
+        return config.ProcessingSpeedProfile;
+    }
+
+    public static bool IsTranscriptOnlyDrainActive(AppConfig config)
+    {
+        return GetEffectiveSpeedProfile(config) == ProcessingSpeedProfile.TranscriptOnlyDrain;
+    }
+
+    public static int GetMaxWorkerCount(AppConfig config)
+    {
+        return IsTranscriptOnlyDrainActive(config) ? TranscriptOnlyDrainWorkerCount : 1;
+    }
+
     public static bool ShouldPauseNewBackgroundWork(AppConfig config, bool isRecording)
     {
-        return isRecording && config.BackgroundProcessingMode == BackgroundProcessingMode.Responsive;
+        return isRecording && GetEffectiveBackgroundProcessingMode(config) == BackgroundProcessingMode.Responsive;
     }
 
     public static ProcessPriorityClass GetWorkerPriority(AppConfig config)
     {
-        return config.BackgroundProcessingMode switch
+        return GetEffectiveBackgroundProcessingMode(config) switch
         {
             BackgroundProcessingMode.Responsive => ProcessPriorityClass.BelowNormal,
             BackgroundProcessingMode.Balanced => ProcessPriorityClass.BelowNormal,
@@ -24,7 +50,7 @@ public static class BackgroundProcessingPolicy
     public static int GetTranscriptionThreadCount(AppConfig config, int processorCount)
     {
         var normalizedProcessorCount = Math.Max(1, processorCount);
-        return config.BackgroundProcessingMode switch
+        return GetEffectiveBackgroundProcessingMode(config) switch
         {
             BackgroundProcessingMode.Responsive => Math.Min(2, normalizedProcessorCount),
             BackgroundProcessingMode.Balanced => Math.Min(4, normalizedProcessorCount),
@@ -36,7 +62,7 @@ public static class BackgroundProcessingPolicy
     public static int GetDiarizationThreadCount(AppConfig config, int processorCount)
     {
         var normalizedProcessorCount = Math.Max(1, processorCount);
-        return config.BackgroundProcessingMode switch
+        return GetEffectiveBackgroundProcessingMode(config) switch
         {
             BackgroundProcessingMode.Responsive => 1,
             BackgroundProcessingMode.Balanced => Math.Min(2, normalizedProcessorCount),
@@ -47,6 +73,33 @@ public static class BackgroundProcessingPolicy
 
     public static bool ShouldSkipSpeakerLabelingInPrimaryPass(AppConfig config)
     {
-        return config.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred;
+        return config.BackgroundSpeakerLabelingMode == BackgroundSpeakerLabelingMode.Deferred ||
+               IsTranscriptOnlyDrainActive(config);
+    }
+
+    public static bool ShouldSkipSummarizationInPrimaryPass(AppConfig config)
+    {
+        return IsTranscriptOnlyDrainActive(config);
+    }
+
+    private static BackgroundProcessingMode GetEffectiveBackgroundProcessingMode(AppConfig config)
+    {
+        return IsTranscriptOnlyDrainActive(config)
+            ? BackgroundProcessingMode.MaximumThroughput
+            : config.BackgroundProcessingMode;
+    }
+
+    private static bool IsOvernightDrainWindowActive(AppConfig config, TimeSpan localTime)
+    {
+        if (!TimeSpan.TryParse(config.OvernightDrainStartLocal, out var start) ||
+            !TimeSpan.TryParse(config.OvernightDrainEndLocal, out var end))
+        {
+            start = TimeSpan.FromHours(22);
+            end = TimeSpan.FromHours(6);
+        }
+
+        return start <= end
+            ? localTime >= start && localTime < end
+            : localTime >= start || localTime < end;
     }
 }

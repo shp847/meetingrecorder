@@ -223,11 +223,21 @@ Secondary maintenance and support actions live in the header:
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
   - `Inline`: keep speaker labeling in the primary pass for labeled output sooner, with processing speed controlled by the selected background mode.
   - Settings and Setup saves mark the one-time legacy safety migration as applied, so explicit `Throttled` and `Inline` choices survive later app restarts and in-app updates.
+- `Processing speed profile`
+  - `Normal`: follow the selected background processing, speaker-labeling, and summary settings.
+  - `Transcript only`: publish audio/transcript artifacts first, skip speaker labels and automatic summaries, and allow up to two transcript-only workers at once.
+  - `Overnight transcript only`: apply the same transcript-only drain during the configured local window, defaulting to `22:00` through `06:00`.
 
 The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
 
 For one urgent meeting, use `Process ASAP` from the meeting detail window or `Process This ASAP...` from the context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.
+
+For large backlogs or low-value meetings, use `Transcript only` instead of high-accuracy/custom models plus automatic enrichment. Optional speaker labeling now also has a 45-minute per-meeting cap, and DirectML over-segmented speaker clusters publish without a second CPU retry when the automatic speaker count is already outside the supported range.
+
+Experimental processing backends live in `Settings > Advanced`. `External CLI` transcription uses `transcriptionCliPath` plus optional `transcriptionCliArguments`, passes a prepared 16 kHz mono PCM WAV to `{audioPath}`, and expects the current `TranscriptionResult` JSON shape on stdout. `External CLI` speaker labeling uses `diarizationCliPath` plus optional `diarizationCliArguments`, passes prepared audio at `{audioPath}` plus transcript segments at `{transcriptPath}`, and expects the current `DiarizationResult` JSON shape on stdout. Labeled diarization results must include speaker turns, speaker catalog, and metadata; skipped labels must include a safe diagnostic message or metadata diagnostic.
+
+Use the `Test` button beside each external provider before relying on it. The worker runs the configured executable with `--probe` and expects stdout JSON shaped as `{ "ok": true|false, "message": "safe text" }`; the result is saved with the executable path and last probe time. Selecting `External CLI` without a successful probe for the same path is allowed, but worker startup falls back to the built-in provider until the matching probe passes. Runtime CLI failures after a provider has been selected fail that processing stage instead of silently switching providers mid-meeting.
 
 For diarized meetings, the detail window keeps name learning and label repair separate. `Refresh Suggestions` only checks stored speaker voice samples against local voice profiles; it does not retranscribe audio, re-run diarization, or queue the worker. `Undo Name Recognition` removes profile-applied or profile-suggested names from that meeting, preserves explicit user-entered names, and records scoped feedback so the same profile is less likely to be offered for the same meeting speaker again. `Repair Speaker Labels` is the heavier action for suspicious speaker-label explosions and re-runs speaker labeling from the existing transcript snapshot when the meeting is eligible.
 

@@ -152,6 +152,139 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_TranscriptOnlyDrain_Skips_Diarization_And_Summaries()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var pathBuilder = new ArtifactPathBuilder();
+            var workDir = Path.Combine(root, "work");
+            var audioDir = Path.Combine(root, "audio");
+            var transcriptDir = Path.Combine(root, "transcripts");
+            Directory.CreateDirectory(workDir);
+            Directory.CreateDirectory(audioDir);
+            Directory.CreateDirectory(transcriptDir);
+
+            var manifestStore = new SessionManifestStore(pathBuilder);
+            var manifest = await manifestStore.CreateAsync(workDir, MeetingPlatform.Teams, "Queued Session", Array.Empty<DetectionSignal>());
+            var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+            var sourceAudioPath = Path.Combine(workDir, manifest.SessionId, "processing", "existing-audio.wav");
+            await WriteSilentWaveFileAsync(sourceAudioPath, TimeSpan.FromSeconds(1));
+            await manifestStore.SaveAsync(
+                manifest with
+                {
+                    State = SessionState.Queued,
+                    EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1),
+                    MergedAudioPath = sourceAudioPath,
+                },
+                manifestPath);
+
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = new SessionProcessor(
+                manifestStore,
+                pathBuilder,
+                new WaveChunkMerger(),
+                new FakeTranscriptionProvider(),
+                diarizationProvider,
+                new TranscriptRenderer(),
+                new FilePublishService(),
+                summaryProvider);
+
+            await processor.ProcessAsync(
+                manifestPath,
+                new AppConfig
+                {
+                    WorkDir = workDir,
+                    AudioOutputDir = audioDir,
+                    TranscriptOutputDir = transcriptDir,
+                    TranscriptionModelPath = Path.Combine(root, "models", "dummy.bin"),
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+                    ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain,
+                    SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                });
+
+            var finalManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(0, diarizationProvider.CallCount);
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Skipped, finalManifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.Skipped, finalManifest.SummarizationStatus.State);
+            Assert.Contains("processing speed profile", finalManifest.DiarizationStatus.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("processing speed profile", finalManifest.SummarizationStatus.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_Publishes_Transcript_When_Optional_Diarization_Times_Out()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var pathBuilder = new ArtifactPathBuilder();
+            var workDir = Path.Combine(root, "work");
+            var audioDir = Path.Combine(root, "audio");
+            var transcriptDir = Path.Combine(root, "transcripts");
+            Directory.CreateDirectory(workDir);
+            Directory.CreateDirectory(audioDir);
+            Directory.CreateDirectory(transcriptDir);
+
+            var manifestStore = new SessionManifestStore(pathBuilder);
+            var manifest = await manifestStore.CreateAsync(workDir, MeetingPlatform.Teams, "Queued Session", Array.Empty<DetectionSignal>());
+            var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+            var sourceAudioPath = Path.Combine(workDir, manifest.SessionId, "processing", "existing-audio.wav");
+            await WriteSilentWaveFileAsync(sourceAudioPath, TimeSpan.FromSeconds(1));
+            await manifestStore.SaveAsync(
+                manifest with
+                {
+                    State = SessionState.Queued,
+                    EndedAtUtc = manifest.StartedAtUtc.AddMinutes(1),
+                    MergedAudioPath = sourceAudioPath,
+                },
+                manifestPath);
+
+            var processor = new SessionProcessor(
+                manifestStore,
+                pathBuilder,
+                new WaveChunkMerger(),
+                new FakeTranscriptionProvider(),
+                new CancelingDiarizationProvider(),
+                new TranscriptRenderer(),
+                new FilePublishService());
+
+            var published = await processor.ProcessAsync(
+                manifestPath,
+                new AppConfig
+                {
+                    WorkDir = workDir,
+                    AudioOutputDir = audioDir,
+                    TranscriptOutputDir = transcriptDir,
+                    TranscriptionModelPath = Path.Combine(root, "models", "dummy.bin"),
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Inline,
+                });
+
+            var finalManifest = await manifestStore.LoadAsync(manifestPath);
+
+            Assert.Equal(SessionState.Published, finalManifest.State);
+            Assert.Equal(StageExecutionState.Skipped, finalManifest.DiarizationStatus.State);
+            Assert.Contains("45-minute", finalManifest.DiarizationStatus.Message, StringComparison.Ordinal);
+            Assert.True(File.Exists(published.JsonPath));
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task ProcessAsync_Reuses_A_Persisted_Transcription_Snapshot_For_A_Repaired_Session()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -830,6 +963,17 @@ public sealed class SessionProcessorTests
             CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("diarization failed");
+        }
+    }
+
+    private sealed class CancelingDiarizationProvider : IDiarizationProvider
+    {
+        public Task<DiarizationResult> ApplySpeakerLabelsAsync(
+            string audioPath,
+            IReadOnlyList<TranscriptSegment> transcriptSegments,
+            CancellationToken cancellationToken)
+        {
+            throw new OperationCanceledException(cancellationToken);
         }
     }
 

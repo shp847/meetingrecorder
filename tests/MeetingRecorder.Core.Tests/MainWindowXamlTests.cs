@@ -171,8 +171,10 @@ public sealed class MainWindowXamlTests
     public void App_Shell_Uses_A_Global_Status_Surface_Outside_The_Home_Body()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
 
         var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
 
         Assert.Contains("x:Name=\"HeaderShellStatusBorder\"", xaml);
         Assert.Contains("x:Name=\"HeaderShellStatusLabelTextBlock\"", xaml);
@@ -185,8 +187,10 @@ public sealed class MainWindowXamlTests
     public void App_Shell_Adds_A_Compact_Header_Queue_Chip_Without_Replacing_The_Primary_Shell_Status()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
 
         var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
 
         Assert.Contains("x:Name=\"HeaderQueueStatusBorder\"", xaml);
         Assert.Contains("x:Name=\"HeaderQueueStatusLabelTextBlock\"", xaml);
@@ -292,11 +296,28 @@ public sealed class MainWindowXamlTests
     public void Advanced_Settings_Expose_Background_Processing_And_Speaker_Labeling_Mode_Selectors()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
 
         var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
 
         Assert.Contains("x:Name=\"ConfigBackgroundProcessingModeComboBox\"", xaml);
         Assert.Contains("Text=\"Background processing mode\"", xaml);
+        Assert.Contains("x:Name=\"ConfigProcessingSpeedProfileComboBox\"", xaml);
+        Assert.Contains("Text=\"Processing speed profile\"", xaml);
+        Assert.Contains("x:Name=\"ConfigOvernightDrainStartTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigTranscriptionProviderPreferenceComboBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigTranscriptionCliPathTextBox\"", xaml);
+        Assert.Contains("x:Name=\"TestTranscriptionCliProviderButton\"", xaml);
+        Assert.Contains("Click=\"TestTranscriptionCliProviderButton_OnClick\"", xaml);
+        Assert.Contains("x:Name=\"ConfigDiarizationProviderPreferenceComboBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigDiarizationCliPathTextBox\"", xaml);
+        Assert.Contains("x:Name=\"TestDiarizationCliProviderButton\"", xaml);
+        Assert.Contains("Click=\"TestDiarizationCliProviderButton_OnClick\"", xaml);
+        Assert.Contains("--probe-transcription-cli", code);
+        Assert.Contains("--probe-diarization-cli", code);
+        Assert.Contains("TranscriptionCliProviderProbe", code);
+        Assert.Contains("DiarizationCliProviderProbe", code);
         Assert.Contains("x:Name=\"ConfigBackgroundSpeakerLabelingModeComboBox\"", xaml);
         Assert.Contains("Text=\"Speaker labeling mode\"", xaml);
     }

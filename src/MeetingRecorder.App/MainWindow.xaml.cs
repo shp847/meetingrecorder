@@ -134,6 +134,8 @@ public partial class MainWindow : Window
     private bool _isRushingBacklog;
     private bool _isSavingConfig;
     private bool _isTestingDiarizationGpuAcceleration;
+    private bool _isTestingTranscriptionCliProvider;
+    private bool _isTestingDiarizationCliProvider;
     private bool _isRunningTeamsIntegrationProbe;
     private bool _isValidatingModelProxySummaryProvider;
     private bool _isValidatingOpenAiSummaryProvider;
@@ -3184,6 +3186,24 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
+                ProcessingSpeedProfile = ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile
+                    ? processingSpeedProfile
+                    : currentConfig.ProcessingSpeedProfile,
+                OvernightDrainStartLocal = ConfigOvernightDrainStartTextBox.Text.Trim(),
+                OvernightDrainEndLocal = ConfigOvernightDrainEndTextBox.Text.Trim(),
+                PreviousProcessingSpeedProfile = currentConfig.PreviousProcessingSpeedProfile,
+                TranscriptionProviderPreference = ConfigTranscriptionProviderPreferenceComboBox.SelectedValue is TranscriptionProviderPreference transcriptionProviderPreference
+                    ? transcriptionProviderPreference
+                    : currentConfig.TranscriptionProviderPreference,
+                TranscriptionCliPath = ConfigTranscriptionCliPathTextBox.Text.Trim(),
+                TranscriptionCliArguments = ConfigTranscriptionCliArgumentsTextBox.Text.Trim(),
+                TranscriptionCliProviderProbe = currentConfig.TranscriptionCliProviderProbe,
+                DiarizationProviderPreference = ConfigDiarizationProviderPreferenceComboBox.SelectedValue is DiarizationProviderPreference diarizationProviderPreference
+                    ? diarizationProviderPreference
+                    : currentConfig.DiarizationProviderPreference,
+                DiarizationCliPath = ConfigDiarizationCliPathTextBox.Text.Trim(),
+                DiarizationCliArguments = ConfigDiarizationCliArgumentsTextBox.Text.Trim(),
+                DiarizationCliProviderProbe = currentConfig.DiarizationCliProviderProbe,
                 SummaryGenerationMode = ConfigSummaryGenerationEnabledCheckBox.IsChecked == true
                     ? MeetingSummaryGenerationMode.Enabled
                     : MeetingSummaryGenerationMode.Disabled,
@@ -6278,6 +6298,15 @@ public partial class MainWindow : Window
         ConfigAutoInstallUpdatesCheckBox.IsChecked = config.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = config.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
+        ConfigProcessingSpeedProfileComboBox.SelectedValue = config.ProcessingSpeedProfile;
+        ConfigOvernightDrainStartTextBox.Text = config.OvernightDrainStartLocal;
+        ConfigOvernightDrainEndTextBox.Text = config.OvernightDrainEndLocal;
+        ConfigTranscriptionProviderPreferenceComboBox.SelectedValue = config.TranscriptionProviderPreference;
+        ConfigTranscriptionCliPathTextBox.Text = config.TranscriptionCliPath;
+        ConfigTranscriptionCliArgumentsTextBox.Text = config.TranscriptionCliArguments;
+        ConfigDiarizationProviderPreferenceComboBox.SelectedValue = config.DiarizationProviderPreference;
+        ConfigDiarizationCliPathTextBox.Text = config.DiarizationCliPath;
+        ConfigDiarizationCliArgumentsTextBox.Text = config.DiarizationCliArguments;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
         ConfigSummaryGenerationEnabledCheckBox.IsChecked = config.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled;
         ConfigSummaryProviderPreferenceComboBox.SelectedValue = config.SummaryProviderPreference;
@@ -6288,6 +6317,8 @@ public partial class MainWindow : Window
         ConfigSummaryTranscriptChunkTargetTextBox.Text = config.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture);
         ConfigSummaryTranscriptChunkOverlapTextBox.Text = config.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture);
         SetSpeakerLabelingModeSelectors(config.BackgroundSpeakerLabelingMode);
+        UpdateProcessingSpeedProfileHelpText(config.ProcessingSpeedProfile);
+        UpdateExternalProviderStatusText(config);
         UpdateBackgroundProcessingModeHelpText(config.BackgroundProcessingMode);
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
         UpdateTeamsIntegrationProbePresentation(config);
@@ -6311,6 +6342,27 @@ public partial class MainWindow : Window
         ConfigBackgroundProcessingModeComboBox.ItemsSource = MainWindowInteractionLogic
             .BuildBackgroundProcessingModeOptions(Environment.ProcessorCount)
             .Select(option => new SelectionOption<BackgroundProcessingMode>(option.Value, option.Label))
+            .ToArray();
+
+        ConfigProcessingSpeedProfileComboBox.DisplayMemberPath = nameof(SelectionOption<ProcessingSpeedProfile>.Label);
+        ConfigProcessingSpeedProfileComboBox.SelectedValuePath = nameof(SelectionOption<ProcessingSpeedProfile>.Value);
+        ConfigProcessingSpeedProfileComboBox.ItemsSource = MainWindowInteractionLogic
+            .BuildProcessingSpeedProfileOptions()
+            .Select(option => new SelectionOption<ProcessingSpeedProfile>(option.Value, option.Label))
+            .ToArray();
+
+        ConfigTranscriptionProviderPreferenceComboBox.DisplayMemberPath = nameof(SelectionOption<TranscriptionProviderPreference>.Label);
+        ConfigTranscriptionProviderPreferenceComboBox.SelectedValuePath = nameof(SelectionOption<TranscriptionProviderPreference>.Value);
+        ConfigTranscriptionProviderPreferenceComboBox.ItemsSource = MainWindowInteractionLogic
+            .BuildTranscriptionProviderOptions()
+            .Select(option => new SelectionOption<TranscriptionProviderPreference>(option.Value, option.Label))
+            .ToArray();
+
+        ConfigDiarizationProviderPreferenceComboBox.DisplayMemberPath = nameof(SelectionOption<DiarizationProviderPreference>.Label);
+        ConfigDiarizationProviderPreferenceComboBox.SelectedValuePath = nameof(SelectionOption<DiarizationProviderPreference>.Value);
+        ConfigDiarizationProviderPreferenceComboBox.ItemsSource = MainWindowInteractionLogic
+            .BuildDiarizationProviderOptions()
+            .Select(option => new SelectionOption<DiarizationProviderPreference>(option.Value, option.Label))
             .ToArray();
 
         ConfigBackgroundSpeakerLabelingModeComboBox.DisplayMemberPath = nameof(SelectionOption<BackgroundSpeakerLabelingMode>.Label);
@@ -6346,6 +6398,12 @@ public partial class MainWindow : Window
                      ConfigAutoDetectThresholdTextBox,
                      ConfigMeetingStopTimeoutTextBox,
                      ConfigUpdateFeedUrlTextBox,
+                     ConfigOvernightDrainStartTextBox,
+                     ConfigOvernightDrainEndTextBox,
+                     ConfigTranscriptionCliPathTextBox,
+                     ConfigTranscriptionCliArgumentsTextBox,
+                     ConfigDiarizationCliPathTextBox,
+                     ConfigDiarizationCliArgumentsTextBox,
                      ConfigSummaryModelProxyBaseUrlTextBox,
                      ConfigSummaryModelProxyModelTextBox,
                      ConfigSummaryOpenAiModelTextBox,
@@ -6376,6 +6434,9 @@ public partial class MainWindow : Window
         }
 
         ConfigPreferredTeamsIntegrationModeComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigProcessingSpeedProfileComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigTranscriptionProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigDiarizationProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundProcessingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundSpeakerLabelingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigSummaryProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
@@ -6401,6 +6462,7 @@ public partial class MainWindow : Window
     {
         UpdateConfigDependencyState();
         UpdateConfigModeHelpTextFromSelection();
+        UpdateExternalProviderStatusTextFromEditor();
         var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(
             _liveConfig.Current,
             ReadConfigEditorSnapshot());
@@ -6410,6 +6472,7 @@ public partial class MainWindow : Window
             !_isSavingConfig && hasPendingChanges);
         UpdateTeamsIntegrationProbeActionState();
         UpdateDiarizationGpuTestActionState();
+        UpdateExternalProviderTestActionState();
         UpdateSummaryProviderValidationActionState();
     }
 
@@ -6421,6 +6484,14 @@ public partial class MainWindow : Window
             ? "Testing GPU..."
             : "Test GPU";
         TestDiarizationGpuAccelerationButton.IsEnabled = !_isTestingDiarizationGpuAcceleration && isReady;
+    }
+
+    private void UpdateExternalProviderTestActionState()
+    {
+        TestTranscriptionCliProviderButton.Content = _isTestingTranscriptionCliProvider ? "Testing..." : "Test";
+        TestDiarizationCliProviderButton.Content = _isTestingDiarizationCliProvider ? "Testing..." : "Test";
+        TestTranscriptionCliProviderButton.IsEnabled = !_isTestingTranscriptionCliProvider && !_isSavingConfig;
+        TestDiarizationCliProviderButton.IsEnabled = !_isTestingDiarizationCliProvider && !_isSavingConfig;
     }
 
     private void SetConfigSaveStatus(string statusText)
@@ -6614,6 +6685,113 @@ public partial class MainWindow : Window
             _isTestingDiarizationGpuAcceleration = false;
             UpdateConfigActionState();
         }
+    }
+
+    private async void TestTranscriptionCliProviderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await TestExternalCliProviderAsync(
+            isTranscription: true,
+            "--probe-transcription-cli",
+            value => _isTestingTranscriptionCliProvider = value);
+    }
+
+    private async void TestDiarizationCliProviderButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await TestExternalCliProviderAsync(
+            isTranscription: false,
+            "--probe-diarization-cli",
+            value => _isTestingDiarizationCliProvider = value);
+    }
+
+    private async Task TestExternalCliProviderAsync(
+        bool isTranscription,
+        string probeArgument,
+        Action<bool> setTesting)
+    {
+        setTesting(true);
+        UpdateConfigActionState();
+        var label = isTranscription ? "transcription" : "speaker-labeling";
+        SetConfigSaveStatus($"Testing external {label} provider...");
+
+        try
+        {
+            await SaveExternalProviderEditorSettingsAsync(isTranscription, _lifetimeCts.Token);
+            var message = await RunExternalCliProviderProbeAsync(probeArgument, _lifetimeCts.Token);
+            await _liveConfig.ReloadIfChangedAsync(_lifetimeCts.Token);
+            UpdateExternalProviderStatusText(_liveConfig.Current);
+            SetConfigSaveStatus($"External {label} provider test finished: {message}");
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Ignore shutdown.
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"External {label} provider probe failed safely: {exception.GetType().Name}");
+            await _liveConfig.ReloadIfChangedAsync(_lifetimeCts.Token);
+            UpdateExternalProviderStatusText(_liveConfig.Current);
+            SetConfigSaveStatus($"External {label} provider test failed safely.");
+        }
+        finally
+        {
+            setTesting(false);
+            UpdateConfigActionState();
+        }
+    }
+
+    private async Task SaveExternalProviderEditorSettingsAsync(
+        bool isTranscription,
+        CancellationToken cancellationToken)
+    {
+        var currentConfig = _liveConfig.Current;
+        var editorSnapshot = ReadConfigEditorSnapshot();
+        var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(currentConfig, editorSnapshot);
+        _pendingConfigEditorSnapshotRestore = hasPendingChanges ? editorSnapshot : null;
+
+        var nextConfig = isTranscription
+            ? currentConfig with
+            {
+                TranscriptionProviderPreference = editorSnapshot.TranscriptionProviderPreference,
+                TranscriptionCliPath = editorSnapshot.TranscriptionCliPath.Trim(),
+                TranscriptionCliArguments = editorSnapshot.TranscriptionCliArguments.Trim(),
+            }
+            : currentConfig with
+            {
+                DiarizationProviderPreference = editorSnapshot.DiarizationProviderPreference,
+                DiarizationCliPath = editorSnapshot.DiarizationCliPath.Trim(),
+                DiarizationCliArguments = editorSnapshot.DiarizationCliArguments.Trim(),
+            };
+
+        await _liveConfig.SaveAsync(nextConfig, cancellationToken);
+    }
+
+    private async Task<string> RunExternalCliProviderProbeAsync(
+        string probeArgument,
+        CancellationToken cancellationToken)
+    {
+        var launch = WorkerLocator.Resolve();
+        var arguments = $"{launch.ArgumentPrefix} {probeArgument} --config \"{_liveConfig.ConfigPath}\"".Trim();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = launch.FileName,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Unable to start the processing worker for the external provider test.");
+        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var standardOutput = (await standardOutputTask).Trim();
+        var standardError = (await standardErrorTask).Trim();
+        var message = string.IsNullOrWhiteSpace(standardOutput) ? standardError : standardOutput;
+        return string.IsNullOrWhiteSpace(message)
+            ? process.ExitCode == 0 ? "Probe succeeded." : "Probe failed."
+            : message;
     }
 
     private async Task EnableDiarizationGpuAccelerationAfterSuccessfulProbeAsync(CancellationToken cancellationToken)
@@ -6861,6 +7039,21 @@ public partial class MainWindow : Window
             ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                 ? backgroundSpeakerLabelingMode
                 : _liveConfig.Current.BackgroundSpeakerLabelingMode,
+            ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile
+                ? processingSpeedProfile
+                : _liveConfig.Current.ProcessingSpeedProfile,
+            ConfigOvernightDrainStartTextBox.Text,
+            ConfigOvernightDrainEndTextBox.Text,
+            ConfigTranscriptionProviderPreferenceComboBox.SelectedValue is TranscriptionProviderPreference transcriptionProviderPreference
+                ? transcriptionProviderPreference
+                : _liveConfig.Current.TranscriptionProviderPreference,
+            ConfigTranscriptionCliPathTextBox.Text,
+            ConfigTranscriptionCliArgumentsTextBox.Text,
+            ConfigDiarizationProviderPreferenceComboBox.SelectedValue is DiarizationProviderPreference diarizationProviderPreference
+                ? diarizationProviderPreference
+                : _liveConfig.Current.DiarizationProviderPreference,
+            ConfigDiarizationCliPathTextBox.Text,
+            ConfigDiarizationCliArgumentsTextBox.Text,
             ConfigSummaryGenerationEnabledCheckBox.IsChecked == true
                 ? MeetingSummaryGenerationMode.Enabled
                 : MeetingSummaryGenerationMode.Disabled,
@@ -6894,6 +7087,15 @@ public partial class MainWindow : Window
         ConfigAutoInstallUpdatesCheckBox.IsChecked = snapshot.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = snapshot.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = snapshot.PreferredTeamsIntegrationMode;
+        ConfigProcessingSpeedProfileComboBox.SelectedValue = snapshot.ProcessingSpeedProfile;
+        ConfigOvernightDrainStartTextBox.Text = snapshot.OvernightDrainStartLocal;
+        ConfigOvernightDrainEndTextBox.Text = snapshot.OvernightDrainEndLocal;
+        ConfigTranscriptionProviderPreferenceComboBox.SelectedValue = snapshot.TranscriptionProviderPreference;
+        ConfigTranscriptionCliPathTextBox.Text = snapshot.TranscriptionCliPath;
+        ConfigTranscriptionCliArgumentsTextBox.Text = snapshot.TranscriptionCliArguments;
+        ConfigDiarizationProviderPreferenceComboBox.SelectedValue = snapshot.DiarizationProviderPreference;
+        ConfigDiarizationCliPathTextBox.Text = snapshot.DiarizationCliPath;
+        ConfigDiarizationCliArgumentsTextBox.Text = snapshot.DiarizationCliArguments;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = snapshot.BackgroundProcessingMode;
         ConfigSummaryGenerationEnabledCheckBox.IsChecked =
             snapshot.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled;
@@ -6936,6 +7138,11 @@ public partial class MainWindow : Window
             UpdateBackgroundProcessingModeHelpText(backgroundProcessingMode);
         }
 
+        if (ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile)
+        {
+            UpdateProcessingSpeedProfileHelpText(processingSpeedProfile);
+        }
+
         if (ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode speakerLabelingMode)
         {
             ConfigBackgroundSpeakerLabelingModeHelpTextBlock.Text =
@@ -6947,6 +7154,86 @@ public partial class MainWindow : Window
     {
         ConfigBackgroundProcessingModeHelpTextBlock.Text =
             MainWindowInteractionLogic.BuildBackgroundProcessingModeHelpText(mode, Environment.ProcessorCount);
+    }
+
+    private void UpdateProcessingSpeedProfileHelpText(ProcessingSpeedProfile profile)
+    {
+        ConfigProcessingSpeedProfileHelpTextBlock.Text =
+            MainWindowInteractionLogic.BuildProcessingSpeedProfileHelpText(profile);
+    }
+
+    private void UpdateExternalProviderStatusText(AppConfig config)
+    {
+        ConfigTranscriptionCliProviderStatusTextBlock.Text = BuildExternalProviderStatusText(
+            config.TranscriptionProviderPreference == TranscriptionProviderPreference.LocalCli,
+            config.TranscriptionCliPath,
+            config.TranscriptionCliProviderProbe,
+            "External transcription");
+        ConfigDiarizationCliProviderStatusTextBlock.Text = BuildExternalProviderStatusText(
+            config.DiarizationProviderPreference == DiarizationProviderPreference.LocalCli,
+            config.DiarizationCliPath,
+            config.DiarizationCliProviderProbe,
+            "External speaker-labeling");
+    }
+
+    private void UpdateExternalProviderStatusTextFromEditor()
+    {
+        ConfigTranscriptionCliProviderStatusTextBlock.Text = BuildExternalProviderStatusText(
+            ConfigTranscriptionProviderPreferenceComboBox.SelectedValue is TranscriptionProviderPreference.LocalCli,
+            ConfigTranscriptionCliPathTextBox.Text.Trim(),
+            _liveConfig.Current.TranscriptionCliProviderProbe,
+            "External transcription");
+        ConfigDiarizationCliProviderStatusTextBlock.Text = BuildExternalProviderStatusText(
+            ConfigDiarizationProviderPreferenceComboBox.SelectedValue is DiarizationProviderPreference.LocalCli,
+            ConfigDiarizationCliPathTextBox.Text.Trim(),
+            _liveConfig.Current.DiarizationCliProviderProbe,
+            "External speaker-labeling");
+    }
+
+    private static string BuildExternalProviderStatusText(
+        bool selected,
+        string configuredPath,
+        ExternalProviderProbeSnapshot? probe,
+        string label)
+    {
+        if (!selected)
+        {
+            return $"{label} provider is off. Built-in processing will be used.";
+        }
+
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return $"{label} provider is selected, but no CLI path is configured.";
+        }
+
+        var probeMatches = probe?.Succeeded == true &&
+            !string.IsNullOrWhiteSpace(probe.ExecutablePath) &&
+            PathsEqualSafe(configuredPath, probe.ExecutablePath);
+        var lastProbe = probe?.LastProbeUtc is { } atUtc
+            ? atUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
+            : "not run";
+        var message = string.IsNullOrWhiteSpace(probe?.Message)
+            ? "No probe result."
+            : probe!.Message;
+
+        return probeMatches
+            ? $"{label} provider probe passed. Last probe: {lastProbe}. {message}"
+            : $"{label} provider will fall back to built-in processing until Test passes for this path. Last probe: {lastProbe}. {message}";
+    }
+
+    private static bool PathsEqualSafe(string left, string right)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(left),
+                Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task SaveSpeakerLabelingRunModeQuickSettingAsync(BackgroundSpeakerLabelingMode selectedMode, string source)

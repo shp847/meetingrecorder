@@ -72,6 +72,7 @@ public sealed class ProcessingQueueServiceTests
 
         var enqueueTask = service.EnqueueAsync(manifestPath);
         var process = await processFactory.WaitForStartAsync();
+        await WaitForConditionAsync(() => service.IsProcessingInProgress);
 
         var stopTask = service.StopAsync();
 
@@ -716,6 +717,52 @@ public sealed class ProcessingQueueServiceTests
 
         firstProcess.CompleteExit();
         var secondProcess = await processFactory.WaitForStartAsync(1);
+        secondProcess.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task TranscriptOnlyDrain_Starts_Two_Workers()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain,
+                BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new SequencedWorkerProcessFactory(
+            new FakeWorkerProcess(),
+            new FakeWorkerProcess());
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory);
+
+        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(30));
+        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(20));
+
+        Assert.Equal(2, BackgroundProcessingPolicy.GetMaxWorkerCount(liveConfig.Current));
+
+        await service.EnqueueAsync(firstManifestPath);
+        await service.EnqueueAsync(secondManifestPath);
+
+        var firstProcess = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
+        var secondProcess = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(2, processFactory.StartCount);
+
+        firstProcess.CompleteExit();
         secondProcess.CompleteExit();
         await service.StopAsync();
     }

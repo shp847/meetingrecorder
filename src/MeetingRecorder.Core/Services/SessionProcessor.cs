@@ -196,15 +196,19 @@ public sealed class SessionProcessor
         IReadOnlyList<SpeakerTurn> speakerTurns = EmptySpeakerTurns;
         IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
         DiarizationMetadata? diarizationMetadata = null;
-        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true)
+        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true ||
+            BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(config))
         {
+            var skipMessage = manifest.ProcessingOverrides?.SkipSpeakerLabeling == true
+                ? "Speaker labeling skipped by processing override."
+                : "Speaker labeling skipped by processing speed profile.";
             manifest = manifest with
             {
                 DiarizationStatus = new ProcessingStageStatus(
                     "diarization",
                     StageExecutionState.Skipped,
                     DateTimeOffset.UtcNow,
-                    "Speaker labeling skipped by processing override."),
+                    skipMessage),
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
         }
@@ -218,7 +222,12 @@ public sealed class SessionProcessor
                 };
                 await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
-                var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(sourceAudioPath, transcription.Segments, cancellationToken);
+                using var diarizationTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                diarizationTimeoutCts.CancelAfter(BackgroundProcessingPolicy.DiarizationTimeout);
+                var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(
+                    sourceAudioPath,
+                    transcription.Segments,
+                    diarizationTimeoutCts.Token);
                 transcriptSegments = diarization.Segments;
                 speakers = diarization.Speakers ?? EmptySpeakers;
                 speakerTurns = diarization.SpeakerTurns ?? EmptySpeakerTurns;
@@ -231,6 +240,17 @@ public sealed class SessionProcessor
                         diarization.AppliedSpeakerLabels ? StageExecutionState.Succeeded : StageExecutionState.Skipped,
                         DateTimeOffset.UtcNow,
                         diarization.Message),
+                };
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                manifest = manifest with
+                {
+                    DiarizationStatus = new ProcessingStageStatus(
+                        "diarization",
+                        StageExecutionState.Skipped,
+                        DateTimeOffset.UtcNow,
+                        $"Speaker labeling skipped after the {BackgroundProcessingPolicy.DiarizationTimeout.TotalMinutes:0}-minute optional processing limit."),
                 };
             }
             catch (Exception exception)
@@ -350,15 +370,19 @@ public sealed class SessionProcessor
             return skipped;
         }
 
-        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled)
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled ||
+            BackgroundProcessingPolicy.ShouldSkipSummarizationInPrimaryPass(config))
         {
+            var message = BackgroundProcessingPolicy.ShouldSkipSummarizationInPrimaryPass(config)
+                ? "Summary generation skipped by processing speed profile."
+                : "Summary generation disabled.";
             var skipped = manifest with
             {
                 SummarizationStatus = new ProcessingStageStatus(
                     "summarization",
                     StageExecutionState.Skipped,
                     DateTimeOffset.UtcNow,
-                    "Summary generation disabled."),
+                    message),
                 Summary = null,
             };
             await ManifestStore.SaveAsync(skipped, manifestPath, cancellationToken);

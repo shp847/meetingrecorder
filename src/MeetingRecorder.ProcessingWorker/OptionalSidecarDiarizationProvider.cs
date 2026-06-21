@@ -11,8 +11,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 {
     private const string DirectMlFallbackMessage =
         "DirectML GPU initialization failed; speaker labeling retried on CPU.";
-    private const string DirectMlUnsupportedClusterFallbackMessage =
-        "DirectML speaker clustering was outside the supported automatic range; speaker labeling retried on CPU.";
+    private const string DirectMlUnsupportedClusterSkipMessage =
+        "DirectML speaker clustering was outside the supported automatic range; speaker labeling skipped without CPU retry.";
     private const string SherpaDirectMlUnavailableMessage =
         "This Meeting Recorder build does not include a DirectML-enabled speaker-labeling runtime; speaker labeling used CPU.";
     private const string SherpaDirectMlFallbackOnlyMarker = "DirectML is for Windows only";
@@ -188,13 +188,12 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
                         AccelerationDiagnosticMessage: null);
                 }
 
-                _logger.Log("DirectML speaker clustering was outside the supported automatic range. Retrying speaker labeling on CPU.");
-                return await RunCpuFallbackAsync(
-                    preparedAudioPath,
-                    transcriptSegments,
-                    installedAssets,
-                    DirectMlUnsupportedClusterFallbackMessage,
-                    cancellationToken);
+                _logger.Log("DirectML speaker clustering was outside the supported automatic range. Skipping CPU retry so transcript publishing can continue.");
+                return new DiarizationProviderRun(
+                    directMlResult with { Message = CombineDiagnosticMessages(directMlResult.Message, DirectMlUnsupportedClusterSkipMessage) },
+                    GpuAccelerationAvailable: true,
+                    EffectiveExecutionProvider: DiarizationExecutionProvider.Directml,
+                    AccelerationDiagnosticMessage: DirectMlUnsupportedClusterSkipMessage);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {

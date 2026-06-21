@@ -156,8 +156,16 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             ModelCacheDir = modelCache,
             TranscriptionModelPath = defaultTranscriptionModelPath,
             TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
+            TranscriptionProviderPreference = TranscriptionProviderPreference.WhisperNet,
+            TranscriptionCliPath = string.Empty,
+            TranscriptionCliArguments = string.Empty,
+            TranscriptionCliProviderProbe = new ExternalProviderProbeSnapshot(),
             DiarizationAssetPath = defaultDiarizationAssetPath,
             SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Standard,
+            DiarizationProviderPreference = DiarizationProviderPreference.LocalSherpa,
+            DiarizationCliPath = string.Empty,
+            DiarizationCliArguments = string.Empty,
+            DiarizationCliProviderProbe = new ExternalProviderProbeSnapshot(),
             DiarizationAccelerationPreference = InferenceAccelerationPreference.CpuOnly,
             DiarizationAccelerationSecurityPromptMigrationApplied = true,
             MicCaptureEnabled = true,
@@ -171,6 +179,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = AppBranding.DefaultUpdateFeedUrl,
             BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+            ProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
+            OvernightDrainStartLocal = "22:00",
+            OvernightDrainEndLocal = "06:00",
+            PreviousProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
             SpeakerNameLearningMode = SpeakerNameLearningMode.LocalAutoLearn,
             SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
             SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
@@ -308,12 +320,20 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
                 normalizedModelCacheDir,
                 normalizedTranscriptionModelPath,
                 defaults.TranscriptionModelPath),
+            TranscriptionProviderPreference = NormalizeEnum(config.TranscriptionProviderPreference, defaults.TranscriptionProviderPreference),
+            TranscriptionCliPath = NormalizeOptionalLocalPath(config.TranscriptionCliPath),
+            TranscriptionCliArguments = NormalizeOptionalText(config.TranscriptionCliArguments),
+            TranscriptionCliProviderProbe = NormalizeExternalProviderProbe(config.TranscriptionCliProviderProbe),
             DiarizationAssetPath = normalizedDiarizationAssetPath,
             SpeakerLabelingModelProfilePreference = InferSpeakerLabelingModelProfilePreference(
                 config.SpeakerLabelingModelProfilePreference,
                 normalizedModelCacheDir,
                 normalizedDiarizationAssetPath,
                 defaults.DiarizationAssetPath),
+            DiarizationProviderPreference = NormalizeEnum(config.DiarizationProviderPreference, defaults.DiarizationProviderPreference),
+            DiarizationCliPath = NormalizeOptionalLocalPath(config.DiarizationCliPath),
+            DiarizationCliArguments = NormalizeOptionalText(config.DiarizationCliArguments),
+            DiarizationCliProviderProbe = NormalizeExternalProviderProbe(config.DiarizationCliProviderProbe),
             DiarizationAccelerationPreference = diarizationAccelerationPreference,
             DiarizationAccelerationSecurityPromptMigrationApplied = diarizationAccelerationSecurityPromptMigrationApplied,
             AutoDetectEnabled = autoDetectEnabled,
@@ -321,6 +341,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,
+            ProcessingSpeedProfile = NormalizeEnum(config.ProcessingSpeedProfile, defaults.ProcessingSpeedProfile),
+            OvernightDrainStartLocal = NormalizeLocalTimeText(config.OvernightDrainStartLocal, defaults.OvernightDrainStartLocal),
+            OvernightDrainEndLocal = NormalizeLocalTimeText(config.OvernightDrainEndLocal, defaults.OvernightDrainEndLocal),
+            PreviousProcessingSpeedProfile = NormalizeEnum(config.PreviousProcessingSpeedProfile, defaults.PreviousProcessingSpeedProfile),
             SpeakerNameLearningMode = NormalizeEnum(config.SpeakerNameLearningMode, defaults.SpeakerNameLearningMode),
             SummaryGenerationMode = NormalizeEnum(config.SummaryGenerationMode, defaults.SummaryGenerationMode),
             SummaryProviderPreference = NormalizeEnum(config.SummaryProviderPreference, defaults.SummaryProviderPreference),
@@ -393,6 +417,60 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         return string.IsNullOrWhiteSpace(configuredValue)
             ? fallbackValue
             : configuredValue.Trim();
+    }
+
+    private static string NormalizeOptionalText(string? configuredValue)
+    {
+        return string.IsNullOrWhiteSpace(configuredValue)
+            ? string.Empty
+            : configuredValue.Trim();
+    }
+
+    private static string NormalizeOptionalLocalPath(string? configuredValue)
+    {
+        return string.IsNullOrWhiteSpace(configuredValue)
+            ? string.Empty
+            : configuredValue.Trim().Trim('"');
+    }
+
+    private static ExternalProviderProbeSnapshot NormalizeExternalProviderProbe(
+        ExternalProviderProbeSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return new ExternalProviderProbeSnapshot();
+        }
+
+        return new ExternalProviderProbeSnapshot
+        {
+            Succeeded = snapshot.Succeeded,
+            LastProbeUtc = snapshot.LastProbeUtc,
+            ExecutablePath = NormalizeOptionalLocalPath(snapshot.ExecutablePath),
+            Message = SanitizeProbeMessage(snapshot.Message),
+        };
+    }
+
+    private static string SanitizeProbeMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return string.Empty;
+        }
+
+        var sanitized = new string(message
+            .Trim()
+            .Where(character => !char.IsControl(character) || character is '\r' or '\n' or '\t')
+            .ToArray());
+        return sanitized.Length <= 240
+            ? sanitized
+            : sanitized[..240];
+    }
+
+    private static string NormalizeLocalTimeText(string? configuredValue, string fallbackValue)
+    {
+        return TimeSpan.TryParse(configuredValue, out _)
+            ? configuredValue!.Trim()
+            : fallbackValue;
     }
 
     private static IReadOnlyList<DismissedMeetingRecommendation> NormalizeDismissedMeetingRecommendations(

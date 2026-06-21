@@ -11,6 +11,7 @@
           "AppPlatform.Deployment.Cli": "0.3.0",
           "MeetingRecorder.App": "0.3.0",
           "MeetingRecorder.Core": "0.3.0",
+          "MeetingRecorder.ProcessingWorker": "0.3.0",
           "MeetingRecorder.Product": "0.3.0",
           "MeetingRecorderInstaller": "0.3.0",
           "Microsoft.NET.Test.Sdk": "17.8.0",
@@ -453,6 +454,121 @@
           "lib/netstandard2.0/NuGet.Frameworks.dll": {
             "assemblyVersion": "6.5.0.154",
             "fileVersion": "6.5.0.154"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx/1.12.17": {
+        "dependencies": {
+          "org.k2fsa.sherpa.onnx.runtime.linux-arm64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.linux-x64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.osx-arm64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.osx-x64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.win-arm64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.win-x64": "1.12.17",
+          "org.k2fsa.sherpa.onnx.runtime.win-x86": "1.12.17"
+        },
+        "runtime": {
+          "lib/net8.0/sherpa-onnx.dll": {
+            "assemblyVersion": "1.12.17.0",
+            "fileVersion": "1.12.17.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.linux-arm64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/linux-arm64/native/libonnxruntime.so": {
+            "rid": "linux-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-arm64/native/libsherpa-onnx-c-api.so": {
+            "rid": "linux-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.linux-x64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/linux-x64/native/libonnxruntime.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/linux-x64/native/libsherpa-onnx-c-api.so": {
+            "rid": "linux-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.osx-arm64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/osx-arm64/native/libonnxruntime.1.17.1.dylib": {
+            "rid": "osx-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/osx-arm64/native/libsherpa-onnx-c-api.dylib": {
+            "rid": "osx-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.osx-x64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/osx-x64/native/libonnxruntime.1.17.1.dylib": {
+            "rid": "osx-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          },
+          "runtimes/osx-x64/native/libsherpa-onnx-c-api.dylib": {
+            "rid": "osx-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.win-arm64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/win-arm64/native/onnxruntime.dll": {
+            "rid": "win-arm64",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
+          "runtimes/win-arm64/native/sherpa-onnx-c-api.dll": {
+            "rid": "win-arm64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.win-x64/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/win-x64/native/onnxruntime.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
+          "runtimes/win-x64/native/sherpa-onnx-c-api.dll": {
+            "rid": "win-x64",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "org.k2fsa.sherpa.onnx.runtime.win-x86/1.12.17": {
+        "runtimeTargets": {
+          "runtimes/win-x86/native/onnxruntime.dll": {
+            "rid": "win-x86",
+            "assetType": "native",
+            "fileVersion": "1.17.24.223"
+          },
+          "runtimes/win-x86/native/sherpa-onnx-c-api.dll": {
+            "rid": "win-x86",
+            "assetType": "native",
+            "fileVersion": "0.0.0.0"
           }
         }
       },
@@ -1283,6 +1399,18 @@
           }
         }
       },
+      "MeetingRecorder.ProcessingWorker/0.3.0": {
+        "dependencies": {
+          "MeetingRecorder.Core": "0.3.0",
+          "org.k2fsa.sherpa.onnx": "1.12.17"
+        },
+        "runtime": {
+          "MeetingRecorder.ProcessingWorker.dll": {
+            "assemblyVersion": "0.3.0",
+            "fileVersion": "0.3.0.0"
+          }
+        }
+      },
       "MeetingRecorder.Product/0.3.0": {
         "dependencies": {
           "AppPlatform.Abstractions": "0.3.0",
@@ -1466,6 +1594,62 @@
       "sha512": "sha512-QWINE2x3MbTODsWT1Gh71GaGb5icBz4chS8VYvTgsBnsi8esgN6wtHhydd7fvToWECYGq7T4cgBBDiKD/363fg==",
       "path": "nuget.frameworks/6.5.0",
       "hashPath": "nuget.frameworks.6.5.0.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kLBZOITLM4t5+ehNMptWKweHHENDxuBEXoEbanV0M5B/x5inMQ60pIwpEV3nviOKwDSEPZh3v8si/gaC5PukJg==",
+      "path": "org.k2fsa.sherpa.onnx/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.linux-arm64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-xinyJgF2DTvHXpZcHwf32u7AqSgNQrgR/t5umTdQWahS3tSrOIIpIIpMCxMWBQT1S5s6zAp72eV9fCZgsV3pSg==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.linux-arm64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.linux-arm64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.linux-x64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hhio0QJSCruxZBhELkawYSa4PgLaVW5kSLOpgyTbJXHWRYuGtUcs+zlzzgV/JanrIc25B+D0faD2HHPH5xna2A==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.linux-x64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.linux-x64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.osx-arm64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-/HcMBTbGmSdLX4H9QQBzZ8kLfsfZf59WMocQuE6h1LdWSb1/dcd5FbKrJxyKd5NXhhAIvBkWPsdgbqa2YPQfPA==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.osx-arm64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.osx-arm64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.osx-x64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-7FbQwA0BBGGhvdpAS3qh4zgbAUN+0gRHS7d+31aMH2Q/UoGyGxvZ2ZqGxAzql+ShK9DJNv3TVkq0wI/FSCkG4A==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.osx-x64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.osx-x64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.win-arm64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-lNlEQkgP+l7i+peJQ/VlAGwoD490U6680BO8v4T/ofJ/v5bvrpie80NWHzJtb17NXx7j+XnZchEa/yHfA4Ak5Q==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.win-arm64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.win-arm64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.win-x64/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-70mGS5YVcccTcI9gaPMjj2t8RcoBCQIDeza6ZB1DqyPi6gAbnx/yLyYKwvgHcGc+gTOuDfeY0fKgAm+b/anJIQ==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.win-x64/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.win-x64.1.12.17.nupkg.sha512"
+    },
+    "org.k2fsa.sherpa.onnx.runtime.win-x86/1.12.17": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-qCdiwrpVCMgOIweThq/6TVfN9x1FSoXm6oZrklOz44/VgxCxqpxBi1UolHCB2PGNbDTXRHmcEAWXbJ33LXvbvw==",
+      "path": "org.k2fsa.sherpa.onnx.runtime.win-x86/1.12.17",
+      "hashPath": "org.k2fsa.sherpa.onnx.runtime.win-x86.1.12.17.nupkg.sha512"
     },
     "runtime.debian.8-x64.runtime.native.System.Security.Cryptography.OpenSsl/4.3.0": {
       "type": "package",
@@ -2105,6 +2289,11 @@
       "sha512": ""
     },
     "MeetingRecorder.Core/0.3.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MeetingRecorder.ProcessingWorker/0.3.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

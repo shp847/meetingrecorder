@@ -35,8 +35,18 @@ public sealed class AppConfigStoreTests
         Assert.Equal(Path.Combine(root, "models"), config.ModelCacheDir);
         Assert.Equal(Path.Combine(root, "models", "asr", "ggml-base.en-q8_0.bin"), config.TranscriptionModelPath);
         Assert.Equal(TranscriptionModelProfilePreference.Standard, config.TranscriptionModelProfilePreference);
+        Assert.Equal(TranscriptionProviderPreference.WhisperNet, config.TranscriptionProviderPreference);
+        Assert.Equal(string.Empty, config.TranscriptionCliPath);
+        Assert.Equal(string.Empty, config.TranscriptionCliArguments);
+        Assert.False(config.TranscriptionCliProviderProbe.Succeeded);
+        Assert.Null(config.TranscriptionCliProviderProbe.LastProbeUtc);
         Assert.Equal(Path.Combine(root, "models", "diarization", "standard"), config.DiarizationAssetPath);
         Assert.Equal(SpeakerLabelingModelProfilePreference.Standard, config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(DiarizationProviderPreference.LocalSherpa, config.DiarizationProviderPreference);
+        Assert.Equal(string.Empty, config.DiarizationCliPath);
+        Assert.Equal(string.Empty, config.DiarizationCliArguments);
+        Assert.False(config.DiarizationCliProviderProbe.Succeeded);
+        Assert.Null(config.DiarizationCliProviderProbe.LastProbeUtc);
         Assert.Equal(0.02d, config.AutoDetectAudioPeakThreshold);
         Assert.Equal(InferenceAccelerationPreference.CpuOnly, config.DiarizationAccelerationPreference);
         Assert.True(config.DiarizationAccelerationSecurityPromptMigrationApplied);
@@ -51,6 +61,9 @@ public sealed class AppConfigStoreTests
         Assert.Equal(AppBranding.DefaultUpdateFeedUrl, config.UpdateFeedUrl);
         Assert.Equal(BackgroundProcessingMode.Responsive, config.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, config.BackgroundSpeakerLabelingMode);
+        Assert.Equal(ProcessingSpeedProfile.Normal, config.ProcessingSpeedProfile);
+        Assert.Equal("22:00", config.OvernightDrainStartLocal);
+        Assert.Equal("06:00", config.OvernightDrainEndLocal);
         Assert.Equal(SpeakerNameLearningMode.LocalAutoLearn, config.SpeakerNameLearningMode);
         Assert.Equal(0.86d, config.SpeakerNameAutoApplyConfidenceThreshold);
         Assert.Equal(0.78d, config.SpeakerNameSuggestionConfidenceThreshold);
@@ -102,8 +115,28 @@ public sealed class AppConfigStoreTests
             ModelCacheDir = Path.Combine(root, "custom-models"),
             TranscriptionModelPath = Path.Combine(root, "custom-models", "asr", "ggml-base.bin"),
             TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Custom,
+            TranscriptionProviderPreference = TranscriptionProviderPreference.LocalCli,
+            TranscriptionCliPath = $" \"{Path.Combine(root, "bin", "gpu-transcriber.exe")}\" ",
+            TranscriptionCliArguments = " --audio {audioPath} ",
+            TranscriptionCliProviderProbe = new ExternalProviderProbeSnapshot
+            {
+                Succeeded = true,
+                LastProbeUtc = DateTimeOffset.Parse("2026-06-21T10:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                ExecutablePath = Path.Combine(root, "bin", "gpu-transcriber.exe"),
+                Message = "ready",
+            },
             DiarizationAssetPath = Path.Combine(root, "custom-models", "diarization"),
             SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Custom,
+            DiarizationProviderPreference = DiarizationProviderPreference.LocalCli,
+            DiarizationCliPath = $" \"{Path.Combine(root, "bin", "speaker-labeler.exe")}\" ",
+            DiarizationCliArguments = " --audio {audioPath} --transcript {transcriptPath} ",
+            DiarizationCliProviderProbe = new ExternalProviderProbeSnapshot
+            {
+                Succeeded = false,
+                LastProbeUtc = DateTimeOffset.Parse("2026-06-21T10:05:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
+                ExecutablePath = Path.Combine(root, "bin", "speaker-labeler.exe"),
+                Message = "not ready",
+            },
             MicCaptureEnabled = true,
             LaunchOnLoginEnabled = true,
             AutoDetectEnabled = false,
@@ -113,6 +146,10 @@ public sealed class AppConfigStoreTests
             UpdateFeedUrl = "https://example.com/releases/latest.json",
             BackgroundProcessingMode = BackgroundProcessingMode.Balanced,
             BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Throttled,
+            ProcessingSpeedProfile = ProcessingSpeedProfile.OvernightDrain,
+            OvernightDrainStartLocal = "21:30",
+            OvernightDrainEndLocal = "05:15",
+            PreviousProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
             SpeakerLabelingSecurityPromptMigrationApplied = true,
             LastUpdateCheckUtc = DateTimeOffset.Parse("2026-03-16T12:00:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind),
             InstalledReleaseVersion = "0.2",
@@ -192,6 +229,9 @@ public sealed class AppConfigStoreTests
         Assert.Equal("https://example.com/releases/latest.json", reloaded.UpdateFeedUrl);
         Assert.Equal(BackgroundProcessingMode.Balanced, reloaded.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, reloaded.BackgroundSpeakerLabelingMode);
+        Assert.Equal(ProcessingSpeedProfile.OvernightDrain, reloaded.ProcessingSpeedProfile);
+        Assert.Equal("21:30", reloaded.OvernightDrainStartLocal);
+        Assert.Equal("05:15", reloaded.OvernightDrainEndLocal);
         Assert.Equal("0.2", reloaded.InstalledReleaseVersion);
         Assert.Equal(987654321, reloaded.InstalledReleaseAssetSizeBytes);
         Assert.Equal(Path.Combine(root, "downloads", "MeetingRecorder-v0.3-win-x64.zip"), reloaded.PendingUpdateZipPath);
@@ -226,7 +266,17 @@ public sealed class AppConfigStoreTests
         Assert.Equal(saved.WorkDir, reloaded.WorkDir);
         Assert.Equal(saved.ModelCacheDir, reloaded.ModelCacheDir);
         Assert.Equal(TranscriptionModelProfilePreference.Custom, reloaded.TranscriptionModelProfilePreference);
+        Assert.Equal(TranscriptionProviderPreference.LocalCli, reloaded.TranscriptionProviderPreference);
+        Assert.Equal(Path.Combine(root, "bin", "gpu-transcriber.exe"), reloaded.TranscriptionCliPath);
+        Assert.Equal("--audio {audioPath}", reloaded.TranscriptionCliArguments);
+        Assert.True(reloaded.TranscriptionCliProviderProbe.Succeeded);
+        Assert.Equal("ready", reloaded.TranscriptionCliProviderProbe.Message);
         Assert.Equal(SpeakerLabelingModelProfilePreference.Custom, reloaded.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(DiarizationProviderPreference.LocalCli, reloaded.DiarizationProviderPreference);
+        Assert.Equal(Path.Combine(root, "bin", "speaker-labeler.exe"), reloaded.DiarizationCliPath);
+        Assert.Equal("--audio {audioPath} --transcript {transcriptPath}", reloaded.DiarizationCliArguments);
+        Assert.False(reloaded.DiarizationCliProviderProbe.Succeeded);
+        Assert.Equal("not ready", reloaded.DiarizationCliProviderProbe.Message);
         Assert.True(reloaded.SpeakerLabelingSecurityPromptMigrationApplied);
         Assert.Single(reloaded.DismissedMeetingRecommendations);
         Assert.Equal("archive:meeting-1", reloaded.DismissedMeetingRecommendations[0].Fingerprint);
@@ -588,6 +638,10 @@ public sealed class AppConfigStoreTests
               "updateCheckEnabled": true,
               "autoInstallUpdatesEnabled": true,
               "updateFeedUrl": "",
+              "transcriptionProviderPreference": 97,
+              "transcriptionCliProviderProbe": null,
+              "diarizationProviderPreference": 98,
+              "diarizationCliProviderProbe": null,
               "summaryGenerationMode": 97,
               "summaryProviderPreference": 98,
               "summaryModelProxyBaseUrl": "   ",
@@ -606,6 +660,10 @@ public sealed class AppConfigStoreTests
         var migrated = await store.LoadOrCreateAsync();
 
         Assert.Equal(MeetingSummaryGenerationMode.Disabled, migrated.SummaryGenerationMode);
+        Assert.Equal(TranscriptionProviderPreference.WhisperNet, migrated.TranscriptionProviderPreference);
+        Assert.False(migrated.TranscriptionCliProviderProbe.Succeeded);
+        Assert.Equal(DiarizationProviderPreference.LocalSherpa, migrated.DiarizationProviderPreference);
+        Assert.False(migrated.DiarizationCliProviderProbe.Succeeded);
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, migrated.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", migrated.SummaryModelProxyBaseUrl);
         Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyModel);

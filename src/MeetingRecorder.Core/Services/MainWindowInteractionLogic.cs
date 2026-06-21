@@ -23,6 +23,15 @@ internal sealed record ConfigEditorSnapshot(
     PreferredTeamsIntegrationMode PreferredTeamsIntegrationMode,
     BackgroundProcessingMode BackgroundProcessingMode,
     BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode,
+    ProcessingSpeedProfile ProcessingSpeedProfile,
+    string OvernightDrainStartLocal,
+    string OvernightDrainEndLocal,
+    TranscriptionProviderPreference TranscriptionProviderPreference,
+    string TranscriptionCliPath,
+    string TranscriptionCliArguments,
+    DiarizationProviderPreference DiarizationProviderPreference,
+    string DiarizationCliPath,
+    string DiarizationCliArguments,
     MeetingSummaryGenerationMode SummaryGenerationMode,
     MeetingSummaryProviderPreference SummaryProviderPreference,
     string SummaryModelProxyBaseUrl,
@@ -305,6 +314,47 @@ internal static class MainWindowInteractionLogic
             (BackgroundProcessingMode.FastestDrain, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.FastestDrain, processorCount)),
             (BackgroundProcessingMode.MaximumThroughput, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.MaximumThroughput, processorCount)),
         ];
+    }
+
+    public static IReadOnlyList<(ProcessingSpeedProfile Value, string Label)> BuildProcessingSpeedProfileOptions()
+    {
+        return
+        [
+            (ProcessingSpeedProfile.Normal, "Normal"),
+            (ProcessingSpeedProfile.TranscriptOnlyDrain, "Transcript only"),
+            (ProcessingSpeedProfile.OvernightDrain, "Overnight transcript only"),
+        ];
+    }
+
+    public static string BuildProcessingSpeedProfileHelpText(ProcessingSpeedProfile profile)
+    {
+        return profile switch
+        {
+            ProcessingSpeedProfile.TranscriptOnlyDrain =>
+                "Transcript only skips speaker labels and summaries, runs up to two transcript workers, and publishes audio/transcripts first.",
+            ProcessingSpeedProfile.OvernightDrain =>
+                "Overnight transcript only applies transcript-only drain during the configured local window, then returns to normal processing.",
+            _ =>
+                "Normal follows the selected background processing, speaker-labeling, and summary settings.",
+        };
+    }
+
+    public static IReadOnlyList<(TranscriptionProviderPreference Value, string Label)> BuildTranscriptionProviderOptions()
+    {
+        return new[]
+        {
+            (TranscriptionProviderPreference.WhisperNet, "Built-in Whisper.NET"),
+            (TranscriptionProviderPreference.LocalCli, "External CLI"),
+        };
+    }
+
+    public static IReadOnlyList<(DiarizationProviderPreference Value, string Label)> BuildDiarizationProviderOptions()
+    {
+        return new[]
+        {
+            (DiarizationProviderPreference.LocalSherpa, "Built-in Sherpa"),
+            (DiarizationProviderPreference.LocalCli, "External CLI"),
+        };
     }
 
     public static string BuildBackgroundProcessingModeHelpText(
@@ -2188,6 +2238,15 @@ internal static class MainWindowInteractionLogic
             currentConfig.PreferredTeamsIntegrationMode != editor.PreferredTeamsIntegrationMode ||
             currentConfig.BackgroundProcessingMode != editor.BackgroundProcessingMode ||
             currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode ||
+            currentConfig.ProcessingSpeedProfile != editor.ProcessingSpeedProfile ||
+            !string.Equals(currentConfig.OvernightDrainStartLocal, NormalizeText(editor.OvernightDrainStartLocal), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(currentConfig.OvernightDrainEndLocal, NormalizeText(editor.OvernightDrainEndLocal), StringComparison.OrdinalIgnoreCase) ||
+            currentConfig.TranscriptionProviderPreference != editor.TranscriptionProviderPreference ||
+            !string.Equals(currentConfig.TranscriptionCliPath, NormalizeText(editor.TranscriptionCliPath), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(currentConfig.TranscriptionCliArguments, NormalizeText(editor.TranscriptionCliArguments), StringComparison.Ordinal) ||
+            currentConfig.DiarizationProviderPreference != editor.DiarizationProviderPreference ||
+            !string.Equals(currentConfig.DiarizationCliPath, NormalizeText(editor.DiarizationCliPath), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(currentConfig.DiarizationCliArguments, NormalizeText(editor.DiarizationCliArguments), StringComparison.Ordinal) ||
             currentConfig.SummaryGenerationMode != editor.SummaryGenerationMode ||
             currentConfig.SummaryProviderPreference != editor.SummaryProviderPreference ||
             !string.Equals(NormalizeSummaryBaseUrl(currentConfig.SummaryModelProxyBaseUrl), NormalizeSummaryBaseUrl(editor.SummaryModelProxyBaseUrl), StringComparison.OrdinalIgnoreCase) ||

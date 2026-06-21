@@ -2367,6 +2367,74 @@
                                         </StackPanel>
 
                                         <StackPanel Margin="0,16,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="External transcription provider" />
+                                            <ComboBox x:Name="ConfigTranscriptionProviderPreferenceComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Width="260"
+                                                      Height="32"
+                                                      HorizontalAlignment="Left"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="CLI executable path" />
+                                            <TextBox x:Name="ConfigTranscriptionCliPathTextBox"
+                                                     Margin="0,4,0,0"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="CLI arguments, using {audioPath}" />
+                                            <TextBox x:Name="ConfigTranscriptionCliArgumentsTextBox"
+                                                     Margin="0,4,0,0"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <Button x:Name="TestTranscriptionCliProviderButton"
+                                                    Margin="0,8,0,0"
+                                                    HorizontalAlignment="Left"
+                                                    MinWidth="120"
+                                                    Click="TestTranscriptionCliProviderButton_OnClick"
+                                                    Content="Test" />
+                                            <TextBlock x:Name="ConfigTranscriptionCliProviderStatusTextBlock"
+                                                       Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,16,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="External speaker-labeling provider" />
+                                            <ComboBox x:Name="ConfigDiarizationProviderPreferenceComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Width="260"
+                                                      Height="32"
+                                                      HorizontalAlignment="Left"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="CLI executable path" />
+                                            <TextBox x:Name="ConfigDiarizationCliPathTextBox"
+                                                     Margin="0,4,0,0"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="CLI arguments, using {audioPath} and {transcriptPath}" />
+                                            <TextBox x:Name="ConfigDiarizationCliArgumentsTextBox"
+                                                     Margin="0,4,0,0"
+                                                     Height="32"
+                                                     VerticalContentAlignment="Center" />
+                                            <Button x:Name="TestDiarizationCliProviderButton"
+                                                    Margin="0,8,0,0"
+                                                    HorizontalAlignment="Left"
+                                                    MinWidth="120"
+                                                    Click="TestDiarizationCliProviderButton_OnClick"
+                                                    Content="Test" />
+                                            <TextBlock x:Name="ConfigDiarizationCliProviderStatusTextBlock"
+                                                       Margin="0,8,0,0"
+                                                       Style="{StaticResource ConfigHelpTextStyle}" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigAutoDetectCheckBox"
                                                       Content="Enable auto-detection" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
@@ -3033,6 +3101,37 @@
                                                      VerticalContentAlignment="Center" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Point this at the shared release feed the app should use for update discovery." />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Processing speed profile" />
+                                            <ComboBox x:Name="ConfigProcessingSpeedProfileComboBox"
+                                                      Margin="0,6,0,0"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center" />
+                                            <TextBlock x:Name="ConfigProcessingSpeedProfileHelpTextBlock"
+                                                       Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Normal follows the selected background processing, speaker-labeling, and summary settings." />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,14,0,0">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Overnight drain window" />
+                                            <StackPanel Margin="0,6,0,0"
+                                                        Orientation="Horizontal">
+                                                <TextBox x:Name="ConfigOvernightDrainStartTextBox"
+                                                         Width="76"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center" />
+                                                <TextBlock Margin="8,0"
+                                                           VerticalAlignment="Center"
+                                                           Text="to" />
+                                                <TextBox x:Name="ConfigOvernightDrainEndTextBox"
+                                                         Width="76"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
+                                                       Text="Used only by Overnight transcript only. Format: HH:mm local time." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
