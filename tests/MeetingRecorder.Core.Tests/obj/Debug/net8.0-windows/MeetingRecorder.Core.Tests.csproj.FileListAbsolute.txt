@@ -125,3 +125,6 @@ C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\
 C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\MeetingRecorder.Core.Tests.pdb
 C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\MeetingRecorder.Core.Tests.genruntimeconfig.cache
 C:\Users\psharm04\OneDrive - Kearney\Documents\Coding Projects\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\ref\MeetingRecorder.Core.Tests.dll
+C:\code\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\MeetingRecorder.Core.Tests.dll
+C:\code\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\refint\MeetingRecorder.Core.Tests.dll
+C:\code\Meeting Recorder\tests\MeetingRecorder.Core.Tests\obj\Debug\net8.0-windows\MeetingRecorder.Core.Tests.pdb

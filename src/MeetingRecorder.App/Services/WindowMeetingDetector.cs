@@ -1332,13 +1332,12 @@ internal static class AudioActivityProbeSupport
             using var enumerator = new MMDeviceEnumerator();
             using var device = enumerator.GetDefaultAudioEndpoint(flow, role);
             var peakLevel = device.AudioMeterInformation.MasterPeakValue;
-            var sessions = CaptureSessions(device, threshold);
             return new AudioSourceAttributionSnapshot(
                 device.FriendlyName,
                 peakLevel,
                 peakLevel >= threshold,
                 peakLevel >= threshold ? "active" : "below-threshold",
-                sessions,
+                Array.Empty<AudioSourceSessionSnapshot>(),
                 null);
         }
         catch (Exception exception)
@@ -1351,106 +1350,6 @@ internal static class AudioActivityProbeSupport
                 Array.Empty<AudioSourceSessionSnapshot>(),
                 null);
         }
-    }
-
-    private static IReadOnlyList<AudioSourceSessionSnapshot> CaptureSessions(MMDevice device, double threshold)
-    {
-        try
-        {
-            var sessions = device.AudioSessionManager.Sessions;
-            var results = new List<AudioSourceSessionSnapshot>(sessions.Count);
-            for (var index = 0; index < sessions.Count; index++)
-            {
-                using var session = sessions[index];
-                var peakLevel = session.AudioMeterInformation.MasterPeakValue;
-                var isSystemSounds = TryGetSystemSoundsFlag(session);
-                var displayName = TryGetSessionDisplayName(session);
-                var sessionIdentifier = TryGetSessionIdentifier(session);
-                var stateText = TryGetSessionStateText(session);
-                var isCurrentProcess = LooksLikeCurrentProcessSession(displayName, sessionIdentifier);
-
-                results.Add(BuildSessionSnapshot(
-                    0,
-                    peakLevel,
-                    threshold,
-                    isSystemSounds,
-                    isCurrentProcess,
-                    displayName,
-                    sessionIdentifier,
-                    stateText));
-            }
-
-            return results;
-        }
-        catch
-        {
-            return Array.Empty<AudioSourceSessionSnapshot>();
-        }
-    }
-
-    internal static AudioSourceSessionSnapshot BuildSessionSnapshot(
-        int processId,
-        double peakLevel,
-        double activityThreshold,
-        bool isSystemSounds,
-        bool isCurrentProcess,
-        string? displayName,
-        string? sessionIdentifier,
-        string? stateText)
-    {
-        var isActive = peakLevel >= activityThreshold ||
-            string.Equals(stateText, "AudioSessionStateActive", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase);
-        var processName = DeriveAudioSessionProcessName(
-            isActive,
-            isSystemSounds,
-            isCurrentProcess,
-            displayName,
-            sessionIdentifier);
-
-        return new AudioSourceSessionSnapshot(
-            processId,
-            processName,
-            peakLevel,
-            isActive,
-            isSystemSounds,
-            isCurrentProcess,
-            displayName,
-            sessionIdentifier);
-    }
-
-    private static string DeriveAudioSessionProcessName(
-        bool isActive,
-        bool isSystemSounds,
-        bool isCurrentProcess,
-        string? displayName,
-        string? sessionIdentifier)
-    {
-        if (!isActive || isSystemSounds || isCurrentProcess)
-        {
-            return string.Empty;
-        }
-
-        return TryDeriveMeetingAudioProcessName(displayName) ??
-            TryDeriveMeetingAudioProcessName(sessionIdentifier) ??
-            string.Empty;
-    }
-
-    private static bool LooksLikeCurrentProcessSession(string? displayName, string? sessionIdentifier)
-    {
-        return ContainsCurrentProcessMarker(displayName) ||
-            ContainsCurrentProcessMarker(sessionIdentifier);
-    }
-
-    private static bool ContainsCurrentProcessMarker(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        return value.Contains("meetingrecorder", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("meeting recorder", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string? TryDeriveMeetingAudioProcessName(string? metadataValue)
@@ -1501,58 +1400,6 @@ internal static class AudioActivityProbeSupport
         }
 
         return null;
-    }
-
-    private static bool TryGetSystemSoundsFlag(AudioSessionControl session)
-    {
-        try
-        {
-            return session.IsSystemSoundsSession;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string? TryGetSessionDisplayName(AudioSessionControl session)
-    {
-        try
-        {
-            return string.IsNullOrWhiteSpace(session.DisplayName)
-                ? null
-                : session.DisplayName.Trim();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? TryGetSessionIdentifier(AudioSessionControl session)
-    {
-        try
-        {
-            return string.IsNullOrWhiteSpace(session.GetSessionIdentifier)
-                ? null
-                : session.GetSessionIdentifier;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? TryGetSessionStateText(AudioSessionControl session)
-    {
-        try
-        {
-            return session.State.ToString();
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private static bool ShouldPreferRenderSnapshot(

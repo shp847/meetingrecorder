@@ -621,7 +621,7 @@ public sealed class AutoRecordingContinuityPolicy
         if (IsGenericMeetingTitle(normalizedTitle, MeetingPlatform.Teams) ||
             HasSuppressedTeamsNavigationSignal(decision) ||
             !HasMeetingIdentityEvidence(decision) ||
-            !HasSupportedMeetingAudioAttribution(decision) ||
+            (!HasSupportedMeetingAudioAttribution(decision) && !HasUnavailableAudioProbeSignal(decision)) ||
             !HasSilentAudioSignal(decision))
         {
             return false;

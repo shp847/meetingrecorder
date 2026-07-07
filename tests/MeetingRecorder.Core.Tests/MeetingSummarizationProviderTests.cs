@@ -196,19 +196,11 @@ public sealed class MeetingSummarizationProviderTests
     }
 
     [Fact]
-    public async Task SummarizeAsync_Uses_ModelProxy_Advertised_Default_When_Config_Still_Default()
+    public async Task SummarizeAsync_Uses_MeetingRecorder_Default_Model_When_Config_Still_Default()
     {
         var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
         var chatClient = new FakeSummaryChatClient();
-        var modelCatalogClient = new FakeModelProxyModelCatalogClient(
-            new ModelProxyModelCatalog(
-                "gpt-5.5-mini",
-                "gpt-5.5-mini",
-                [
-                    new ModelProxyModelInfo("gpt-5.5-mini", true, "app-server", "gpt-5.5-mini"),
-                    new ModelProxyModelInfo(MeetingSummaryDefaults.ModelProxyModel, false, "app-server", MeetingSummaryDefaults.ModelProxyModel),
-                ]));
-        var provider = new MeetingSummarizationProvider(secrets, chatClient, modelCatalogClient);
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
 
         var result = await provider.SummarizeAsync(
             CreateRequest(new AppConfig
@@ -221,26 +213,19 @@ public sealed class MeetingSummarizationProviderTests
 
         Assert.Equal(StageExecutionState.Succeeded, result.Status.State);
         var call = Assert.Single(chatClient.Calls);
-        Assert.Equal("gpt-5.5-mini", call.Request.Model);
-        Assert.Equal("gpt-5.5-mini", result.Summary!.Provider.Model);
+        Assert.Equal(MeetingSummaryDefaults.ModelProxyModel, call.Request.Model);
+        Assert.Equal(MeetingSummaryDefaults.ModelProxyModel, result.Summary!.Provider.Model);
         Assert.Equal("app-server", call.ProviderOptions.ModelProxyBackend);
         Assert.False(call.ProviderOptions.ModelProxyWebSearchEnabled);
+        Assert.True(call.ProviderOptions.ModelProxyCloudDenied);
     }
 
     [Fact]
-    public async Task SummarizeAsync_Keeps_User_Selected_Advertised_Model()
+    public async Task SummarizeAsync_Keeps_User_Selected_Model()
     {
         var secrets = new TrackingSummarySecretStore { ModelProxySecret = "sk-modelproxy-test" };
         var chatClient = new FakeSummaryChatClient();
-        var modelCatalogClient = new FakeModelProxyModelCatalogClient(
-            new ModelProxyModelCatalog(
-                "gpt-5.5-mini",
-                "gpt-5.5-mini",
-                [
-                    new ModelProxyModelInfo("gpt-5.5-mini", true, "app-server", "gpt-5.5-mini"),
-                    new ModelProxyModelInfo("gpt-5.4", false, "app-server", "gpt-5.4"),
-                ]));
-        var provider = new MeetingSummarizationProvider(secrets, chatClient, modelCatalogClient);
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
 
         var result = await provider.SummarizeAsync(
             CreateRequest(new AppConfig
@@ -255,6 +240,30 @@ public sealed class MeetingSummarizationProviderTests
         var call = Assert.Single(chatClient.Calls);
         Assert.Equal("gpt-5.4", call.Request.Model);
         Assert.Equal("gpt-5.4", result.Summary!.Provider.Model);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Does_Not_Deny_ModelProxy_Cloud_When_Fallback_Preference_Is_Enabled()
+    {
+        var secrets = new TrackingSummarySecretStore
+        {
+            ModelProxySecret = "sk-modelproxy-test",
+            OpenAiSecret = "sk-openai-test",
+        };
+        var chatClient = new FakeSummaryChatClient();
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+            }),
+            CancellationToken.None);
+
+        var call = Assert.Single(chatClient.Calls);
+        Assert.False(call.ProviderOptions.ModelProxyCloudDenied);
+        Assert.False(call.ProviderOptions.ModelProxyWebSearchEnabled);
     }
 
     [Fact]
@@ -418,21 +427,4 @@ public sealed class MeetingSummarizationProviderTests
     private sealed record SummaryChatCall(
         SummaryChatProviderOptions ProviderOptions,
         SummaryChatRequest Request);
-
-    private sealed class FakeModelProxyModelCatalogClient : IModelProxyModelCatalogClient
-    {
-        private readonly ModelProxyModelCatalog _catalog;
-
-        public FakeModelProxyModelCatalogClient(ModelProxyModelCatalog catalog)
-        {
-            _catalog = catalog;
-        }
-
-        public Task<ModelProxyModelCatalog> GetModelsAsync(
-            SummaryChatProviderOptions providerOptions,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(_catalog);
-        }
-    }
 }

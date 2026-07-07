@@ -158,7 +158,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
 
             var providerOptions = SummaryChatProviderOptions.ForModelProxy(
                 apiKey,
-                config.SummaryModelProxyBaseUrl);
+                config.SummaryModelProxyBaseUrl) with
+            {
+                ModelProxyCloudDenied = config.SummaryProviderPreference == MeetingSummaryProviderPreference.LocalOnly,
+            };
             var model = await ResolveModelProxyModelAsync(
                 providerOptions,
                 config.SummaryModelProxyModel,
@@ -210,38 +213,23 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         CancellationToken cancellationToken)
     {
         var normalizedConfiguredModel = NormalizeModelName(configuredModel, MeetingSummaryDefaults.ModelProxyModel);
-        if (_modelCatalogClient is null)
+        if (!string.Equals(normalizedConfiguredModel, MeetingSummaryDefaults.ModelProxyModel, StringComparison.OrdinalIgnoreCase))
         {
             return normalizedConfiguredModel;
         }
 
-        try
+        if (_modelCatalogClient is not null)
         {
-            var catalog = await _modelCatalogClient.GetModelsAsync(providerOptions, cancellationToken);
-            if (IsAdvertisedUserModelOverride(normalizedConfiguredModel, catalog))
+            try
             {
-                return normalizedConfiguredModel;
+                await _modelCatalogClient.GetModelsAsync(providerOptions, cancellationToken);
             }
-
-            return catalog.ResolveModel();
+            catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or ArgumentException)
+            {
+            }
         }
-        catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or ArgumentException)
-        {
-            return normalizedConfiguredModel;
-        }
-    }
 
-    private static string NormalizeModelName(string model, string defaultModel)
-    {
-        return string.IsNullOrWhiteSpace(model) ? defaultModel : model.Trim();
-    }
-
-    private static bool IsAdvertisedUserModelOverride(
-        string configuredModel,
-        ModelProxyModelCatalog catalog)
-    {
-        return !string.Equals(configuredModel, MeetingSummaryDefaults.ModelProxyModel, StringComparison.OrdinalIgnoreCase) &&
-               catalog.Models.Any(model => string.Equals(model.Id, configuredModel, StringComparison.OrdinalIgnoreCase));
+        return normalizedConfiguredModel;
     }
 
     private async Task<MeetingSummaryContent> SummarizeSingleChunkAsync(
@@ -304,7 +292,10 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                     new SummaryChatMessage(SummaryChatRole.System, BuildSystemPrompt()),
                     new SummaryChatMessage(SummaryChatRole.User, combinePrompt),
                 ],
-                TimeSpan.FromSeconds(timeoutSeconds)),
+                TimeSpan.FromSeconds(timeoutSeconds))
+            {
+                JsonOutput = true,
+            },
             cancellationToken);
         return ParseSummaryContent(candidate.ProviderOptions.ProviderName, combineResponse.Content) with
         {
@@ -349,7 +340,15 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 new SummaryChatMessage(SummaryChatRole.System, BuildSystemPrompt()),
                 new SummaryChatMessage(SummaryChatRole.User, prompt),
             ],
-            TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)));
+            TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)))
+        {
+            JsonOutput = true,
+        };
+    }
+
+    private static string NormalizeModelName(string model, string defaultModel)
+    {
+        return string.IsNullOrWhiteSpace(model) ? defaultModel : model.Trim();
     }
 
     private static string BuildSystemPrompt()

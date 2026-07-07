@@ -9,11 +9,11 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Net.Http
 
 $normalizedBaseUrl = $BaseUrl.TrimEnd("/")
-$parallelRequestCount = 5
-$maxBackendBusyAttempts = 3
+$maxAttempts = 3
+$requestTimeoutSeconds = 60
 
 if (-not $ApiKey) {
-    $ApiKey = "sk-modelproxy"
+    $ApiKey = "sk-modelproxy-meeting-recorder"
 }
 
 function Get-ModelProxyErrorKind {
@@ -26,6 +26,9 @@ function Get-ModelProxyErrorKind {
     try {
         $payload = $ResponseContent | ConvertFrom-Json
         $errorNode = $payload.detail
+        if ($errorNode -and $errorNode.error) {
+            $errorNode = $errorNode.error
+        }
         if (-not $errorNode) {
             $errorNode = $payload.error
         }
@@ -49,29 +52,56 @@ function Get-ModelProxyErrorKind {
 }
 
 function New-ModelProxySmokeRequest {
-    param(
-        [string]$ModelName,
-        [bool]$UseLongSyntheticPrompt = $false
-    )
+    param([string]$ModelName)
 
     $prompt = "Reply exactly: summary-provider-ok"
-    if ($UseLongSyntheticPrompt) {
-        $prompt = $prompt + ". Synthetic validation context: " + ("parallel no-search app-server validation. " * 160)
-    }
 
     $body = @{
         model = $ModelName
-        messages = @(@{ role = "user"; content = $prompt })
+        input = @(@{
+                role = "user"
+                content = @(@{
+                        type = "input_text"
+                        text = $prompt
+                    })
+            })
     } | ConvertTo-Json -Depth 8
 
     $request = [System.Net.Http.HttpRequestMessage]::new(
         [System.Net.Http.HttpMethod]::Post,
-        "$normalizedBaseUrl/chat/completions")
+        "$normalizedBaseUrl/responses")
     $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ApiKey)
     $request.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", "app-server") | Out-Null
     $request.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search", "false") | Out-Null
     $request.Content = [System.Net.Http.StringContent]::new($body, [Text.Encoding]::UTF8, "application/json")
     return $request
+}
+
+function Get-ModelProxyOutputText {
+    param([object]$Payload)
+
+    if (-not $Payload.output) {
+        return $null
+    }
+
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Payload.output)) {
+        if ($item.type -ne "message" -or $item.role -ne "assistant" -or -not $item.content) {
+            continue
+        }
+
+        foreach ($contentItem in @($item.content)) {
+            if ($contentItem.type -eq "output_text" -and $contentItem.text) {
+                $parts.Add([string]$contentItem.text)
+            }
+        }
+    }
+
+    if ($parts.Count -eq 0) {
+        return $null
+    }
+
+    return [string]::Join("", $parts)
 }
 
 function Read-ModelProxySmokeResponse {
@@ -109,13 +139,12 @@ function Read-ModelProxySmokeResponse {
     }
 
     $payload = $responseContent | ConvertFrom-Json
-    $content = $payload.choices[0].message.content
+    $content = Get-ModelProxyOutputText -Payload $payload
     if ($content -notmatch "summary-provider-ok") {
         throw "Unexpected ModelProxy response for synthetic request $RequestIndex."
     }
 
     return [pscustomobject]@{
-        RequestIndex = $RequestIndex
         Success = $true
         RetryableBackendBusy = $false
         ErrorKind = $null
@@ -123,57 +152,19 @@ function Read-ModelProxySmokeResponse {
     }
 }
 
-function Invoke-ParallelModelProxySmokeRequests {
-    param(
-        [System.Net.Http.HttpClient]$Client,
-        [string]$ModelName
-    )
-
-    $entries = @()
-    for ($index = 1; $index -le $parallelRequestCount; $index++) {
-        $request = New-ModelProxySmokeRequest -ModelName $ModelName -UseLongSyntheticPrompt:($index -eq $parallelRequestCount)
-        $entries += [pscustomobject]@{
-            Index = $index
-            Request = $request
-            Task = $Client.SendAsync($request)
-        }
-    }
-
-    [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($entries.Task))
-
-    $results = @()
-    foreach ($entry in $entries) {
-        $response = $null
-        try {
-            $response = $entry.Task.GetAwaiter().GetResult()
-            $results += Read-ModelProxySmokeResponse -Response $response -RequestIndex $entry.Index
-        }
-        finally {
-            if ($response) {
-                $response.Dispose()
-            }
-
-            $entry.Request.Dispose()
-        }
-    }
-
-    return $results
-}
-
 function Invoke-ModelProxySmokeRetry {
     param(
         [System.Net.Http.HttpClient]$Client,
         [string]$ModelName,
-        [int]$RequestIndex,
         [int]$Attempt
     )
 
     $request = $null
     $response = $null
     try {
-        $request = New-ModelProxySmokeRequest -ModelName $ModelName -UseLongSyntheticPrompt:($RequestIndex -eq $parallelRequestCount)
+        $request = New-ModelProxySmokeRequest -ModelName $ModelName
         $response = $Client.SendAsync($request).GetAwaiter().GetResult()
-        return Read-ModelProxySmokeResponse -Response $response -RequestIndex $RequestIndex
+        return Read-ModelProxySmokeResponse -Response $response -RequestIndex $Attempt
     }
     finally {
         if ($response) {
@@ -188,7 +179,7 @@ function Invoke-ModelProxySmokeRetry {
 
 $httpClient = [System.Net.Http.HttpClient]::new()
 try {
-    $httpClient.Timeout = [TimeSpan]::FromSeconds(900)
+    $httpClient.Timeout = [TimeSpan]::FromSeconds($requestTimeoutSeconds)
     if (-not $Model) {
         $modelsRequest = [System.Net.Http.HttpRequestMessage]::new(
             [System.Net.Http.HttpMethod]::Get,
@@ -203,21 +194,13 @@ try {
             }
 
             $modelsPayload = $modelsContent | ConvertFrom-Json
-            $Model = $modelsPayload.default_model
-            if (-not $Model -and $modelsPayload.data) {
-                $defaultEntry = @($modelsPayload.data | Where-Object { $_.default } | Select-Object -First 1)
-                if ($defaultEntry.Count -gt 0) {
-                    $Model = $defaultEntry[0].id
-                }
+            $advertisedModels = @($modelsPayload.data | Where-Object { $_.id } | ForEach-Object { [string]$_.id })
+            if ($advertisedModels.Count -eq 0) {
+                throw "ModelProxy models response did not include usable OpenAI-shaped model ids."
             }
-            if (-not $Model -and $modelsPayload.data) {
-                $firstEntry = @($modelsPayload.data | Select-Object -First 1)
-                if ($firstEntry.Count -gt 0) {
-                    $Model = $firstEntry[0].id
-                }
-            }
-            if (-not $Model) {
-                throw "ModelProxy models response did not include a usable default model."
+            $Model = "gpt-5.4-mini"
+            if (-not ($advertisedModels -contains $Model)) {
+                throw "ModelProxy models response did not advertise Meeting Recorder default model '$Model'."
             }
             Write-Host "Meeting Recorder ModelProxy default model: $Model"
         }
@@ -230,42 +213,33 @@ try {
         }
     }
 
-    $results = Invoke-ParallelModelProxySmokeRequests -Client $httpClient -ModelName $Model
-    for ($attempt = 2; $attempt -le $maxBackendBusyAttempts; $attempt++) {
-        $busyResults = @($results | Where-Object { $_.RetryableBackendBusy })
-        if ($busyResults.Count -eq 0) {
+    $result = $null
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-Host "ModelProxy app-server reported retryable backend_busy for synthetic validation; retrying shortly."
+            Start-Sleep -Milliseconds (250 * ($attempt - 1))
+        }
+
+        $result = Invoke-ModelProxySmokeRetry -Client $httpClient -ModelName $Model -Attempt $attempt
+        if (-not $result.RetryableBackendBusy) {
             break
         }
-
-        Write-Host "ModelProxy app-server reported retryable backend_busy for $($busyResults.Count) synthetic request(s); retrying shortly."
-        Start-Sleep -Milliseconds (250 * ($attempt - 1))
-        $updatedResults = @($results | Where-Object { -not $_.RetryableBackendBusy })
-        foreach ($busyResult in $busyResults) {
-            $updatedResults += Invoke-ModelProxySmokeRetry -Client $httpClient -ModelName $Model -RequestIndex $busyResult.RequestIndex -Attempt $attempt
-        }
-
-        $results = $updatedResults
     }
 
-    $remainingBusy = @($results | Where-Object { $_.RetryableBackendBusy })
-    if ($remainingBusy.Count -gt 0) {
+    if ($result.RetryableBackendBusy) {
         throw "ModelProxy app-server remained temporarily saturated after retry attempts; retry shortly."
     }
 
-    $failedResults = @($results | Where-Object { -not $_.Success })
-    if ($failedResults.Count -gt 0) {
-        $firstFailure = $failedResults[0]
-        throw "ModelProxy smoke failed for synthetic request $($firstFailure.RequestIndex) with structured error '$($firstFailure.ErrorKind)'."
+    if (-not $result.Success) {
+        throw "ModelProxy smoke failed for synthetic request with structured error '$($result.ErrorKind)'."
     }
 
-    Write-Host "Meeting Recorder ModelProxy synthetic smoke response matched expected marker for $parallelRequestCount parallel no-search app-server request(s)."
+    Write-Host "Meeting Recorder ModelProxy synthetic smoke response matched expected marker for a lightweight no-search app-server request."
 
     $printedRouting = $false
-    foreach ($result in $results) {
-        foreach ($headerName in $result.Routing.Keys) {
-            Write-Host "ModelProxy routing: request=$($result.RequestIndex) $headerName=$($result.Routing[$headerName])"
-            $printedRouting = $true
-        }
+    foreach ($headerName in $result.Routing.Keys) {
+        Write-Host "ModelProxy routing: $headerName=$($result.Routing[$headerName])"
+        $printedRouting = $true
     }
 
     if (-not $printedRouting) {

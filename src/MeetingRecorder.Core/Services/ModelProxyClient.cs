@@ -34,6 +34,8 @@ public sealed record SummaryChatRequest(
     TimeSpan Timeout)
 {
     public bool Stream { get; init; }
+
+    public bool JsonOutput { get; init; }
 }
 
 public sealed record ModelProxyRoutingInfo(
@@ -94,11 +96,11 @@ public sealed record SummaryChatProviderOptions(
     public string? ModelProxyBackend { get; init; }
 
     public bool ModelProxyWebSearchEnabled { get; init; }
+
+    public bool ModelProxyCloudDenied { get; init; }
 }
 
 public sealed record ModelProxyModelCatalog(
-    string? DefaultModel,
-    string? DefaultCodexModel,
     IReadOnlyList<ModelProxyModelInfo> Models)
 {
     public string ResolveModel(string? projectSpecificOverride = null)
@@ -108,29 +110,64 @@ public sealed record ModelProxyModelCatalog(
             return projectSpecificOverride.Trim();
         }
 
-        if (!string.IsNullOrWhiteSpace(DefaultModel))
-        {
-            return DefaultModel.Trim();
-        }
+        return MeetingSummaryDefaults.ModelProxyModel;
+    }
 
-        var defaultItem = Models.FirstOrDefault(model => model.IsDefault);
-        if (!string.IsNullOrWhiteSpace(defaultItem?.Id))
-        {
-            return defaultItem.Id.Trim();
-        }
-
-        var firstItem = Models.FirstOrDefault();
-        return !string.IsNullOrWhiteSpace(firstItem?.Id)
-            ? firstItem.Id.Trim()
-            : MeetingSummaryDefaults.ModelProxyModel;
+    public bool ContainsModel(string modelId)
+    {
+        return !string.IsNullOrWhiteSpace(modelId) &&
+               Models.Any(model => string.Equals(model.Id, modelId.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 }
 
 public sealed record ModelProxyModelInfo(
     string Id,
-    bool IsDefault,
-    string? Backend,
-    string? DefaultBackendModel);
+    string? ObjectType,
+    long? Created,
+    string? OwnedBy);
+
+internal sealed record ModelProxyAudioFallbackPlan(
+    bool UseLocalFallback,
+    bool RetryAsCloud,
+    bool UploadAudio);
+
+internal static class ModelProxyAudioContract
+{
+    public const string TranscriptionModel = "gpt-4o-transcribe";
+    public const string DiarizedTranscriptionModel = "gpt-4o-transcribe-diarize";
+
+    private static readonly HashSet<string> LocalFallbackErrorKinds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "audio_disabled",
+        "unsupported_model",
+        "backend_unavailable",
+        "backend_busy",
+        "timeout",
+        "quota",
+        "config_error",
+        "protocol_mismatch",
+        "protocol mismatch",
+    };
+
+    public static bool CanUseRemoteAudio(
+        ModelProxyModelCatalog catalog,
+        bool diarized)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        return catalog.ContainsModel(diarized ? DiarizedTranscriptionModel : TranscriptionModel);
+    }
+
+    public static ModelProxyAudioFallbackPlan BuildFallbackPlan(string? errorKind)
+    {
+        var normalized = errorKind?.Trim();
+        var useLocalFallback = !string.IsNullOrWhiteSpace(normalized) &&
+                               LocalFallbackErrorKinds.Contains(normalized);
+        return new ModelProxyAudioFallbackPlan(
+            UseLocalFallback: useLocalFallback,
+            RetryAsCloud: false,
+            UploadAudio: false);
+    }
+}
 
 public interface ISummarySecretStore
 {
@@ -339,15 +376,8 @@ public sealed class SummaryChatClient : ISummaryChatClient
         var effectiveTimeout = GetEffectiveTimeout(providerOptions, request.Timeout);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(effectiveTimeout);
-        var endpoint = new Uri(new Uri(NormalizeBaseUrl(providerOptions.BaseUrl)), "chat/completions");
-        var payload = new SummaryChatCompletionPayload(
-            request.Model.Trim(),
-            request.Messages.Select(message => new SummaryChatCompletionMessagePayload(
-                ConvertRole(message.Role),
-                message.Content)).ToArray())
-        {
-            Stream = request.Stream,
-        };
+        var endpoint = new Uri(new Uri(NormalizeBaseUrl(providerOptions.BaseUrl)), "responses");
+        var payload = BuildResponsesPayload(request);
         var json = JsonSerializer.Serialize(payload, SerializerOptions);
 
         try
@@ -357,7 +387,7 @@ public sealed class SummaryChatClient : ISummaryChatClient
                 : HttpCompletionOption.ResponseContentRead;
             for (var attempt = 1; attempt <= MaxBackendBusyAttempts; attempt++)
             {
-                using var httpRequest = BuildChatCompletionRequest(providerOptions, endpoint, json);
+                using var httpRequest = BuildResponsesRequest(providerOptions, endpoint, json);
                 using var response = await _httpClient.SendAsync(httpRequest, completionOption, timeoutCts.Token);
                 var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token);
                 if (!response.IsSuccessStatusCode)
@@ -396,7 +426,37 @@ public sealed class SummaryChatClient : ISummaryChatClient
         throw new InvalidOperationException($"{providerOptions.ProviderName} summary request did not complete.");
     }
 
-    private static HttpRequestMessage BuildChatCompletionRequest(
+    private static SummaryResponseRequestPayload BuildResponsesPayload(SummaryChatRequest request)
+    {
+        var instructions = string.Join(
+            Environment.NewLine + Environment.NewLine,
+            request.Messages
+                .Where(message => message.Role == SummaryChatRole.System)
+                .Select(message => message.Content.Trim())
+                .Where(content => content.Length > 0));
+        var input = request.Messages
+            .Where(message => message.Role != SummaryChatRole.System)
+            .Select(message => new SummaryResponseInputMessagePayload(
+                ConvertRole(message.Role),
+                [new SummaryResponseInputTextPayload(message.Content)]))
+            .ToArray();
+
+        if (input.Length == 0)
+        {
+            throw new ArgumentException("At least one non-system summary chat message is required.", nameof(request));
+        }
+
+        return new SummaryResponseRequestPayload(request.Model.Trim(), input)
+        {
+            Instructions = instructions.Length == 0 ? null : instructions,
+            Stream = request.Stream,
+            Text = request.JsonOutput
+                ? new SummaryResponseTextPayload(new SummaryResponseTextFormatPayload("json_object"))
+                : null,
+        };
+    }
+
+    private static HttpRequestMessage BuildResponsesRequest(
         SummaryChatProviderOptions providerOptions,
         Uri endpoint,
         string json)
@@ -411,6 +471,11 @@ public sealed class SummaryChatClient : ISummaryChatClient
             if (!string.IsNullOrWhiteSpace(providerOptions.ModelProxyBackend))
             {
                 httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", providerOptions.ModelProxyBackend);
+            }
+
+            if (providerOptions.ModelProxyCloudDenied)
+            {
+                httpRequest.Headers.TryAddWithoutValidation("X-ModelProxy-Cloud", "deny");
             }
         }
 
@@ -490,22 +555,17 @@ public sealed class SummaryChatClient : ISummaryChatClient
     private static string ExtractAssistantContent(string providerName, string responseBody)
     {
         using var document = JsonDocument.Parse(responseBody);
-        if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-            choices.ValueKind != JsonValueKind.Array ||
-            choices.GetArrayLength() == 0)
+        if (TryExtractResponsesOutputText(document.RootElement, out var content))
         {
-            throw new InvalidOperationException($"{providerName} response did not include choices.");
+            return content;
         }
 
-        var firstChoice = choices[0];
-        if (!firstChoice.TryGetProperty("message", out var message) ||
-            !message.TryGetProperty("content", out var content) ||
-            content.ValueKind != JsonValueKind.String)
+        if (TryExtractLegacyChatCompletionText(document.RootElement, out content))
         {
-            throw new InvalidOperationException($"{providerName} response did not include assistant text.");
+            return content;
         }
 
-        return content.GetString() ?? string.Empty;
+        throw new InvalidOperationException($"{providerName} response did not include assistant text.");
     }
 
     private static string ExtractStreamingAssistantContent(string providerName, string responseBody)
@@ -585,8 +645,7 @@ public sealed class SummaryChatClient : ISummaryChatClient
             throw new HttpRequestException(BuildStreamingFailureMessage(providerName, data));
         }
 
-        builder.Append(ExtractStreamingChunkContent(providerName, data));
-        return false;
+        return ProcessStreamingChunk(providerName, data, builder);
     }
 
     private static string BuildStreamingFailureMessage(
@@ -605,41 +664,177 @@ public sealed class SummaryChatClient : ISummaryChatClient
         return string.Join(" ", parts);
     }
 
-    private static string ExtractStreamingChunkContent(string providerName, string json)
+    private static bool ProcessStreamingChunk(
+        string providerName,
+        string json,
+        StringBuilder builder)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
-            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array ||
-                choices.GetArrayLength() == 0)
+            var root = document.RootElement;
+            if (root.TryGetProperty("type", out var typeElement) &&
+                typeElement.ValueKind == JsonValueKind.String)
             {
-                return string.Empty;
+                var eventType = typeElement.GetString();
+                if (string.Equals(eventType, "response.output_text.delta", StringComparison.Ordinal) ||
+                    string.Equals(eventType, "response.text.delta", StringComparison.Ordinal))
+                {
+                    if (root.TryGetProperty("delta", out var deltaElement) &&
+                        deltaElement.ValueKind == JsonValueKind.String)
+                    {
+                        builder.Append(deltaElement.GetString());
+                    }
+
+                    return false;
+                }
+
+                if (string.Equals(eventType, "response.output_text.done", StringComparison.Ordinal) ||
+                    string.Equals(eventType, "response.text.done", StringComparison.Ordinal))
+                {
+                    if (root.TryGetProperty("text", out var textElement) &&
+                        textElement.ValueKind == JsonValueKind.String &&
+                        builder.Length == 0)
+                    {
+                        builder.Append(textElement.GetString());
+                    }
+
+                    return false;
+                }
+
+                if (string.Equals(eventType, "response.completed", StringComparison.Ordinal) ||
+                    string.Equals(eventType, "response.done", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                if (string.Equals(eventType, "error", StringComparison.Ordinal) ||
+                    string.Equals(eventType, "response.error", StringComparison.Ordinal))
+                {
+                    throw new HttpRequestException(BuildStreamingFailureMessage(providerName, json));
+                }
             }
 
-            var firstChoice = choices[0];
-            if (firstChoice.TryGetProperty("delta", out var delta) &&
-                delta.ValueKind == JsonValueKind.Object &&
-                delta.TryGetProperty("content", out var deltaContent) &&
-                deltaContent.ValueKind == JsonValueKind.String)
+            if (TryExtractLegacyStreamingChunk(root, out var legacyChunk))
             {
-                return deltaContent.GetString() ?? string.Empty;
+                builder.Append(legacyChunk);
+                return false;
             }
 
-            if (firstChoice.TryGetProperty("message", out var message) &&
-                message.ValueKind == JsonValueKind.Object &&
-                message.TryGetProperty("content", out var messageContent) &&
-                messageContent.ValueKind == JsonValueKind.String)
-            {
-                return messageContent.GetString() ?? string.Empty;
-            }
-
-            return string.Empty;
+            return false;
         }
         catch (JsonException exception)
         {
             throw new InvalidOperationException($"{providerName} streaming response included a malformed assistant chunk.", exception);
         }
+    }
+
+    private static bool TryExtractResponsesOutputText(
+        JsonElement root,
+        out string content)
+    {
+        content = string.Empty;
+        if (!root.TryGetProperty("output", out var output) ||
+            output.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var parts = new List<string>();
+        foreach (var item in output.EnumerateArray())
+        {
+            if (!string.Equals(GetJsonString(item, "type"), "message", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(GetJsonString(item, "role"), "assistant", StringComparison.OrdinalIgnoreCase) ||
+                !item.TryGetProperty("content", out var contentItems) ||
+                contentItems.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var contentItem in contentItems.EnumerateArray())
+            {
+                if (string.Equals(GetJsonString(contentItem, "type"), "output_text", StringComparison.OrdinalIgnoreCase) &&
+                    contentItem.TryGetProperty("text", out var textElement) &&
+                    textElement.ValueKind == JsonValueKind.String)
+                {
+                    var text = textElement.GetString();
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        parts.Add(text);
+                    }
+                }
+            }
+        }
+
+        content = string.Concat(parts);
+        return parts.Count > 0;
+    }
+
+    private static bool TryExtractLegacyChatCompletionText(
+        JsonElement root,
+        out string content)
+    {
+        content = string.Empty;
+        if (!root.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array ||
+            choices.GetArrayLength() == 0)
+        {
+            return false;
+        }
+
+        var firstChoice = choices[0];
+        if (!firstChoice.TryGetProperty("message", out var message) ||
+            message.ValueKind != JsonValueKind.Object ||
+            !message.TryGetProperty("content", out var textElement) ||
+            textElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        content = textElement.GetString() ?? string.Empty;
+        return true;
+    }
+
+    private static bool TryExtractLegacyStreamingChunk(
+        JsonElement root,
+        out string content)
+    {
+        content = string.Empty;
+        if (!root.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array ||
+            choices.GetArrayLength() == 0)
+        {
+            return false;
+        }
+
+        var firstChoice = choices[0];
+        if (firstChoice.TryGetProperty("delta", out var delta) &&
+            delta.ValueKind == JsonValueKind.Object &&
+            delta.TryGetProperty("content", out var deltaContent) &&
+            deltaContent.ValueKind == JsonValueKind.String)
+        {
+            content = deltaContent.GetString() ?? string.Empty;
+            return true;
+        }
+
+        if (firstChoice.TryGetProperty("message", out var message) &&
+            message.ValueKind == JsonValueKind.Object &&
+            message.TryGetProperty("content", out var messageContent) &&
+            messageContent.ValueKind == JsonValueKind.String)
+        {
+            content = messageContent.GetString() ?? string.Empty;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string? GetJsonString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) &&
+               property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
     }
 
     private static string BuildHttpFailureMessage(
@@ -658,7 +853,8 @@ public sealed class SummaryChatClient : ISummaryChatClient
             providerOptions.ProviderKind,
             modelProxyError,
             backendBusyRetriesExhausted,
-            providerOptions.ModelProxyWebSearchEnabled);
+            providerOptions.ModelProxyWebSearchEnabled,
+            providerOptions.ModelProxyCloudDenied);
         var safeDetails = TryExtractSafeErrorDetails(responseBody);
         var routingInfo = ExtractModelProxyRoutingInfo(providerOptions.ProviderKind, response.Headers);
         var routingDetails = BuildSafeRoutingDetails(routingInfo);
@@ -679,7 +875,8 @@ public sealed class SummaryChatClient : ISummaryChatClient
         SummaryChatProviderKind providerKind,
         ModelProxyStructuredError? modelProxyError,
         bool backendBusyRetriesExhausted,
-        bool webSearchEnabled)
+        bool webSearchEnabled,
+        bool cloudDenied = false)
     {
         if (providerKind != SummaryChatProviderKind.ModelProxy || modelProxyError is null)
         {
@@ -704,6 +901,11 @@ public sealed class SummaryChatClient : ISummaryChatClient
             ErrorKindContains(modelProxyError, "capability"))
         {
             return "ModelProxy rejected an unsupported capability; adjust the request shape or disable the unsupported feature.";
+        }
+
+        if (cloudDenied && HasErrorKind(modelProxyError, "config_error"))
+        {
+            return "ModelProxy local-only mode is not ready on this machine; allow cloud routing or fix the local backend configuration.";
         }
 
         return string.Empty;
@@ -762,15 +964,7 @@ public sealed class SummaryChatClient : ISummaryChatClient
         try
         {
             using var document = JsonDocument.Parse(responseBody);
-            var root = document.RootElement;
-            if (root.TryGetProperty("detail", out var detail) &&
-                detail.ValueKind == JsonValueKind.Object)
-            {
-                return BuildSafeErrorDetails(detail);
-            }
-
-            if (root.TryGetProperty("error", out var error) &&
-                error.ValueKind == JsonValueKind.Object)
+            if (TryGetStructuredErrorObject(document.RootElement, out var error))
             {
                 return BuildSafeErrorDetails(error);
             }
@@ -793,15 +987,7 @@ public sealed class SummaryChatClient : ISummaryChatClient
         try
         {
             using var document = JsonDocument.Parse(responseBody);
-            var root = document.RootElement;
-            if (root.TryGetProperty("detail", out var detail) &&
-                detail.ValueKind == JsonValueKind.Object)
-            {
-                return BuildModelProxyStructuredError(detail);
-            }
-
-            if (root.TryGetProperty("error", out var error) &&
-                error.ValueKind == JsonValueKind.Object)
+            if (TryGetStructuredErrorObject(document.RootElement, out var error))
             {
                 return BuildModelProxyStructuredError(error);
             }
@@ -812,6 +998,34 @@ public sealed class SummaryChatClient : ISummaryChatClient
         }
 
         return null;
+    }
+
+    private static bool TryGetStructuredErrorObject(
+        JsonElement root,
+        out JsonElement error)
+    {
+        if (root.TryGetProperty("detail", out var detail) &&
+            detail.ValueKind == JsonValueKind.Object)
+        {
+            if (detail.TryGetProperty("error", out var nestedError) &&
+                nestedError.ValueKind == JsonValueKind.Object)
+            {
+                error = nestedError;
+                return true;
+            }
+
+            error = detail;
+            return true;
+        }
+
+        if (root.TryGetProperty("error", out error) &&
+            error.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        error = default;
+        return false;
     }
 
     private static ModelProxyStructuredError BuildModelProxyStructuredError(JsonElement error)
@@ -989,18 +1203,39 @@ public sealed class SummaryChatClient : ISummaryChatClient
             : null;
     }
 
-    private sealed record SummaryChatCompletionPayload(
+    private sealed record SummaryResponseRequestPayload(
         [property: JsonPropertyName("model")] string Model,
-        [property: JsonPropertyName("messages")] IReadOnlyList<SummaryChatCompletionMessagePayload> Messages)
+        [property: JsonPropertyName("input")] IReadOnlyList<SummaryResponseInputMessagePayload> Input)
     {
+        [JsonPropertyName("instructions")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Instructions { get; init; }
+
         [JsonPropertyName("stream")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool Stream { get; init; }
+
+        [JsonPropertyName("text")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SummaryResponseTextPayload? Text { get; init; }
     }
 
-    private sealed record SummaryChatCompletionMessagePayload(
+    private sealed record SummaryResponseInputMessagePayload(
         [property: JsonPropertyName("role")] string Role,
-        [property: JsonPropertyName("content")] string Content);
+        [property: JsonPropertyName("content")] IReadOnlyList<SummaryResponseInputTextPayload> Content);
+
+    private sealed record SummaryResponseInputTextPayload(
+        [property: JsonPropertyName("text")] string Text)
+    {
+        [JsonPropertyName("type")]
+        public string Type { get; } = "input_text";
+    }
+
+    private sealed record SummaryResponseTextPayload(
+        [property: JsonPropertyName("format")] SummaryResponseTextFormatPayload Format);
+
+    private sealed record SummaryResponseTextFormatPayload(
+        [property: JsonPropertyName("type")] string Type);
 
     private sealed record ModelProxyStructuredError(
         string? Type,
@@ -1190,15 +1425,12 @@ public sealed class ModelProxyClient : IModelProxyModelCatalogClient
             .Where(model => !string.IsNullOrWhiteSpace(model.Id))
             .Select(model => new ModelProxyModelInfo(
                 model.Id!.Trim(),
-                model.IsDefault,
-                string.IsNullOrWhiteSpace(model.Backend) ? null : model.Backend.Trim(),
-                string.IsNullOrWhiteSpace(model.DefaultBackendModel) ? null : model.DefaultBackendModel.Trim()))
+                string.IsNullOrWhiteSpace(model.ObjectType) ? null : model.ObjectType.Trim(),
+                model.Created,
+                string.IsNullOrWhiteSpace(model.OwnedBy) ? null : model.OwnedBy.Trim()))
             .ToArray();
 
-        return new ModelProxyModelCatalog(
-            string.IsNullOrWhiteSpace(payload.DefaultModel) ? null : payload.DefaultModel.Trim(),
-            string.IsNullOrWhiteSpace(payload.DefaultCodexModel) ? null : payload.DefaultCodexModel.Trim(),
-            models);
+        return new ModelProxyModelCatalog(models);
     }
 
     private static string NormalizeBaseUrl(string baseUrl)
@@ -1207,15 +1439,13 @@ public sealed class ModelProxyClient : IModelProxyModelCatalogClient
     }
 
     private sealed record ModelProxyModelsPayload(
-        [property: JsonPropertyName("default_model")] string? DefaultModel,
-        [property: JsonPropertyName("default_codex_model")] string? DefaultCodexModel,
         [property: JsonPropertyName("data")] IReadOnlyList<ModelProxyModelPayload>? Data);
 
     private sealed record ModelProxyModelPayload(
         [property: JsonPropertyName("id")] string? Id,
-        [property: JsonPropertyName("default")] bool IsDefault,
-        [property: JsonPropertyName("backend")] string? Backend,
-        [property: JsonPropertyName("default_backend_model")] string? DefaultBackendModel);
+        [property: JsonPropertyName("object")] string? ObjectType,
+        [property: JsonPropertyName("created")] long? Created,
+        [property: JsonPropertyName("owned_by")] string? OwnedBy);
 }
 
 public sealed record ModelProxyOptions

@@ -1483,10 +1483,13 @@ public sealed class MeetingOutputCatalogService
         string? markdownPath,
         ManifestInfo? manifestInfo)
     {
-        var audioDuration = TryReadAudioDuration(audioPath);
-        if (IsRepairGeneratedPublishedArtifact(markdownPath) && audioDuration is not null)
+        if (IsRepairGeneratedPublishedArtifact(markdownPath))
         {
-            return audioDuration;
+            var repairAudioDuration = TryReadAudioDuration(audioPath);
+            if (repairAudioDuration is not null)
+            {
+                return repairAudioDuration;
+            }
         }
 
         var durationStart = manifestInfo?.StartedAtUtc ?? startedAtUtc;
@@ -1497,7 +1500,7 @@ public sealed class MeetingOutputCatalogService
             return endedAtUtc - durationStart;
         }
 
-        return audioDuration;
+        return TryReadAudioDuration(audioPath);
     }
 
     private static bool IsRepairGeneratedPublishedArtifact(string? markdownPath)
@@ -1534,6 +1537,11 @@ public sealed class MeetingOutputCatalogService
 
         try
         {
+            if (CloudFileStorageOptimizer.IsCloudPlaceholderOrOffline(audioPath))
+            {
+                return null;
+            }
+
             using var reader = new AudioFileReader(audioPath);
             return reader.TotalTime;
         }

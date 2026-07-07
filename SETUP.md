@@ -102,14 +102,15 @@ For an already-published meeting, open the meeting detail window to view the str
 Local-first setup uses ModelProxy:
 
 - ModelProxy should be running on `127.0.0.1:8645`.
-- Meeting Recorder should call `http://127.0.0.1:8645/v1/chat/completions`.
+- Meeting Recorder should call `http://127.0.0.1:8645/v1/responses` for transcript enrichment.
 - Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
-- Model discovery uses `GET http://127.0.0.1:8645/v1/models`; consumers should use `default_model` unless Settings names another advertised model.
-- Summary and validation requests must send `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. ModelProxy enables public web search by default for requests that do not opt out.
+- Model discovery uses `GET http://127.0.0.1:8645/v1/models` as an OpenAI-shaped model list only. Meeting Recorder defaults to `gpt-5.4-mini` unless Settings names another model.
+- Summary and validation requests must send `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. Local-only summary requests also send `X-ModelProxy-Cloud: deny`. ModelProxy enables public web search by default for requests that do not opt out.
 - Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. Safe routing headers are persisted with summary provider metadata when present. A web-enabled request may route to CLI search when app-server search has not been proved safe.
 - Streaming clients must ignore SSE comment lines beginning with `:` and parse terminal `event: error` frames as structured ModelProxy failures. A `cli_timeout` terminal stream error means the local endpoint was reachable and the effective CLI web-search backend timed out.
-- `backend_busy` means temporary ModelProxy saturation. Meeting Recorder retries it with short backoff and should not report the endpoint as unreachable while `/v1/models` or health is reachable.
-- The app uses non-streaming Chat Completions for automatic summary generation.
+- `backend_busy` means temporary ModelProxy saturation. Meeting Recorder retries it with short backoff and should not report the endpoint as unreachable while `/v1/models` is reachable.
+- The app uses non-streaming Responses for automatic summary generation.
+- Remote audio remains parked unless `GET /v1/models` advertises `gpt-4o-transcribe` or `gpt-4o-transcribe-diarize`. When ModelProxy returns `audio_disabled`, `unsupported_model`, `backend_unavailable`, `backend_busy`, `timeout`, `quota`, `config_error`, or protocol mismatch, Meeting Recorder stays on local Whisper plus local diarization.
 - Local ModelProxy transcript summaries use an effective minimum timeout of 240 seconds. The Settings validation action remains a short synthetic probe and does not send transcript content.
 
 Synthetic validation is allowed and should never use real meeting content:
@@ -118,7 +119,7 @@ Synthetic validation is allowed and should never use real meeting content:
 .\scripts\Test-ModelProxy.ps1
 ```
 
-The synthetic smoke script defaults to `sk-modelproxy`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script sends five parallel no-search app-server requests, retries `backend_busy`, and prints safe routing headers when ModelProxy returns them; it does not print prompt text, response text, API keys, bearer headers, or raw response bodies.
+The synthetic smoke script defaults to `sk-modelproxy-meeting-recorder`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script sends five parallel no-search app-server requests, retries `backend_busy`, and prints safe routing headers when ModelProxy returns them; it does not print prompt text, response text, API keys, bearer headers, or raw response bodies.
 
 Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and hosted credential clearing.
 

@@ -754,6 +754,11 @@ internal static class MeetingCleanupRecommendationEngine
             return null;
         }
 
+        if (CloudFileStorageOptimizer.IsCloudPlaceholderOrOffline(audioPath))
+        {
+            return null;
+        }
+
         using var stream = File.OpenRead(audioPath);
         using var sha = SHA256.Create();
         return Convert.ToHexString(sha.ComputeHash(stream));

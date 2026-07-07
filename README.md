@@ -109,22 +109,22 @@ For newer managed installs, the app can also migrate prior portable data forward
 
 - Manual Start and Stop controls
 - Auto-detection for Teams desktop and Google Meet, on by default for new installs and still reset off once for older configs that predate the security-prompt migration so existing users can opt back in deliberately
-- Google Meet detection now relies on explicit browser titles plus Windows render-session metadata, so a Meet call can still be recognized when the visible Edge or Chrome window is a shared Slides or Docs page and Windows exposes Meet-specific session details
-- Windows audio-session probing now also uses a short timeout and backoff window, so a hung render-session query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
-- Teams render-session probing now gives each scan up to `1.5 s` and retries attribution after a `15 s` cooldown when one pass is slow, which helps quieter Teams calls on slower Windows machines keep the session metadata needed for quiet auto-start
+- Google Meet detection now relies on explicit browser titles plus endpoint render activity, so a visible Meet window can still be recognized without inspecting browser tabs or per-app audio sessions
+- Windows render audio probing now also uses a short timeout and backoff window, so a hung Core Audio query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
+- Teams render probing now gives each scan up to `1.5 s` and retries after a `15 s` cooldown when one pass is slow, while avoiding per-app session attribution on endpoint-protected machines
 - Windows audio-session probing now merges both the default multimedia and communications render endpoints, so Teams auto-start can recover when meeting audio moves onto a Bluetooth headset or other communications-only output after the original speaker path drops
-- Windows audio-session probing now classifies system sounds, inactive sessions, and the app's own audio before deriving Teams/browser process labels from session metadata, and it no longer asks Core Audio for per-session owning PIDs during live detection, reducing endpoint-protection prompts from service-hosted Windows audio sessions such as `svchost.exe`
-- Window-based meeting detection now avoids resolving visible-window process names; it uses supported window classes, titles, and session metadata instead of cross-process PID lookups, so service-hosted browser or Teams shell windows cannot trigger protected `svchost.exe` process-memory prompts
+- Windows render audio probing now reads endpoint peak levels only and does not enumerate per-app Core Audio sessions, reducing endpoint-protection prompts from service-hosted Windows audio sessions such as `svchost.exe`
+- Window-based meeting detection now avoids resolving visible-window process names; it uses supported window classes and titles instead of cross-process PID lookups, so service-hosted browser or Teams shell windows cannot trigger protected `svchost.exe` process-memory prompts
 - Recording start now checks for at least `1 GB` free on the work drive before opening audio chunks, and app/worker logging is bounded and non-fatal so low disk space surfaces as a controlled recording warning instead of escalating into Windows Error Reporting
 - Live recording loopback capture now also prefers the active communications render endpoint when meeting playback is routed there, so recorded meeting audio is less likely to flatten out while only microphone room pickup remains
 - Live recording now keeps a readable capture timeline that records which loopback endpoint was selected, when the app swapped endpoints, and whether a loopback fallback or swap failure happened during the session
 - While a recording is live, the app keeps reevaluating the preferred render endpoint and can hot-swap loopback capture in place when Windows moves meeting playback to a better device, preserving earlier chunks and continuing the same session without a stop/start restart
 - When a live loopback or microphone capture client dies unexpectedly, the recorder now closes the orphaned segment at the actual stop time, reopens capture in place on the best available endpoint, and avoids running the old and new Windows audio clients at the same time during a swap
-- Auto-detection now also attributes active Windows render audio to a likely process, meeting window, or browser tab when Windows exposes enough metadata, and uses that source as a strong tie-breaker instead of a single shared audio bonus
-- Google Meet auto-start now prefers Meet-specific browser-audio attribution when browser render-session metadata is available, but an explicit active `Meet - ...` browser window can still start when browser-family audio is active and exact tab attribution is unavailable
+- Auto-detection now treats active Windows render audio as endpoint-level evidence instead of attributing it to a likely process, meeting window, or browser tab
+- Google Meet auto-start now prefers an explicit active `Meet - ...` browser window with render activity and no longer depends on browser render-session metadata
 - Google Meet auto-start still begins immediately when active browser-family audio is present, but a silent explicit `Meet - ...` browser window now waits for sustained specific Meet-code evidence before starting so momentary browser-title flashes do not create tiny fragments; generic browser windows or tab-only Meet hints still wait for stronger evidence
-- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence, but only when Windows audio attribution still matches a real Teams meeting session, including a quiet matched Teams session that is still present at `peak=0.000`; a stale remembered Teams window title on its own is no longer enough to start a recording
-- Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can still qualify for sustained quiet-meeting auto-start when Teams render-session evidence is present
+- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence and endpoint render activity; a stale remembered Teams window title on its own is no longer enough to start a recording
+- Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can still qualify for sustained quiet-meeting auto-start when endpoint render activity is present
 - Teams auto-detection now ignores unrelated browser pages that merely mention Microsoft Teams in the title, prefers a specific live call title over the generic `Sharing control bar` continuation shell, and no longer lets generic/search/sharing-control-bar live surfaces borrow a nearby Outlook calendar title during detection
 - A specific Teams desktop meeting with live Teams audio attribution now also outranks a stale Google Meet browser candidate that no longer has attributed Meet audio, so an old Edge Meet tab cannot steal auto-start after you switch the real call over to Teams
 - Auto-started Teams recordings no longer treat a stale same-title quiet window as a forever-positive signal; instead they use a bounded quiet grace period before auto-stop, matching Teams shell/chat surfaces still need recent Teams render activity, and the pinned Teams sharing control bar is treated as a continuation of the already active specific meeting so live screen sharing does not fragment one call into repeated stop/start sessions
@@ -269,7 +269,7 @@ Meeting Recorder still owns:
 - Webex
 - Other conferencing apps that use standard Windows playback and microphone devices
 
-Manual recording works more broadly than assisted auto-detection. Auto-detection currently focuses on Teams desktop and Google Meet browser heuristics driven by visible browser titles plus Windows render-session metadata.
+Manual recording works more broadly than assisted auto-detection. Auto-detection currently focuses on Teams desktop and Google Meet browser heuristics driven by visible browser titles plus endpoint-level Windows render activity.
 
 ### Imported audio
 
@@ -310,6 +310,8 @@ When available, the published transcript JSON now also carries durable meeting m
 The ready-marker is the completion signal intended for downstream tools such as Power Automate.
 
 Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup. Separately, successful publish and startup maintenance can permanently delete redundant bulky local work-cache files only after the matching published recording exists, without deleting published recordings or transcripts.
+
+Meeting list refreshes, cleanup analysis, and dropped-audio import are metadata-first for OneDrive-backed folders: the app uses manifest end times when available and skips offline or reparse-point audio files so Files On-Demand placeholders stay dehydrated.
 
 The Meetings tab also exposes a separate manual `Delete Permanently` action from the meeting context menu. That path is irreversible, requires typing `DELETE` to confirm, removes the published audio and transcript artifacts, and also removes the linked session work folder when one still exists.
 
@@ -381,11 +383,12 @@ The default provider path is local-first:
 
 - Try ModelProxy through its local OpenAI-compatible HTTP API.
 - Fall back to OpenAI only when the user has explicitly saved an OpenAI API key and selected a provider preference that permits hosted fallback.
-- Retrieve the ModelProxy model catalog from `GET /v1/models` and use `default_model` unless Settings contains a specific summary model override.
-- Send summary, planning, classification, final synthesis, and validation calls that do not need public search to the no-search app-server path with `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false`, using the advertised default model unless Settings names another advertised model.
+- Retrieve the ModelProxy model catalog from `GET /v1/models` only as an OpenAI-shaped model list. Meeting Recorder defaults to `gpt-5.4-mini` unless Settings contains a specific summary model override.
+- Send summary, planning, classification, final synthesis, and validation calls through `POST /v1/responses`. Requests that do not need public search stay on the no-search app-server path with `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false`. Local-only summary requests also send `X-ModelProxy-Cloud: deny`.
 - Read ModelProxy's safe routing headers on local responses, including request id, requested/effective backend, web-search backend, app-server search support, and fallback reason. These safe headers are preserved in summary provider metadata when present. If a future web-enabled request falls back to CLI search, the app must tolerate that route and use a timeout above ModelProxy's 45-second CLI search timeout.
 - Parse terminal streaming `event: error` frames as structured ModelProxy failures. For example, `cli_timeout` means ModelProxy was reachable but the effective Codex CLI web-search backend timed out.
 - Treat structured `backend_busy` responses as retryable ModelProxy saturation, not as an unreachable LLM endpoint. If retries are exhausted, show a temporary saturation failure; structured `cli_timeout` web-search errors should advise narrowing the query or retrying without web search, and capability errors should disable or reshape the unsupported feature.
+- Keep local Whisper transcription and local diarization as the primary audio path. Only consider remote audio after `GET /v1/models` advertises `gpt-4o-transcribe` or `gpt-4o-transcribe-diarize`, and fall back locally on `audio_disabled`, `unsupported_model`, `backend_unavailable`, `backend_busy`, `timeout`, `quota`, `config_error`, or protocol mismatch.
 - Allow local ModelProxy transcript summary requests at least 240 seconds to finish, because longer transcript chunks can outlive the lightweight Settings validation timeout even with web search disabled.
 - Treat forced app-server web-search `400` responses as a capability issue and offer a retry path without web search.
 - Treat summary failures as supplemental failures; they must not block `.md`, `.json`, or `.ready` transcript output.
@@ -394,7 +397,7 @@ The default provider path is local-first:
 
 Meeting Recorder includes an opt-in ModelProxy validation path. It is deliberately separate from recording and publishing: validation must use synthetic prompts and must not send meeting audio, transcript text, attendee lists, or client metadata.
 
-The validation client lives in `MeetingRecorder.Core` and posts a synthetic text-only Chat Completions request to `http://127.0.0.1:8645/v1/chat/completions` using ModelProxy's local authentication default.
+The validation client lives in `MeetingRecorder.Core` and posts a synthetic text-only Responses request to `http://127.0.0.1:8645/v1/responses` using ModelProxy's local authentication default.
 
 Run the live smoke only after ModelProxy is already running:
 
@@ -404,8 +407,8 @@ Run the live smoke only after ModelProxy is already running:
 
 Defaults:
 
-- ModelProxy auth default: `sk-modelproxy`
-- caller model: discovered from `GET /v1/models` `default_model` unless `-Model` is supplied
+- ModelProxy auth default: `sk-modelproxy-meeting-recorder`
+- caller model: `gpt-5.4-mini` unless `-Model` is supplied
 - summary requests must send `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false`
 
 Use `MODELPROXY_MEETING_RECORDER_API_KEY` only if your local ModelProxy operator config uses a non-default local key. The script sends five parallel synthetic no-search app-server requests, treats `backend_busy` as retryable saturation, and prints only success state plus safe ModelProxy routing headers. It does not print prompt text, response text, API keys, bearer headers, or meeting/private context. OpenAI API keys, when configured later through Settings, must be stored outside plaintext app config and never echoed into logs, status text, or transcript artifacts.

@@ -162,7 +162,7 @@ public static class MeetingSummaryDefaults
 
     public const string ModelProxyModel = "gpt-5.4-mini";
 
-    public const string ModelProxyLocalApiKey = "sk-modelproxy";
+    public const string ModelProxyLocalApiKey = "sk-modelproxy-meeting-recorder";
 
     public const string OpenAiModel = "gpt-5-mini";
 

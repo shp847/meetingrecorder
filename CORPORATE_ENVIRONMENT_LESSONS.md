@@ -164,13 +164,12 @@ Avoid in installer/update/bootstrap code:
 - process-tree kills for app-owned background workers; on locked-down Windows laptops,
   walking a worker's child `conhost.exe` can surface as a restricted process-memory
   access prompt even when the app is only trying to interrupt queued work
-- resolving process names for every Windows audio session before filtering out system sounds, inactive sessions, or the app's own session
-- resolving process names for service-hosted Windows audio sessions such as
-  `svchost.exe`; meeting audio attribution should derive Teams/browser labels
-  from session metadata instead of looking up session PIDs
+- enumerating per-app Windows audio sessions during live detection; endpoint
+  tooling can treat service-hosted audio sessions such as `svchost.exe` as
+  protected process-memory access even when the app only wants audio metadata
 - resolving process names for every visible browser or Teams host window; window
-  detection should use title, class, handle, and render-session PID correlation
-  before any cross-process metadata is considered
+  detection should use title, class, and handle before any cross-process
+  metadata is considered
 - treating Windows audio default-role churn as a real device change; the same
   capture device can appear alternately under `Multimedia` and `Communications`,
   and restarting capture for that metadata-only flip can repeatedly re-enter
@@ -184,12 +183,12 @@ Prefer instead:
   cancellation or rush-preemption path needs to stop background work
 - normal file-replacement retries
 - a clear retry message when the app still will not release the install path
-- classifying audio-session state and metadata first, then deriving meeting
-  process labels from trusted Teams/browser/Meet metadata without probing the
-  owning process
-- avoiding Core Audio session-owner PID lookups during live detection; if the
-  meeting match can be made from session metadata, titles, and trusted browser
-  or Teams families, that path is materially safer on endpoint-protected laptops
+- using endpoint-level render activity instead of per-app Core Audio session
+  enumeration during live detection
+- avoiding Core Audio session-owner PID lookups or session sweeps during live
+  detection; if the meeting match can be made from titles, classes, endpoint
+  activity, and trusted browser or Teams families, that path is materially safer
+  on endpoint-protected laptops
 - comparing live microphone capture identity by stable endpoint ID plus fallback
   state, while ignoring role-only changes for the same physical microphone
 

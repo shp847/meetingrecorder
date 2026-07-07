@@ -67,6 +67,11 @@ public sealed class ExternalAudioImportService
                 continue;
             }
 
+            if (CloudFileStorageOptimizer.IsCloudPlaceholderOrOffline(sourcePath))
+            {
+                continue;
+            }
+
             if (!HasSettled(sourceFile, nowUtc))
             {
                 continue;

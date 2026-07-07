@@ -1322,6 +1322,34 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_True_When_Audio_Probe_Times_Out_For_A_Specific_Teams_Title()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Raudabaugh, Joseph | Kearney | psharm04@atkearney.com",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Raudabaugh, Joseph | Kearney | psharm04@atkearney.com | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("process-name", "ms-teams", 0.05d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "peak=0.000; status=audio probe timed out", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldStart = policy.ShouldAutoStartQuietSpecificTeamsMeeting(
+            decision,
+            now.AddSeconds(-25),
+            now);
+
+        Assert.True(shouldStart);
+    }
+
+    [Fact]
     public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_False_Without_A_Matched_Teams_Audio_Source()
     {
         var policy = new AutoRecordingContinuityPolicy();

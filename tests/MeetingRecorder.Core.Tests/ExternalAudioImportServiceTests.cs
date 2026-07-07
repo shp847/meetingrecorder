@@ -64,6 +64,40 @@ public sealed class ExternalAudioImportServiceTests
     }
 
     [Fact]
+    public async Task ImportPendingAudioFilesAsync_Skips_Offline_Audio()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var config = CreateConfig(root);
+        Directory.CreateDirectory(config.AudioOutputDir);
+        Directory.CreateDirectory(config.TranscriptOutputDir);
+        Directory.CreateDirectory(config.WorkDir);
+
+        var sourcePath = Path.Combine(config.AudioOutputDir, "Voice Memo 17.wav");
+        await WriteSilentWaveFileAsync(sourcePath, TimeSpan.FromSeconds(2));
+        File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddMinutes(-5));
+
+        try
+        {
+            File.SetAttributes(sourcePath, File.GetAttributes(sourcePath) | FileAttributes.Offline);
+
+            var service = new ExternalAudioImportService(new ArtifactPathBuilder());
+
+            var imported = await service.ImportPendingAudioFilesAsync(config, DateTimeOffset.UtcNow);
+
+            Assert.Empty(imported);
+            Assert.True(File.Exists(sourcePath));
+            Assert.Empty(Directory.EnumerateDirectories(config.WorkDir));
+        }
+        finally
+        {
+            if (File.Exists(sourcePath))
+            {
+                File.SetAttributes(sourcePath, File.GetAttributes(sourcePath) & ~FileAttributes.Offline);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ImportPendingAudioFilesAsync_DoesNotRetry_Unchanged_File_After_A_Failed_Import()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

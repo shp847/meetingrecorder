@@ -5,6 +5,28 @@ internal static class CloudFileStorageOptimizer
     private const FileAttributes WindowsFileAttributePinned = (FileAttributes)0x00080000;
     private const FileAttributes WindowsFileAttributeUnpinned = (FileAttributes)0x00100000;
 
+    public static bool IsCloudPlaceholderOrOffline(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & (FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+    }
+
     public static void MarkUnpinnedRecursive(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) && !Directory.Exists(path))

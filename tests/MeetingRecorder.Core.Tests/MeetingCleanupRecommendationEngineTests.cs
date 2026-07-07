@@ -98,6 +98,39 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Skips_DuplicateHash_For_Offline_Audio()
+    {
+        var startedAtUtc = DateTimeOffset.Parse("2026-03-16T07:33:58Z");
+        var firstStem = "2026-03-16_073358_manual_first";
+        var secondStem = "2026-03-16_073358_manual_second";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        await WriteSilentWaveFileAsync(firstAudioPath, TimeSpan.FromSeconds(81));
+        File.Copy(firstAudioPath, secondAudioPath);
+
+        try
+        {
+            File.SetAttributes(firstAudioPath, File.GetAttributes(firstAudioPath) | FileAttributes.Offline);
+
+            var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+                new[]
+                {
+                    CreateInspection(firstStem, "First", startedAtUtc, MeetingPlatform.Manual, TimeSpan.FromSeconds(81), firstAudioPath, Path.Combine(_root, $"{firstStem}.md")),
+                    CreateInspection(secondStem, "Second", startedAtUtc, MeetingPlatform.Manual, TimeSpan.FromSeconds(81), secondAudioPath, Path.Combine(_root, $"{secondStem}.md")),
+                });
+
+            Assert.DoesNotContain(recommendations, item => item.ReasonCode == "archive-duplicate-publish");
+        }
+        finally
+        {
+            if (File.Exists(firstAudioPath))
+            {
+                File.SetAttributes(firstAudioPath, File.GetAttributes(firstAudioPath) & ~FileAttributes.Offline);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Analyze_Returns_HighConfidence_Merge_For_Punctuation_Only_Split_Pair()
     {
         var firstStem = "2026-03-20_132751_teams_wang-stein";

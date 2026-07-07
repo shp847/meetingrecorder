@@ -3120,6 +3120,202 @@ Sprint 13 acceptance criteria:
 - If Sprint 1 cannot prove a clean packaged backend and model path, stop the
   track before implementation.
 
+# Adaptive Backlog Drain Acceleration Plan
+
+## Summary
+
+Goal: make overnight drain and spare-capacity drain accelerate the real backlog
+instead of only switching to transcript-only processing. Drain order is fixed:
+transcripts first, then speaker labeling, then summaries. Acceleration is
+conservative by default: plugged in, not recording, sustained idle capacity, and
+fast backoff when the user starts using the machine.
+
+Current gap: `OvernightDrain` maps to `TranscriptOnlyDrain` with a fixed worker
+count. That can publish transcripts quickly, but it does not drain diarization
+or summary backlog after transcripts are done.
+
+## Sprint 0: Current Behavior Audit And Safety Baseline
+
+Goal: prove the existing queue, profile, and worker contracts before changing
+scheduling.
+
+- Document current `ProcessingSpeedProfile`, `BackgroundProcessingPolicy`,
+  worker launch, manifest status, and summary/speaker-label skip behavior.
+- Capture backlog examples for: transcript missing, transcript done but
+  diarization missing, diarization done but summary missing, and failed/skipped
+  optional stages.
+- Define "active recording" and "safe to accelerate" from existing app state
+  rather than process inspection.
+- Add focused tests that lock the current overnight bug: overnight currently
+  becomes transcript-only and does not advance later enrichment stages.
+
+Sprint 0 acceptance criteria:
+
+- The implementer can reproduce the current overnight drain limitation from a
+  focused test or fixture.
+- No production behavior changes ship in this sprint.
+
+## Sprint 1: Staged Drain Work Model
+
+Goal: make backlog work explicit enough to drain one stage at a time.
+
+- Introduce a queue work item shape with `manifest path + requested stage`.
+- Supported requested stages:
+  - `transcript`,
+  - `diarization`,
+  - `summary`,
+  - existing full-pass behavior when no stage is specified.
+- Stage order:
+  1. Start transcript work while any eligible meetings lack published
+     transcripts.
+  2. Start diarization work only when transcript backlog is empty.
+  3. Start summary work only when transcript and diarization backlog are empty.
+- Keep `Rush Backlog` as transcript-first; do not turn it into full enrichment.
+- Do not kill or preempt active workers when the focused stage changes; only
+  affect newly launched work.
+
+Sprint 1 acceptance criteria:
+
+- Queue tests prove transcript backlog is exhausted before diarization starts.
+- Queue tests prove diarization backlog is exhausted before summaries start.
+- Existing full-pass processing remains available for normal/manual paths.
+
+## Sprint 2: Stage-Specific Worker Passes
+
+Goal: let one worker run exactly the stage requested without redoing earlier
+work.
+
+- Add worker stage argument:
+  - `--stage transcript`,
+  - `--stage diarization`,
+  - `--stage summary`.
+- Transcript stage:
+  - merge/prep audio as today,
+  - run transcription,
+  - publish audio, transcript JSON, and transcript Markdown,
+  - skip speaker labels and summaries.
+- Diarization stage:
+  - require existing transcript artifacts plus prepared or merged audio,
+  - run speaker labeling only,
+  - republish JSON/Markdown with labels,
+  - record skipped/unsupported/timeout state without failing transcript output.
+- Summary stage:
+  - require existing transcript JSON,
+  - run summary only when summaries are enabled and configured,
+  - republish JSON/Markdown with summary.
+- Keep output schemas backward-compatible and keep enrichment metadata optional.
+
+Sprint 2 acceptance criteria:
+
+- Transcript-stage tests prove no diarization or summary provider is invoked.
+- Diarization-stage tests prove transcription is not rerun.
+- Summary-stage tests prove transcription and diarization are not rerun.
+
+## Sprint 3: Overnight Acceleration Semantics
+
+Goal: make overnight mode accelerate the staged drain queue, not force
+transcript-only forever.
+
+- Change `OvernightDrain` label/help text to "Overnight acceleration."
+- During the configured overnight window, use staged acceleration worker caps:
+  - up to 3 transcript workers,
+  - up to 1 diarization worker,
+  - up to 1 summary worker.
+- Outside the window, return to the prior normal processing profile.
+- Keep `TranscriptOnlyDrain` as a separate manual emergency mode.
+- Show queue status with active focus: `Transcripts`, `Speaker labels`, or
+  `Summaries`.
+
+Sprint 3 acceptance criteria:
+
+- Overnight tests prove transcripts drain first, then speaker labels, then
+  summaries.
+- UI tests prove labels no longer describe overnight as transcript-only.
+- Live recording still blocks new accelerated work.
+
+## Sprint 4: Idle CPU Capacity Acceleration
+
+Goal: use idle CPU safely without adding dependencies.
+
+- Add an app-process `ResourceCapacityMonitor`.
+- Measure CPU with native Windows `GetSystemTimes` deltas.
+- Treat CPU as idle when average use stays below 55% for 3 samples.
+- Back off when CPU use exceeds 70% for 2 samples.
+- Sample every 30 seconds.
+- Accelerate only when plugged in and not recording.
+- Daytime idle-capacity worker caps:
+  - up to 2 transcript workers,
+  - up to 1 diarization worker,
+  - up to 1 summary worker.
+
+Sprint 4 acceptance criteria:
+
+- Capacity tests prove smoothing, idle entry, and fast backoff thresholds.
+- Queue tests prove backoff stops new workers but does not kill active workers.
+- App remains single-worker when unplugged or recording.
+
+## Sprint 5: Best-Effort GPU Capacity Acceleration
+
+Goal: use idle GPU only for GPU-capable stages, with safe CPU fallback.
+
+- Read Windows GPU Engine performance counters when available.
+- If counters are missing or fail, log once and continue CPU-only.
+- Treat GPU as idle when use stays below 35% for 3 samples.
+- Back off when GPU use exceeds 65% for 2 samples.
+- GPU capacity may only raise caps for:
+  - DirectML diarization when enabled and probed,
+  - external transcription CLI when probe/runtime metadata marks it
+    GPU-capable.
+- CPU Whisper.NET never consumes GPU merely because GPU is idle.
+
+Sprint 5 acceptance criteria:
+
+- Tests prove missing GPU counters degrade to CPU-only acceleration.
+- Tests prove GPU idle does not affect CPU-only providers.
+- DirectML/external-provider tests prove GPU capacity is considered only after
+  provider readiness is known.
+
+## Sprint 6: UI, Documentation, Packaging, And Release
+
+Goal: ship acceleration as understandable product behavior.
+
+- Add profile options:
+  - `Normal`,
+  - `Transcript-only drain`,
+  - `Overnight acceleration`,
+  - `Idle-capacity acceleration`,
+  - `Overnight + idle acceleration`.
+- Show compact runtime status near the queue:
+  - active acceleration mode,
+  - current stage focus,
+  - active worker count,
+  - reason such as `CPU idle, plugged in` or `recording active`.
+- Update `README.md`, `SETUP.md`, and `ARCHITECTURE.md` with staged drain,
+  capacity sensing, guardrails, and fallback behavior.
+- Run focused tests, then
+  `powershell -ExecutionPolicy Bypass -File .\scripts\Test-All.ps1`.
+- Rebuild installer assets with
+  `powershell -ExecutionPolicy Bypass -File .\scripts\Build-Installer.ps1`.
+
+Sprint 6 acceptance criteria:
+
+- Users can tell whether acceleration is active and why.
+- Documentation matches the shipped settings and queue behavior.
+- Installer assets include the new runtime behavior.
+
+## Adaptive Drain Interfaces And Constraints
+
+- Add `ProcessingSpeedProfile` values for idle-capacity acceleration and
+  combined overnight-plus-idle acceleration.
+- Add a minimal stage request contract for worker launch.
+- Keep transcript JSON/Markdown schema changes additive only.
+- Keep default behavior conservative: plugged in, not recording, sustained
+  spare capacity, fast backoff.
+- No new third-party dependency for CPU sensing.
+- GPU sensing is best-effort and must not block CPU-only processing.
+- If stage-specific worker passes require risky artifact rewrites, stop and
+  narrow the implementation before shipping automatic enrichment drain.
+
 # Meeting Continuity And Split-Healing Reliability Plan
 
 ## Summary

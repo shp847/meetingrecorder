@@ -87,8 +87,9 @@ instructions.
 - ModelProxy summary validation command:
   `powershell -ExecutionPolicy Bypass -File .\scripts\Test-ModelProxy.ps1`.
   Defined in `scripts\Test-ModelProxy.ps1`; it posts a synthetic
-  `summary-provider-ok` prompt to `http://127.0.0.1:8645/v1/chat/completions`,
-  uses `MODELPROXY_MEETING_RECORDER_API_KEY` or local fallback `sk-modelproxy`,
+  `summary-provider-ok` prompt to `http://127.0.0.1:8645/v1/responses`,
+  uses `MODELPROXY_MEETING_RECORDER_API_KEY` or local fallback
+  `sk-modelproxy-meeting-recorder`,
   forces the no-search app-server path with `X-ModelProxy-Backend: app-server`
   and `X-ModelProxy-Web-Search: false`, and prints only safe routing metadata.
 - Speaker-name learning stores local voice-profile embeddings under

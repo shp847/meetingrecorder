@@ -471,6 +471,37 @@ public sealed class MeetingOutputCatalogServiceTests
     }
 
     [Fact]
+    public async Task ListMeetings_Does_Not_Read_Offline_Audio_Duration_When_Manifest_Is_Missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var stem = "2026-03-16_004645_teams_offline-placeholder";
+        var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(5));
+
+        try
+        {
+            File.SetAttributes(audioPath, File.GetAttributes(audioPath) | FileAttributes.Offline);
+
+            var meeting = Assert.Single(service.ListMeetings(audioDir, transcriptDir, workDir: null));
+
+            Assert.Null(meeting.Duration);
+        }
+        finally
+        {
+            if (File.Exists(audioPath))
+            {
+                File.SetAttributes(audioPath, File.GetAttributes(audioPath) & ~FileAttributes.Offline);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ListMeetings_Prefers_Repaired_Artifact_Duration_When_A_Stale_Manifest_Reuses_The_Same_Stem()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

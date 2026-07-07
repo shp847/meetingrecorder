@@ -395,7 +395,7 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
-    public void AudioActivityProbeSupport_Does_Not_Resolve_Audio_Session_Process_Pids()
+    public void AudioActivityProbeSupport_Does_Not_Enumerate_Audio_Sessions()
     {
         var assemblyDirectory = Path.GetDirectoryName(typeof(WindowMeetingDetectorTests).Assembly.Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -406,12 +406,13 @@ public sealed class WindowMeetingDetectorTests
 
         var source = File.ReadAllText(detectorPath);
         var audioProbeStart = source.IndexOf("internal sealed class SystemAudioActivityProbe", StringComparison.Ordinal);
-        var audioProbeEnd = source.IndexOf("private static bool TryGetSystemSoundsFlag", StringComparison.Ordinal);
+        var audioProbeEnd = source.IndexOf("private static bool ShouldPreferRenderSnapshot", StringComparison.Ordinal);
 
         Assert.True(audioProbeStart >= 0, "Expected the audio activity probe source block.");
         Assert.True(audioProbeEnd > audioProbeStart, "Expected the audio activity probe support boundary.");
 
         var audioProbeSource = source[audioProbeStart..audioProbeEnd];
+        Assert.DoesNotContain("AudioSessionManager", audioProbeSource, StringComparison.Ordinal);
         Assert.DoesNotContain("Process.GetProcessById", audioProbeSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GetProcessID", audioProbeSource, StringComparison.Ordinal);
     }
@@ -833,74 +834,6 @@ public sealed class WindowMeetingDetectorTests
         Assert.True(result.IsActive);
         Assert.Equal("Bluetooth Headset", result.DeviceName);
         Assert.Contains(result.Sessions, session => string.Equals(session.ProcessName, "ms-teams", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_System_Sounds()
-    {
-        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
-            processId: 4242,
-            peakLevel: 0.65d,
-            activityThreshold: 0.05d,
-            isSystemSounds: true,
-            isCurrentProcess: false,
-            displayName: "System Sounds",
-            sessionIdentifier: "system-sounds",
-            stateText: "Active");
-
-        Assert.Equal(string.Empty, result.ProcessName);
-        Assert.True(result.IsSystemSounds);
-    }
-
-    [Fact]
-    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_Inactive_Sessions()
-    {
-        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
-            processId: 4242,
-            peakLevel: 0d,
-            activityThreshold: 0.05d,
-            isSystemSounds: false,
-            isCurrentProcess: false,
-            displayName: null,
-            sessionIdentifier: null,
-            stateText: "AudioSessionStateInactive");
-
-        Assert.Equal(string.Empty, result.ProcessName);
-        Assert.False(result.IsActive);
-    }
-
-    [Fact]
-    public void BuildSessionSnapshot_Does_Not_Resolve_Process_Name_For_Active_Service_Sessions_Without_Meeting_Metadata()
-    {
-        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
-            processId: 4242,
-            peakLevel: 0.65d,
-            activityThreshold: 0.05d,
-            isSystemSounds: false,
-            isCurrentProcess: false,
-            displayName: "Windows Audio Service",
-            sessionIdentifier: @"@%SystemRoot%\System32\AudioSrv.dll,-202",
-            stateText: "Active");
-
-        Assert.Equal(string.Empty, result.ProcessName);
-        Assert.True(result.IsActive);
-    }
-
-    [Fact]
-    public void BuildSessionSnapshot_Derives_Process_Name_From_Active_Meeting_Audio_Metadata_When_ProcessId_Is_Unavailable()
-    {
-        var result = AudioActivityProbeSupport.BuildSessionSnapshot(
-            processId: 0,
-            peakLevel: 0.65d,
-            activityThreshold: 0.05d,
-            isSystemSounds: false,
-            isCurrentProcess: false,
-            displayName: "Microsoft Teams",
-            sessionIdentifier: "teams-session",
-            stateText: "Active");
-
-        Assert.Equal("ms-teams", result.ProcessName);
-        Assert.True(result.IsActive);
     }
 
     [Fact]
