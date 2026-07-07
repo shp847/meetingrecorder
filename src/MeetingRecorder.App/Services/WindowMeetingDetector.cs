@@ -149,14 +149,15 @@ internal sealed class WindowMeetingDetector
         ArgumentNullException.ThrowIfNull(candidate);
         ArgumentNullException.ThrowIfNull(allCandidates);
 
+        var hasMatchingSuppressedChatCandidate = HasMatchingSuppressedTeamsChatCandidate(candidate, allCandidates);
+
         if (!IsAmbiguousPlainTeamsContentWindow(candidate) ||
             HasTeamsRenderEvidence(candidate) ||
-            HasUnavailableAudioProbeSignal(candidate))
+            HasUnavailableAudioProbeSignal(candidate) ||
+            (HasEndpointAudioFallbackEvidence(candidate) && !hasMatchingSuppressedChatCandidate))
         {
             return candidate;
         }
-
-        var hasMatchingSuppressedChatCandidate = HasMatchingSuppressedTeamsChatCandidate(candidate, allCandidates);
 
         return candidate with
         {
@@ -1132,6 +1133,46 @@ internal sealed class WindowMeetingDetector
         return false;
     }
 
+    private static bool HasEndpointAudioFallbackEvidence(DetectionDecision candidate)
+    {
+        // ponytail: endpoint-level audio is all we have after removing per-session enumeration; trust it only for specific non-navigation Teams titles.
+        return candidate.Platform == MeetingPlatform.Teams &&
+            HasSpecificSessionTitle(candidate) &&
+            !HasSuppressedTeamsNavigationSignal(candidate) &&
+            HasAudioActivitySignal(candidate);
+    }
+
+    private static bool HasSuppressedTeamsNavigationSignal(DetectionDecision candidate)
+    {
+        foreach (var signal in candidate.Signals)
+        {
+            if (!string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (IsSuppressedTeamsWindowTitle(signal.Value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasAudioActivitySignal(DetectionDecision candidate)
+    {
+        foreach (var signal in candidate.Signals)
+        {
+            if (string.Equals(signal.Source, "audio-activity", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool HasUnavailableAudioProbeSignal(DetectionDecision candidate)
     {
         foreach (var signal in candidate.Signals)
@@ -1148,6 +1189,19 @@ internal sealed class WindowMeetingDetector
         }
 
         return false;
+    }
+
+    private static bool IsSuppressedTeamsWindowTitle(string value)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized.StartsWith("chat |", StringComparison.Ordinal) ||
+            normalized.StartsWith("activity |", StringComparison.Ordinal) ||
+            normalized.StartsWith("calendar |", StringComparison.Ordinal) ||
+            normalized.StartsWith("files |", StringComparison.Ordinal) ||
+            normalized.StartsWith("approvals |", StringComparison.Ordinal) ||
+            normalized.StartsWith("assignments |", StringComparison.Ordinal) ||
+            normalized.StartsWith("calls |", StringComparison.Ordinal) ||
+            normalized.StartsWith("search |", StringComparison.Ordinal);
     }
 
     private static CandidatePriority GetCandidatePriority(DetectionDecision decision)

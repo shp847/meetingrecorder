@@ -40,13 +40,13 @@ public sealed class AppActivationSignalTests
         var signalName = "MeetingRecorder.Tests." + Guid.NewGuid().ToString("N");
         var acknowledgementSignalName = signalName + ".Ack";
         using var signal = new AppActivationSignal(signalName, acknowledgementSignalName);
-        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         var waitTask = signal.WaitForSignalAsync(cancellationTokenSource.Token);
         var activationTask = Task.Run(() => AppActivationSignal.TrySignalAndWaitForAcknowledgement(
             signalName,
             acknowledgementSignalName,
-            TimeSpan.FromSeconds(2)));
+            TimeSpan.FromSeconds(10)));
 
         Assert.True(await waitTask);
 

@@ -38,13 +38,8 @@ public static class BackgroundProcessingPolicy
 
     public static ProcessPriorityClass GetWorkerPriority(AppConfig config)
     {
-        return GetEffectiveBackgroundProcessingMode(config) switch
-        {
-            BackgroundProcessingMode.Responsive => ProcessPriorityClass.BelowNormal,
-            BackgroundProcessingMode.Balanced => ProcessPriorityClass.BelowNormal,
-            BackgroundProcessingMode.MaximumThroughput => ProcessPriorityClass.AboveNormal,
-            _ => ProcessPriorityClass.Normal,
-        };
+        _ = config;
+        return ProcessPriorityClass.BelowNormal;
     }
 
     public static int GetTranscriptionThreadCount(AppConfig config, int processorCount)

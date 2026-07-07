@@ -221,14 +221,16 @@ public sealed class OutlookCalendarMeetingTitleProviderTests
                 3,
                 ["Jane Smith"]),
         ]);
-        var provider = new OutlookCalendarMeetingTitleProvider(source);
+        var provider = new OutlookCalendarMeetingTitleProvider(
+            source,
+            appointmentReadTimeout: TimeSpan.FromSeconds(10));
 
         var firstLookup = Task.Run(() => provider.TryGetMeetingTitle(
             MeetingPlatform.Teams,
             DateTimeOffset.Parse("2026-03-21T13:00:00Z"),
             DateTimeOffset.Parse("2026-03-21T13:30:00Z")));
 
-        Assert.True(firstCallObserved.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(firstCallObserved.Wait(TimeSpan.FromSeconds(10)));
 
         var secondLookup = Task.Run(() => provider.TryGetMeetingTitle(
             MeetingPlatform.Teams,

@@ -3142,7 +3142,7 @@
                                                       VerticalContentAlignment="Center" />
                                             <TextBlock x:Name="ConfigBackgroundProcessingModeHelpTextBlock"
                                                        Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Responsive pauses new backlog work during live recordings and keeps the worker below normal priority by default." />
+                                                       Text="Background workers run below normal priority; responsive mode also pauses new backlog work during live recordings." />
                                         </StackPanel>
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"

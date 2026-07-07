@@ -32,7 +32,7 @@ public sealed class BackgroundProcessingPolicyTests
     }
 
     [Fact]
-    public void Fastest_Drain_Mode_Keeps_Processing_Inline_Without_Falling_Back_To_All_Cores()
+    public void Fastest_Drain_Mode_Keeps_Processing_Inline_Without_Falling_Back_To_All_Cores_Or_Normal_Priority()
     {
         var config = new AppConfig
         {
@@ -41,14 +41,14 @@ public sealed class BackgroundProcessingPolicyTests
         };
 
         Assert.False(BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(config, isRecording: true));
-        Assert.Equal(ProcessPriorityClass.Normal, BackgroundProcessingPolicy.GetWorkerPriority(config));
+        Assert.Equal(ProcessPriorityClass.BelowNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
         Assert.Equal(8, BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount: 16));
         Assert.Equal(4, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
         Assert.False(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));
     }
 
     [Fact]
-    public void Maximum_Throughput_Mode_Uses_Above_Normal_Priority_And_Capped_High_Budgets()
+    public void Maximum_Throughput_Mode_Uses_Low_Process_Priority_And_Capped_High_Budgets()
     {
         var config = new AppConfig
         {
@@ -57,7 +57,7 @@ public sealed class BackgroundProcessingPolicyTests
         };
 
         Assert.False(BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(config, isRecording: true));
-        Assert.Equal(ProcessPriorityClass.AboveNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
+        Assert.Equal(ProcessPriorityClass.BelowNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
         Assert.Equal(12, BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount: 16));
         Assert.Equal(6, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
         Assert.False(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));
@@ -74,7 +74,7 @@ public sealed class BackgroundProcessingPolicyTests
         };
 
         Assert.False(BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(config, isRecording: true));
-        Assert.Equal(ProcessPriorityClass.AboveNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
+        Assert.Equal(ProcessPriorityClass.BelowNormal, BackgroundProcessingPolicy.GetWorkerPriority(config));
         Assert.Equal(12, BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount: 16));
         Assert.Equal(6, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
         Assert.True(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));

@@ -233,6 +233,30 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public void ApplyTeamsPlaybackHeuristic_Does_Not_Demote_Specific_Teams_Window_When_Only_Endpoint_Audio_Is_Active()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var plainCandidate = new DetectionDecision(
+            MeetingPlatform.Teams,
+            true,
+            true,
+            1d,
+            "Project Viper - Sonderman | anonymous",
+            new[]
+            {
+                new DetectionSignal("window-title", "Project Viper - Sonderman | anonymous | Microsoft Teams", 0.85d, timestamp),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, timestamp),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.494; status=active", 0.1d, timestamp),
+            },
+            "Detection confidence met the recording threshold and active system audio was present.");
+
+        var result = WindowMeetingDetector.ApplyTeamsPlaybackHeuristic(plainCandidate, new[] { plainCandidate });
+
+        Assert.True(result.ShouldStart);
+        Assert.True(result.ShouldKeepRecording);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Ignores_Browser_Documentation_Page_That_Mentions_Microsoft_Teams()
     {
         var detector = await CreateDetectorAsync(
@@ -257,6 +281,35 @@ public sealed class WindowMeetingDetectorTests
         Assert.NotNull(result);
         Assert.Equal(MeetingPlatform.Teams, result.Platform);
         Assert.Equal("Alex Johnson", result.SessionTitle);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Starts_Specific_Teams_Window_When_Endpoint_Audio_Is_Active_Without_Attributed_Session()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Project Viper - Sonderman | anonymous | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)200,
+                    2000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.49d,
+                true,
+                "active",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.Equal("Project Viper - Sonderman | anonymous", result.SessionTitle);
+        Assert.True(result.ShouldStart);
+        Assert.True(result.ShouldKeepRecording);
     }
 
     [Fact]

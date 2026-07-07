@@ -217,8 +217,8 @@ Secondary maintenance and support actions live in the header:
   - Each dropdown label shows the local thread budget, for example `Fast (8 transcription / 4 labeling)`.
   - `Light` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets.
   - `Balanced`: keeps background work moving with moderate thread budgets.
-  - `Fast`: favors queue throughput over responsiveness and uses normal worker priority.
-  - `Maximum`: skips the live-recording pause, uses `AboveNormal` worker priority, and caps local work at up to 12 transcription threads and 6 speaker-labeling threads.
+  - `Fast`: favors queue throughput over responsiveness with larger thread budgets, while keeping the worker process below normal OS priority.
+  - `Maximum`: skips the live-recording pause and caps local work at up to 12 transcription threads and 6 speaker-labeling threads, while keeping the worker process below normal OS priority.
 - `Speaker labeling mode`
   - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for manual follow-up.
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
@@ -229,7 +229,7 @@ Secondary maintenance and support actions live in the header:
   - `Transcript only`: publish audio/transcript artifacts first, skip speaker labels and automatic summaries, and allow up to two transcript-only workers at once.
   - `Overnight transcript only`: apply the same transcript-only drain during the configured local window, defaulting to `22:00` through `06:00`.
 
-The responsive defaults are intentional: the app now prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
+Background workers always launch below normal OS priority. The responsive defaults add smaller thread budgets and live-recording pauses so the app prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
 
 For one urgent meeting, use `Process ASAP` from the meeting detail window or `Process This ASAP...` from the context menu. For a whole backlog, use `Rush Backlog...` in the Meetings processing strip. The prompt offers `This backlog only`, `This and future meetings`, and `Cancel`; the future option also saves `Speaker labeling mode` as `Deferred`. Rush Backlog does not interrupt active transcription, but if the current worker is already in speaker labeling it interrupts and requeues that item so the saved transcript snapshot can publish without labels.

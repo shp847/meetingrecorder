@@ -31,7 +31,7 @@ public sealed class MainWindowInteractionLogicTests
             processorCount: 16);
 
         Assert.Contains("Maximum does not pause", helpText, StringComparison.Ordinal);
-        Assert.Contains("AboveNormal", helpText, StringComparison.Ordinal);
+        Assert.Contains("BelowNormal", helpText, StringComparison.Ordinal);
         Assert.Contains("12 transcription", helpText, StringComparison.Ordinal);
         Assert.Contains("6 speaker-labeling", helpText, StringComparison.Ordinal);
     }

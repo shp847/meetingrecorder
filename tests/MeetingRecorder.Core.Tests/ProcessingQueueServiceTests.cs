@@ -35,7 +35,7 @@ public sealed class ProcessingQueueServiceTests
         var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
 
         await service.EnqueueAsync(manifestPath);
-        await Task.Delay(100);
+        await WaitForConditionAsync(() => enrichGate.WasCalled);
 
         Assert.True(enrichGate.WasCalled);
         Assert.Equal(0, processFactory.StartCount);
