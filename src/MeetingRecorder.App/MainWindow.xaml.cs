@@ -10488,10 +10488,9 @@ public partial class MainWindow : Window
             MeetingsDataGrid.SelectedItem = row;
             MeetingsDataGrid.SelectedItems.Add(row);
         }
-        else
-        {
-            MeetingsDataGrid.SelectedItem = row;
-        }
+
+        item.Focus();
+        e.Handled = true;
     }
 
     private void RevealMeetingDrafts(Control focusTarget)

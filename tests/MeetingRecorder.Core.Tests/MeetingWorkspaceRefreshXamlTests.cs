@@ -100,6 +100,33 @@ public sealed class MeetingWorkspaceRefreshXamlTests
     }
 
     [Fact]
+    public void Meetings_List_Right_Click_Preserves_Current_Selection()
+    {
+        var sourcePath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "MeetingRecorder.App",
+            "MainWindow.xaml.cs"));
+
+        var source = File.ReadAllText(sourcePath);
+        var handlerStart = source.IndexOf(
+            "private void MeetingListItem_OnPreviewMouseRightButtonDown",
+            StringComparison.Ordinal);
+        var handlerEnd = source.IndexOf("private void RevealMeetingDrafts", handlerStart, StringComparison.Ordinal);
+        var handler = source[handlerStart..handlerEnd];
+
+        Assert.Contains("MeetingsDataGrid.SelectedItems.Clear();", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("else", handler, StringComparison.Ordinal);
+        Assert.Contains("item.Focus();", handler, StringComparison.Ordinal);
+        Assert.Contains("e.Handled = true;", handler, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Config_Optional_Helpers_Expose_Attendee_Enrichment_Setting()
     {
         var xamlPath = Path.GetFullPath(Path.Combine(
