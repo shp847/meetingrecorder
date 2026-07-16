@@ -8,10 +8,10 @@ public sealed class WorkerLocatorTests
     public void ResolveInstalledAppRoot_Prefers_ProcessPath_Directory_Over_AppContext_BaseDirectory()
     {
         var installedRoot = WorkerLocator.ResolveInstalledAppRoot(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe",
             @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\");
 
-        Assert.Equal(@"C:\Users\test\Documents\MeetingRecorder", installedRoot);
+        Assert.Equal(@"C:\Users\test\AppData\Local\Programs\Meeting Recorder", installedRoot);
     }
 
     [Fact]
@@ -19,15 +19,15 @@ public sealed class WorkerLocatorTests
     {
         var candidates = WorkerLocator
             .EnumerateCandidates(
-                @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+                @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe",
                 @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\")
             .ToArray();
 
         Assert.Equal(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.ProcessingWorker.exe",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.ProcessingWorker.exe",
             candidates[0]);
         Assert.Equal(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.ProcessingWorker.dll",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.ProcessingWorker.dll",
             candidates[1]);
         Assert.DoesNotContain(
             @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\MeetingRecorder.ProcessingWorker.exe",

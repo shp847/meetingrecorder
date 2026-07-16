@@ -8,7 +8,7 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class ExternalAudioImportServiceTests
 {
     [Fact]
-    public async Task ImportPendingAudioFilesAsync_Creates_Queued_WorkManifest_And_Removes_Source_File()
+    public async Task ImportPendingAudioFilesAsync_Creates_Queued_WorkManifest_And_Preserves_Source_File()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var config = CreateConfig(root);
@@ -35,9 +35,104 @@ public sealed class ExternalAudioImportServiceTests
         Assert.Equal(sourcePath, manifest.ImportedSourceAudio!.OriginalPath);
         Assert.Equal(sourceInfo.Length, manifest.ImportedSourceAudio.SourceSizeBytes);
         Assert.Equal(sourceInfo.LastWriteTimeUtc, manifest.ImportedSourceAudio.SourceLastWriteUtc.UtcDateTime);
+        Assert.Equal("Voice Memo 17.wav", manifest.ImportedSourceAudio.SourceDisplayName);
+        Assert.Equal(ExternalAudioImportMethod.WatchedFolder, manifest.ImportedSourceAudio.ImportMethod);
+        Assert.True(manifest.ImportedSourceAudio.SourceRetained);
+        Assert.NotNull(manifest.ImportedSourceAudio.ProbedDuration);
         Assert.NotNull(manifest.MergedAudioPath);
         Assert.True(File.Exists(manifest.MergedAudioPath));
-        Assert.False(File.Exists(sourcePath));
+        Assert.True(File.Exists(sourcePath));
+    }
+
+    [Fact]
+    public async Task BuildImportCandidatesAsync_Creates_Ready_Explicit_Review_Candidate()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var config = CreateConfig(root);
+        Directory.CreateDirectory(config.WorkDir);
+
+        var sourcePath = Path.Combine(root, "imports", "Voice Memo 17.wav");
+        await WriteSilentWaveFileAsync(sourcePath, TimeSpan.FromSeconds(2));
+        File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddMinutes(-5));
+
+        var service = new ExternalAudioImportService(new ArtifactPathBuilder());
+
+        var candidates = await service.BuildImportCandidatesAsync(
+            config,
+            [sourcePath],
+            ExternalAudioImportMethod.FilePicker,
+            DateTimeOffset.UtcNow);
+
+        var candidate = Assert.Single(candidates);
+        Assert.True(candidate.CanQueue);
+        Assert.Equal(ExternalAudioImportPreflightStatus.Ready, candidate.Preflight.Status);
+        Assert.Equal("Voice Memo 17", candidate.Title);
+        Assert.Equal("Voice Memo 17.wav", candidate.SourceDisplayName);
+        Assert.Equal(ExternalAudioImportMethod.FilePicker, candidate.ImportMethod);
+        Assert.NotNull(candidate.Preflight.Duration);
+    }
+
+    [Fact]
+    public async Task BuildImportCandidatesAsync_Flags_Unsupported_Extensions_Before_Queue()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var config = CreateConfig(root);
+        Directory.CreateDirectory(config.WorkDir);
+
+        var sourcePath = Path.Combine(root, "imports", "notes.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        await File.WriteAllTextAsync(sourcePath, "not audio");
+
+        var service = new ExternalAudioImportService(new ArtifactPathBuilder());
+
+        var candidates = await service.BuildImportCandidatesAsync(
+            config,
+            [sourcePath],
+            ExternalAudioImportMethod.FilePicker,
+            DateTimeOffset.UtcNow);
+
+        var candidate = Assert.Single(candidates);
+        Assert.False(candidate.CanQueue);
+        Assert.Equal(ExternalAudioImportPreflightStatus.UnsupportedExtension, candidate.Preflight.Status);
+    }
+
+    [Fact]
+    public async Task QueueImportAsync_Persists_Explicit_Import_Metadata()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var config = CreateConfig(root);
+        Directory.CreateDirectory(config.WorkDir);
+
+        var sourcePath = Path.Combine(root, "imports", "Client Call.wav");
+        await WriteSilentWaveFileAsync(sourcePath, TimeSpan.FromSeconds(5));
+        var sourceInfo = new FileInfo(sourcePath);
+        var startedAtUtc = DateTimeOffset.Parse("2026-07-14T15:30:00Z");
+
+        var service = new ExternalAudioImportService(new ArtifactPathBuilder());
+        var result = await service.QueueImportAsync(
+            config.WorkDir,
+            new ExternalAudioImportRequest(
+                sourcePath,
+                "Client Call.wav",
+                sourceInfo.Length,
+                new DateTimeOffset(sourceInfo.LastWriteTimeUtc),
+                ExternalAudioImportMethod.DragDrop,
+                "Client Call",
+                startedAtUtc,
+                "Project Delta",
+                TimeSpan.FromSeconds(5),
+                SourceRetained: true),
+            DateTimeOffset.UtcNow);
+        var manifest = await new SessionManifestStore(new ArtifactPathBuilder()).LoadAsync(result.ManifestPath);
+
+        Assert.NotNull(manifest.ImportedSourceAudio);
+        Assert.Equal(ExternalAudioImportMethod.DragDrop, manifest.ImportedSourceAudio!.ImportMethod);
+        Assert.Equal("Client Call.wav", manifest.ImportedSourceAudio.SourceDisplayName);
+        Assert.Equal(TimeSpan.FromSeconds(5), manifest.ImportedSourceAudio.ProbedDuration);
+        Assert.True(manifest.ImportedSourceAudio.SourceRetained);
+        Assert.Equal("Project Delta", manifest.ProjectName);
+        Assert.Equal(startedAtUtc, manifest.StartedAtUtc);
+        Assert.True(File.Exists(sourcePath));
     }
 
     [Fact]

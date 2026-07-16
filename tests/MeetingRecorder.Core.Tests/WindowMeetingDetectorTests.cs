@@ -562,6 +562,66 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Prefers_ChromiumHosted_Teams_Roster_Title_Over_Generic_GoogleMeet_Browser_Shell_When_Audio_Is_Not_Attributed()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "Google Meet and 19 more pages - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)100,
+                    1000),
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "Khan, Khalid, Narasimhan, Sridhar",
+                    "Chrome_WidgetWin_1",
+                    (nint)200,
+                    2000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.Equal("Khan, Khalid, Narasimhan, Sridhar", result.SessionTitle);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.False(result.ShouldStart);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Treat_Comma_Separated_Browser_Shell_Title_As_Teams()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "Khan, Khalid, Narasimhan, Sridhar - Work - Microsoft Edge",
+                    "Chrome_WidgetWin_1",
+                    (nint)100,
+                    1000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Preserves_A_Matched_Teams_Audio_Source_When_The_Endpoint_Is_Quiet()
     {
         var detector = await CreateDetectorAsync(

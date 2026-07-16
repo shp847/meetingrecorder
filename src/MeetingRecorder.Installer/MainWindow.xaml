@@ -157,7 +157,7 @@
                            Text="Meeting Recorder Installer" />
                 <TextBlock Margin="0,12,0,0"
                            Style="{StaticResource InstallerLeadTextStyle}"
-                           Text="This launcher prefers the colocated app package when one ships beside it and otherwise falls back to the shared GitHub command bootstrapper path. It then hands the install off to Documents\MeetingRecorder while writable runtime data such as config, logs, models, and work files stays separately under %LOCALAPPDATA%\MeetingRecorder." />
+                           Text="This launcher prefers the colocated app package when one ships beside it and otherwise falls back to the shared GitHub command bootstrapper path. It then hands the install off to %LOCALAPPDATA%\Programs\Meeting Recorder while writable runtime data such as config, logs, models, and work files stays separately under %LOCALAPPDATA%\MeetingRecorder." />
             </StackPanel>
 
             <Border x:Name="InstallerStatusCard"
@@ -253,7 +253,7 @@
                                    Text="If the installer is blocked" />
                         <TextBlock Margin="0,10,0,0"
                                    Style="{StaticResource DialogBodyTextStyle}"
-                                   Text="You can fall back to the command installer or do a manual portable install. App files live in Documents\MeetingRecorder, while config, logs, models, and work files live under %LOCALAPPDATA%\MeetingRecorder. The steps below stay visible so the user is never stuck behind one blocked path." />
+                                   Text="You can fall back to the command installer or do a manual portable install. App files live in %LOCALAPPDATA%\Programs\Meeting Recorder, while config, logs, models, and work files live under %LOCALAPPDATA%\MeetingRecorder. The steps below stay visible so the user is never stuck behind one blocked path." />
                         <TextBox Margin="0,14,0,0"
                                  Style="{StaticResource InstallerInsetTextBoxStyle}"
                                  Text="{Binding ManualSteps, Mode=OneWay}" />

@@ -70,6 +70,7 @@ internal sealed record LoopbackCaptureStatusSnapshot(
 internal sealed class RecordingSessionCoordinator
 {
     private const long MinimumRecordingFreeBytes = 1L * 1024L * 1024L * 1024L;
+    private static readonly TimeSpan LoopbackSwapCooldown = TimeSpan.FromSeconds(45);
 
     private readonly LiveAppConfig _config;
     private readonly SessionManifestStore _manifestStore;
@@ -309,6 +310,12 @@ internal sealed class RecordingSessionCoordinator
         }
 
         var currentSnapshot = SystemLoopbackCaptureFactory.GetSnapshotForSelection(evaluation, activeSession.ActiveLoopbackSelection);
+        if (ShouldDelayLoopbackSwap(activeSession, preferredSelection, currentSnapshot))
+        {
+            ClearPendingLoopbackSelection(activeSession);
+            return new LoopbackCaptureRefreshResult(false, false, null);
+        }
+
         var shouldSwapImmediately = ShouldSwapImmediately(activeSession.ActiveLoopbackSelection, preferredSelection, currentSnapshot);
         var requiredStableCount = shouldSwapImmediately ? 1 : 2;
         UpdatePendingLoopbackSelection(activeSession, preferredSelection);
@@ -958,6 +965,36 @@ internal sealed class RecordingSessionCoordinator
         }
 
         return currentSnapshot is { IsEndpointActive: false };
+    }
+
+    private static bool ShouldDelayLoopbackSwap(
+        ActiveRecordingSession activeSession,
+        LoopbackCaptureSelection preferredSelection,
+        LoopbackCaptureProbeSnapshot? currentSnapshot)
+    {
+        if (preferredSelection.IsFallbackCapture ||
+            activeSession.ActiveLoopbackSelection.IsFallbackCapture ||
+            activeSession.ActiveLoopbackSelection.MeetingSessionMatches > preferredSelection.MeetingSessionMatches)
+        {
+            return false;
+        }
+
+        var lastSwapAtUtc = GetLastLoopbackSwapAtUtc(activeSession);
+        if (!lastSwapAtUtc.HasValue ||
+            DateTimeOffset.UtcNow - lastSwapAtUtc.Value >= LoopbackSwapCooldown)
+        {
+            return false;
+        }
+
+        return currentSnapshot is { IsEndpointActive: true } &&
+               activeSession.ActiveLoopbackSelection.MeetingSessionMatches >= preferredSelection.MeetingSessionMatches;
+    }
+
+    private static DateTimeOffset? GetLastLoopbackSwapAtUtc(ActiveRecordingSession activeSession)
+    {
+        return activeSession.CaptureTimelineEntries
+            .LastOrDefault(entry => entry.Kind is CaptureTimelineEventKind.Swapped or CaptureTimelineEventKind.Fallback)
+            ?.OccurredAtUtc;
     }
 
     private static bool ShouldSwapMicrophoneImmediately(

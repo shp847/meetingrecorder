@@ -55,7 +55,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public async Task PlatformInstallPathManager_Retries_Until_The_Primary_Instance_Releases()
     {
-        var targetRoot = @"C:\Users\Test\Documents\MeetingRecorder";
+        var targetRoot = @"C:\Users\Test\AppData\Local\Programs\Meeting Recorder";
         var processController = new FakeInstallPathProcessController(
             signalResult: true,
             waitResults: [false, false, true]);

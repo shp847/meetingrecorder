@@ -621,6 +621,95 @@ public sealed class RecordingSessionCoordinatorTests
     }
 
     [Fact]
+    public async Task RefreshLoopbackCaptureAsync_Does_Not_Flap_Back_To_Another_Active_Endpoint_Immediately_After_A_Swap()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-antiflap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var firstEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.10d,
+                    true,
+                    0,
+                    0,
+                    "Preferred multimedia render endpoint.",
+                    false),
+                new LoopbackCaptureProbeSnapshot(Role.Multimedia, "device-1", "Laptop speakers", 0.10d, true, Array.Empty<AudioSourceSessionSnapshot>()),
+                new LoopbackCaptureProbeSnapshot(Role.Communications, "device-2", "USB headset", 0.00d, false, Array.Empty<AudioSourceSessionSnapshot>()));
+            var secondEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Communications,
+                    "device-2",
+                    "USB headset",
+                    0.40d,
+                    true,
+                    1,
+                    1,
+                    "Communications endpoint has supported meeting audio.",
+                    false),
+                new LoopbackCaptureProbeSnapshot(Role.Multimedia, "device-1", "Laptop speakers", 0d, false, Array.Empty<AudioSourceSessionSnapshot>()),
+                new LoopbackCaptureProbeSnapshot(Role.Communications, "device-2", "USB headset", 0.40d, true,
+                [
+                    new AudioSourceSessionSnapshot(1, "ms-teams", 0.40d, true, false, false, "Microsoft Teams", "teams-session"),
+                ]));
+            var thirdEvaluation = new LoopbackCaptureEvaluation(
+                new LoopbackCaptureSelection(
+                    Role.Multimedia,
+                    "device-1",
+                    "Laptop speakers",
+                    0.55d,
+                    true,
+                    1,
+                    1,
+                    "Multimedia endpoint has supported meeting audio.",
+                    false),
+                new LoopbackCaptureProbeSnapshot(Role.Multimedia, "device-1", "Laptop speakers", 0.55d, true,
+                [
+                    new AudioSourceSessionSnapshot(1, "ms-teams", 0.55d, true, false, false, "Microsoft Teams", "teams-session"),
+                ]),
+                new LoopbackCaptureProbeSnapshot(Role.Communications, "device-2", "USB headset", 0.35d, true,
+                [
+                    new AudioSourceSessionSnapshot(1, "ms-teams", 0.35d, true, false, false, "Microsoft Teams", "teams-session"),
+                ]));
+            var loopbackFactory = new SpyLoopbackCaptureFactory(firstEvaluation, secondEvaluation, thirdEvaluation);
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn(),
+                loopbackFactory);
+
+            await coordinator.StartAsync(
+                MeetingPlatform.Teams,
+                "Client Sync",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var firstRefresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var secondRefresh = await coordinator.RefreshLoopbackCaptureAsync(MeetingPlatform.Teams, detectedAudioSource: null);
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.True(firstRefresh.SwapPerformed);
+            Assert.False(secondRefresh.SwapPerformed);
+            Assert.Equal("device-2", activeSession.ActiveLoopbackSelection.DeviceId);
+            Assert.Equal(2, reloadedManifest.LoopbackCaptureSegments.Count);
+            Assert.Single(reloadedManifest.CaptureTimeline.Where(entry => entry.Kind == CaptureTimelineEventKind.Swapped));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task RefreshLoopbackCaptureAsync_Records_SwapFailure_And_Keeps_The_Current_Recorder_Active()
     {
         var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-swap-failure-{Guid.NewGuid():N}");

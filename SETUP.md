@@ -15,13 +15,13 @@ Recommended user flow:
 
 That installer path:
 
-- installs the app into `%USERPROFILE%\Documents\MeetingRecorder`
+- installs the app into `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - keeps writable runtime data such as config, logs, models, work files, and install provenance under `%LOCALAPPDATA%\MeetingRecorder`
 - tries the recommended Standard transcription and Standard speaker-labeling downloads into `%LOCALAPPDATA%\MeetingRecorder\models` during install
 - shows a first-install `Choose model options` page where users can keep `Standard` or also ask setup to try one optional `Higher Accuracy` download for transcription and speaker labeling
 - explains the tradeoff clearly: `Higher Accuracy` can improve transcript or speaker-label quality, but it uses a larger download and may lead to slower processing than the included `Standard` option
 - keeps the install successful even if setup downloads are blocked, then tells the user to resume setup from `Settings > Setup`
-- creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%USERPROFILE%\Documents\MeetingRecorder`
+- creates user-scope `.lnk` Start Menu and Desktop shortcuts that point to the safe launcher under `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - repairs an existing pinned taskbar shortcut, if one already exists, so it points at the installed app executable and the installed `MeetingRecorder.ico` instead of a stale Windows Installer icon-cache path
 - skips the stock license-agreement page so the install flow stays short
 - shows a final completion screen so users can confirm the install succeeded
@@ -48,7 +48,7 @@ If you already have a downloaded release ZIP, you can still use the manual path:
 By default, the installers preserve existing user data on update so recordings, transcripts, logs, models, and config are not wiped. The thin script/bootstrap wrappers now delegate install and update execution to the bundled `AppPlatform.Deployment.Cli` helper instead of mutating app config themselves.
 The portable bundle now ships with `bundle-integrity.json`, and the shared deployment CLI validates that manifest before it touches the managed install root.
 The shared deployment engine also persists install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-on timestamp plus any trusted installed package published-at and asset size used by the in-app updater. MSI post-install provisioning now recreates that file when it is missing, and the app still keeps the startup repair as a safety net for older managed installs. If a fresh install still reaches the app without package metadata, the first successful `UpToDate` GitHub check now backfills the installed package published-at and asset size into `install-provenance.json` so the Updates tab and same-version comparison logic can recover durably instead of keeping those fields unknown.
-The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%USERPROFILE%\Documents\MeetingRecorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
+The MSI uninstall path also preserves user data by design. Removing `Meeting Recorder` from Windows only removes the managed app files under `%LOCALAPPDATA%\Programs\Meeting Recorder` plus the current-user shortcuts. It does not remove `%LOCALAPPDATA%\MeetingRecorder`, `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, or `Documents\Meetings\Archive`, so a fresh install can pick up your existing settings, models, logs, and published meeting outputs.
 After a meeting publishes successfully, current builds keep the published recording as the retained audio copy, prune raw capture chunks from `%LOCALAPPDATA%\MeetingRecorder\work`, and delete redundant work-cache processing WAVs when a matching published recording exists. Startup also reclaims those artifacts from older already-published sessions.
 
 User-facing installer and updater rule:
@@ -64,7 +64,7 @@ User-facing installer and updater rule:
 - that MSI handoff now also passes the install root as `INSTALLFOLDER.` instead of a raw quoted trailing-backslash directory, so Windows command-line parsing cannot break the custom-action launch with `0x80070002`
 - that MSI handoff now runs after `InstallFinalize` and is best-effort, so a provisioning launch or download failure no longer aborts the installer itself
 - the MSI progress page uses plain-language action text for application file copy, registration, and shortcut creation so users do not see raw Windows Installer field placeholders such as `File: [1], Directory: [9], Size: [6]`
-- if bundle validation fails, the shared deployment CLI should abort before touching `Documents\MeetingRecorder` and log the exact missing or mismatched file
+- if bundle validation fails, the shared deployment CLI should abort before touching `%LOCALAPPDATA%\Programs\Meeting Recorder` and log the exact missing or mismatched file
 - pinned taskbar repair is limited to an existing `Meeting Recorder.lnk` whose target is missing or already belongs to the current install root, so installer/update tests cannot repoint a healthy user pin to a temporary install folder
 - app startup repairs a missing or malformed process `windir` before WPF creates the main window, so installer/update relaunches cannot fail inside WPF font initialization when the inherited environment is incomplete
 - unexpected dispatcher UI errors close Meeting Recorder after logging instead of leaving a hidden primary instance that blocks future launches
@@ -90,7 +90,7 @@ That default self-contained bundle now publishes the WPF shell as a loose apphos
 If you are rebuilding from source locally, note the difference between artifacts and the live installed app:
 
 - `.artifacts\publish\win-x64\MeetingRecorder` is only the freshly published bundle output
-- `%USERPROFILE%\Documents\MeetingRecorder` is the canonical managed install root that the Start Menu and live app should use
+- `%LOCALAPPDATA%\Programs\Meeting Recorder` is the canonical managed install root that the Start Menu and live app should use
 - `scripts\Deploy-Local.ps1 -BuildFirst` can refresh the managed install root for local development by publishing the portable bundle and delegating to `AppPlatform.Deployment.Cli install-bundle`; use the MSI install path or release bootstrap scripts for publish validation
 
 ## AI Summary Provider Setup
@@ -203,6 +203,7 @@ The app now keeps the main workflow in two primary destinations inside one visib
 Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. `Speaker labeling` now also includes a direct `When to run speaker labeling` selector so you can move between `Deferred`, `Throttled`, and `Inline` without leaving Setup. Recording and auto-detect stay blocked until transcription is ready.
 When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
+Imported recordings now start from `Meetings > Add Audio Files` or by dragging files onto the `Meetings` surface. The review tray shows inferred title, local start time, duration, and import status before anything is queued. You can adjust the title, time, and optional project there, and the original source file stays in place by default. The legacy watched audio folder is still scanned for compatibility, but the explicit review flow is the primary import path.
 If the app restarts after a crash while a live recording manifest is still open or only captured the first chunk paths, startup now rediscovers recoverable raw chunks from the session folder, seals stale raw-chunk sessions, requeues them, and keeps them visible for normal processing instead of leaving the meeting hidden or truncated in the work folder.
 When the backlog includes repaired sessions that already finished transcription, startup now resumes those publish-ready items before fresh untouched queue work so the visible queue can shrink faster after a crash backlog.
 
@@ -300,7 +301,7 @@ Uninstall with preserved data:
 
 Expected result after uninstall:
 
-- `%USERPROFILE%\Documents\MeetingRecorder` is removed
+- `%LOCALAPPDATA%\Programs\Meeting Recorder` is removed
 - current-user Start Menu and Desktop shortcuts are removed
 - `%LOCALAPPDATA%\MeetingRecorder` remains
 - `Documents\Meetings\Recordings` remains
@@ -328,7 +329,7 @@ If Meeting Recorder is already installed and you want to apply the latest GitHub
 If an installer or updater console fails, copy the diagnostic log path shown in the console window before closing it. Direct MSI installs now also emit Windows Installer logs under `%TEMP%`.
 
 The installer preserves the existing portable `data` folder during updates, so recordings, transcripts, logs, models, and config are kept.
-The shared deployment CLI now updates the managed install in place instead of renaming the whole `Documents\MeetingRecorder` root first, which makes updates more tolerant of locked files under the preserved `data` tree.
+The shared deployment CLI now updates the managed install in place instead of renaming the whole `%LOCALAPPDATA%\Programs\Meeting Recorder` root first, which makes updates more tolerant of locked files under the preserved `data` tree.
 In-place updates now keep the already-extracted app bundle as an immutable repair source, copy that validated source into a separate staging workspace, and only then move current install files aside. That keeps transient executable staging out of random sibling folders under `Documents` while still leaving a second validated copy available if endpoint protection removes freshly promoted `.exe` files.
 Current v2 updates go further: the MSI/bootstrapper reset installs a `bundle-layout.json` marker and stable apphosts, and routine in-app updates preserve those existing apphost EXEs while replacing mutable DLLs, scripts, assets, and manifests. Legacy single-file installs without that marker are sent through a one-time MSI or bootstrapper reset instead of trying to rewrite themselves in place.
 Managed install repair now also restores the required worker sidecar payload from the source bundle if any of those files are missing from an existing install, so queued sessions do not stay unpublished after restart because the worker cannot load `MeetingRecorder.Core.dll`.
@@ -417,7 +418,7 @@ Default portable path:
 
 Default managed path:
 
-- `%USERPROFILE%\Documents\MeetingRecorder\data\models\asr\ggml-base.bin`
+- `%LOCALAPPDATA%\MeetingRecorder\models\asr\ggml-base.bin`
 
 The app treats tiny files as invalid and will not accept an HTML or proxy error page saved with a `.bin` extension.
 
@@ -594,6 +595,7 @@ What it does:
 - shows row-level recommendation badges such as `Archive`, `Merge`, `Rename`, `Split`, `Retry Transcript`, `Add Speaker Labels`, or `Repair Speaker Labels`
 - shows a lighter cleanup review tray for the current selection or the whole library
 - offers a one-time historical review prompt with `Review Suggestions` and `Apply Safe Fixes`
+- auto-applies current `Safe Fix` rows after a full cleanup refresh when no other meeting action is running
 - includes `Add Speaker Labels` as a safe fix only when the diarization model bundle is installed and the meeting has usable published audio plus a transcript that currently lacks speaker labels
 - includes `Repair Speaker Labels` as a safe fix when a published JSON transcript already has labels but the speaker distribution looks like over-fragmentation, such as many fragment-only speakers in a short conversation
 - flags unusually sparse published transcripts for manual review when a long recording produced very little transcript text
@@ -602,6 +604,7 @@ Important behavior:
 
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, retry-transcript, add-speaker-label, and repair-speaker-label actions
+- failed automatic safe-fix attempts are suppressed by recommendation fingerprint until the recommendation changes, but manual `Apply Safe Fixes` still tries them immediately
 - sparse-transcript recommendations stay manual so the app does not automatically spend time retranscribing long recordings that may contain unusable source audio
 - split and lower-confidence actions stay manual
 - on first launch after the updated build, the versioned `published-meeting-repair-v7` pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence, republish repairable historical microphone sessions from `%LOCALAPPDATA%\MeetingRecorder\work`, and queue suspicious over-fragmented speaker labels for repair when speaker labeling is ready

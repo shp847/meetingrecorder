@@ -185,6 +185,16 @@ internal sealed class WindowMeetingDetector
             return false;
         }
 
+        if (ShouldPreferSpecificTeamsCandidateOverGenericGoogleMeetShell(candidate, currentBest))
+        {
+            return true;
+        }
+
+        if (ShouldPreferSpecificTeamsCandidateOverGenericGoogleMeetShell(currentBest, candidate))
+        {
+            return false;
+        }
+
         var candidatePriority = GetCandidatePriority(candidate);
         var currentBestPriority = GetCandidatePriority(currentBest);
 
@@ -227,6 +237,34 @@ internal sealed class WindowMeetingDetector
                 MatchKind: not AudioSourceMatchKind.EndpointFallback,
             } &&
             string.Equals(appName, "Google Meet", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldPreferSpecificTeamsCandidateOverGenericGoogleMeetShell(
+        DetectionDecision candidate,
+        DetectionDecision other)
+    {
+        return candidate.Platform == MeetingPlatform.Teams &&
+            other.Platform == MeetingPlatform.GoogleMeet &&
+            candidate.ShouldKeepRecording &&
+            HasSpecificSessionTitle(candidate) &&
+            HasTeamsSurfaceEvidence(candidate) &&
+            IsUnattributedGenericGoogleMeetShell(other);
+    }
+
+    private static bool HasTeamsSurfaceEvidence(DetectionDecision decision)
+    {
+        return decision.Platform == MeetingPlatform.Teams &&
+            decision.Signals.Any(signal =>
+                string.Equals(signal.Source, "teams-host", StringComparison.OrdinalIgnoreCase) ||
+                (string.Equals(signal.Source, "window-title", StringComparison.OrdinalIgnoreCase) &&
+                 signal.Value.Contains("Microsoft Teams", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool IsUnattributedGenericGoogleMeetShell(DetectionDecision decision)
+    {
+        return decision.Platform == MeetingPlatform.GoogleMeet &&
+            !HasAttributedGoogleMeetAudio(decision) &&
+            LooksLikeGenericGoogleMeetBrowserShellTitle(decision.SessionTitle);
     }
 
     internal static IReadOnlyList<MeetingWindowCandidate> EnumerateCandidateWindows()
@@ -285,10 +323,12 @@ internal sealed class WindowMeetingDetector
         if (LooksLikeTeamsMeetingSurface(candidateWindow, title))
         {
             var hasExplicitTeamsTitle = LooksLikeTeamsWindowTitle(title);
+            var hasHighConfidenceTeamsTitle = hasExplicitTeamsTitle ||
+                LooksLikeTeamsRosterWindowTitle(candidateWindow, title);
             signals.Add(new DetectionSignal(
                 "window-title",
                 hasExplicitTeamsTitle ? title : $"{title} | Microsoft Teams",
-                hasExplicitTeamsTitle ? 0.85d : 0.70d,
+                hasHighConfidenceTeamsTitle ? 0.85d : 0.70d,
                 now));
 
             if (!string.IsNullOrWhiteSpace(candidateWindow.ProcessName))
@@ -876,6 +916,19 @@ internal sealed class WindowMeetingDetector
             normalized.StartsWith("meet -", StringComparison.Ordinal);
     }
 
+    private static bool LooksLikeGenericGoogleMeetBrowserShellTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title) || !LooksLikeGoogleMeetWindowTitle(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim();
+        return LooksLikeBrowserShellTitle(normalized) &&
+            !normalized.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.Contains("meet.google.com/", StringComparison.OrdinalIgnoreCase);
+    }
+
     internal static bool LooksLikeTeamsWindowTitle(string title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -902,6 +955,11 @@ internal sealed class WindowMeetingDetector
     private static bool LooksLikeTeamsMeetingSurface(MeetingWindowCandidate candidateWindow, string title)
     {
         if (LooksLikeTeamsWindowTitle(title))
+        {
+            return true;
+        }
+
+        if (LooksLikeTeamsRosterWindowTitle(candidateWindow, title))
         {
             return true;
         }
@@ -936,6 +994,7 @@ internal sealed class WindowMeetingDetector
         }
 
         if (LooksLikeGoogleMeetWindowTitle(normalized) ||
+            LooksLikeBrowserShellTitle(normalized) ||
             !normalized.Any(char.IsLetterOrDigit))
         {
             return false;
@@ -953,6 +1012,103 @@ internal sealed class WindowMeetingDetector
         }
 
         return normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 2;
+    }
+
+    private static bool LooksLikeTeamsRosterWindowTitle(MeetingWindowCandidate candidateWindow, string title)
+    {
+        if (!LooksLikeBrowserWindowClass(candidateWindow.WindowClassName) ||
+            string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim();
+        if (!LooksLikeTeamsRosterTitleText(normalized) ||
+            normalized.Contains('|', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeRosterNameSegment(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            return false;
+        }
+
+        var normalized = segment.Trim();
+        if (normalized.Length < 2 || normalized.Length > 40 || !normalized.Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        var lower = normalized.ToLowerInvariant();
+        if (lower.Contains("google", StringComparison.Ordinal) ||
+            lower.Contains("meet", StringComparison.Ordinal) ||
+            lower.Contains("page", StringComparison.Ordinal) ||
+            lower.Contains("work", StringComparison.Ordinal) ||
+            lower.Contains("edge", StringComparison.Ordinal) ||
+            lower.Contains("chrome", StringComparison.Ordinal) ||
+            lower.Contains("teams", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > 3)
+        {
+            return false;
+        }
+
+        foreach (var character in normalized)
+        {
+            if (char.IsLetter(character) || char.IsWhiteSpace(character) || character is '-' or '\'' or '.')
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeTeamsRosterTitleText(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim();
+        if (normalized.EndsWith("| Microsoft Teams", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..normalized.LastIndexOf('|')].TrimEnd();
+        }
+
+        if (LooksLikeGoogleMeetWindowTitle(normalized) ||
+            LooksLikeBrowserShellTitle(normalized))
+        {
+            return false;
+        }
+
+        var segments = normalized.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length < 3 || segments.Length > 6)
+        {
+            return false;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (!LooksLikeRosterNameSegment(segment))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool LooksLikeTeamsProcessName(string? processName)
@@ -975,6 +1131,26 @@ internal sealed class WindowMeetingDetector
             "msedge" or "chrome" or "brave" or "vivaldi" or "opera" => string.Equals(candidateProcessName, sessionProcessName, StringComparison.OrdinalIgnoreCase),
             _ => false,
         };
+    }
+
+    private static bool LooksLikeBrowserShellTitle(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        var normalized = title.Trim();
+        return normalized.EndsWith(" - Microsoft Edge", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(" - Google Chrome", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(" - Mozilla Firefox", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(" - Brave", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(" - Opera", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(" - Vivaldi", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains(" - Work - ", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains(" - Personal - ", StringComparison.OrdinalIgnoreCase) ||
+            (normalized.Contains(" and ", StringComparison.OrdinalIgnoreCase) &&
+             normalized.Contains(" more pages", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetEffectiveSessionProcessName(AudioSourceSessionSnapshot session)
@@ -1039,6 +1215,7 @@ internal sealed class WindowMeetingDetector
                 normalizedTitle.StartsWith("Calls |", StringComparison.OrdinalIgnoreCase) ||
                 normalizedTitle.StartsWith("Search |", StringComparison.OrdinalIgnoreCase) ||
                 normalizedTitle.Contains("Meeting compact view", StringComparison.OrdinalIgnoreCase) ||
+                LooksLikeTeamsRosterTitleText(normalizedTitle) ||
                 normalizedTitle.Contains("Sharing control bar", StringComparison.OrdinalIgnoreCase))
             {
                 return false;

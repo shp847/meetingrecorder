@@ -9,22 +9,22 @@ public sealed class UpdateInstallerLaunchBuilderTests
     public void ResolveInstalledAppRoot_Prefers_ProcessPath_Directory_Over_AppContext_BaseDirectory()
     {
         var installedRoot = UpdateInstallerLaunchBuilder.ResolveInstalledAppRoot(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe",
             @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\");
 
-        Assert.Equal(@"C:\Users\test\Documents\MeetingRecorder", installedRoot);
+        Assert.Equal(@"C:\Users\test\AppData\Local\Programs\Meeting Recorder", installedRoot);
     }
 
     [Fact]
     public void ResolveInstalledAppExecutablePath_Prefers_The_Installed_Process_Root_Over_The_Temporary_AppContext_Directory()
     {
         var executablePath = UpdateInstallerLaunchBuilder.ResolveInstalledAppExecutablePath(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe",
             @"C:\Users\test\AppData\Local\Temp\.net\MeetingRecorder.App\abc123\",
             "MeetingRecorder.App.exe");
 
         Assert.Equal(
-            @"C:\Users\test\Documents\MeetingRecorder\MeetingRecorder.App.exe",
+            @"C:\Users\test\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe",
             executablePath);
     }
 

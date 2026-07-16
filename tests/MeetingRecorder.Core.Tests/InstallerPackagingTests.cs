@@ -22,7 +22,7 @@ public sealed class InstallerPackagingTests
     }
 
     [Fact]
-    public void WixPackage_Uses_Documents_MeetingRecorder_Location_And_StartMenu_Shortcut()
+    public void WixPackage_Uses_LocalAppData_Programs_Location_And_StartMenu_Shortcut()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -35,12 +35,10 @@ public sealed class InstallerPackagingTests
 
         Assert.Contains("ProgramMenuFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("TARGETDIR", packageContents, StringComparison.Ordinal);
-        Assert.Contains("PHYSICALUSERPROFILE", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Volatile Environment", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Name=\"USERPROFILE\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("LocalAppDataFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("<SetProperty Id=\"INSTALLFOLDER\"", packageContents, StringComparison.Ordinal);
-        Assert.Contains("[PHYSICALUSERPROFILE]\\Documents\\MeetingRecorder", packageContents, StringComparison.Ordinal);
-        Assert.Contains("Name=\"MeetingRecorder\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("[LocalAppDataFolder]Programs\\Meeting Recorder", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Name=\"Meeting Recorder\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("ProgramMenuFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("<Shortcut", packageContents, StringComparison.Ordinal);
         Assert.Contains("Target=\"[INSTALLFOLDER]MeetingRecorder.App.exe\"", packageContents, StringComparison.Ordinal);
@@ -48,7 +46,6 @@ public sealed class InstallerPackagingTests
         Assert.Contains("ARPINSTALLLOCATION", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("<Property Id=\"ARPINSTALLLOCATION\" Value=\"[INSTALLFOLDER]\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("<SetProperty Id=\"ARPINSTALLLOCATION\"", packageContents, StringComparison.Ordinal);
-        Assert.DoesNotContain("LocalProgramsFolder", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("PersonalFolder", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("UserProfileFolder", packageContents, StringComparison.Ordinal);
     }

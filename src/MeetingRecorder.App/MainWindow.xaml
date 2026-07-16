@@ -755,7 +755,10 @@
                 </TabItem>
                 <TabItem x:Name="MeetingsTabItem" Header="Meetings">
                     <Grid x:Name="MeetingsWorkspaceGrid"
-                          Margin="0,12,0,0">
+                          Margin="0,12,0,0"
+                          AllowDrop="True"
+                          DragOver="MeetingsWorkspaceGrid_OnDragOver"
+                          Drop="MeetingsWorkspaceGrid_OnDrop">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -910,6 +913,18 @@
                                 <StackPanel Margin="0,0,0,10"
                                             VerticalAlignment="Bottom">
                                     <TextBlock Visibility="Hidden"
+                                               Text="Import" />
+                                    <Button x:Name="AddAudioFilesButton"
+                                            Width="130"
+                                            Height="34"
+                                            Margin="0,6,14,0"
+                                            Click="AddAudioFilesButton_OnClick"
+                                            Content="Add Audio Files" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,0,10"
+                                            VerticalAlignment="Bottom">
+                                    <TextBlock Visibility="Hidden"
                                                Text="Refresh" />
                                     <Button x:Name="RefreshMeetingsButton"
                                             Width="120"
@@ -925,6 +940,7 @@
                               Grid.Row="2"
                               Margin="0,16,0,0">
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
@@ -972,7 +988,7 @@
                             </Border>
 
                             <Border x:Name="MeetingSelectionCommandBarBorder"
-                                    Grid.Row="1"
+                                    Grid.Row="2"
                                     Grid.Column="0"
                                     Grid.ColumnSpan="3"
                                     Margin="0,16,0,0"
@@ -1028,8 +1044,132 @@
                                 </DockPanel>
                             </Border>
 
+                            <Border x:Name="ExternalAudioImportReviewBorder"
+                                    Grid.Row="1"
+                                    Grid.Column="0"
+                                    Grid.ColumnSpan="3"
+                                    Margin="0,16,0,0"
+                                    Padding="14"
+                                    CornerRadius="4"
+                                    Background="{StaticResource AppCardBrush}"
+                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed">
+                                <StackPanel>
+                                    <DockPanel LastChildFill="True">
+                                        <WrapPanel DockPanel.Dock="Right"
+                                                   Margin="12,0,0,0">
+                                            <Button x:Name="AddMoreAudioFilesButton"
+                                                    Width="130"
+                                                    Height="32"
+                                                    Margin="0,0,10,0"
+                                                    Click="AddAudioFilesButton_OnClick"
+                                                    Content="Add More Files" />
+                                            <Button x:Name="QueueExternalAudioImportsButton"
+                                                    Width="110"
+                                                    Height="32"
+                                                    Margin="0,0,10,0"
+                                                    Click="QueueExternalAudioImportsButton_OnClick"
+                                                    Content="Queue Valid" />
+                                            <Button x:Name="RemoveExternalAudioImportButton"
+                                                    Width="130"
+                                                    Height="32"
+                                                    Margin="0,0,10,0"
+                                                    Click="RemoveExternalAudioImportButton_OnClick"
+                                                    Content="Remove Selected" />
+                                            <Button x:Name="OpenExternalAudioImportSetupButton"
+                                                    Width="150"
+                                                    Height="32"
+                                                    Click="OpenExternalAudioImportSetupButton_OnClick"
+                                                    Content="Open Settings &gt; Setup" />
+                                        </WrapPanel>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="Imported Audio Review" />
+                                            <TextBlock x:Name="ExternalAudioImportSummaryTextBlock"
+                                                       Margin="0,4,0,0"
+                                                       Foreground="{StaticResource AppMutedTextBrush}"
+                                                       Text="Add recordings from another source, review them here, then queue the valid files for transcription and optional speaker labeling."
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </DockPanel>
+
+                                    <DataGrid x:Name="ExternalAudioImportDataGrid"
+                                              Margin="0,12,0,0"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              HeadersVisibility="Column"
+                                              IsReadOnly="True"
+                                              MinHeight="150"
+                                              MaxHeight="220"
+                                              SelectionMode="Single"
+                                              SelectionChanged="ExternalAudioImportDataGrid_OnSelectionChanged">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Source"
+                                                                Binding="{Binding SourceDisplayName, Mode=OneWay}"
+                                                                Width="1.7*" />
+                                            <DataGridTextColumn Header="Method"
+                                                                Binding="{Binding ImportMethodLabel, Mode=OneWay}"
+                                                                Width="0.9*" />
+                                            <DataGridTextColumn Header="Title"
+                                                                Binding="{Binding EditableTitle, Mode=OneWay}"
+                                                                Width="1.4*" />
+                                            <DataGridTextColumn Header="Start Time"
+                                                                Binding="{Binding StartedAtDisplayText, Mode=OneWay}"
+                                                                Width="1.2*" />
+                                            <DataGridTextColumn Header="Duration"
+                                                                Binding="{Binding DurationDisplayText, Mode=OneWay}"
+                                                                Width="0.9*" />
+                                            <DataGridTextColumn Header="Status"
+                                                                Binding="{Binding StatusText, Mode=OneWay}"
+                                                                Width="2*" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0"
+                                                    Margin="0,0,12,0">
+                                            <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                       Text="Meeting Title" />
+                                            <TextBox x:Name="ExternalAudioImportTitleTextBox"
+                                                     Height="32"
+                                                     Margin="0,6,0,0"
+                                                     TextChanged="ExternalAudioImportTitleTextBox_OnTextChanged" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1"
+                                                    Margin="0,0,12,0">
+                                            <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                       Text="Started (local)" />
+                                            <TextBox x:Name="ExternalAudioImportStartedAtTextBox"
+                                                     Height="32"
+                                                     Margin="0,6,0,0"
+                                                     TextChanged="ExternalAudioImportStartedAtTextBox_OnTextChanged" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                       Text="Project" />
+                                            <TextBox x:Name="ExternalAudioImportProjectTextBox"
+                                                     Height="32"
+                                                     Margin="0,6,0,0"
+                                                     TextChanged="ExternalAudioImportProjectTextBox_OnTextChanged" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <TextBlock x:Name="ExternalAudioImportDetailStatusTextBlock"
+                                               Margin="0,10,0,0"
+                                               Foreground="{StaticResource AppMutedTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
                             <Border x:Name="MeetingsListBorder"
-                                    Grid.Row="2"
+                                    Grid.Row="3"
                                     Grid.Column="0"
                                     Margin="0,16,0,0"
                                     Padding="8"
@@ -1206,7 +1346,7 @@
                             </Border>
 
                             <GridSplitter x:Name="MeetingsWorkspaceGridSplitter"
-                                          Grid.Row="2"
+                                          Grid.Row="3"
                                           Grid.Column="1"
                                           Width="12"
                                           HorizontalAlignment="Stretch"
@@ -1217,7 +1357,7 @@
                                           Visibility="Collapsed" />
 
                             <ScrollViewer x:Name="MeetingsInspectorScrollViewer"
-                                          Grid.Row="3"
+                                          Grid.Row="4"
                                           Grid.Column="0"
                                           Grid.ColumnSpan="3"
                                           Margin="0,16,0,0"

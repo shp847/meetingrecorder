@@ -23,18 +23,10 @@
     <Property Id="MsiLogging" Value="voicewarmup!" />
     <Property Id="MODEL_OPTION_TRANSCRIPTION" Value="standard" Secure="yes" />
     <Property Id="MODEL_OPTION_SPEAKER_LABELING" Value="standard" Secure="yes" />
-    <Property Id="PHYSICALUSERPROFILE" Secure="yes">
-      <RegistrySearch
-        Id="SearchPhysicalUserProfile"
-        Root="HKCU"
-        Key="Volatile Environment"
-        Name="USERPROFILE"
-        Type="raw" />
-    </Property>
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Meeting Recorder installed successfully. Setup tried the selected model downloads. If transcription still needs setup, open Settings > Setup at first launch to finish the download or import an approved model." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Meeting Recorder" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <SetProperty Id="INSTALLFOLDER" Value="[PHYSICALUSERPROFILE]\Documents\MeetingRecorder" After="AppSearch" Sequence="both" Condition="PHYSICALUSERPROFILE" />
+    <SetProperty Id="INSTALLFOLDER" Value="[LocalAppDataFolder]Programs\Meeting Recorder" After="AppSearch" Sequence="both" />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
     <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]Launch-MeetingRecorder-AfterInstall.vbs" After="CostFinalize" Sequence="ui" />
     <SetProperty
@@ -138,7 +130,7 @@
     </InstallExecuteSequence>
 
     <StandardDirectory Id="TARGETDIR">
-      <Directory Id="INSTALLFOLDER" Name="MeetingRecorder" />
+      <Directory Id="INSTALLFOLDER" Name="Meeting Recorder" />
     </StandardDirectory>
 
 <?if $(var.HasHarvestedAppFiles) = true ?>

@@ -156,9 +156,30 @@ public sealed class SessionManifestStore
             MicrophoneCaptureSegments = normalizedMicrophoneCaptureSegments,
             MicrophoneChunkPaths = normalizedMicrophoneCaptureSegments.SelectMany(segment => segment.ChunkPaths).ToArray(),
             CaptureTimeline = NormalizeCaptureTimeline(manifest.CaptureTimeline),
+            ImportedSourceAudio = NormalizeImportedSourceAudio(manifest.ImportedSourceAudio),
             KeyAttendees = MeetingMetadataNameMatcher.MergeNames(manifest.KeyAttendees, Array.Empty<string>()),
             Attendees = NormalizeAttendees(manifest.Attendees),
             SummarizationStatus = NormalizeSummarizationStatus(manifest.SummarizationStatus),
+        };
+    }
+
+    private static ImportedSourceAudioInfo? NormalizeImportedSourceAudio(ImportedSourceAudioInfo? importedSourceAudio)
+    {
+        if (importedSourceAudio is null)
+        {
+            return null;
+        }
+
+        return importedSourceAudio with
+        {
+            OriginalPath = string.IsNullOrWhiteSpace(importedSourceAudio.OriginalPath)
+                ? string.Empty
+                : importedSourceAudio.OriginalPath,
+            SourceDisplayName = string.IsNullOrWhiteSpace(importedSourceAudio.SourceDisplayName)
+                ? Path.GetFileName(importedSourceAudio.OriginalPath)
+                : importedSourceAudio.SourceDisplayName.Trim(),
+            ImportMethod = importedSourceAudio.ImportMethod,
+            SourceRetained = importedSourceAudio.SourceRetained,
         };
     }
 

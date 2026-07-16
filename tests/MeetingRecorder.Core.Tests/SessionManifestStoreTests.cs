@@ -168,6 +168,59 @@ public sealed class SessionManifestStoreTests
     }
 
     [Fact]
+    public async Task LoadAsync_Normalizes_Legacy_Imported_Source_Metadata_With_New_Defaults()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var sessionRoot = Path.Combine(workDir, "legacy-import-session");
+        Directory.CreateDirectory(sessionRoot);
+        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+        await File.WriteAllTextAsync(
+            manifestPath,
+            """
+            {
+              "sessionId": "legacy-import-session",
+              "platform": 2,
+              "detectedTitle": "Legacy Import",
+              "startedAtUtc": "2026-07-14T14:00:00Z",
+              "state": 3,
+              "mergedAudioPath": "C:\\work\\legacy-import.wav",
+              "importedSourceAudio": {
+                "originalPath": "C:\\imports\\legacy-import.wav",
+                "sourceSizeBytes": 2048,
+                "sourceLastWriteUtc": "2026-07-14T13:55:00Z"
+              },
+              "transcriptionStatus": {
+                "stageName": "transcription",
+                "state": 0,
+                "updatedAtUtc": "2026-07-14T14:00:00Z",
+                "message": null
+              },
+              "diarizationStatus": {
+                "stageName": "diarization",
+                "state": 0,
+                "updatedAtUtc": "2026-07-14T14:00:00Z",
+                "message": null
+              },
+              "publishStatus": {
+                "stageName": "publish",
+                "state": 0,
+                "updatedAtUtc": "2026-07-14T14:00:00Z",
+                "message": null
+              }
+            }
+            """);
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+
+        var loaded = await store.LoadAsync(manifestPath);
+
+        Assert.NotNull(loaded.ImportedSourceAudio);
+        Assert.Equal("legacy-import.wav", loaded.ImportedSourceAudio!.SourceDisplayName);
+        Assert.Equal(ExternalAudioImportMethod.WatchedFolder, loaded.ImportedSourceAudio.ImportMethod);
+        Assert.True(loaded.ImportedSourceAudio.SourceRetained);
+        Assert.Null(loaded.ImportedSourceAudio.ProbedDuration);
+    }
+
+    [Fact]
     public async Task LoadAsync_Normalizes_Legacy_Microphone_Chunk_Paths_Into_A_Full_Session_Segment()
     {
         var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");

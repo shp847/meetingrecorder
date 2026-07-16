@@ -250,6 +250,29 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Does_Not_Return_RegenerateTranscript_When_Transcript_Reprocessing_Is_Already_Queued()
+    {
+        var audioPath = Path.Combine(_root, "queued-retry.wav");
+        await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(30));
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    "2026-03-19_214258_teams_microsoft-teams",
+                    "Microsoft Teams",
+                    DateTimeOffset.Parse("2026-03-19T21:42:58Z"),
+                    MeetingPlatform.Teams,
+                    TimeSpan.FromMinutes(24) + TimeSpan.FromSeconds(7),
+                    audioPath: audioPath,
+                    markdownPath: null,
+                    manifestState: SessionState.Queued),
+            });
+
+        Assert.Empty(recommendations);
+    }
+
+    [Fact]
     public async Task Analyze_Returns_RegenerateTranscript_When_Published_Transcript_Is_Sparse()
     {
         var stem = "2026-05-13_185954_teams_data-role-connect";

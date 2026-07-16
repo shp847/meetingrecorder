@@ -38,8 +38,8 @@ The app is now split between reusable platform projects and Meeting Recorder-spe
 - `MeetingRecorder.Product`
   - product adapter that owns the manifest, shell registrations, about/support content, and default install/data layout
 
-For the shipped MSI flow, the managed install root in `MeetingRecorder.Product` and the bundled `MeetingRecorder.product.json` are expected to stay aligned with `%USERPROFILE%\Documents\MeetingRecorder`. Writable runtime data remains outside the install root under `%LOCALAPPDATA%\MeetingRecorder`.
-Managed-install update repair is also responsible for cleaning up stale launch surfaces around that canonical root: it now quarantines both the older `%LOCALAPPDATA%\Programs\Meeting Recorder` location and the legacy `%USERPROFILE%\Documents\Meeting Recorder` alias when those exist, rewrites existing Desktop or Start Menu shortcuts back to the canonical launcher after an update, and repairs an already-pinned taskbar shortcut to the installed app executable plus installed `MeetingRecorder.ico` without creating a new taskbar pin.
+For the shipped MSI flow, the managed install root in `MeetingRecorder.Product` and the bundled `MeetingRecorder.product.json` are expected to stay aligned with `%LOCALAPPDATA%\Programs\Meeting Recorder`. Writable runtime data remains outside the install root under `%LOCALAPPDATA%\MeetingRecorder`.
+Managed-install update repair is also responsible for cleaning up stale launch surfaces around that canonical root: it now quarantines both legacy `%USERPROFILE%\Documents\MeetingRecorder` variants when those exist, rewrites existing Desktop or Start Menu shortcuts back to the canonical launcher after an update, and repairs an already-pinned taskbar shortcut to the installed app executable plus installed `MeetingRecorder.ico` without creating a new taskbar pin.
 The MSI finish-launch path is intentionally not a raw second launch of `MeetingRecorder.App.exe`; it uses an installed relaunch wrapper plus a short-lived marker under `%LOCALAPPDATA%\MeetingRecorder` so the app can distinguish installer relaunches from normal user activations and coordinate a clean close-and-reopen of an idle existing instance.
 
 ### Meeting Recorder-specific runtime projects
@@ -94,7 +94,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
 The default transcription provider remains Whisper.NET and the default diarization provider remains the local Sherpa sidecar. Experimental GPU transcription and alternate diarization backends are represented as Advanced-settings local CLI providers: worker probes persist success/failure for the configured executable, startup uses an external provider only when the saved probe still matches the executable path, prepared audio flows through `{audioPath}`, transcript segments flow through `{transcriptPath}` where needed, and provider output keeps the existing `TranscriptionResult` or `DiarizationResult` shape.
 For self-contained release bundles, `MeetingRecorder.App` is now published as a loose apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
-Runtime paths that persist launch targets resolve them from `Environment.ProcessPath` so launch-on-login, worker startup, and updater handoff stay rooted at the canonical managed install under `%USERPROFILE%\Documents\MeetingRecorder`.
+Runtime paths that persist launch targets resolve them from `Environment.ProcessPath` so launch-on-login, worker startup, and updater handoff stay rooted at the canonical managed install under `%LOCALAPPDATA%\Programs\Meeting Recorder`.
 
 ## 3. Windows Deployment Constraints
 
@@ -351,6 +351,7 @@ Historical behavior:
 
 - the old silent repair path has been replaced with a one-time historical review prompt in the Meetings experience
 - users can review suggestions first or apply only the high-confidence safe fixes
+- full cleanup refreshes can auto-apply safe fixes in the background, but failed automatic attempts are suppressed per recommendation fingerprint until the recommendation changes
 - safe fixes are never permanent deletes; archive-style cleanup moves artifacts into the Meetings archive
 - current archive-style flows use a single `Documents\Meetings\Archive` root, and any older parallel legacy archive roots are treated as migration inputs rather than ongoing destinations
 - archive-style flows mark archived artifacts with the Windows unpinned file attribute after writing them, allowing OneDrive Files On-Demand to dehydrate large recovery WAVs while preserving cloud recovery
@@ -531,7 +532,7 @@ That bootstrap path:
 - extracts it to a temporary folder
 - runs `AppPlatform.Deployment.Cli` from the downloaded bundle
 - expects the WPF shell itself to be present as a loose apphost layout with `MeetingRecorder.App.exe`, `MeetingRecorder.App.dll`, `.deps.json`, `.runtimeconfig.json`, and `bundle-layout.json`
-- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so helpers stay anchored in `%USERPROFILE%\Documents\MeetingRecorder`
+- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so helpers stay anchored in `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - preserves installed stable apphosts during v2 in-app updates and replaces only mutable DLLs, scripts, assets, and manifests
 - requires a one-time MSI or bootstrapper reset for legacy single-file installs that do not have the v2 layout marker
 - only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt when explicitly launched
@@ -539,7 +540,7 @@ That bootstrap path:
 - validates `bundle-integrity.json` before the managed install root is changed
 - persists install provenance under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-at timestamp plus any trusted installed package published-at and asset-size identity used by in-app update comparison, and both MSI post-install provisioning plus app startup now repair a missing provenance file with local install facts so older or partially migrated installs can recover gracefully; if package metadata is still unavailable after that repair, the first successful `UpToDate` GitHub check backfills the installed package publish timestamp and asset size into the same provenance file
 - preserves the existing install `data` folder on update installs instead of reimplementing install logic in PowerShell
-- promotes staged app files into the managed install root in place during updates instead of renaming the entire `Documents\MeetingRecorder` tree first
+- promotes staged app files into the managed install root in place during updates instead of renaming the entire `%LOCALAPPDATA%\Programs\Meeting Recorder` tree first
 - writes a diagnostic log under `%TEMP%\MeetingRecorderInstaller`
 - suppresses raw PowerShell transfer progress noise in the user-facing bootstrap scripts
 - pauses on error for user-facing console helpers so users can review the failure before the window closes
@@ -557,7 +558,7 @@ Deprecated thin-launcher responsibilities were intentionally limited to:
 That deprecated path no longer:
 
 - extracts ZIPs
-- copies app files into `Documents\MeetingRecorder`
+- copies app files into `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - mutates the managed install tree directly
 - launches the app after install
 - creates shortcuts itself
@@ -568,14 +569,14 @@ The WiX package is now authored as a per-user MSI.
 
 That MSI path:
 
-- installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`
+- installs the binaries under `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - avoids `Program Files` and per-machine scope
-- adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `Documents\MeetingRecorder`
+- adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - keeps writable runtime data outside the installed binaries
 - downloads the selected Standard or Higher Accuracy transcription and speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
 - shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
 - invokes the installed `AppPlatform.Deployment.Cli provision-models` step after `InstallFinalize` so provisioning and later update repair share one model-management path without depending on pre-commit file visibility
-- keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%USERPROFILE%\Documents\MeetingRecorder`
+- keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - treats `MeetingRecorder-v<version>-win-x64.zip` as the only valid in-app update package shape; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs are rejected before update apply asks the app process to exit
 - preserves user-selected speaker-labeling run mode across in-app updates by stamping the one-time legacy safety migration whenever Settings or Setup saves that preference
 - keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, including `highAccuracy` for Higher Accuracy setup options, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow

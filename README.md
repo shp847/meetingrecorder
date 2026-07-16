@@ -64,7 +64,7 @@ The current documented release line is **v0.3**.
 
 - `MeetingRecorderInstaller.msi`
 
-This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%USERPROFILE%\Documents\MeetingRecorder`, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files. A fresh MSI install now tries the recommended Standard transcription and Standard speaker-labeling downloads first, then offers first-install Advanced options to try Higher Accuracy or skip speaker labeling for now.
+This is the preferred Windows installer for the current release flow, especially when a per-user MSI is more appropriate than a custom bootstrapper. The MSI installs the binaries under `%LOCALAPPDATA%\Programs\Meeting Recorder`, which avoids OneDrive-synced Documents roots, adds a user-scope Start Menu entry, and leaves writable runtime data outside the installed files. A fresh MSI install now tries the recommended Standard transcription and Standard speaker-labeling downloads first, then offers first-install Advanced options to try Higher Accuracy or skip speaker labeling for now.
 
 ### Other supported install paths
 
@@ -182,13 +182,17 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Manual context-menu actions for archive, permanent delete, reprocessing, split, merge, and related meeting maintenance
 - Suggests adding missing speaker labels when the diarization model bundle is ready and the transcript can be upgraded safely, and suggests repairing existing speaker labels when a published JSON sidecar shows an unusually large, fragment-heavy speaker distribution
 - One-time historical review flow with `Review Suggestions` and `Apply Safe Fixes`
+- Full Meetings cleanup refreshes can now auto-apply current `Safe Fix` items in the background while leaving review-first recommendations visible
 - Library/detail workflow where the Meetings tab stays focused on browsing, queue status, artifact shortcuts, and cleanup review, while the owned detail window handles transcript review and one-meeting maintenance
 
 ### External Audio Import
 
-- Drop supported audio files into the watched audio folder
-- Automatic import into the processing pipeline
-- Automatic transcript generation for newly discovered audio without transcripts
+- `Add Audio Files` from the `Meetings` workspace for explicit import review before queueing
+- Drag and drop supported audio files onto `Meetings`
+- Edit the inferred title, local start time, and optional project before queueing
+- Original source files stay in place by default
+- Legacy watched-folder scanning of the configured audio folder still works as a compatibility path
+- Automatic import into the processing pipeline after review or watched-folder discovery
 - Retry suppression for unchanged failed imports so the app does not loop forever on a bad file
 
 ### Updates and Deployment
@@ -204,11 +208,11 @@ For newer managed installs, the app can also migrate prior portable data forward
 - In-app update downloads now reject non-app release assets before download, validate the downloaded app ZIP name, size, and ZIP readability before persisting it under `%LOCALAPPDATA%\MeetingRecorder\updates`, clear stale pending-update config that points at missing or non-app assets, and preflight the ZIP again before asking the running app to shut down
 - In-app updates now require the v2 `bundle-layout.json` marker and existing stable apphosts before self-update; legacy single-file installs show a one-time MSI/bootstrapper reset path instead of attempting a fragile self-rewrite
 - `Settings > Updates` now separates local install facts from release-package metadata: `Current Installation` shows the actual installed-on timestamp and install footprint from the local install, while installed package published-at and package size are shown when managed install provenance has trusted package metadata or after the first successful `UpToDate` GitHub check backfills those fields for an older or MSI-origin install that arrived without provenance
-- In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so it stays rooted at `%USERPROFILE%\Documents\MeetingRecorder`
+- In-app update handoff now resolves `AppPlatform.Deployment.Cli.exe` from the installed app directory via the running process path, so it stays rooted at `%LOCALAPPDATA%\Programs\Meeting Recorder`
 - Launch-on-login registration now also resolves `MeetingRecorder.App.exe` from the installed app directory via the running process path, so Windows startup targets the canonical managed install root
 - Background publish processing now resolves `MeetingRecorder.ProcessingWorker.exe` from the installed app directory via the running process path, so queued sessions publish from the canonical managed install root
 - Managed install repair now restores the required worker sidecar payload if any of those files are missing from an existing install, instead of only checking for the worker `.exe`
-- CLI-driven updates now repair existing Desktop and Start Menu launch surfaces and quarantine both legacy `%LOCALAPPDATA%\Programs\Meeting Recorder` installs and the older `%USERPROFILE%\Documents\Meeting Recorder` root, so stale launchers do not keep pointing at a missing apphost after update
+- CLI-driven updates now repair existing Desktop and Start Menu launch surfaces and quarantine both legacy `%USERPROFILE%\Documents\MeetingRecorder` roots plus the older `%USERPROFILE%\Documents\Meeting Recorder` alias, so stale launchers do not keep pointing at a missing apphost after update
 - Same-version pending updates are only cleared when their published-at and asset-size identity matches the installed build, so rebuilt releases can still replace older binaries that report the same semantic version when you install them manually
 - In-app update comparison now resolves the installed package published-at and asset-size identity only from trusted managed install provenance, so stale `%LOCALAPPDATA%` config cannot keep advertising a freshly reinstalled same-version build as newer
 - Background auto-install and passive pending-update retry are limited to true semantic-version upgrades, while an explicitly queued manual same-version install can still apply once background processing becomes idle
@@ -281,6 +285,8 @@ The external audio import flow accepts these source formats:
 - `.aac`
 - `.mp4`
 
+The recommended path is explicit import from `Meetings > Add Audio Files` or drag/drop onto the `Meetings` surface. Meeting Recorder keeps the original source file, copies a working version into its local work session, preflights the file with the same audio-preparation stack used by transcription, and then publishes the normal meeting audio, transcript, and sidecar artifacts once the queue finishes. The configured audio output folder is still watched for compatibility, but it is now secondary to the explicit import flow.
+
 ## Outputs
 
 For a successful transcript run, the app publishes:
@@ -309,7 +315,7 @@ When available, the published transcript JSON now also carries durable meeting m
 
 The ready-marker is the completion signal intended for downstream tools such as Power Automate.
 
-Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup. Separately, successful publish and startup maintenance can permanently delete redundant bulky local work-cache files only after the matching published recording exists, without deleting published recordings or transcripts.
+Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Full cleanup refreshes can auto-apply the current high-confidence `Safe Fix` set, but failed automatic attempts are suppressed by recommendation fingerprint until the underlying recommendation changes, and manual `Apply Safe Fixes` still bypasses that suppression. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup. Separately, successful publish and startup maintenance can permanently delete redundant bulky local work-cache files only after the matching published recording exists, without deleting published recordings or transcripts.
 
 Meeting list refreshes, cleanup analysis, and dropped-audio import are metadata-first for OneDrive-backed folders: the app uses manifest end times when available and skips offline or reparse-point audio files so Files On-Demand placeholders stay dehydrated.
 

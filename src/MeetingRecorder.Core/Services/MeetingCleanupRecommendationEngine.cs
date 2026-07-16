@@ -328,6 +328,11 @@ internal static class MeetingCleanupRecommendationEngine
             return null;
         }
 
+        if (IsProcessingPending(inspection.Meeting))
+        {
+            return null;
+        }
+
         if (string.IsNullOrWhiteSpace(inspection.Meeting.MarkdownPath) &&
             string.IsNullOrWhiteSpace(inspection.Meeting.JsonPath))
         {

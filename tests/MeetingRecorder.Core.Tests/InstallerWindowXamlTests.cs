@@ -79,7 +79,7 @@ public sealed class InstallerWindowXamlTests
 
         var xaml = File.ReadAllText(xamlPath);
 
-        Assert.Contains("Documents\\MeetingRecorder", xaml, StringComparison.Ordinal);
+        Assert.Contains("%LOCALAPPDATA%\\Programs\\Meeting Recorder", xaml, StringComparison.Ordinal);
         Assert.Contains("%LOCALAPPDATA%\\MeetingRecorder", xaml, StringComparison.Ordinal);
         Assert.Contains("config, logs, models, and work files", xaml, StringComparison.OrdinalIgnoreCase);
     }

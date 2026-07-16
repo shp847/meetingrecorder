@@ -7,7 +7,7 @@ public sealed class InstallPathProcessManagerTests
     [Fact]
     public async Task EnsureInstallPathReleasedAsync_Retries_Until_The_Primary_Instance_Releases()
     {
-        var targetRoot = @"C:\Users\Test\Documents\MeetingRecorder";
+        var targetRoot = @"C:\Users\Test\AppData\Local\Programs\Meeting Recorder";
         var processController = new FakeInstallPathProcessController(
             signalResult: true,
             waitResults: [false, false, true]);
@@ -23,7 +23,7 @@ public sealed class InstallPathProcessManagerTests
     [Fact]
     public async Task EnsureInstallPathReleasedAsync_Still_Signals_Shutdown_When_Path_Is_Not_In_Use()
     {
-        var targetRoot = @"C:\Users\Test\Documents\MeetingRecorder";
+        var targetRoot = @"C:\Users\Test\AppData\Local\Programs\Meeting Recorder";
         var processController = new FakeInstallPathProcessController(signalResult: false);
         var manager = new InstallPathProcessManager(processController);
 
@@ -37,7 +37,7 @@ public sealed class InstallPathProcessManagerTests
     [Fact]
     public async Task EnsureInstallPathReleasedAsync_Throws_When_The_Primary_Instance_Never_Releases()
     {
-        var targetRoot = @"C:\Users\Test\Documents\MeetingRecorder";
+        var targetRoot = @"C:\Users\Test\AppData\Local\Programs\Meeting Recorder";
         var processController = new FakeInstallPathProcessController(
             signalResult: true,
             waitResults: [false, false, false]);

@@ -80,10 +80,10 @@ public sealed class MeetingRecorderProductModule :
                 Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     "Documents",
-                    "Meeting Recorder"),
+                    "MeetingRecorder"),
                 Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Programs",
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "Documents",
                     "Meeting Recorder"),
             ]);
     }

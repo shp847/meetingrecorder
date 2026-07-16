@@ -59,10 +59,66 @@ public sealed record MeetingSessionManifest
     public string? ErrorSummary { get; init; }
 }
 
-public sealed record ImportedSourceAudioInfo(
-    string OriginalPath,
-    long SourceSizeBytes,
-    DateTimeOffset SourceLastWriteUtc);
+public enum ExternalAudioImportMethod
+{
+    WatchedFolder = 0,
+    FilePicker = 1,
+    DragDrop = 2,
+}
+
+public sealed record ImportedSourceAudioInfo
+{
+    public ImportedSourceAudioInfo()
+    {
+    }
+
+    public ImportedSourceAudioInfo(
+        string originalPath,
+        long sourceSizeBytes,
+        DateTimeOffset sourceLastWriteUtc)
+        : this(
+            originalPath,
+            sourceSizeBytes,
+            sourceLastWriteUtc,
+            Path.GetFileName(originalPath),
+            ExternalAudioImportMethod.WatchedFolder,
+            probedDuration: null,
+            sourceRetained: true)
+    {
+    }
+
+    public ImportedSourceAudioInfo(
+        string originalPath,
+        long sourceSizeBytes,
+        DateTimeOffset sourceLastWriteUtc,
+        string? sourceDisplayName,
+        ExternalAudioImportMethod importMethod,
+        TimeSpan? probedDuration,
+        bool sourceRetained)
+    {
+        OriginalPath = originalPath;
+        SourceSizeBytes = sourceSizeBytes;
+        SourceLastWriteUtc = sourceLastWriteUtc;
+        SourceDisplayName = sourceDisplayName ?? string.Empty;
+        ImportMethod = importMethod;
+        ProbedDuration = probedDuration;
+        SourceRetained = sourceRetained;
+    }
+
+    public string OriginalPath { get; init; } = string.Empty;
+
+    public long SourceSizeBytes { get; init; }
+
+    public DateTimeOffset SourceLastWriteUtc { get; init; }
+
+    public string SourceDisplayName { get; init; } = string.Empty;
+
+    public ExternalAudioImportMethod ImportMethod { get; init; } = ExternalAudioImportMethod.WatchedFolder;
+
+    public TimeSpan? ProbedDuration { get; init; }
+
+    public bool SourceRetained { get; init; } = true;
+}
 
 public sealed record MicrophoneCaptureSegment(
     DateTimeOffset StartedAtUtc,

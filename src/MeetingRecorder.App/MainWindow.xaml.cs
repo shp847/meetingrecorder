@@ -91,6 +91,7 @@ public partial class MainWindow : Window
     private readonly TeamsLiveAttendeeCaptureService _teamsLiveAttendeeCaptureService;
     private readonly OutlookCalendarMeetingTitleProvider _outlookCalendarMeetingTitleProvider;
     private readonly MeetingsAttendeeBackfillService _meetingsAttendeeBackfillService;
+    private readonly MeetingCleanupAutoApplyCacheService _meetingCleanupAutoApplyCacheService;
     private readonly DispatcherTimer _detectionTimer;
     private readonly DispatcherTimer _audioGraphTimer;
     private readonly DispatcherTimer _updateTimer;
@@ -140,6 +141,7 @@ public partial class MainWindow : Window
     private bool _isValidatingModelProxySummaryProvider;
     private bool _isValidatingOpenAiSummaryProvider;
     private bool _isGeneratingMeetingSummary;
+    private bool _isQueueingExternalAudioImports;
     private int _updateCheckOperations;
     private bool _isPreparingUpdateInstall;
     private bool _isDownloadingUpdate;
@@ -198,6 +200,10 @@ public partial class MainWindow : Window
     private bool _isSynchronizingSpeakerLabelingModeSelectors;
     private MeetingCleanupRecommendation[] _meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();
     private MeetingListRow[] _allMeetingRows = Array.Empty<MeetingListRow>();
+    private List<ExternalAudioImportReviewRow> _externalAudioImportRows = [];
+    private ExternalAudioImportReviewRow? _selectedExternalAudioImportRow;
+    private bool _isUpdatingExternalAudioImportEditor;
+    private bool _isRefreshingExternalAudioImportGrid;
     private Dictionary<string, bool> _meetingGroupExpansionStates = new(StringComparer.Ordinal);
     private bool _isApplyingMeetingGroupExpansionState;
     private AppShutdownMode _shutdownMode = AppShutdownMode.Deferred;
@@ -251,6 +257,7 @@ public partial class MainWindow : Window
             _outlookCalendarMeetingTitleProvider,
             _meetingOutputCatalogService,
             new MeetingsAttendeeBackfillCacheService());
+        _meetingCleanupAutoApplyCacheService = new MeetingCleanupAutoApplyCacheService();
         _microphoneActivityProbe = new SystemMicrophoneActivityProbe();
         _processingQueue = new ProcessingQueueService(
             liveConfig,
@@ -3356,9 +3363,395 @@ public partial class MainWindow : Window
         OpenPath(_liveConfig.Current.TranscriptOutputDir);
     }
 
+    private async void AddAudioFilesButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Add Audio Files",
+            Filter = "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.mp4|All files|*.*",
+            Multiselect = true,
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        await AddExternalAudioImportsAsync(dialog.FileNames, ExternalAudioImportMethod.FilePicker);
+    }
+
+    private void MeetingsWorkspaceGrid_OnDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void MeetingsWorkspaceGrid_OnDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return;
+        }
+
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] droppedPaths || droppedPaths.Length == 0)
+        {
+            return;
+        }
+
+        await AddExternalAudioImportsAsync(droppedPaths, ExternalAudioImportMethod.DragDrop);
+    }
+
+    private void ExternalAudioImportDataGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingExternalAudioImportGrid)
+        {
+            return;
+        }
+
+        _selectedExternalAudioImportRow = ExternalAudioImportDataGrid.SelectedItem as ExternalAudioImportReviewRow;
+        UpdateExternalAudioImportReviewState();
+    }
+
+    private void ExternalAudioImportTitleTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingExternalAudioImportEditor || _selectedExternalAudioImportRow is null)
+        {
+            return;
+        }
+
+        _selectedExternalAudioImportRow.UpdateTitle(ExternalAudioImportTitleTextBox.Text);
+        RefreshExternalAudioImportGrid();
+        UpdateExternalAudioImportReviewState();
+    }
+
+    private void ExternalAudioImportStartedAtTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingExternalAudioImportEditor || _selectedExternalAudioImportRow is null)
+        {
+            return;
+        }
+
+        _selectedExternalAudioImportRow.UpdateStartedAtInput(ExternalAudioImportStartedAtTextBox.Text);
+        RefreshExternalAudioImportGrid();
+        UpdateExternalAudioImportReviewState();
+    }
+
+    private void ExternalAudioImportProjectTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingExternalAudioImportEditor || _selectedExternalAudioImportRow is null)
+        {
+            return;
+        }
+
+        _selectedExternalAudioImportRow.UpdateProjectName(ExternalAudioImportProjectTextBox.Text);
+        RefreshExternalAudioImportGrid();
+        UpdateExternalAudioImportReviewState();
+    }
+
+    private async void QueueExternalAudioImportsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_externalAudioImportRows.Count == 0)
+        {
+            return;
+        }
+
+        ApplyExternalAudioImportSetupState();
+        var queueableRows = _externalAudioImportRows
+            .Where(row => row.CanQueue)
+            .ToArray();
+        if (queueableRows.Length == 0)
+        {
+            ExternalAudioImportDetailStatusTextBlock.Text =
+                "No files are ready to queue yet. Fix any setup or validation issues first.";
+            UpdateExternalAudioImportReviewState();
+            return;
+        }
+
+        _isQueueingExternalAudioImports = true;
+        UpdateMeetingActionState();
+        try
+        {
+            var successfullyQueuedRows = new List<ExternalAudioImportReviewRow>(queueableRows.Length);
+            foreach (var row in queueableRows)
+            {
+                row.ClearQueueError();
+                if (!row.TryBuildRequest(out var request, out var validationMessage))
+                {
+                    row.SetQueueError(validationMessage);
+                    continue;
+                }
+
+                try
+                {
+                    var queued = await _externalAudioImportService.QueueImportAsync(
+                        _liveConfig.Current.WorkDir,
+                        request,
+                        DateTimeOffset.UtcNow,
+                        _lifetimeCts.Token);
+                    await _processingQueue.EnqueueAsync(queued.ManifestPath, _lifetimeCts.Token);
+                    successfullyQueuedRows.Add(row);
+                    AppendActivity($"Queued imported audio '{queued.Title}' for transcription.");
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    row.SetQueueError(exception.Message);
+                }
+            }
+
+            if (successfullyQueuedRows.Count > 0)
+            {
+                _externalAudioImportRows = _externalAudioImportRows
+                    .Except(successfullyQueuedRows)
+                    .ToList();
+                _selectedExternalAudioImportRow = _externalAudioImportRows.FirstOrDefault();
+                await RefreshMeetingListAsync();
+            }
+
+            if (_externalAudioImportRows.Count == 0)
+            {
+                ExternalAudioImportDetailStatusTextBlock.Text =
+                    $"Queued {successfullyQueuedRows.Count} imported audio file(s).";
+            }
+            else if (successfullyQueuedRows.Count > 0)
+            {
+                ExternalAudioImportDetailStatusTextBlock.Text =
+                    $"Queued {successfullyQueuedRows.Count} imported audio file(s). Review the remaining rows for any errors.";
+            }
+
+            UpdateExternalAudioImportReviewState();
+        }
+        catch (OperationCanceledException)
+        {
+            ExternalAudioImportDetailStatusTextBlock.Text = "Audio import queueing was canceled.";
+            UpdateExternalAudioImportReviewState();
+        }
+        finally
+        {
+            _isQueueingExternalAudioImports = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private void RemoveExternalAudioImportButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedExternalAudioImportRow is null)
+        {
+            return;
+        }
+
+        _externalAudioImportRows.Remove(_selectedExternalAudioImportRow);
+        _selectedExternalAudioImportRow = _externalAudioImportRows.FirstOrDefault();
+        UpdateExternalAudioImportReviewState();
+    }
+
+    private void OpenExternalAudioImportSetupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenSettingsSurface(SettingsWindowSection.Setup);
+    }
+
     private void ConfigPathLink_OnClick(object sender, RoutedEventArgs e)
     {
         OpenPath(_liveConfig.ConfigPath);
+    }
+
+    private async Task AddExternalAudioImportsAsync(
+        IEnumerable<string> selectedPaths,
+        ExternalAudioImportMethod importMethod)
+    {
+        var expandedPaths = ExpandExternalAudioImportSelection(selectedPaths);
+        if (expandedPaths.Length == 0)
+        {
+            ExternalAudioImportDetailStatusTextBlock.Text =
+                "Choose at least one readable audio file to import.";
+            UpdateExternalAudioImportReviewState();
+            return;
+        }
+
+        try
+        {
+            var candidates = await _externalAudioImportService.BuildImportCandidatesAsync(
+                _liveConfig.Current,
+                expandedPaths,
+                importMethod,
+                DateTimeOffset.UtcNow,
+                _lifetimeCts.Token);
+            if (candidates.Count == 0)
+            {
+                ExternalAudioImportDetailStatusTextBlock.Text =
+                    "No supported audio files were found in the selection.";
+                UpdateExternalAudioImportReviewState();
+                return;
+            }
+
+            var nextSelectedRow = MergeExternalAudioImportCandidates(candidates);
+            ApplyExternalAudioImportSetupState();
+            _selectedExternalAudioImportRow = nextSelectedRow ?? _selectedExternalAudioImportRow ?? _externalAudioImportRows.FirstOrDefault();
+            UpdateExternalAudioImportReviewState();
+            AppendActivity($"Added {candidates.Count} audio file(s) to the import review.");
+        }
+        catch (OperationCanceledException)
+        {
+            ExternalAudioImportDetailStatusTextBlock.Text = "Adding audio files was canceled.";
+            UpdateExternalAudioImportReviewState();
+        }
+        catch (Exception exception)
+        {
+            ExternalAudioImportDetailStatusTextBlock.Text = $"Audio import review failed: {exception.Message}";
+            AppendActivity($"Audio import review failed: {exception.Message}");
+            UpdateExternalAudioImportReviewState();
+        }
+    }
+
+    private ExternalAudioImportReviewRow? MergeExternalAudioImportCandidates(
+        IReadOnlyList<ExternalAudioImportCandidate> candidates)
+    {
+        var existingKeys = _externalAudioImportRows
+            .Select(row => row.SourceIdentityKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ExternalAudioImportReviewRow? firstAddedRow = null;
+        foreach (var candidate in candidates)
+        {
+            var nextRow = new ExternalAudioImportReviewRow(candidate);
+            if (!existingKeys.Add(nextRow.SourceIdentityKey))
+            {
+                continue;
+            }
+
+            _externalAudioImportRows.Add(nextRow);
+            firstAddedRow ??= nextRow;
+        }
+
+        return firstAddedRow;
+    }
+
+    private void ApplyExternalAudioImportSetupState()
+    {
+        var hasReadyModel = HasReadyTranscriptionModel();
+        var setupMessage = hasReadyModel
+            ? null
+            : "Blocked by setup. Import a valid Whisper transcription model from Settings > Setup before queueing.";
+        foreach (var row in _externalAudioImportRows)
+        {
+            row.SetSetupBlocked(!hasReadyModel && row.Preflight.IsSuccess, setupMessage);
+        }
+    }
+
+    private void RefreshExternalAudioImportGrid()
+    {
+        _isRefreshingExternalAudioImportGrid = true;
+        try
+        {
+            ExternalAudioImportDataGrid.ItemsSource = null;
+            ExternalAudioImportDataGrid.ItemsSource = _externalAudioImportRows;
+            if (_selectedExternalAudioImportRow is not null &&
+                _externalAudioImportRows.Contains(_selectedExternalAudioImportRow))
+            {
+                ExternalAudioImportDataGrid.SelectedItem = _selectedExternalAudioImportRow;
+            }
+        }
+        finally
+        {
+            _isRefreshingExternalAudioImportGrid = false;
+        }
+    }
+
+    private void UpdateExternalAudioImportReviewState()
+    {
+        ApplyExternalAudioImportSetupState();
+        var hasRows = _externalAudioImportRows.Count > 0;
+        ExternalAudioImportReviewBorder.Visibility = hasRows ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasRows)
+        {
+            RefreshExternalAudioImportGrid();
+            _selectedExternalAudioImportRow = null;
+            _isUpdatingExternalAudioImportEditor = true;
+            try
+            {
+                ExternalAudioImportTitleTextBox.Text = string.Empty;
+                ExternalAudioImportStartedAtTextBox.Text = string.Empty;
+                ExternalAudioImportProjectTextBox.Text = string.Empty;
+            }
+            finally
+            {
+                _isUpdatingExternalAudioImportEditor = false;
+            }
+
+            ExternalAudioImportSummaryTextBlock.Text =
+                "Add recordings from another source, review them here, then queue the valid files for transcription and optional speaker labeling.";
+            return;
+        }
+
+        RefreshExternalAudioImportGrid();
+        var readyCount = _externalAudioImportRows.Count(row => row.CanQueue);
+        var blockedCount = _externalAudioImportRows.Count(row => row.IsSetupBlocked);
+        var issueCount = _externalAudioImportRows.Count - readyCount;
+        ExternalAudioImportSummaryTextBlock.Text =
+            $"{_externalAudioImportRows.Count} import row(s) in review. {readyCount} ready, {blockedCount} blocked by setup, {issueCount - blockedCount} with file or validation issues.";
+        AddAudioFilesButton.IsEnabled = !_isQueueingExternalAudioImports;
+        AddMoreAudioFilesButton.IsEnabled = !_isQueueingExternalAudioImports;
+        QueueExternalAudioImportsButton.Content = _isQueueingExternalAudioImports ? "Queueing..." : "Queue Valid";
+        QueueExternalAudioImportsButton.IsEnabled = readyCount > 0 && !_isQueueingExternalAudioImports && !IsMeetingActionInProgress();
+        RemoveExternalAudioImportButton.IsEnabled = _selectedExternalAudioImportRow is not null && !_isQueueingExternalAudioImports;
+        OpenExternalAudioImportSetupButton.IsEnabled = blockedCount > 0 && !_isQueueingExternalAudioImports;
+        ExternalAudioImportTitleTextBox.IsEnabled = _selectedExternalAudioImportRow is not null && !_isQueueingExternalAudioImports;
+        ExternalAudioImportStartedAtTextBox.IsEnabled = _selectedExternalAudioImportRow is not null && !_isQueueingExternalAudioImports;
+        ExternalAudioImportProjectTextBox.IsEnabled = _selectedExternalAudioImportRow is not null && !_isQueueingExternalAudioImports;
+        UpdateSelectedExternalAudioImportEditor();
+    }
+
+    private void UpdateSelectedExternalAudioImportEditor()
+    {
+        _isUpdatingExternalAudioImportEditor = true;
+        try
+        {
+            if (_selectedExternalAudioImportRow is null)
+            {
+                ExternalAudioImportTitleTextBox.Text = string.Empty;
+                ExternalAudioImportStartedAtTextBox.Text = string.Empty;
+                ExternalAudioImportProjectTextBox.Text = string.Empty;
+                ExternalAudioImportDetailStatusTextBlock.Text =
+                    "Select one import row to adjust the title, start time, or optional project before queueing.";
+                return;
+            }
+
+            ExternalAudioImportTitleTextBox.Text = _selectedExternalAudioImportRow.EditableTitle;
+            ExternalAudioImportStartedAtTextBox.Text = _selectedExternalAudioImportRow.StartedAtInputText;
+            ExternalAudioImportProjectTextBox.Text = _selectedExternalAudioImportRow.ProjectName;
+            ExternalAudioImportDetailStatusTextBlock.Text = _selectedExternalAudioImportRow.DetailStatusText;
+        }
+        finally
+        {
+            _isUpdatingExternalAudioImportEditor = false;
+        }
+    }
+
+    private static string[] ExpandExternalAudioImportSelection(IEnumerable<string> selectedPaths)
+    {
+        return selectedPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .SelectMany(path =>
+            {
+                if (File.Exists(path))
+                {
+                    return [path];
+                }
+
+                if (Directory.Exists(path))
+                {
+                    return Directory.EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly);
+                }
+
+                return Array.Empty<string>();
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private void ModelPathLink_OnClick(object sender, RoutedEventArgs e)
@@ -4333,6 +4726,7 @@ public partial class MainWindow : Window
 
             _meetingCleanupRecommendations = visibleRecommendations;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
+            await TryAutoApplyMeetingCleanupSafeFixesAsync(visibleRecommendations, refreshVersion, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -6161,6 +6555,7 @@ public partial class MainWindow : Window
         ReviewMeetingCleanupSuggestionsButton.IsEnabled = !isMeetingActionInProgress;
         _meetingDetailWindow?.SetMaintenanceBusy(isMeetingActionInProgress);
         UpdateMeetingsContextMenuState();
+        UpdateExternalAudioImportReviewState();
     }
 
     private bool IsMeetingActionInProgress()
@@ -6177,11 +6572,12 @@ public partial class MainWindow : Window
                _isSplittingMeeting ||
                _isArchivingMeetings ||
                _isUpdatingRushProcessing ||
-                 _isDeletingMeetings ||
-                 _isApplyingMeetingCleanupRecommendations ||
-                 _isDismissingMeetingCleanupRecommendations ||
-                 _isApplyingSafeMeetingCleanupFixes ||
-                 _isRushingBacklog;
+               _isDeletingMeetings ||
+               _isApplyingMeetingCleanupRecommendations ||
+               _isDismissingMeetingCleanupRecommendations ||
+               _isApplyingSafeMeetingCleanupFixes ||
+               _isRushingBacklog ||
+               _isQueueingExternalAudioImports;
     }
 
     private bool HasPendingSpeakerLabelChanges()
@@ -7516,6 +7912,12 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!HasReadyTranscriptionModel())
+            {
+                ApplyExternalAudioImportSetupState();
+                return;
+            }
+
             var imported = await _externalAudioImportService.ImportPendingAudioFilesAsync(
                 _liveConfig.Current,
                 DateTimeOffset.UtcNow,
@@ -9153,6 +9555,96 @@ public partial class MainWindow : Window
             $"You can review them below or apply {safeRecommendationCount} safe fix(es) now. Rows marked Safe Fix are included in that bulk action.";
     }
 
+    private async Task TryAutoApplyMeetingCleanupSafeFixesAsync(
+        IReadOnlyList<MeetingCleanupRecommendation> visibleRecommendations,
+        int refreshVersion,
+        CancellationToken cancellationToken)
+    {
+        var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetEligibleRecommendations(
+            visibleRecommendations,
+            _meetingCleanupAutoApplyCacheService);
+        if (!MeetingCleanupAutoApplyPlanner.ShouldStartAutomaticApply(
+                MeetingRefreshMode.Full,
+                refreshVersion == Volatile.Read(ref _meetingRefreshVersion),
+                IsShutdownRequested,
+                IsMeetingActionInProgress(),
+                _isApplyingSafeMeetingCleanupFixes,
+                eligibleRecommendations.Count))
+        {
+            return;
+        }
+
+        _isApplyingSafeMeetingCleanupFixes = true;
+        UpdateMeetingActionState();
+        MeetingCleanupRecommendationsStatusTextBlock.Text =
+            $"Automatically applying {eligibleRecommendations.Count} safe cleanup fix(es)...";
+
+        try
+        {
+            var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(_liveConfig.Current.AudioOutputDir);
+            var archiveDirectory = MeetingCleanupExecutionService.CreateExecutionArchiveDirectory(archiveRoot, "auto-safe-fixes");
+            var batchResult = await MeetingCleanupRecommendationBatchRunner.ExecuteAsync(
+                eligibleRecommendations,
+                (recommendation, batchCancellationToken) =>
+                    ExecuteMeetingCleanupRecommendationAsync(recommendation, archiveDirectory, batchCancellationToken),
+                continueOnError: true,
+                cancellationToken);
+
+            foreach (var item in batchResult.Items)
+            {
+                if (item.Succeeded)
+                {
+                    _meetingCleanupAutoApplyCacheService.RecordSuccess(item.Recommendation.Fingerprint);
+                    continue;
+                }
+
+                _meetingCleanupAutoApplyCacheService.RecordFailure(
+                    item.Recommendation.Fingerprint,
+                    DateTimeOffset.UtcNow,
+                    item.ErrorMessage);
+            }
+
+            await RefreshMeetingListAsync();
+
+            var remainingRecommendationCount = _meetingCleanupRecommendations.Length;
+            MeetingCleanupRecommendationsStatusTextBlock.Text = BuildAutomaticMeetingCleanupApplyStatusText(
+                batchResult.SucceededCount,
+                remainingRecommendationCount);
+            AppendActivity(BuildAutomaticMeetingCleanupApplyActivityText(
+                batchResult.SucceededCount,
+                batchResult.FailedCount,
+                remainingRecommendationCount));
+        }
+        finally
+        {
+            _isApplyingSafeMeetingCleanupFixes = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private static string BuildAutomaticMeetingCleanupApplyStatusText(
+        int appliedCount,
+        int remainingRecommendationCount)
+    {
+        var appliedText = appliedCount == 0
+            ? "Automatic safe cleanup did not apply any fixes."
+            : $"Automatically applied {appliedCount} safe cleanup fix(es).";
+        return remainingRecommendationCount == 0
+            ? appliedText
+            : $"{appliedText} {remainingRecommendationCount} recommendation(s) still need manual review.";
+    }
+
+    private static string BuildAutomaticMeetingCleanupApplyActivityText(
+        int appliedCount,
+        int failedCount,
+        int remainingRecommendationCount)
+    {
+        var statusText = BuildAutomaticMeetingCleanupApplyStatusText(appliedCount, remainingRecommendationCount);
+        return failedCount == 0
+            ? statusText
+            : $"{statusText} Suppressed {failedCount} failed automatic retry attempt(s) until the recommendation changes.";
+    }
+
     private bool HasCompletedMeetingCleanupHistoricalReview()
     {
         return File.Exists(GetMeetingCleanupHistoricalReviewMarkerPath());
@@ -9197,102 +9689,110 @@ public partial class MainWindow : Window
         foreach (var recommendation in recommendations)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var meetingsByStem = _meetingOutputCatalogService.ListMeetings(
+            await ExecuteMeetingCleanupRecommendationAsync(recommendation, archiveDirectory, cancellationToken);
+        }
+    }
+
+    private async Task ExecuteMeetingCleanupRecommendationAsync(
+        MeetingCleanupRecommendation recommendation,
+        string archiveDirectory,
+        CancellationToken cancellationToken)
+    {
+        var meetingsByStem = _meetingOutputCatalogService.ListMeetings(
+                _liveConfig.Current.AudioOutputDir,
+                _liveConfig.Current.TranscriptOutputDir,
+                _liveConfig.Current.WorkDir)
+            .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase);
+
+        switch (recommendation.Action)
+        {
+            case MeetingCleanupAction.Archive:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var archiveMeeting))
+                {
+                    return;
+                }
+
+                await _meetingCleanupExecutionService.ArchiveMeetingAsync(
+                    archiveMeeting,
+                    archiveDirectory,
+                    ResolveMeetingCleanupArchiveCategory(recommendation),
+                    cancellationToken);
+                return;
+
+            case MeetingCleanupAction.Merge:
+                if (recommendation.RelatedStems.Count < 2)
+                {
+                    return;
+                }
+
+                if (!meetingsByStem.TryGetValue(recommendation.RelatedStems[0], out var firstMeeting) ||
+                    !meetingsByStem.TryGetValue(recommendation.RelatedStems[1], out var secondMeeting))
+                {
+                    return;
+                }
+
+                await _meetingCleanupExecutionService.MergeMeetingsAsync(
+                    firstMeeting,
+                    secondMeeting,
+                    recommendation.SuggestedTitle ?? firstMeeting.Title,
                     _liveConfig.Current.AudioOutputDir,
                     _liveConfig.Current.TranscriptOutputDir,
-                    _liveConfig.Current.WorkDir)
-                .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase);
+                    archiveDirectory,
+                    cancellationToken);
+                return;
 
-            switch (recommendation.Action)
-            {
-                case MeetingCleanupAction.Archive:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var archiveMeeting))
-                    {
-                        continue;
-                    }
+            case MeetingCleanupAction.Rename:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var renameMeeting) ||
+                    string.IsNullOrWhiteSpace(recommendation.SuggestedTitle))
+                {
+                    return;
+                }
 
-                    await _meetingCleanupExecutionService.ArchiveMeetingAsync(
-                        archiveMeeting,
-                        archiveDirectory,
-                        ResolveMeetingCleanupArchiveCategory(recommendation),
-                        cancellationToken);
-                    break;
+                await _meetingCleanupExecutionService.RenameMeetingAsync(
+                    _liveConfig.Current.AudioOutputDir,
+                    _liveConfig.Current.TranscriptOutputDir,
+                    _liveConfig.Current.WorkDir,
+                    renameMeeting,
+                    recommendation.SuggestedTitle,
+                    cancellationToken);
+                return;
 
-                case MeetingCleanupAction.Merge:
-                    if (recommendation.RelatedStems.Count < 2)
-                    {
-                        continue;
-                    }
+            case MeetingCleanupAction.RegenerateTranscript:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var regenerateMeeting))
+                {
+                    return;
+                }
 
-                    if (!meetingsByStem.TryGetValue(recommendation.RelatedStems[0], out var firstMeeting) ||
-                        !meetingsByStem.TryGetValue(recommendation.RelatedStems[1], out var secondMeeting))
-                    {
-                        continue;
-                    }
+                await QueueTranscriptRegenerationAsync(regenerateMeeting, cancellationToken);
+                return;
 
-                    await _meetingCleanupExecutionService.MergeMeetingsAsync(
-                        firstMeeting,
-                        secondMeeting,
-                        recommendation.SuggestedTitle ?? firstMeeting.Title,
-                        _liveConfig.Current.AudioOutputDir,
-                        _liveConfig.Current.TranscriptOutputDir,
-                        archiveDirectory,
-                        cancellationToken);
-                    break;
+            case MeetingCleanupAction.GenerateSpeakerLabels:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var speakerLabelMeeting))
+                {
+                    return;
+                }
 
-                case MeetingCleanupAction.Rename:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var renameMeeting) ||
-                        string.IsNullOrWhiteSpace(recommendation.SuggestedTitle))
-                    {
-                        continue;
-                    }
+                await QueueSpeakerLabelGenerationAsync(speakerLabelMeeting, cancellationToken);
+                return;
 
-                    await _meetingCleanupExecutionService.RenameMeetingAsync(
-                        _liveConfig.Current.AudioOutputDir,
-                        _liveConfig.Current.TranscriptOutputDir,
-                        _liveConfig.Current.WorkDir,
-                        renameMeeting,
-                        recommendation.SuggestedTitle,
-                        cancellationToken);
-                    break;
+            case MeetingCleanupAction.RepairSpeakerLabels:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var repairSpeakerLabelMeeting))
+                {
+                    return;
+                }
 
-                case MeetingCleanupAction.RegenerateTranscript:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var regenerateMeeting))
-                    {
-                        continue;
-                    }
+                await QueueSpeakerLabelRepairAsync(repairSpeakerLabelMeeting, cancellationToken);
+                return;
 
-                    await QueueTranscriptRegenerationAsync(regenerateMeeting, cancellationToken);
-                    break;
+            case MeetingCleanupAction.Split:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var splitMeeting) ||
+                    recommendation.SuggestedSplitPoint is not { } suggestedSplitPoint)
+                {
+                    return;
+                }
 
-                case MeetingCleanupAction.GenerateSpeakerLabels:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var speakerLabelMeeting))
-                    {
-                        continue;
-                    }
-
-                    await QueueSpeakerLabelGenerationAsync(speakerLabelMeeting, cancellationToken);
-                    break;
-
-                case MeetingCleanupAction.RepairSpeakerLabels:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var repairSpeakerLabelMeeting))
-                    {
-                        continue;
-                    }
-
-                    await QueueSpeakerLabelRepairAsync(repairSpeakerLabelMeeting, cancellationToken);
-                    break;
-
-                case MeetingCleanupAction.Split:
-                    if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var splitMeeting) ||
-                        recommendation.SuggestedSplitPoint is not { } suggestedSplitPoint)
-                    {
-                        continue;
-                    }
-
-                    await QueueSplitMeetingAsync(splitMeeting, suggestedSplitPoint, cancellationToken);
-                    break;
-            }
+                await QueueSplitMeetingAsync(splitMeeting, suggestedSplitPoint, cancellationToken);
+                return;
         }
     }
 
@@ -9824,6 +10324,7 @@ public partial class MainWindow : Window
             : Visibility.Visible;
         UpdateModelsTabGuidance();
         UpdateRecordingControlState();
+        UpdateExternalAudioImportReviewState();
     }
 
     private void ApplyDiarizationAssetStatus(DiarizationAssetInstallStatus status)
@@ -10238,7 +10739,19 @@ public partial class MainWindow : Window
 
     private bool HasReadyTranscriptionModel()
     {
-        return _currentWhisperModelDisplayState?.IsHealthy == true;
+        if (_currentWhisperModelDisplayState is not null)
+        {
+            return _currentWhisperModelDisplayState.IsHealthy;
+        }
+
+        try
+        {
+            return _whisperModelService.Inspect(_liveConfig.Current.TranscriptionModelPath).Kind == WhisperModelStatusKind.Valid;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void ShowTranscriptionSetupRequiredMessage()
@@ -11985,6 +12498,217 @@ public partial class MainWindow : Window
         public string Summary { get; }
 
         public string RelatedMeetingsLabel { get; }
+    }
+
+    private sealed class ExternalAudioImportReviewRow
+    {
+        private string _editableTitle;
+        private string _startedAtInputText;
+        private DateTimeOffset _startedAtLocal;
+        private string? _validationMessage;
+        private string? _queueErrorMessage;
+        private string? _setupBlockedMessage;
+
+        public ExternalAudioImportReviewRow(ExternalAudioImportCandidate source)
+        {
+            Source = source;
+            SourcePath = source.SourcePath;
+            SourceDisplayName = source.SourceDisplayName;
+            ImportMethod = source.ImportMethod;
+            SourceSizeBytes = source.SourceSizeBytes;
+            SourceLastWriteUtc = source.SourceLastWriteUtc;
+            ProbedDuration = source.Preflight.Duration;
+            _editableTitle = source.Title;
+            _startedAtLocal = source.StartedAtUtc.ToLocalTime();
+            _startedAtInputText = _startedAtLocal.ToString("g", CultureInfo.CurrentCulture);
+            ProjectName = string.Empty;
+            RecomputeValidation();
+        }
+
+        public ExternalAudioImportCandidate Source { get; }
+
+        public string SourcePath { get; }
+
+        public string SourceDisplayName { get; }
+
+        public ExternalAudioImportMethod ImportMethod { get; }
+
+        public long SourceSizeBytes { get; }
+
+        public DateTimeOffset SourceLastWriteUtc { get; }
+
+        public TimeSpan? ProbedDuration { get; }
+
+        public ExternalAudioImportPreflightResult Preflight => Source.Preflight;
+
+        public string SourceIdentityKey => $"{SourcePath}\n{SourceSizeBytes}\n{SourceLastWriteUtc.UtcTicks}";
+
+        public string ImportMethodLabel => ImportMethod switch
+        {
+            ExternalAudioImportMethod.FilePicker => "Add Files",
+            ExternalAudioImportMethod.DragDrop => "Drag/Drop",
+            _ => "Watched Folder",
+        };
+
+        public string EditableTitle => _editableTitle;
+
+        public string StartedAtInputText => _startedAtInputText;
+
+        public string StartedAtDisplayText => _startedAtInputText;
+
+        public string ProjectName { get; private set; }
+
+        public bool IsSetupBlocked { get; private set; }
+
+        public string DurationDisplayText => ProbedDuration is null
+            ? "Unknown"
+            : FormatDuration(ProbedDuration.Value);
+
+        public string StatusText => DetailStatusText;
+
+        public string DetailStatusText
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(_queueErrorMessage))
+                {
+                    return $"Queue failed: {_queueErrorMessage}";
+                }
+
+                if (IsSetupBlocked && !string.IsNullOrWhiteSpace(_setupBlockedMessage))
+                {
+                    return _setupBlockedMessage;
+                }
+
+                if (!string.IsNullOrWhiteSpace(_validationMessage))
+                {
+                    return _validationMessage;
+                }
+
+                return Preflight.Message;
+            }
+        }
+
+        public bool CanQueue => Preflight.IsSuccess &&
+            !IsSetupBlocked &&
+            string.IsNullOrWhiteSpace(_validationMessage);
+
+        public void UpdateTitle(string title)
+        {
+            _editableTitle = title.Trim();
+            RecomputeValidation();
+        }
+
+        public void UpdateStartedAtInput(string text)
+        {
+            _startedAtInputText = text;
+            RecomputeValidation();
+        }
+
+        public void UpdateProjectName(string projectName)
+        {
+            ProjectName = projectName.Trim();
+        }
+
+        public void SetSetupBlocked(bool isSetupBlocked, string? setupBlockedMessage)
+        {
+            IsSetupBlocked = isSetupBlocked;
+            _setupBlockedMessage = isSetupBlocked ? setupBlockedMessage : null;
+        }
+
+        public void SetQueueError(string? message)
+        {
+            _queueErrorMessage = string.IsNullOrWhiteSpace(message) ? "Unknown queue failure." : message.Trim();
+        }
+
+        public void ClearQueueError()
+        {
+            _queueErrorMessage = null;
+        }
+
+        public bool TryBuildRequest(out ExternalAudioImportRequest request, out string validationMessage)
+        {
+            if (!TryGetStartedAtUtc(out var startedAtUtc, out validationMessage))
+            {
+                request = default!;
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(_editableTitle))
+            {
+                validationMessage = "Enter a meeting title before queueing this import.";
+                request = default!;
+                return false;
+            }
+
+            request = new ExternalAudioImportRequest(
+                SourcePath,
+                SourceDisplayName,
+                SourceSizeBytes,
+                SourceLastWriteUtc,
+                ImportMethod,
+                _editableTitle,
+                startedAtUtc,
+                string.IsNullOrWhiteSpace(ProjectName) ? null : ProjectName,
+                ProbedDuration,
+                SourceRetained: true);
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        private void RecomputeValidation()
+        {
+            if (string.IsNullOrWhiteSpace(_editableTitle))
+            {
+                _validationMessage = "Enter a meeting title before queueing this import.";
+                return;
+            }
+
+            if (!TryParseStartedAtLocal(_startedAtInputText, out _startedAtLocal))
+            {
+                _validationMessage = "Enter a valid local start date and time before queueing this import.";
+                return;
+            }
+
+            _validationMessage = null;
+        }
+
+        private bool TryGetStartedAtUtc(out DateTimeOffset startedAtUtc, out string validationMessage)
+        {
+            if (!TryParseStartedAtLocal(_startedAtInputText, out var localStartedAt))
+            {
+                startedAtUtc = default;
+                validationMessage = "Enter a valid local start date and time before queueing this import.";
+                return false;
+            }
+
+            startedAtUtc = localStartedAt.ToUniversalTime();
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        private static bool TryParseStartedAtLocal(string text, out DateTimeOffset startedAtLocal)
+        {
+            if (DateTime.TryParse(
+                    text,
+                    CultureInfo.CurrentCulture,
+                    DateTimeStyles.AssumeLocal | DateTimeStyles.AllowWhiteSpaces,
+                    out var localDateTime))
+            {
+                startedAtLocal = new DateTimeOffset(DateTime.SpecifyKind(localDateTime, DateTimeKind.Local));
+                return true;
+            }
+
+            startedAtLocal = default;
+            return false;
+        }
+
+        private static string FormatDuration(TimeSpan duration)
+        {
+            return duration.TotalHours >= 1d
+                ? duration.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture)
+                : duration.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
+        }
     }
 
     private sealed class WhisperModelListRow

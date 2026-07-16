@@ -201,6 +201,37 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Meetings_Workspace_Exposes_Explicit_Audio_Import_Entry_Points_And_Review_Surface()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
+
+        Assert.Contains("x:Name=\"MeetingsWorkspaceGrid\"", xaml);
+        Assert.Contains("AllowDrop=\"True\"", xaml);
+        Assert.Contains("DragOver=\"MeetingsWorkspaceGrid_OnDragOver\"", xaml);
+        Assert.Contains("Drop=\"MeetingsWorkspaceGrid_OnDrop\"", xaml);
+        Assert.Contains("x:Name=\"AddAudioFilesButton\"", xaml);
+        Assert.Contains("Content=\"Add Audio Files\"", xaml);
+        Assert.Contains("x:Name=\"ExternalAudioImportReviewBorder\"", xaml);
+        Assert.Contains("x:Name=\"ExternalAudioImportDataGrid\"", xaml);
+        Assert.Contains("x:Name=\"QueueExternalAudioImportsButton\"", xaml);
+        Assert.Contains("x:Name=\"OpenExternalAudioImportSetupButton\"", xaml);
+        Assert.Contains("x:Name=\"ExternalAudioImportTitleTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ExternalAudioImportStartedAtTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ExternalAudioImportProjectTextBox\"", xaml);
+
+        Assert.Contains("AddAudioFilesButton_OnClick", code);
+        Assert.Contains("MeetingsWorkspaceGrid_OnDrop", code);
+        Assert.Contains("QueueExternalAudioImportsButton_OnClick", code);
+        Assert.Contains("OpenSettingsSurface(SettingsWindowSection.Setup)", code);
+        Assert.Contains("ExternalAudioImportMethod.FilePicker", code);
+        Assert.Contains("ExternalAudioImportMethod.DragDrop", code);
+    }
+
+    [Fact]
     public void Home_Page_Uses_A_Simplified_Recording_Console_With_Two_Quick_Settings()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

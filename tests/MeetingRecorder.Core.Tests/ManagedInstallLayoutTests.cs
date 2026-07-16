@@ -7,12 +7,12 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class ManagedInstallLayoutTests
 {
     [Fact]
-    public void ProductModule_Uses_Documents_MeetingRecorder_As_Managed_Install_Root()
+    public void ProductModule_Uses_LocalPrograms_MeetingRecorder_As_Managed_Install_Root()
     {
         var expectedInstallRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Documents",
-            "MeetingRecorder");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs",
+            "Meeting Recorder");
 
         var layout = MeetingRecorderProductModule.Instance.GetManagedInstallLayout();
 
@@ -20,7 +20,7 @@ public sealed class ManagedInstallLayoutTests
     }
 
     [Fact]
-    public void ProductManifest_Uses_Documents_MeetingRecorder_As_Managed_Install_Root()
+    public void ProductManifest_Uses_LocalPrograms_MeetingRecorder_As_Managed_Install_Root()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -35,16 +35,16 @@ public sealed class ManagedInstallLayoutTests
             .GetProperty("installRoot")
             .GetString();
 
-        Assert.Equal("%USERPROFILE%\\Documents\\MeetingRecorder", installRoot);
+        Assert.Equal("%LOCALAPPDATA%\\Programs\\Meeting Recorder", installRoot);
     }
 
     [Fact]
-    public void ProductModule_Declares_LocalPrograms_As_A_Legacy_Install_Root()
+    public void ProductModule_Declares_The_Legacy_Documents_MeetingRecorder_Install_Root()
     {
         var expectedLegacyInstallRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Programs",
-            "Meeting Recorder");
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Documents",
+            "MeetingRecorder");
 
         var layout = MeetingRecorderProductModule.Instance.GetManagedInstallLayout();
 
@@ -84,7 +84,7 @@ public sealed class ManagedInstallLayoutTests
     }
 
     [Fact]
-    public void ProductManifest_Declares_LocalPrograms_As_A_Legacy_Install_Root()
+    public void ProductManifest_Declares_The_Legacy_Documents_MeetingRecorder_Install_Root()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -102,7 +102,7 @@ public sealed class ManagedInstallLayoutTests
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToArray();
 
-        Assert.Contains("%LOCALAPPDATA%\\Programs\\Meeting Recorder", legacyInstallRoots);
+        Assert.Contains("%USERPROFILE%\\Documents\\MeetingRecorder", legacyInstallRoots);
     }
 
     [Fact]
