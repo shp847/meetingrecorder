@@ -6,6 +6,19 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class ArtifactPathBuilderTests
 {
     [Fact]
+    public void BuildFileStem_Uses_Zoom_Platform_Token()
+    {
+        var builder = new ArtifactPathBuilder();
+
+        var stem = builder.BuildFileStem(
+            MeetingPlatform.Zoom,
+            DateTimeOffset.Parse("2026-07-21T15:00:00Z"),
+            "Next Steps: Kearney | BairesDev");
+
+        Assert.Equal("2026-07-21_150000_zoom_next-steps-kearney-bairesdev", stem);
+    }
+
+    [Fact]
     public void BuildFileStem_Sanitizes_Title_And_Uses_Platform()
     {
         var builder = new ArtifactPathBuilder();

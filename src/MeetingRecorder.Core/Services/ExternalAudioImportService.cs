@@ -587,6 +587,7 @@ public sealed class ExternalAudioImportService
         {
             "teams" => MeetingPlatform.Teams,
             "gmeet" => MeetingPlatform.GoogleMeet,
+            "zoom" => MeetingPlatform.Zoom,
             "manual" => MeetingPlatform.Manual,
             _ => MeetingPlatform.Unknown,
         };

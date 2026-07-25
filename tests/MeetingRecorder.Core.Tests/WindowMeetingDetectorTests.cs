@@ -185,7 +185,7 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
-    public void ApplyTeamsPlaybackHeuristic_Demotes_Plain_Teams_Content_Window_When_No_Teams_Render_Evidence_Exists()
+    public void ApplyTeamsPlaybackHeuristic_Preserves_Quiet_Specific_Teams_Window_For_Sustained_AutoStart()
     {
         var timestamp = DateTimeOffset.UtcNow;
         var plainCandidate = new DetectionDecision(
@@ -197,16 +197,15 @@ public sealed class WindowMeetingDetectorTests
             new[]
             {
                 new DetectionSignal("window-title", "Jain, Himanshu | Microsoft Teams", 0.85d, timestamp),
-                new DetectionSignal("process-name", "ms-teams", 0.15d, timestamp),
-                new DetectionSignal("audio-silence", "peak=0.000", 0d, timestamp),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, timestamp),
+                new DetectionSignal("audio-silence", "Headphones (Jabra Elite 7 Pro); peak=0.000; status=below-threshold", 0d, timestamp),
             },
             "Meeting-like window detected, but no active system audio was observed.");
 
         var result = WindowMeetingDetector.ApplyTeamsPlaybackHeuristic(plainCandidate, new[] { plainCandidate });
 
         Assert.False(result.ShouldStart);
-        Assert.False(result.ShouldKeepRecording);
-        Assert.Contains("not a live meeting", result.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.ShouldKeepRecording);
     }
 
     [Fact]
@@ -986,6 +985,102 @@ public sealed class WindowMeetingDetectorTests
         Assert.True(result.ShouldStart);
     }
 
+    [Fact]
+    public async Task DetectBestCandidate_Starts_CalendarMatched_Zoom_Web_Call_With_Active_Endpoint_Audio()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    string.Empty,
+                    "Quarterly Review | Partner",
+                    "Chrome_WidgetWin_1"),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.23d,
+                true,
+                "active",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)),
+            calendarMeetingTitleProvider: new StubCalendarMeetingTitleProvider(
+                new CalendarMeetingDetailsCandidate(
+                    "Quarterly Review | Partner",
+                    Array.Empty<MeetingAttendee>(),
+                    "Outlook calendar",
+                    PlatformMatchScore: 3)),
+            calendarTitleFallbackEnabled: true);
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Zoom, result.Platform);
+        Assert.Equal("Quarterly Review | Partner", result.SessionTitle);
+        Assert.True(result.ShouldStart);
+        Assert.Contains(result.Signals, signal => signal.Source == "calendar-zoom");
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Start_Zoom_When_Calendar_Title_Does_Not_Match_Browser_Window()
+    {
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate(string.Empty, "Unrelated browser tab", "Chrome_WidgetWin_1")],
+            new StubAudioActivityProbe(),
+            calendarMeetingTitleProvider: new StubCalendarMeetingTitleProvider(
+                new CalendarMeetingDetailsCandidate(
+                    "Quarterly Review | Partner",
+                    Array.Empty<MeetingAttendee>(),
+                    "Outlook calendar",
+                    PlatformMatchScore: 3)),
+            calendarTitleFallbackEnabled: true);
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Start_Zoom_When_Endpoint_Audio_Is_Quiet()
+    {
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate(string.Empty, "Quarterly Review | Partner", "Chrome_WidgetWin_1")],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)),
+            calendarMeetingTitleProvider: new StubCalendarMeetingTitleProvider(
+                new CalendarMeetingDetailsCandidate(
+                    "Quarterly Review | Partner",
+                    Array.Empty<MeetingAttendee>(),
+                    "Outlook calendar",
+                    PlatformMatchScore: 3)),
+            calendarTitleFallbackEnabled: true);
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Start_Zoom_From_Unmatched_Calendar_Fallback()
+    {
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate(string.Empty, "Quarterly Review | Partner", "Chrome_WidgetWin_1")],
+            new StubAudioActivityProbe(),
+            calendarMeetingTitleProvider: new StubCalendarMeetingTitleProvider(
+                new CalendarMeetingDetailsCandidate(
+                    "Quarterly Review | Partner",
+                    Array.Empty<MeetingAttendee>(),
+                    "Outlook calendar")),
+            calendarTitleFallbackEnabled: true);
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.Null(result);
+    }
+
     private static Task<WindowMeetingDetector> CreateDetectorAsync(params MeetingWindowCandidate[] candidates)
     {
         return CreateDetectorAsync(candidates, null);
@@ -995,7 +1090,9 @@ public sealed class WindowMeetingDetectorTests
         MeetingWindowCandidate[] candidates,
         IAudioActivityProbe? audioActivityProbe = null,
         TimeSpan? audioTimeout = null,
-        TimeSpan? audioBackoff = null)
+        TimeSpan? audioBackoff = null,
+        ICalendarMeetingTitleProvider? calendarMeetingTitleProvider = null,
+        bool calendarTitleFallbackEnabled = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var configPath = Path.Combine(root, "config", "appsettings.json");
@@ -1003,14 +1100,14 @@ public sealed class WindowMeetingDetectorTests
         var initial = await store.LoadOrCreateAsync();
         var liveConfig = new LiveAppConfig(store, initial with
         {
-            CalendarTitleFallbackEnabled = false,
+            CalendarTitleFallbackEnabled = calendarTitleFallbackEnabled,
         });
 
         return new WindowMeetingDetector(
             liveConfig,
             new MeetingDetectionEvaluator(),
             audioActivityProbe ?? new StubAudioActivityProbe(),
-            new MeetingTitleEnricher(new StubCalendarMeetingTitleProvider()),
+            new MeetingTitleEnricher(calendarMeetingTitleProvider ?? new StubCalendarMeetingTitleProvider()),
             () => candidates,
             audioTimeout ?? TimeSpan.FromMilliseconds(750),
             audioBackoff ?? TimeSpan.FromMinutes(2));
@@ -1044,12 +1141,19 @@ public sealed class WindowMeetingDetectorTests
 
     private sealed class StubCalendarMeetingTitleProvider : ICalendarMeetingTitleProvider
     {
+        private readonly CalendarMeetingDetailsCandidate? _candidate;
+
+        public StubCalendarMeetingTitleProvider(CalendarMeetingDetailsCandidate? candidate = null)
+        {
+            _candidate = candidate;
+        }
+
         public CalendarMeetingDetailsCandidate? TryGetMeetingTitle(
             MeetingPlatform platform,
             DateTimeOffset startedAtUtc,
             DateTimeOffset? endedAtUtc)
         {
-            return null;
+            return platform == MeetingPlatform.Zoom ? _candidate : null;
         }
     }
 

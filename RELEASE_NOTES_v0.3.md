@@ -6,6 +6,8 @@ It records meeting audio locally, transcribes with local Whisper models, optiona
 
 This release should be read as the product definition for Meeting Recorder as it exists today, not just as a list of incremental changes from the prior build.
 
+Reliability fix: automatic meeting rollover now saves pending metadata without recursively starting another rollover. This prevents the app from exiting with a stack overflow when the detected Teams meeting title changes during recording.
+
 ## What Meeting Recorder Is
 
 Meeting Recorder is built for users who need:
@@ -73,6 +75,7 @@ Assisted auto-detection is narrower and currently focuses on:
 
 - Microsoft Teams desktop
 - Google Meet in visible Chromium-family browsers
+- Zoom Web when an overlapping Outlook event contains Zoom join evidence, its subject exactly matches the visible Chromium window title, and endpoint audio is active
 
 When auto-detection is enabled, the app watches for a supported live meeting and can auto-start and auto-stop supported calls. Manual recordings also continue running with background detection, so a user-started session can still reclassify in place to a detected Teams or Google Meet meeting later.
 
@@ -276,7 +279,7 @@ Meeting Recorder v0.3 is intentionally strong in a few areas and explicitly limi
 - A valid local Whisper model is required for transcript generation.
 - Speaker labeling is optional.
 - Meeting summaries are optional and require Settings provider configuration before transcript text is sent to ModelProxy or OpenAI.
-- Assisted auto-detection currently focuses on Teams desktop and Google Meet only.
+- Assisted auto-detection supports Teams desktop, Google Meet, and calendar-matched Zoom Web calls; other Zoom and conferencing-app cases remain manual.
 - Manual recording works more broadly than assisted auto-detection.
 - Transcript quality depends on the selected model and source audio quality.
 - Users are responsible for complying with applicable recording, privacy, employment, and consent laws and workplace policies.

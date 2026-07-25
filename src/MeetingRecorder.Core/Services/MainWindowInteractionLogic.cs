@@ -2315,6 +2315,7 @@ internal static class MainWindowInteractionLogic
         {
             MeetingPlatform.GoogleMeet => "Google Meet",
             MeetingPlatform.Teams => "Teams",
+            MeetingPlatform.Zoom => "Zoom",
             MeetingPlatform.Manual => "Manual",
             _ => "A conferencing app",
         };
@@ -2351,9 +2352,15 @@ internal static class MainWindowInteractionLogic
         return platform switch
         {
             MeetingPlatform.Teams => normalizedTitle is "microsoft teams" or "teams" or "ms-teams" or "sharing control bar" or "search",
-            MeetingPlatform.GoogleMeet => normalizedTitle is "google meet" or "meet",
+            MeetingPlatform.GoogleMeet => IsGenericGoogleMeetTitle(normalizedTitle),
             _ => false,
         };
+    }
+
+    private static bool IsGenericGoogleMeetTitle(string normalizedTitle)
+    {
+        return normalizedTitle is "google meet" or "meet" ||
+            normalizedTitle.StartsWith("google meet ", StringComparison.Ordinal);
     }
 
     private static MeetingProcessingOverrides? BuildReprocessingOverrides(
@@ -2362,7 +2369,7 @@ internal static class MainWindowInteractionLogic
         bool forceTranscription)
     {
         var updated = overrides;
-        if (forceTranscription && updated is null)
+        if ((forceSpeakerLabeling || forceTranscription) && updated is null)
         {
             updated = new MeetingProcessingOverrides(null, null);
         }
@@ -2378,12 +2385,17 @@ internal static class MainWindowInteractionLogic
             {
                 SkipSpeakerLabeling = false,
                 ForceTranscription = false,
+                ForceSpeakerLabeling = true,
             };
         }
 
         if (forceTranscription)
         {
-            updated = updated with { ForceTranscription = true };
+            updated = updated with
+            {
+                ForceTranscription = true,
+                ForceSpeakerLabeling = false,
+            };
         }
 
         return updated;

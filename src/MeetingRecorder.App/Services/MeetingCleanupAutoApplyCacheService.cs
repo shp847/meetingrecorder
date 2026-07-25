@@ -13,7 +13,7 @@ internal sealed class MeetingCleanupAutoApplyCacheService
 
     private readonly string _cachePath;
     private readonly object _gate = new();
-    private Dictionary<string, MeetingCleanupAutoApplyFailureEntry>? _entriesByFingerprint;
+    private Dictionary<string, MeetingCleanupAutoApplyEntry>? _entriesByFingerprint;
 
     public MeetingCleanupAutoApplyCacheService(string? cachePath = null)
     {
@@ -54,6 +54,65 @@ internal sealed class MeetingCleanupAutoApplyCacheService
         }
     }
 
+    public void RecordQueuedSuccess(string fingerprint, DateTimeOffset nowUtc)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var entriesByFingerprint = LoadEntriesByFingerprint();
+            entriesByFingerprint[fingerprint.Trim()] = new MeetingCleanupAutoApplyEntry(
+                fingerprint.Trim(),
+                LastFailureUtc: null,
+                FailureMessage: string.Empty,
+                LastQueuedSuccessUtc: nowUtc);
+            Save(entriesByFingerprint.Values);
+        }
+    }
+
+    public void RecordQueuedSuccesses(IEnumerable<string> fingerprints, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(fingerprints);
+
+        var normalizedFingerprints = fingerprints
+            .Where(fingerprint => !string.IsNullOrWhiteSpace(fingerprint))
+            .Select(fingerprint => fingerprint.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedFingerprints.Length == 0)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var entriesByFingerprint = LoadEntriesByFingerprint();
+            var addedEntry = false;
+            foreach (var fingerprint in normalizedFingerprints)
+            {
+                if (entriesByFingerprint.ContainsKey(fingerprint))
+                {
+                    continue;
+                }
+
+                entriesByFingerprint[fingerprint] = new MeetingCleanupAutoApplyEntry(
+                    fingerprint,
+                    LastFailureUtc: null,
+                    FailureMessage: string.Empty,
+                    LastQueuedSuccessUtc: nowUtc);
+                addedEntry = true;
+            }
+
+            if (addedEntry)
+            {
+                Save(entriesByFingerprint.Values);
+            }
+        }
+    }
+
     public void RecordFailure(string fingerprint, DateTimeOffset nowUtc, string? failureMessage)
     {
         if (string.IsNullOrWhiteSpace(fingerprint))
@@ -64,15 +123,16 @@ internal sealed class MeetingCleanupAutoApplyCacheService
         lock (_gate)
         {
             var entriesByFingerprint = LoadEntriesByFingerprint();
-            entriesByFingerprint[fingerprint.Trim()] = new MeetingCleanupAutoApplyFailureEntry(
+            entriesByFingerprint[fingerprint.Trim()] = new MeetingCleanupAutoApplyEntry(
                 fingerprint.Trim(),
                 nowUtc,
-                string.IsNullOrWhiteSpace(failureMessage) ? string.Empty : failureMessage.Trim());
+                string.IsNullOrWhiteSpace(failureMessage) ? string.Empty : failureMessage.Trim(),
+                LastQueuedSuccessUtc: null);
             Save(entriesByFingerprint.Values);
         }
     }
 
-    private Dictionary<string, MeetingCleanupAutoApplyFailureEntry> LoadEntriesByFingerprint()
+    private Dictionary<string, MeetingCleanupAutoApplyEntry> LoadEntriesByFingerprint()
     {
         if (_entriesByFingerprint is not null)
         {
@@ -81,7 +141,7 @@ internal sealed class MeetingCleanupAutoApplyCacheService
 
         if (!File.Exists(_cachePath))
         {
-            _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyFailureEntry>(StringComparer.Ordinal);
+            _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyEntry>(StringComparer.Ordinal);
             return _entriesByFingerprint;
         }
 
@@ -90,24 +150,24 @@ internal sealed class MeetingCleanupAutoApplyCacheService
             var contents = File.ReadAllText(_cachePath).Trim();
             if (string.IsNullOrWhiteSpace(contents))
             {
-                _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyFailureEntry>(StringComparer.Ordinal);
+                _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyEntry>(StringComparer.Ordinal);
                 return _entriesByFingerprint;
             }
 
             var document = JsonSerializer.Deserialize<MeetingCleanupAutoApplyCacheDocument>(contents, SerializerOptions);
-            _entriesByFingerprint = (document?.Entries ?? Array.Empty<MeetingCleanupAutoApplyFailureEntry>())
+            _entriesByFingerprint = (document?.Entries ?? Array.Empty<MeetingCleanupAutoApplyEntry>())
                 .Where(entry => !string.IsNullOrWhiteSpace(entry.Fingerprint))
                 .ToDictionary(entry => entry.Fingerprint, StringComparer.Ordinal);
             return _entriesByFingerprint;
         }
         catch
         {
-            _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyFailureEntry>(StringComparer.Ordinal);
+            _entriesByFingerprint = new Dictionary<string, MeetingCleanupAutoApplyEntry>(StringComparer.Ordinal);
             return _entriesByFingerprint;
         }
     }
 
-    private void Save(IEnumerable<MeetingCleanupAutoApplyFailureEntry> entries)
+    private void Save(IEnumerable<MeetingCleanupAutoApplyEntry> entries)
     {
         var directory = Path.GetDirectoryName(_cachePath)
             ?? throw new InvalidOperationException("Cache path must include a parent directory.");
@@ -131,9 +191,10 @@ internal sealed class MeetingCleanupAutoApplyCacheService
 }
 
 internal sealed record MeetingCleanupAutoApplyCacheDocument(
-    IReadOnlyList<MeetingCleanupAutoApplyFailureEntry> Entries);
+    IReadOnlyList<MeetingCleanupAutoApplyEntry> Entries);
 
-internal sealed record MeetingCleanupAutoApplyFailureEntry(
+internal sealed record MeetingCleanupAutoApplyEntry(
     string Fingerprint,
-    DateTimeOffset LastFailureUtc,
-    string FailureMessage);
+    DateTimeOffset? LastFailureUtc,
+    string FailureMessage,
+    DateTimeOffset? LastQueuedSuccessUtc = null);

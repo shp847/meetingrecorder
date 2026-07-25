@@ -196,8 +196,9 @@ public sealed class SessionProcessor
         IReadOnlyList<SpeakerTurn> speakerTurns = EmptySpeakerTurns;
         IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
         DiarizationMetadata? diarizationMetadata = null;
+        var forceSpeakerLabeling = manifest.ProcessingOverrides?.ForceSpeakerLabeling == true;
         if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true ||
-            BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(config))
+            (BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(config) && !forceSpeakerLabeling))
         {
             var skipMessage = manifest.ProcessingOverrides?.SkipSpeakerLabeling == true
                 ? "Speaker labeling skipped by processing override."
@@ -262,6 +263,10 @@ public sealed class SessionProcessor
             }
         }
 
+        manifest = manifest with
+        {
+            ProcessingOverrides = ClearForceSpeakerLabelingOverride(manifest.ProcessingOverrides),
+        };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
 
         manifest = manifest with
@@ -606,6 +611,13 @@ public sealed class SessionProcessor
     {
         return overrides?.ForceTranscription == true
             ? overrides with { ForceTranscription = false }
+            : overrides;
+    }
+
+    private static MeetingProcessingOverrides? ClearForceSpeakerLabelingOverride(MeetingProcessingOverrides? overrides)
+    {
+        return overrides?.ForceSpeakerLabeling == true
+            ? overrides with { ForceSpeakerLabeling = false }
             : overrides;
     }
 

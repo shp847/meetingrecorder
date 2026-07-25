@@ -7,6 +7,18 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class OutlookCalendarMeetingTitleProviderTests
 {
     [Fact]
+    public void ScorePlatformMatch_Recognizes_Zoom_Web_Link()
+    {
+        var score = OutlookCalendarMeetingTitleProvider.ScorePlatformMatch(
+            MeetingPlatform.Zoom,
+            "Next Steps: Kearney | BairesDev",
+            null,
+            "Join at https://app.zoom.us/wc/96067705206/join");
+
+        Assert.Equal(3, score);
+    }
+
+    [Fact]
     public void TryGetMeetingTitle_Returns_Title_And_Attendees_From_Matched_Appointment()
     {
         var provider = new OutlookCalendarMeetingTitleProvider(

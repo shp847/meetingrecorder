@@ -10,7 +10,8 @@ internal interface ICalendarMeetingTitleProvider
 internal sealed record CalendarMeetingDetailsCandidate(
     string Title,
     IReadOnlyList<MeetingAttendee> Attendees,
-    string Source);
+    string Source,
+    int PlatformMatchScore = 0);
 
 internal sealed class MeetingTitleEnricher
 {
@@ -67,6 +68,26 @@ internal sealed class MeetingTitleEnricher
         {
             // Calendar lookup is intentionally soft-fail and must never break detection.
             return decision;
+        }
+    }
+
+    public CalendarMeetingDetailsCandidate? TryGetCalendarMeeting(
+        MeetingPlatform platform,
+        bool calendarTitleFallbackEnabled,
+        DateTimeOffset nowUtc)
+    {
+        if (!calendarTitleFallbackEnabled)
+        {
+            return null;
+        }
+
+        try
+        {
+            return _calendarMeetingTitleProvider.TryGetMeetingTitle(platform, nowUtc, nowUtc);
+        }
+        catch
+        {
+            return null;
         }
     }
 

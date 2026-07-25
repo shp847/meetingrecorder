@@ -44,7 +44,8 @@ public sealed record MeetingProcessingOverrides(
     string? TranscriptionModelPath,
     string? TranscriptionModelFileName,
     bool SkipSpeakerLabeling = false,
-    bool ForceTranscription = false);
+    bool ForceTranscription = false,
+    bool ForceSpeakerLabeling = false);
 
 public enum DiarizationAttributionMode
 {

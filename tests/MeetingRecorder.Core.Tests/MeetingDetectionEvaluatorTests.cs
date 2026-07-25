@@ -99,6 +99,24 @@ public sealed class MeetingDetectionEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_Removes_Teams_Organization_And_Account_From_Meeting_Title()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal(
+                "window-title",
+                "Project Planning | Prep | Contoso | user@example.com | Microsoft Teams",
+                0.85,
+                DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.Equal("Project Planning | Prep", decision.SessionTitle);
+    }
+
+    [Fact]
     public void Evaluate_Does_Not_Start_For_Teams_Chat_Window_Even_When_Audio_Is_Active()
     {
         var evaluator = new MeetingDetectionEvaluator();

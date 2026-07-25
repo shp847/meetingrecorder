@@ -525,6 +525,35 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void GetEligibleActiveSessionTransition_Returns_Reclassify_When_Google_Meet_Code_Appears_After_A_Generic_Browser_Shell_Title()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-activity", "Device; peak=0.280; status=active", 0.2d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Google Meet and 19 more pages - Work - Microsoft Edge",
+            meetingLifecycleManaged: true,
+            policy);
+
+        Assert.Equal(ActiveSessionTransitionKind.Reclassify, transition);
+    }
+
+    [Fact]
     public void ShouldRefreshMeetingCatalogForConfigChange_Returns_False_For_Runtime_Only_Config_Changes()
     {
         var previous = new AppConfig
@@ -1373,6 +1402,19 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void ShouldAutoPromoteActiveMeetingTitle_Returns_True_For_Specific_Google_Meet_Title_When_Current_Title_Is_A_Generic_Browser_Shell()
+    {
+        var result = MainWindowInteractionLogic.ShouldAutoPromoteActiveMeetingTitle(
+            MeetingPlatform.GoogleMeet,
+            currentDetectedTitle: "Google Meet and 19 more pages - Work - Microsoft Edge",
+            currentEditorTitle: "Google Meet and 19 more pages - Work - Microsoft Edge",
+            proposedTitle: "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge",
+            proposalCameFromCalendarFallback: false);
+
+        Assert.True(result);
+    }
+
+    [Fact]
     public void ShouldAutoPromoteActiveMeetingTitle_Returns_False_When_User_Has_A_Pending_Title_Edit()
     {
         var result = MainWindowInteractionLogic.ShouldAutoPromoteActiveMeetingTitle(
@@ -1992,6 +2034,23 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildQueuedMeetingReprocessingManifest_Creates_ForceSpeakerLabeling_Override_When_None_Exists()
+    {
+        var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
+        var manifest = CreatePublishedManifest() with { ProcessingOverrides = null };
+
+        var queued = MainWindowInteractionLogic.BuildQueuedMeetingReprocessingManifest(
+            manifest,
+            now,
+            "Queued to add speaker labels.",
+            forceSpeakerLabeling: true);
+
+        Assert.NotNull(queued.ProcessingOverrides);
+        Assert.False(queued.ProcessingOverrides.SkipSpeakerLabeling);
+        Assert.True(queued.ProcessingOverrides.ForceSpeakerLabeling);
+    }
+
+    [Fact]
     public void BuildQueuedMeetingReprocessingManifest_Preserves_SkipSpeakerLabeling_For_Transcript_Regeneration()
     {
         var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
@@ -2032,6 +2091,7 @@ public sealed class MainWindowInteractionLogicTests
 
         Assert.False(queued.ProcessingOverrides?.SkipSpeakerLabeling == true);
         Assert.False(queued.ProcessingOverrides?.ForceTranscription == true);
+        Assert.True(queued.ProcessingOverrides?.ForceSpeakerLabeling);
     }
 
     [Fact]

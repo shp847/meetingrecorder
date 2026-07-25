@@ -152,6 +152,52 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_Clears_ForceSpeakerLabeling_After_Diarization_Attempt()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            await context.ManifestStore.SaveAsync(
+                manifest with
+                {
+                    ProcessingOverrides = new MeetingProcessingOverrides(
+                        TranscriptionModelPath: null,
+                        TranscriptionModelFileName: null,
+                        ForceSpeakerLabeling: true),
+                },
+                context.ManifestPath);
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new FakeTranscriptionProvider(),
+                diarizationProvider,
+                new TrackingSummaryProvider());
+
+            await processor.ProcessAsync(
+                context.ManifestPath,
+                new AppConfig
+                {
+                    WorkDir = context.WorkDir,
+                    AudioOutputDir = context.AudioDir,
+                    TranscriptOutputDir = context.TranscriptDir,
+                    TranscriptionModelPath = Path.Combine(context.Root, "models", "dummy.bin"),
+                    ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain,
+                });
+
+            var finalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            Assert.Equal(1, diarizationProvider.CallCount);
+            Assert.False(finalManifest.ProcessingOverrides?.ForceSpeakerLabeling == true);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
     public async Task ProcessAsync_TranscriptOnlyDrain_Skips_Diarization_And_Summaries()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

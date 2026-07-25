@@ -945,6 +945,7 @@ internal sealed class ProcessingQueueService
             ProcessingOverrides = existingOverrides with
             {
                 SkipSpeakerLabeling = true,
+                ForceSpeakerLabeling = false,
             },
             ErrorSummary = null,
         };
@@ -1338,6 +1339,12 @@ internal sealed class ProcessingQueueService
             return;
         }
 
+        var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+        if (!ShouldApplyDeferredSpeakerLabelingOverride(manifest))
+        {
+            return;
+        }
+
         await ApplySkipSpeakerLabelingOverrideAsync(
             manifestPath,
             BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(_config.Current)
@@ -1547,7 +1554,8 @@ internal sealed class ProcessingQueueService
 
     private static bool ShouldApplyDeferredSpeakerLabelingOverride(MeetingSessionManifest manifest)
     {
-        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true)
+        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true ||
+            manifest.ProcessingOverrides?.ForceSpeakerLabeling == true)
         {
             return false;
         }

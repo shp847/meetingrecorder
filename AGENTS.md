@@ -107,6 +107,11 @@ instructions.
   Keep it limited to dependency ecosystems, key local/external contracts,
   latest checked versions or revisions, deferred updates, and the verification
   command used; do not duplicate the tracker contents in this file.
+- Before changing meeting detection, Windows audio probing, executable naming,
+  signing, launch paths, or install location, read and append
+  `docs/auto-detection-cyberark-decision-log.md`. Record source, test, package,
+  installed, and live-machine states separately so an unshipped or inconclusive
+  experiment is not treated as a verified fix.
 
 ## Release Hygiene
 

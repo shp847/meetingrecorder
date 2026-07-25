@@ -39,6 +39,18 @@ public sealed class CurrentMeetingMetadataSourceTests
         Assert.Contains("await TryApplyDeferredMeetingReclassificationAsync(activeSession, cancellationToken);", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Meeting_Rollover_Saves_Metadata_Without_Recursively_Reentering_Rollover()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var rolloverStart = source.IndexOf("private async Task<bool> TryRollOverManagedSessionAsync(", StringComparison.Ordinal);
+        var rolloverEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync(", rolloverStart, StringComparison.Ordinal);
+        var rolloverBlock = source[rolloverStart..rolloverEnd];
+
+        Assert.Contains("applyDeferredReclassification: false", rolloverBlock, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] parts)
     {
         var current = AppContext.BaseDirectory;

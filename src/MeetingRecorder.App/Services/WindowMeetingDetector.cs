@@ -85,8 +85,9 @@ internal sealed class WindowMeetingDetector
     {
         var candidates = new List<DetectionDecision>();
         var audioAttribution = TryCaptureAudioAttribution();
+        var candidateWindows = _enumerateCandidates();
 
-        foreach (var candidateWindow in _enumerateCandidates())
+        foreach (var candidateWindow in candidateWindows)
         {
             if (!LooksLikeSupportedMeetingWindowClass(candidateWindow.WindowClassName))
             {
@@ -124,6 +125,12 @@ internal sealed class WindowMeetingDetector
             }
         }
 
+        var calendarBackedZoomCandidate = TryCreateCalendarBackedZoomCandidate(candidateWindows, audioAttribution);
+        if (calendarBackedZoomCandidate is not null)
+        {
+            candidates.Add(calendarBackedZoomCandidate);
+        }
+
         var bestCandidate = default(DetectionDecision);
         foreach (var candidate in candidates)
         {
@@ -135,6 +142,54 @@ internal sealed class WindowMeetingDetector
         }
 
         return bestCandidate;
+    }
+
+    private DetectionDecision? TryCreateCalendarBackedZoomCandidate(
+        IReadOnlyList<MeetingWindowCandidate> candidateWindows,
+        AudioSourceAttributionSnapshot audioAttribution)
+    {
+        if (!audioAttribution.IsActive)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var calendarMeeting = _meetingTitleEnricher.TryGetCalendarMeeting(
+            MeetingPlatform.Zoom,
+            _config.Current.CalendarTitleFallbackEnabled,
+            now);
+        if (calendarMeeting is null ||
+            calendarMeeting.PlatformMatchScore <= 0 ||
+            string.IsNullOrWhiteSpace(calendarMeeting.Title))
+        {
+            return null;
+        }
+
+        var matchingWindow = candidateWindows.FirstOrDefault(window =>
+            LooksLikeBrowserWindowClass(window.WindowClassName) &&
+            string.Equals(
+                window.MainWindowTitle.Trim(),
+                calendarMeeting.Title.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(matchingWindow.MainWindowTitle))
+        {
+            return null;
+        }
+
+        return new DetectionDecision(
+            MeetingPlatform.Zoom,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: calendarMeeting.Title.Trim(),
+            Signals:
+            [
+                new DetectionSignal("window-title", matchingWindow.MainWindowTitle, 0.70d, now),
+                new DetectionSignal("browser-window", matchingWindow.MainWindowTitle, 0.10d, now),
+                new DetectionSignal("calendar-zoom", calendarMeeting.Source, 0.20d, now),
+                new DetectionSignal("audio-activity", BuildEndpointAudioSignalValue(audioAttribution), 0.10d, now),
+            ],
+            Reason: "A visible browser window matched the active Zoom calendar event and system audio was active.");
     }
 
     public Task<DetectionDecision?> DetectBestCandidateAsync(CancellationToken cancellationToken)
@@ -154,6 +209,9 @@ internal sealed class WindowMeetingDetector
         if (!IsAmbiguousPlainTeamsContentWindow(candidate) ||
             HasTeamsRenderEvidence(candidate) ||
             HasUnavailableAudioProbeSignal(candidate) ||
+            (HasSpecificSessionTitle(candidate) &&
+             !hasMatchingSuppressedChatCandidate &&
+             HasSilentAudioSignal(candidate)) ||
             (HasEndpointAudioFallbackEvidence(candidate) && !hasMatchingSuppressedChatCandidate))
         {
             return candidate;
@@ -372,13 +430,21 @@ internal sealed class WindowMeetingDetector
                 : audioSource == "audio-activity"
                     ? 0.1d
                     : 0d;
-            var audioValue = string.IsNullOrWhiteSpace(audioAttribution.DeviceName)
-                ? $"peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "unknown"}"
-                : $"{audioAttribution.DeviceName}; peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "ok"}";
-            signals.Add(new DetectionSignal(audioSource, audioValue, audioWeight, now));
+            signals.Add(new DetectionSignal(
+                audioSource,
+                BuildEndpointAudioSignalValue(audioAttribution),
+                audioWeight,
+                now));
         }
 
         return signals;
+    }
+
+    private static string BuildEndpointAudioSignalValue(AudioSourceAttributionSnapshot audioAttribution)
+    {
+        return string.IsNullOrWhiteSpace(audioAttribution.DeviceName)
+            ? $"peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "unknown"}"
+            : $"{audioAttribution.DeviceName}; peak={audioAttribution.PeakLevel:0.000}; status={audioAttribution.StatusDetail ?? "ok"}";
     }
 
     private static IReadOnlyList<CandidateDetectionTitle> EnumerateDetectionTitles(
@@ -1348,6 +1414,12 @@ internal sealed class WindowMeetingDetector
         }
 
         return false;
+    }
+
+    private static bool HasSilentAudioSignal(DetectionDecision candidate)
+    {
+        return candidate.Signals.Any(signal =>
+            string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HasUnavailableAudioProbeSignal(DetectionDecision candidate)

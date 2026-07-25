@@ -39,7 +39,7 @@ Maintenance and support actions live in the header instead of the main navigatio
 
 - Records system audio and optional microphone audio on Windows
 - Supports manual recording for Teams, Google Meet, Zoom, Webex, and other conferencing apps that use the normal Windows audio stack
-- Uses assisted auto-detection for Microsoft Teams desktop and Google Meet browser meetings when you turn it on
+- Uses assisted auto-detection for Microsoft Teams desktop, Google Meet browser meetings, and calendar-matched Zoom Web calls when you turn it on
 - `Settings > Setup` now includes a Teams integration probe that captures the current local detector baseline, checks whether the Teams third-party API candidate exposes anything beyond manual controls on this machine, promotes that path only when readable meeting state is actually available, and otherwise keeps the current local Teams detector as the fallback
 - Transcribes recordings offline with local Whisper models
 - Publishes transcript artifacts in Markdown, JSON, and ready-marker form for automation
@@ -108,7 +108,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 ### Recording
 
 - Manual Start and Stop controls
-- Auto-detection for Teams desktop and Google Meet, on by default for new installs and still reset off once for older configs that predate the security-prompt migration so existing users can opt back in deliberately
+- Auto-detection for Teams desktop, Google Meet, and calendar-matched Zoom Web calls, on by default for new installs and still reset off once for older configs that predate the security-prompt migration so existing users can opt back in deliberately
 - Google Meet detection now relies on explicit browser titles plus endpoint render activity, so a visible Meet window can still be recognized without inspecting browser tabs or per-app audio sessions
 - Windows render audio probing now also uses a short timeout and backoff window, so a hung Core Audio query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
 - Teams render probing now gives each scan up to `1.5 s` and retries after a `15 s` cooldown when one pass is slow, while avoiding per-app session attribution on endpoint-protected machines
@@ -122,16 +122,18 @@ For newer managed installs, the app can also migrate prior portable data forward
 - When a live loopback or microphone capture client dies unexpectedly, the recorder now closes the orphaned segment at the actual stop time, reopens capture in place on the best available endpoint, and avoids running the old and new Windows audio clients at the same time during a swap
 - Auto-detection now treats active Windows render audio as endpoint-level evidence instead of attributing it to a likely process, meeting window, or browser tab
 - Google Meet auto-start now prefers an explicit active `Meet - ...` browser window with render activity and no longer depends on browser render-session metadata
-- Google Meet auto-start still begins immediately when active browser-family audio is present, but a silent explicit `Meet - ...` browser window now waits for sustained specific Meet-code evidence before starting so momentary browser-title flashes do not create tiny fragments; generic browser windows or tab-only Meet hints still wait for stronger evidence
-- Specific quiet Teams desktop meetings can now auto-start after sustained meeting-window evidence and endpoint render activity; a stale remembered Teams window title on its own is no longer enough to start a recording
-- Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can still qualify for sustained quiet-meeting auto-start when endpoint render activity is present
+- Google Meet auto-start still begins immediately when active browser-family audio is present, but a silent explicit `Meet - ...` browser window now waits for 20 seconds of stable joined-Meet identity, whether Google shows a Meet code or a named meeting title; generic browser windows or tab-only Meet hints still wait for stronger evidence
+- Specific quiet Teams desktop meetings can now auto-start after the same named meeting window remains visible for 20 seconds, even before endpoint render activity rises; generic Teams shells and chat, calendar, search, or matching playback surfaces remain excluded
+- Teams auto-detection now also recognizes newer in-call window titles that only show the attendee or meeting name without a visible `| Microsoft Teams` suffix, so quiet one-on-one and newer Teams call surfaces can qualify for the same sustained quiet-meeting auto-start
+- Teams session titles now omit the trailing organization and signed-in email that Teams adds to some call-window captions, while preserving `|` characters that are part of the meeting name
 - Teams auto-detection now ignores unrelated browser pages that merely mention Microsoft Teams in the title, prefers a specific live call title over the generic `Sharing control bar` continuation shell, and no longer lets generic/search/sharing-control-bar live surfaces borrow a nearby Outlook calendar title during detection
+- Zoom Web auto-detection requires an overlapping Outlook event with Zoom join evidence, an exact match between the event subject and a visible Chromium window title, and active endpoint audio; it does not inspect browser tabs, URLs, processes, or UI Automation trees
 - A specific Teams desktop meeting with live Teams audio attribution now also outranks a stale Google Meet browser candidate that no longer has attributed Meet audio, so an old Edge Meet tab cannot steal auto-start after you switch the real call over to Teams
 - Auto-started Teams recordings no longer treat a stale same-title quiet window as a forever-positive signal; instead they use a bounded quiet grace period before auto-stop, matching Teams shell/chat surfaces still need recent Teams render activity, and the pinned Teams sharing control bar is treated as a continuation of the already active specific meeting so live screen sharing does not fragment one call into repeated stop/start sessions
 - When a validated official Teams path is enabled, stale same-title Teams shells also stop refreshing continuity once the official lookup reports that no current meeting is active, but a current official match can still preserve the bounded quiet grace period during real low-audio patches
 - Google Meet continuity now normalizes title variants that share the same Meet code, so browser captions like `...and 1 more page`, `...Work - Microsoft Edge`, and `...Camera and microphone recording...` stay attached to one live call instead of being treated as separate meetings
 - Google Meet continuity now also treats browser share-surface titles such as `meet.google.com is sharing a window.` as part of the active call when the session is already pinned to a specific Meet meeting, which prevents screen sharing from prematurely aging an auto-started recording into auto-stop
-- Active Google Meet recordings tied to a specific Meet code now get a bounded auto-stop grace period when the Meet window is temporarily obscured and detection only sees a weak Teams chat or navigation surface, including up to three minutes when the current audio probe is silent, without resetting the positive-signal clock forever
+- Active Google Meet recordings tied to a specific Meet code or named `Meet - ...` title now get a bounded auto-stop grace period when the Meet window is temporarily obscured and detection only sees a weak Teams chat or navigation surface, including up to three minutes when the current audio probe is silent, without resetting the positive-signal clock forever
 - When microphone capture is enabled, the publish pipeline now reduces low-level mic bleed, short-lag correlated speaker bleed, and longer `80-400 ms` speaker pickup that shows up as delayed room echo when the mic can hear meeting audio from speakers
 - When microphone capture is enabled, the app can now also hot-swap to a better default Windows microphone device during a live recording, preserving earlier mic chunks in the same session instead of requiring a manual stop/start restart after a headset or dock microphone change
 - Microphone hot-swap now treats Windows default-role flips on the same physical input as the same active capture, so secure laptops do not repeatedly reopen WASAPI just because one microphone appears alternately as the multimedia and communications default
@@ -183,6 +185,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 - Suggests adding missing speaker labels when the diarization model bundle is ready and the transcript can be upgraded safely, and suggests repairing existing speaker labels when a published JSON sidecar shows an unusually large, fragment-heavy speaker distribution
 - One-time historical review flow with `Review Suggestions` and `Apply Safe Fixes`
 - Full Meetings cleanup refreshes can now auto-apply current `Safe Fix` items in the background while leaving review-first recommendations visible
+- Explicit or cleanup-triggered `Add Speaker Labels` and `Repair Speaker Labels` jobs bypass `Deferred` or transcript-only scheduling for that one repair attempt, then return to the configured background policy
 - Library/detail workflow where the Meetings tab stays focused on browsing, queue status, artifact shortcuts, and cleanup review, while the owned detail window handles transcript review and one-meeting maintenance
 
 ### External Audio Import
@@ -273,7 +276,7 @@ Meeting Recorder still owns:
 - Webex
 - Other conferencing apps that use standard Windows playback and microphone devices
 
-Manual recording works more broadly than assisted auto-detection. Auto-detection currently focuses on Teams desktop and Google Meet browser heuristics driven by visible browser titles plus endpoint-level Windows render activity.
+Manual recording works more broadly than assisted auto-detection. Auto-detection supports Teams desktop, Google Meet browser heuristics, and Zoom Web only when an active Zoom calendar event exactly matches the visible browser title and endpoint audio is active.
 
 ### Imported audio
 
@@ -315,7 +318,7 @@ When available, the published transcript JSON now also carries durable meeting m
 
 The ready-marker is the completion signal intended for downstream tools such as Power Automate.
 
-Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Full cleanup refreshes can auto-apply the current high-confidence `Safe Fix` set, but failed automatic attempts are suppressed by recommendation fingerprint until the underlying recommendation changes, and manual `Apply Safe Fixes` still bypasses that suppression. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup. Separately, successful publish and startup maintenance can permanently delete redundant bulky local work-cache files only after the matching published recording exists, without deleting published recordings or transcripts.
+Automatic cleanup recommendations and safe fixes remain archive-first. The app moves suspicious or superseded meeting artifacts into the Meetings archive so they can be recovered later if needed. Current builds use a single `Documents\Meetings\Archive` root for archive-style actions and one-time repair flows, and older parallel legacy roots such as `ArchivedRepairs` or `ArchivedFalseStarts` can be consolidated under that same `Archive` stem. Archived files are also marked unpinned on Windows so OneDrive-backed meeting folders can reclaim local disk space while keeping the backup artifacts recoverable from the cloud. Full cleanup refreshes can auto-apply the current high-confidence `Safe Fix` set, but failed attempts and successfully dispatched transcript or speaker-label queue requests are suppressed by recommendation fingerprint until the underlying recommendation changes. Manual `Apply Safe Fixes` still bypasses that suppression. Auto-generated repair backup folders such as `published-meeting-repair-v*` and timestamped `*-echo-repair-*` archives are pruned after 14 days; manual meeting archives are not included in that automatic retention cleanup. Separately, successful publish and startup maintenance can permanently delete redundant bulky local work-cache files only after the matching published recording exists, without deleting published recordings or transcripts.
 
 Meeting list refreshes, cleanup analysis, and dropped-audio import are metadata-first for OneDrive-backed folders: the app uses manifest end times when available and skips offline or reparse-point audio files so Files On-Demand placeholders stay dehydrated.
 
@@ -432,7 +435,7 @@ Settings includes summary provider configuration, DPAPI-protected OpenAI key sto
 
 ## Known Limitations
 
-- Assisted auto-detection currently targets Teams desktop and Google Meet only
+- Zoom Web auto-detection requires a matching Outlook event and visible browser title; native, unscheduled, or title-mismatched Zoom calls still require manual start
 - Transcript quality depends on the chosen local Whisper model and source audio quality
 - Diarization is optional and not guaranteed for every workflow
 - There is still no full transcript text editing interface

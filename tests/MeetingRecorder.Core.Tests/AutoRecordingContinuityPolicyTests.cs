@@ -1154,6 +1154,21 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldReclassifyActiveSession_Returns_True_For_CalendarMatched_Zoom_Over_Manual_Session()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = CreateZoomDecision("Quarterly Review | Partner", now);
+
+        var shouldReclassify = policy.ShouldReclassifyActiveSession(
+            decision,
+            MeetingPlatform.Manual,
+            activeSessionTitle: "Manual session 2026-07-21 11:06");
+
+        Assert.True(shouldReclassify);
+    }
+
+    [Fact]
     public void ShouldRecoverFromRecentAutoStop_Returns_True_For_Recent_Strong_Signal()
     {
         var policy = new AutoRecordingContinuityPolicy();
@@ -1350,7 +1365,7 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
-    public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_False_Without_A_Matched_Teams_Audio_Source()
+    public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_True_After_Sustained_Specific_Window_Without_PerSession_Attribution()
     {
         var policy = new AutoRecordingContinuityPolicy();
         var now = DateTimeOffset.UtcNow;
@@ -1374,7 +1389,7 @@ public sealed class AutoRecordingContinuityPolicyTests
             now.AddSeconds(-30),
             now);
 
-        Assert.False(shouldStart);
+        Assert.True(shouldStart);
     }
 
     [Fact]
@@ -1555,6 +1570,41 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void GetManualStopSuppressionDisposition_Releases_For_A_Different_CalendarMatched_Zoom_Meeting()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var context = new ManualStopSuppressionContext(
+            MeetingPlatform.Zoom,
+            "Earlier Zoom Meeting",
+            now.AddSeconds(-15));
+
+        var disposition = policy.GetManualStopSuppressionDisposition(
+            CreateZoomDecision("Quarterly Review | Partner", now),
+            context);
+
+        Assert.Equal(ManualStopSuppressionDisposition.ReleaseSuppression, disposition);
+    }
+
+    private static DetectionDecision CreateZoomDecision(string title, DateTimeOffset timestamp)
+    {
+        return new DetectionDecision(
+            MeetingPlatform.Zoom,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: title,
+            Signals:
+            [
+                new DetectionSignal("window-title", title, 0.70d, timestamp),
+                new DetectionSignal("browser-window", title, 0.10d, timestamp),
+                new DetectionSignal("calendar-zoom", "Outlook calendar", 0.20d, timestamp),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.230; status=active", 0.10d, timestamp),
+            ],
+            Reason: "A visible browser window matched the active Zoom calendar event and system audio was active.");
+    }
+
+    [Fact]
     public void ShouldRollOverManagedSession_Returns_True_For_A_Different_Specific_Teams_Call()
     {
         var policy = new AutoRecordingContinuityPolicy();
@@ -1619,6 +1669,61 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldRollOverManagedSession_Returns_False_When_Active_Google_Meet_Title_Is_A_Generic_Browser_Shell()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-activity", "Device; peak=0.280; status=active", 0.2d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var shouldRollOver = policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Google Meet and 19 more pages - Work - Microsoft Edge",
+            meetingLifecycleManaged: true);
+
+        Assert.False(shouldRollOver);
+    }
+
+    [Fact]
+    public void ShouldReclassifyActiveSession_Returns_True_When_Google_Meet_Code_Appears_After_A_Generic_Browser_Shell_Title()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.85d, now),
+                new DetectionSignal("browser-window", "Meet - hbk-jwja-scb and 19 more pages - Work - Microsoft Edge", 0.15d, now),
+                new DetectionSignal("audio-activity", "Device; peak=0.280; status=active", 0.2d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var shouldReclassify = policy.ShouldReclassifyActiveSession(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Google Meet and 19 more pages - Work - Microsoft Edge");
+
+        Assert.True(shouldReclassify);
+    }
+
+    [Fact]
     public void GetAutoStopTimeout_Extends_When_Active_Google_Meet_Is_Obscured_By_Weak_Teams_Chat_With_Audio()
     {
         var policy = new AutoRecordingContinuityPolicy();
@@ -1673,6 +1778,34 @@ public sealed class AutoRecordingContinuityPolicyTests
             MeetingPlatform.GoogleMeet,
             activeSessionTitle: "Meet - btw-osmp-hmr and 26 more pages - Work - Microsoft Edge",
             configuredTimeout);
+
+        Assert.Equal(TimeSpan.FromMinutes(3), timeout);
+    }
+
+    [Fact]
+    public void GetAutoStopTimeout_Extends_When_Active_Named_Google_Meet_Is_Obscured_By_Silent_Teams_Chat()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: false,
+            Confidence: 0.20d,
+            SessionTitle: "Sharma, Pranav (You)",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Chat | Sharma, Pranav (You) | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "The detected Teams window appears to be a chat or navigation view, not an active meeting.");
+
+        var timeout = policy.GetAutoStopTimeout(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - Named Customer Workshop - Work - Microsoft Edge",
+            configuredTimeout: TimeSpan.FromSeconds(30));
 
         Assert.Equal(TimeSpan.FromMinutes(3), timeout);
     }
@@ -1780,6 +1913,34 @@ public sealed class AutoRecordingContinuityPolicyTests
                 new DetectionSignal("window-title", "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge", 0.85d, now),
                 new DetectionSignal("browser-window", "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge", 0.15d, now),
                 new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var shouldStart = policy.ShouldAutoStartQuietSpecificGoogleMeet(
+            decision,
+            now.AddSeconds(-20),
+            now);
+
+        Assert.True(shouldStart);
+    }
+
+    [Fact]
+    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_True_For_Sustained_Named_Meet()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var title = "Meet - Named Customer Workshop - Work - Microsoft Edge";
+        var decision = new DetectionDecision(
+            MeetingPlatform.GoogleMeet,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: title,
+            Signals:
+            [
+                new DetectionSignal("window-title", title, 0.85d, now),
+                new DetectionSignal("browser-window", title, 0.15d, now),
+                new DetectionSignal("audio-silence", "LG ULTRAFINE; peak=0.000; status=below-threshold", 0d, now),
             ],
             Reason: "Meeting-like window detected, but no active system audio was observed.");
 

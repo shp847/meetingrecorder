@@ -914,6 +914,65 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_ForceSpeakerLabeling_Bypasses_Deferred_Primary_Pass_Override()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+            var liveConfig = new LiveAppConfig(
+                configStore,
+                await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+                {
+                    BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+                }));
+            var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+            var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+            var processFactory = new FakeWorkerProcessFactory();
+            var service = new ProcessingQueueService(
+                liveConfig,
+                manifestStore,
+                logger,
+                meetingMetadataEnricher: null,
+                () => new WorkerLaunch("fake-worker.exe", string.Empty),
+                processFactory);
+            var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+            var manifest = await manifestStore.LoadAsync(manifestPath);
+            await manifestStore.SaveAsync(
+                manifest with
+                {
+                    ProcessingOverrides = new MeetingProcessingOverrides(
+                        TranscriptionModelPath: null,
+                        TranscriptionModelFileName: null,
+                        ForceSpeakerLabeling: true),
+                },
+                manifestPath);
+
+            await service.EnqueueAsync(manifestPath);
+
+            var process = await processFactory.WaitForStartAsync();
+            var launchedManifest = await manifestStore.LoadAsync(manifestPath);
+            Assert.False(launchedManifest.ProcessingOverrides?.SkipSpeakerLabeling == true);
+            Assert.True(launchedManifest.ProcessingOverrides?.ForceSpeakerLabeling);
+
+            process.CompleteExit();
+            await service.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    [Fact]
     public async Task EnqueueAsync_Retries_DirectMlDiarizationCrash_With_CpuSpeakerLabeling_And_Preserves_RunMode()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

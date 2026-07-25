@@ -15,6 +15,9 @@ The goal is to preserve the parts that worked, avoid the parts that caused frict
 
 If you want the shorter copy-paste version for a new repo, use `PLATFORM_DEPLOYMENT_CHECKLIST_TEMPLATE.md`.
 If you want destination-specific markdown blocks for `ARCHITECTURE.md`, `RELEASING.md`, and `README.md`, use `PLATFORM_DEPLOYMENT_SNIPPETS.md`.
+For Meeting Recorder's chronological auto-detection and CyberArk experiments,
+including failed and inconclusive attempts, use
+`docs/auto-detection-cyberark-decision-log.md`.
 
 ## 1. Start From Corporate-Laptop Assumptions
 

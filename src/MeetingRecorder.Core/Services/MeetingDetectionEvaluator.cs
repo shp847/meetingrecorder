@@ -157,10 +157,24 @@ public sealed class MeetingDetectionEvaluator
 
     private static string CleanTitle(string value, string suffix)
     {
-        return value
+        var cleaned = value
             .Replace($"- {suffix}", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace($"| {suffix}", string.Empty, StringComparison.OrdinalIgnoreCase)
             .Trim();
+
+        if (!suffix.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase))
+        {
+            return cleaned;
+        }
+
+        var parts = cleaned.Split('|', StringSplitOptions.TrimEntries);
+        var account = parts.Length >= 3 ? parts[^1] : string.Empty;
+        return account.IndexOf('@') > 0 &&
+               account.IndexOf('@') == account.LastIndexOf('@') &&
+               account[^1] != '@' &&
+               !account.Any(char.IsWhiteSpace)
+            ? string.Join(" | ", parts[..^2])
+            : cleaned;
     }
 
     private static bool IsSuppressedTeamsWindowTitle(string value)

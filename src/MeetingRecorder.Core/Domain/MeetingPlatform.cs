@@ -6,4 +6,5 @@ public enum MeetingPlatform
     Manual = 1,
     Teams = 2,
     GoogleMeet = 3,
+    Zoom = 4,
 }

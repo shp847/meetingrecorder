@@ -1016,6 +1016,7 @@ public sealed class MeetingOutputCatalogService
         {
             "teams" => MeetingPlatform.Teams,
             "gmeet" => MeetingPlatform.GoogleMeet,
+            "zoom" => MeetingPlatform.Zoom,
             "manual" => MeetingPlatform.Manual,
             _ => MeetingPlatform.Unknown,
         };

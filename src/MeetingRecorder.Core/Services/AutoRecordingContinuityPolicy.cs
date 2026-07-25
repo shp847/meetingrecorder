@@ -511,7 +511,7 @@ public sealed class AutoRecordingContinuityPolicy
             !decision.ShouldStart &&
             !decision.ShouldKeepRecording &&
             HasSuppressedTeamsNavigationSignal(decision) &&
-            HasSpecificGoogleMeetCode(activeSessionTitle);
+            HasSpecificGoogleMeetIdentity(activeSessionTitle);
     }
 
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
@@ -603,8 +603,17 @@ public sealed class AutoRecordingContinuityPolicy
         {
             MeetingPlatform.Teams => HasWindowTitleEvidence(decision) && HasTeamsHostEvidence(decision),
             MeetingPlatform.GoogleMeet => HasWindowTitleEvidence(decision) || HasBrowserSurfaceEvidence(decision),
+            MeetingPlatform.Zoom => HasWindowTitleEvidence(decision) &&
+                HasBrowserSurfaceEvidence(decision) &&
+                HasCalendarZoomEvidence(decision),
             _ => false,
         };
+    }
+
+    private static bool HasCalendarZoomEvidence(DetectionDecision decision)
+    {
+        return decision.Signals.Any(signal =>
+            string.Equals(signal.Source, "calendar-zoom", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsQuietSpecificTeamsMeetingCandidateCore(DetectionDecision? decision)
@@ -621,7 +630,6 @@ public sealed class AutoRecordingContinuityPolicy
         if (IsGenericMeetingTitle(normalizedTitle, MeetingPlatform.Teams) ||
             HasSuppressedTeamsNavigationSignal(decision) ||
             !HasMeetingIdentityEvidence(decision) ||
-            (!HasSupportedMeetingAudioAttribution(decision) && !HasUnavailableAudioProbeSignal(decision)) ||
             !HasSilentAudioSignal(decision))
         {
             return false;
@@ -640,7 +648,7 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
-        if (!HasSpecificGoogleMeetCode(decision.SessionTitle) ||
+        if (!HasSpecificGoogleMeetIdentity(decision.SessionTitle) ||
             !HasMeetingIdentityEvidence(decision) ||
             !HasSilentAudioSignal(decision) ||
             HasActiveAudioSignal(decision))
@@ -741,10 +749,11 @@ public sealed class AutoRecordingContinuityPolicy
 
     private static string NormalizeMeetingTitle(string title) => MeetingTitleNormalizer.NormalizeForComparison(title);
 
-    private static bool HasSpecificGoogleMeetCode(string? title)
+    private static bool HasSpecificGoogleMeetIdentity(string? title)
     {
         var normalizedTitle = NormalizeMeetingTitle(title ?? string.Empty);
-        return LooksLikeGoogleMeetCode(normalizedTitle);
+        return LooksLikeGoogleMeetCode(normalizedTitle) ||
+            normalizedTitle.StartsWith("meet ", StringComparison.Ordinal);
     }
 
     private static bool LooksLikeGoogleMeetCode(string normalizedTitle)
@@ -778,9 +787,15 @@ public sealed class AutoRecordingContinuityPolicy
         return platform switch
         {
             MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms teams" or "sharing control bar",
-            MeetingPlatform.GoogleMeet => normalized is "google meet" or "meet",
+            MeetingPlatform.GoogleMeet => IsGenericGoogleMeetTitle(normalized),
             _ => false,
         };
+    }
+
+    private static bool IsGenericGoogleMeetTitle(string normalizedTitle)
+    {
+        return normalizedTitle is "google meet" or "meet" ||
+            normalizedTitle.StartsWith("google meet ", StringComparison.Ordinal);
     }
 
     private static bool HasTeamsSharingSurfaceContinuation(DetectionDecision decision, string? activeSessionTitle)

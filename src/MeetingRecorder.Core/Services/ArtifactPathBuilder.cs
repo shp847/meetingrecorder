@@ -15,6 +15,7 @@ public sealed class ArtifactPathBuilder
         {
             MeetingPlatform.Teams => "teams",
             MeetingPlatform.GoogleMeet => "gmeet",
+            MeetingPlatform.Zoom => "zoom",
             MeetingPlatform.Manual => "manual",
             _ => "unknown",
         };

@@ -1794,7 +1794,9 @@ public partial class MainWindow : Window
 
         try
         {
-            await ApplyPendingCurrentMetadataAsync(cancellationToken);
+            await ApplyPendingCurrentMetadataAsync(
+                cancellationToken,
+                applyDeferredReclassification: false);
             var manifestPath = await StopRecordingSessionAsync(
                 $"Detected a new meeting '{decision.SessionTitle}' while '{previousTitle}' was still active.",
                 cancellationToken);
@@ -4724,6 +4726,7 @@ public partial class MainWindow : Window
                 return;
             }
 
+            SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts(visibleRecommendations, inspections);
             _meetingCleanupRecommendations = visibleRecommendations;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
             await TryAutoApplyMeetingCleanupSafeFixesAsync(visibleRecommendations, refreshVersion, cancellationToken);
@@ -4743,6 +4746,28 @@ public partial class MainWindow : Window
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
         }
+    }
+
+    private void SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts(
+        IReadOnlyList<MeetingCleanupRecommendation> recommendations,
+        IReadOnlyList<MeetingInspectionRecord> inspections)
+    {
+        var manifestsByStem = inspections
+            .Where(inspection => inspection.Manifest is not null)
+            .GroupBy(inspection => inspection.Meeting.Stem, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Manifest, StringComparer.OrdinalIgnoreCase);
+        var previouslyAttemptedFingerprints = recommendations
+            .Where(recommendation =>
+                manifestsByStem.TryGetValue(recommendation.PrimaryStem, out var manifest) &&
+                MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
+                    recommendation.Action,
+                    manifest))
+            .Select(recommendation => recommendation.Fingerprint)
+            .ToArray();
+
+        _meetingCleanupAutoApplyCacheService.RecordQueuedSuccesses(
+            previouslyAttemptedFingerprints,
+            DateTimeOffset.UtcNow);
     }
 
     private void StartMeetingAttendeeBackfillRefresh(
@@ -9586,23 +9611,12 @@ public partial class MainWindow : Window
             var batchResult = await MeetingCleanupRecommendationBatchRunner.ExecuteAsync(
                 eligibleRecommendations,
                 (recommendation, batchCancellationToken) =>
-                    ExecuteMeetingCleanupRecommendationAsync(recommendation, archiveDirectory, batchCancellationToken),
+                    ExecuteAutomaticMeetingCleanupRecommendationAsync(
+                        recommendation,
+                        archiveDirectory,
+                        batchCancellationToken),
                 continueOnError: true,
                 cancellationToken);
-
-            foreach (var item in batchResult.Items)
-            {
-                if (item.Succeeded)
-                {
-                    _meetingCleanupAutoApplyCacheService.RecordSuccess(item.Recommendation.Fingerprint);
-                    continue;
-                }
-
-                _meetingCleanupAutoApplyCacheService.RecordFailure(
-                    item.Recommendation.Fingerprint,
-                    DateTimeOffset.UtcNow,
-                    item.ErrorMessage);
-            }
 
             await RefreshMeetingListAsync();
 
@@ -9619,6 +9633,46 @@ public partial class MainWindow : Window
         {
             _isApplyingSafeMeetingCleanupFixes = false;
             UpdateMeetingActionState();
+        }
+    }
+
+    private async Task ExecuteAutomaticMeetingCleanupRecommendationAsync(
+        MeetingCleanupRecommendation recommendation,
+        string archiveDirectory,
+        CancellationToken cancellationToken)
+    {
+        var suppressAfterQueueAccepted = MeetingCleanupAutoApplyPlanner
+            .ShouldSuppressSuccessfulAutomaticApply(recommendation.Action);
+        if (suppressAfterQueueAccepted)
+        {
+            // Persist before dispatch so a shutdown between queue acceptance and batch completion cannot requeue it.
+            _meetingCleanupAutoApplyCacheService.RecordQueuedSuccess(
+                recommendation.Fingerprint,
+                DateTimeOffset.UtcNow);
+        }
+
+        try
+        {
+            await ExecuteMeetingCleanupRecommendationAsync(
+                recommendation,
+                archiveDirectory,
+                cancellationToken);
+            if (!suppressAfterQueueAccepted)
+            {
+                _meetingCleanupAutoApplyCacheService.RecordSuccess(recommendation.Fingerprint);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _meetingCleanupAutoApplyCacheService.RecordFailure(
+                recommendation.Fingerprint,
+                DateTimeOffset.UtcNow,
+                exception.Message);
+            throw;
         }
     }
 
@@ -9903,7 +9957,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ApplyPendingCurrentMetadataAsync(CancellationToken cancellationToken)
+    private async Task ApplyPendingCurrentMetadataAsync(
+        CancellationToken cancellationToken,
+        bool applyDeferredReclassification = true)
     {
         var activeSession = _recordingCoordinator.ActiveSession;
         if (activeSession is null)
@@ -9911,11 +9967,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        await TryApplyDeferredMeetingReclassificationAsync(activeSession, cancellationToken);
-        activeSession = _recordingCoordinator.ActiveSession;
-        if (activeSession is null)
+        if (applyDeferredReclassification)
         {
-            return;
+            await TryApplyDeferredMeetingReclassificationAsync(activeSession, cancellationToken);
+            activeSession = _recordingCoordinator.ActiveSession;
+            if (activeSession is null)
+            {
+                return;
+            }
         }
 
         var pendingTitle = CurrentMeetingTitleTextBox.Text.Trim();

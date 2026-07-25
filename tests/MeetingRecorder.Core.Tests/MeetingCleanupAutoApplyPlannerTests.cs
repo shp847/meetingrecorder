@@ -1,5 +1,6 @@
 using MeetingRecorder.App;
 using MeetingRecorder.App.Services;
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.Core.Tests;
@@ -108,6 +109,93 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
         Assert.Empty(automaticResult);
         Assert.Single(manualResult);
         Assert.Equal(repair.Fingerprint, manualResult[0].Fingerprint);
+    }
+
+    [Theory]
+    [InlineData(MeetingCleanupAction.RegenerateTranscript, true)]
+    [InlineData(MeetingCleanupAction.GenerateSpeakerLabels, true)]
+    [InlineData(MeetingCleanupAction.RepairSpeakerLabels, true)]
+    [InlineData(MeetingCleanupAction.Archive, false)]
+    [InlineData(MeetingCleanupAction.Merge, false)]
+    public void ShouldSuppressSuccessfulAutomaticApply_Only_For_Queue_Style_Actions(
+        MeetingCleanupAction action,
+        bool expected)
+    {
+        Assert.Equal(expected, MeetingCleanupAutoApplyPlanner.ShouldSuppressSuccessfulAutomaticApply(action));
+    }
+
+    [Fact]
+    public void GetEligibleRecommendations_Suppresses_A_Previously_Queued_Success()
+    {
+        var generateLabels = CreateRecommendation(
+            "speaker-labels-1",
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        _cacheService.RecordQueuedSuccess(
+            generateLabels.Fingerprint,
+            DateTimeOffset.Parse("2026-07-16T04:15:00Z"));
+
+        var automaticResult = MeetingCleanupAutoApplyPlanner.GetEligibleRecommendations(
+            [generateLabels],
+            _cacheService);
+        var manualResult = MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(
+            [generateLabels]);
+
+        Assert.Empty(automaticResult);
+        Assert.Single(manualResult);
+    }
+
+    [Fact]
+    public void ShouldSeedSuppressionFromPriorAttempt_Detects_Completed_Speaker_Label_Fallback()
+    {
+        var manifest = new MeetingSessionManifest
+        {
+            State = SessionState.Published,
+            ProcessingOverrides = new MeetingProcessingOverrides(
+                TranscriptionModelPath: null,
+                TranscriptionModelFileName: null,
+                SkipSpeakerLabeling: true,
+                ForceTranscription: false),
+            DiarizationStatus = new ProcessingStageStatus(
+                "diarization",
+                StageExecutionState.Skipped,
+                DateTimeOffset.Parse("2026-07-16T04:15:00Z"),
+                "Speaker labeling skipped by processing override."),
+        };
+
+        Assert.True(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            manifest));
+        Assert.True(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
+            MeetingCleanupAction.RepairSpeakerLabels,
+            manifest));
+        Assert.False(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
+            MeetingCleanupAction.Archive,
+            manifest));
+    }
+
+    [Fact]
+    public void ShouldSeedSuppressionFromPriorAttempt_Does_Not_Block_A_Fresh_Queued_Manifest()
+    {
+        var manifest = new MeetingSessionManifest
+        {
+            State = SessionState.Queued,
+            ProcessingOverrides = new MeetingProcessingOverrides(
+                TranscriptionModelPath: null,
+                TranscriptionModelFileName: null,
+                SkipSpeakerLabeling: true,
+                ForceTranscription: false),
+            DiarizationStatus = new ProcessingStageStatus(
+                "diarization",
+                StageExecutionState.Skipped,
+                DateTimeOffset.Parse("2026-07-16T04:15:00Z"),
+                null),
+        };
+
+        Assert.False(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            manifest));
     }
 
     [Fact]

@@ -14,7 +14,7 @@ Meeting Recorder is a Windows desktop application that:
 - provides a meetings workspace for follow-up maintenance such as rename, retry, merge, split, archive, project tagging, and speaker-label edits
 - supports both managed per-user installs and portable usage on restricted Windows laptops
 
-Manual recording is intentionally conferencing-app agnostic: if audio is flowing through the normal Windows render device and optional microphone path, the recorder can capture it regardless of whether the call is in Teams, Google Meet, Zoom, Webex, or another meeting tool. Assisted auto-detection is narrower and currently focuses on Teams desktop and Google Meet patterns.
+Manual recording is intentionally conferencing-app agnostic: if audio is flowing through the normal Windows render device and optional microphone path, the recorder can capture it regardless of whether the call is in Teams, Google Meet, Zoom, Webex, or another meeting tool. Assisted auto-detection is narrower and currently supports Teams desktop, Google Meet patterns, and calendar-matched Zoom Web calls.
 
 The product is intentionally shaped for corporate-restricted and privacy-sensitive laptops:
 
@@ -94,7 +94,7 @@ The product family also includes installer and update surfaces:
 ### Implemented now
 
 - Manual recording controls for any conferencing app that uses the normal Windows output path
-- Assisted auto-detection for Teams desktop and Google Meet
+- Assisted auto-detection for Teams desktop, Google Meet, and calendar-matched Zoom Web calls
 - Auto-stop after qualifying meeting signals disappear for long enough
 - Rolling WAV chunk capture and durable per-session work folders
 - Optional microphone capture mixed into the final WAV
@@ -131,7 +131,8 @@ The product family also includes installer and update surfaces:
 
 - The app must detect likely Teams desktop meetings from process names, window titles, audio activity, and meeting-like keywords.
 - The app must detect likely Google Meet sessions from browser window titles and other OS-visible hints.
-- The app is not required to auto-detect Zoom, Webex, or every other conferencing platform.
+- The app must detect a Zoom Web call only when an overlapping Outlook event has Zoom join evidence, its subject exactly matches a visible Chromium window title, and output audio is active.
+- The app is not required to auto-detect native, unscheduled, or title-mismatched Zoom calls, Webex, or every other conferencing platform.
 - The app must require both meeting-like signals and active output audio before auto-starting a recording.
 - The app must suppress obvious non-meeting Teams surfaces such as chat, navigation, or playback-style windows when possible.
 - The app must expose manual start and stop even when detection is wrong or unavailable.
@@ -329,7 +330,7 @@ The current release line is considered successful when:
 
 - a user can install or run the app without admin rights using the supported managed or portable paths
 - a user can launch the app, see readiness state on `Home`, and manually record a meeting locally
-- assisted auto-detection can start and stop recordings for supported Teams desktop and Google Meet scenarios without blocking manual recording for other apps
+- assisted auto-detection can start and stop recordings for supported Teams desktop, Google Meet, and calendar-matched Zoom Web scenarios without blocking manual recording for other apps
 - the app can publish one final WAV per session
 - a valid local Whisper model can be installed or imported through the guided Setup flow
 - once a valid model exists, the app can generate `.md`, `.json`, and `.ready` outputs

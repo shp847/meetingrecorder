@@ -382,7 +382,30 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
         return new CalendarMeetingDetailsCandidate(
             appointment.Subject.Trim(),
             NormalizeAttendees(appointment.AttendeeNames),
-            "Outlook calendar");
+            "Outlook calendar",
+            appointment.PlatformMatchScore);
+    }
+
+    internal static int ScorePlatformMatch(MeetingPlatform platform, string subject, string? location, string? body)
+    {
+        var haystack = string.Join(
+                "\n",
+                new[] { subject, location ?? string.Empty, body ?? string.Empty })
+            .ToLowerInvariant();
+
+        return platform switch
+        {
+            MeetingPlatform.Teams when haystack.Contains("teams.microsoft.com", StringComparison.Ordinal) => 3,
+            MeetingPlatform.Teams when haystack.Contains("microsoft teams", StringComparison.Ordinal) => 2,
+            MeetingPlatform.Teams when haystack.Contains("teams", StringComparison.Ordinal) => 1,
+            MeetingPlatform.GoogleMeet when haystack.Contains("meet.google.com", StringComparison.Ordinal) => 3,
+            MeetingPlatform.GoogleMeet when haystack.Contains("google meet", StringComparison.Ordinal) => 2,
+            MeetingPlatform.GoogleMeet when haystack.Contains("meet", StringComparison.Ordinal) => 1,
+            MeetingPlatform.Zoom when haystack.Contains("zoom.us", StringComparison.Ordinal) => 3,
+            MeetingPlatform.Zoom when haystack.Contains("zoom meeting", StringComparison.Ordinal) => 2,
+            MeetingPlatform.Zoom when haystack.Contains("zoom", StringComparison.Ordinal) => 1,
+            _ => 0,
+        };
     }
 
     private static IReadOnlyList<MeetingAttendee> NormalizeAttendees(IReadOnlyList<string>? attendeeNames)
@@ -578,7 +601,7 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
                         candidates.Add(new OutlookCalendarAppointmentDetails(
                             subject.Trim(),
                             startLocal.Value,
-                            ScorePlatformMatch(platform, subject, location, body),
+                            OutlookCalendarMeetingTitleProvider.ScorePlatformMatch(platform, subject, location, body),
                             attendees));
                     }
                     finally
@@ -682,24 +705,6 @@ internal sealed class OutlookCalendarMeetingTitleProvider : ICalendarMeetingTitl
             }
         }
 
-        private static int ScorePlatformMatch(MeetingPlatform platform, string subject, string? location, string? body)
-        {
-            var haystack = string.Join(
-                    "\n",
-                    new[] { subject, location ?? string.Empty, body ?? string.Empty })
-                .ToLowerInvariant();
-
-            return platform switch
-            {
-                MeetingPlatform.Teams when haystack.Contains("teams.microsoft.com", StringComparison.Ordinal) => 3,
-                MeetingPlatform.Teams when haystack.Contains("microsoft teams", StringComparison.Ordinal) => 2,
-                MeetingPlatform.Teams when haystack.Contains("teams", StringComparison.Ordinal) => 1,
-                MeetingPlatform.GoogleMeet when haystack.Contains("meet.google.com", StringComparison.Ordinal) => 3,
-                MeetingPlatform.GoogleMeet when haystack.Contains("google meet", StringComparison.Ordinal) => 2,
-                MeetingPlatform.GoogleMeet when haystack.Contains("meet", StringComparison.Ordinal) => 1,
-                _ => 0,
-            };
-        }
     }
 
     private static object? GetComProperty(object target, string propertyName)
