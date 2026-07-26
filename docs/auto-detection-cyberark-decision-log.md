@@ -443,9 +443,17 @@ As of 2026-07-20, executable-policy facts are:
   manifests during a 60-second observation with the current Teams Calendar
   shell visible. The exact stale-specific-title surface was not available for
   a live reproduction. Incident evidence is preserved under
-  `%LOCALAPPDATA%\MeetingRecorder\incident-backups`; 251 header-only false
-  sessions were moved reversibly to an incident archive, while 59 files with
-  audio were left untouched because no authoritative original title exists.
+  `%LOCALAPPDATA%\MeetingRecorder\incident-backups`. The first recovery pass
+  moved 251 header-only WAV files. A follow-up catalog pass moved 949 matching
+  silent/unattributed work sessions and 323 active catalog artifacts
+  reversibly under incident batch `20260726-175143`; 30 stems with transcript
+  text beyond notification-only sounds were initially protected. After the
+  remaining stale-title rows were confirmed to still clutter the Meetings
+  view, a final reversible pass moved their 31 work sessions and 74 catalog
+  artifacts under incident batch `20260726-175724`. The installed Meetings
+  view then stayed responsive, showed the week count reduced from 576 to 29,
+  and exposed zero elements with the stale title. No original titles were
+  inferred because the manifests do not contain an authoritative replacement.
 - Outcome: source, test, package, install, and current-shell live validation
   retained. Exact stale-title live validation remains pending.
 - Follow-up / removal condition: retain unless live evidence proves a different
