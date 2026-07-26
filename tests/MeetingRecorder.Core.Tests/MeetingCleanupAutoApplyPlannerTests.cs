@@ -147,55 +147,27 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
-    public void ShouldSeedSuppressionFromPriorAttempt_Detects_Completed_Speaker_Label_Fallback()
+    public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_App_Run()
     {
-        var manifest = new MeetingSessionManifest
-        {
-            State = SessionState.Published,
-            ProcessingOverrides = new MeetingProcessingOverrides(
-                TranscriptionModelPath: null,
-                TranscriptionModelFileName: null,
-                SkipSpeakerLabeling: true,
-                ForceTranscription: false),
-            DiarizationStatus = new ProcessingStageStatus(
-                "diarization",
-                StageExecutionState.Skipped,
-                DateTimeOffset.Parse("2026-07-16T04:15:00Z"),
-                "Speaker labeling skipped by processing override."),
-        };
+        var recommendations = Enumerable.Range(1, 10)
+            .Select(index => CreateRecommendation(
+                $"labels-{index}",
+                MeetingCleanupAction.GenerateSpeakerLabels,
+                MeetingCleanupConfidence.High,
+                canApplyAutomatically: true))
+            .ToArray();
+        var result = MeetingCleanupAutoApplyPlanner.GetNextAutomaticBatch(
+            recommendations,
+            _cacheService,
+            automaticAttemptCount: 3);
 
-        Assert.True(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
-            MeetingCleanupAction.GenerateSpeakerLabels,
-            manifest));
-        Assert.True(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
-            MeetingCleanupAction.RepairSpeakerLabels,
-            manifest));
-        Assert.False(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
-            MeetingCleanupAction.Archive,
-            manifest));
-    }
+        Assert.Equal(2, result.Count);
+        Assert.Equal(["labels-1", "labels-2"], result.Select(item => item.Fingerprint));
 
-    [Fact]
-    public void ShouldSeedSuppressionFromPriorAttempt_Does_Not_Block_A_Fresh_Queued_Manifest()
-    {
-        var manifest = new MeetingSessionManifest
-        {
-            State = SessionState.Queued,
-            ProcessingOverrides = new MeetingProcessingOverrides(
-                TranscriptionModelPath: null,
-                TranscriptionModelFileName: null,
-                SkipSpeakerLabeling: true,
-                ForceTranscription: false),
-            DiarizationStatus = new ProcessingStageStatus(
-                "diarization",
-                StageExecutionState.Skipped,
-                DateTimeOffset.Parse("2026-07-16T04:15:00Z"),
-                null),
-        };
-
-        Assert.False(MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
-            MeetingCleanupAction.GenerateSpeakerLabels,
-            manifest));
+        Assert.Empty(MeetingCleanupAutoApplyPlanner.GetNextAutomaticBatch(
+            recommendations,
+            _cacheService,
+            automaticAttemptCount: 5));
     }
 
     [Fact]

@@ -129,6 +129,7 @@ public partial class MainWindow : Window
     private bool _isApplyingMeetingCleanupRecommendations;
     private bool _isDismissingMeetingCleanupRecommendations;
     private bool _isApplyingSafeMeetingCleanupFixes;
+    private int _meetingCleanupAutomaticAttemptCount;
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isUpdatingRushProcessing;
@@ -4726,10 +4727,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts(visibleRecommendations, inspections);
             _meetingCleanupRecommendations = visibleRecommendations;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
-            await TryAutoApplyMeetingCleanupSafeFixesAsync(visibleRecommendations, refreshVersion, cancellationToken);
+            await TryAutoApplyMeetingCleanupSafeFixesAsync(
+                visibleRecommendations,
+                records,
+                refreshVersion,
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -4746,28 +4750,6 @@ public partial class MainWindow : Window
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
         }
-    }
-
-    private void SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts(
-        IReadOnlyList<MeetingCleanupRecommendation> recommendations,
-        IReadOnlyList<MeetingInspectionRecord> inspections)
-    {
-        var manifestsByStem = inspections
-            .Where(inspection => inspection.Manifest is not null)
-            .GroupBy(inspection => inspection.Meeting.Stem, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Manifest, StringComparer.OrdinalIgnoreCase);
-        var previouslyAttemptedFingerprints = recommendations
-            .Where(recommendation =>
-                manifestsByStem.TryGetValue(recommendation.PrimaryStem, out var manifest) &&
-                MeetingCleanupAutoApplyPlanner.ShouldSeedSuppressionFromPriorAttempt(
-                    recommendation.Action,
-                    manifest))
-            .Select(recommendation => recommendation.Fingerprint)
-            .ToArray();
-
-        _meetingCleanupAutoApplyCacheService.RecordQueuedSuccesses(
-            previouslyAttemptedFingerprints,
-            DateTimeOffset.UtcNow);
     }
 
     private void StartMeetingAttendeeBackfillRefresh(
@@ -9567,8 +9549,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var safeRecommendationCount = MainWindowInteractionLogic
-            .GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations)
+        var safeRecommendations = MainWindowInteractionLogic
+            .GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations);
+        var eligibleAutomaticCount = MeetingCleanupAutoApplyPlanner
+            .GetEligibleRecommendations(_meetingCleanupRecommendations, _meetingCleanupAutoApplyCacheService)
             .Count;
         var impactedMeetingCount = _meetingCleanupRecommendations
             .SelectMany(recommendation => recommendation.RelatedStems)
@@ -9576,18 +9560,24 @@ public partial class MainWindow : Window
             .Count();
         MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;
         MeetingCleanupReviewBannerTextBlock.Text =
-            $"Found {_meetingCleanupRecommendations.Length} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
-            $"You can review them below or apply {safeRecommendationCount} safe fix(es) now. Rows marked Safe Fix are included in that bulk action.";
+            MainWindowInteractionLogic.BuildMeetingCleanupReviewBannerText(
+                _meetingCleanupRecommendations.Length,
+                impactedMeetingCount,
+                safeRecommendations.Count,
+                eligibleAutomaticCount,
+                MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerAppRun);
     }
 
     private async Task TryAutoApplyMeetingCleanupSafeFixesAsync(
         IReadOnlyList<MeetingCleanupRecommendation> visibleRecommendations,
+        IReadOnlyList<MeetingOutputRecord> records,
         int refreshVersion,
         CancellationToken cancellationToken)
     {
-        var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetEligibleRecommendations(
+        var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetNextAutomaticBatch(
             visibleRecommendations,
-            _meetingCleanupAutoApplyCacheService);
+            _meetingCleanupAutoApplyCacheService,
+            _meetingCleanupAutomaticAttemptCount);
         if (!MeetingCleanupAutoApplyPlanner.ShouldStartAutomaticApply(
                 MeetingRefreshMode.Full,
                 refreshVersion == Volatile.Read(ref _meetingRefreshVersion),
@@ -9600,12 +9590,16 @@ public partial class MainWindow : Window
         }
 
         _isApplyingSafeMeetingCleanupFixes = true;
+        _meetingCleanupAutomaticAttemptCount += eligibleRecommendations.Count;
         UpdateMeetingActionState();
         MeetingCleanupRecommendationsStatusTextBlock.Text =
             $"Automatically applying {eligibleRecommendations.Count} safe cleanup fix(es)...";
 
         try
         {
+            var meetingsByStem = records.ToDictionary(
+                record => record.Stem,
+                StringComparer.OrdinalIgnoreCase);
             var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(_liveConfig.Current.AudioOutputDir);
             var archiveDirectory = MeetingCleanupExecutionService.CreateExecutionArchiveDirectory(archiveRoot, "auto-safe-fixes");
             var batchResult = await MeetingCleanupRecommendationBatchRunner.ExecuteAsync(
@@ -9614,6 +9608,7 @@ public partial class MainWindow : Window
                     ExecuteAutomaticMeetingCleanupRecommendationAsync(
                         recommendation,
                         archiveDirectory,
+                        meetingsByStem,
                         batchCancellationToken),
                 continueOnError: true,
                 cancellationToken);
@@ -9639,6 +9634,7 @@ public partial class MainWindow : Window
     private async Task ExecuteAutomaticMeetingCleanupRecommendationAsync(
         MeetingCleanupRecommendation recommendation,
         string archiveDirectory,
+        IReadOnlyDictionary<string, MeetingOutputRecord> meetingsByStem,
         CancellationToken cancellationToken)
     {
         var suppressAfterQueueAccepted = MeetingCleanupAutoApplyPlanner
@@ -9656,6 +9652,7 @@ public partial class MainWindow : Window
             await ExecuteMeetingCleanupRecommendationAsync(
                 recommendation,
                 archiveDirectory,
+                meetingsByStem,
                 cancellationToken);
             if (!suppressAfterQueueAccepted)
             {
@@ -9743,23 +9740,31 @@ public partial class MainWindow : Window
         foreach (var recommendation in recommendations)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await ExecuteMeetingCleanupRecommendationAsync(recommendation, archiveDirectory, cancellationToken);
+            await ExecuteMeetingCleanupRecommendationAsync(
+                recommendation,
+                archiveDirectory,
+                meetingsByStem: null,
+                cancellationToken);
         }
     }
 
     private async Task ExecuteMeetingCleanupRecommendationAsync(
         MeetingCleanupRecommendation recommendation,
         string archiveDirectory,
+        IReadOnlyDictionary<string, MeetingOutputRecord>? meetingsByStem,
         CancellationToken cancellationToken)
     {
-        var config = _liveConfig.Current;
-        var meetingsByStem = await Task.Run(
-            () => _meetingOutputCatalogService.ListMeetings(
-                    config.AudioOutputDir,
-                    config.TranscriptOutputDir,
-                    config.WorkDir)
-                .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase),
-            cancellationToken);
+        if (meetingsByStem is null)
+        {
+            var config = _liveConfig.Current;
+            meetingsByStem = await Task.Run(
+                () => _meetingOutputCatalogService.ListMeetings(
+                        config.AudioOutputDir,
+                        config.TranscriptOutputDir,
+                        config.WorkDir)
+                    .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase),
+                cancellationToken);
+        }
 
         switch (recommendation.Action)
         {

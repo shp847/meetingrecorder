@@ -1945,6 +1945,31 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal("Repair Speaker Labels", MainWindowInteractionLogic.BuildMeetingCleanupActionLabel(result[0].Action));
     }
 
+    [Theory]
+    [InlineData(395, 388, 388, 0, "388 safe fix(es) are waiting for automatic cleanup")]
+    [InlineData(395, 388, 0, 388, "388 safe fix(es) are already queued or were attempted automatically")]
+    public void BuildMeetingCleanupReviewBannerText_Explains_Automatic_State(
+        int recommendationCount,
+        int safeRecommendationCount,
+        int eligibleAutomaticCount,
+        int suppressedAutomaticCount,
+        string expectedState)
+    {
+        var result = MainWindowInteractionLogic.BuildMeetingCleanupReviewBannerText(
+            recommendationCount,
+            impactedMeetingCount: 388,
+            safeRecommendationCount,
+            eligibleAutomaticCount,
+            automaticBatchSize: 5);
+
+        Assert.Contains(expectedState, result, StringComparison.Ordinal);
+        Assert.Contains(
+            $"{suppressedAutomaticCount} safe fix(es) are already queued or were attempted automatically",
+            result,
+            StringComparison.Ordinal);
+        Assert.Contains("at most 5 fix(es) per app run", result, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BuildMeetingCleanupSafetyLabel_Matches_Safe_Fix_Rules()
     {

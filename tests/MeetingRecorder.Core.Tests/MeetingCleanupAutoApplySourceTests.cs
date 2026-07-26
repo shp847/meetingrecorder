@@ -14,14 +14,25 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         var publishIndex = methodBlock.IndexOf("ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);", StringComparison.Ordinal);
-        var migrationIndex = methodBlock.IndexOf("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts(visibleRecommendations, inspections);", StringComparison.Ordinal);
-        var autoApplyIndex = methodBlock.IndexOf("await TryAutoApplyMeetingCleanupSafeFixesAsync(visibleRecommendations, refreshVersion, cancellationToken);", StringComparison.Ordinal);
+        var autoApplyIndex = methodBlock.IndexOf("await TryAutoApplyMeetingCleanupSafeFixesAsync(", StringComparison.Ordinal);
 
         Assert.True(publishIndex >= 0, "Expected cleanup refresh to publish the visible recommendations.");
-        Assert.True(migrationIndex >= 0 && migrationIndex < autoApplyIndex,
-            "Prior queue attempts should be suppressed before automatic fixes are selected.");
         Assert.True(autoApplyIndex > publishIndex, "Automatic safe fixes should start only after recommendation rows are published.");
+        Assert.DoesNotContain("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts", methodBlock, StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(methodBlock, "await TryAutoApplyMeetingCleanupSafeFixesAsync("));
+    }
+
+    [Fact]
+    public void Automatic_Safe_Fix_Cache_Does_Not_Reuse_The_Legacy_Seeded_V1_File()
+    {
+        var sourcePath = GetPath(
+            "src",
+            "MeetingRecorder.App",
+            "Services",
+            "MeetingCleanupAutoApplyCacheService.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("meeting-cleanup-auto-apply-v2.json", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -45,6 +56,20 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
+    public void Automatic_Safe_Fix_Batch_Reuses_One_Catalog_Snapshot()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task TryAutoApplyMeetingCleanupSafeFixesAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task ExecuteAutomaticMeetingCleanupRecommendationAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("var meetingsByStem = records.ToDictionary(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("meetingsByStem,", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("_meetingOutputCatalogService.ListMeetings(", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Cleanup_Execution_Offloads_The_Catalog_Scan_From_The_Ui_Thread()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -53,7 +78,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodEnd = source.IndexOf("private static string ResolveMeetingCleanupArchiveCategory", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        Assert.Contains("var meetingsByStem = await Task.Run(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("meetingsByStem = await Task.Run(", methodBlock, StringComparison.Ordinal);
         Assert.Contains("cancellationToken);", methodBlock, StringComparison.Ordinal);
     }
 

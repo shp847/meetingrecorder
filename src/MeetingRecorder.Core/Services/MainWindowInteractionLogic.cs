@@ -2190,6 +2190,23 @@ internal static class MainWindowInteractionLogic
                recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
     }
 
+    public static string BuildMeetingCleanupReviewBannerText(
+        int recommendationCount,
+        int impactedMeetingCount,
+        int safeRecommendationCount,
+        int eligibleAutomaticCount,
+        int automaticBatchSize)
+    {
+        var suppressedAutomaticCount = Math.Max(0, safeRecommendationCount - eligibleAutomaticCount);
+        return
+            $"Found {recommendationCount} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
+            $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
+            $"{eligibleAutomaticCount} safe fix(es) are waiting for automatic cleanup; " +
+            $"{suppressedAutomaticCount} safe fix(es) are already queued or were attempted automatically. " +
+            $"Automatic cleanup queues at most {automaticBatchSize} fix(es) per app run. " +
+            "Apply Safe Fixes retries all marked rows manually.";
+    }
+
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)
     {
         return IsSafeMeetingCleanupRecommendation(recommendation)

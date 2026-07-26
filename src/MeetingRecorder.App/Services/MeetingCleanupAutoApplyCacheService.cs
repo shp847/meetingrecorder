@@ -18,7 +18,7 @@ internal sealed class MeetingCleanupAutoApplyCacheService
     public MeetingCleanupAutoApplyCacheService(string? cachePath = null)
     {
         _cachePath = string.IsNullOrWhiteSpace(cachePath)
-            ? Path.Combine(AppDataPaths.GetManagedAppRoot(), "cache", "meeting-cleanup-auto-apply-v1.json")
+            ? Path.Combine(AppDataPaths.GetManagedAppRoot(), "cache", "meeting-cleanup-auto-apply-v2.json")
             : Path.GetFullPath(cachePath);
     }
 

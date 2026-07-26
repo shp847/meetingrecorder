@@ -6,6 +6,8 @@ namespace MeetingRecorder.App.Services;
 
 internal static class MeetingCleanupAutoApplyPlanner
 {
+    public const int MaxAutomaticFixesPerAppRun = 5;
+
     public static IReadOnlyList<MeetingCleanupRecommendation> GetEligibleRecommendations(
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
         MeetingCleanupAutoApplyCacheService cacheService)
@@ -13,6 +15,20 @@ internal static class MeetingCleanupAutoApplyPlanner
         return MainWindowInteractionLogic
             .GetAutoApplicableMeetingCleanupRecommendations(recommendations)
             .Where(recommendation => !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint))
+            .ToArray();
+    }
+
+    public static IReadOnlyList<MeetingCleanupRecommendation> GetNextAutomaticBatch(
+        IReadOnlyList<MeetingCleanupRecommendation> recommendations,
+        MeetingCleanupAutoApplyCacheService cacheService,
+        int automaticAttemptCount)
+    {
+        var availableSlots = Math.Max(0, MaxAutomaticFixesPerAppRun - automaticAttemptCount);
+
+        return MainWindowInteractionLogic
+            .GetAutoApplicableMeetingCleanupRecommendations(recommendations)
+            .Where(recommendation => !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint))
+            .Take(availableSlots)
             .ToArray();
     }
 
@@ -39,23 +55,4 @@ internal static class MeetingCleanupAutoApplyPlanner
             MeetingCleanupAction.RepairSpeakerLabels;
     }
 
-    public static bool ShouldSeedSuppressionFromPriorAttempt(
-        MeetingCleanupAction action,
-        MeetingSessionManifest? manifest)
-    {
-        if (manifest is null || manifest.State is not (SessionState.Published or SessionState.Failed))
-        {
-            return false;
-        }
-
-        return action switch
-        {
-            MeetingCleanupAction.RegenerateTranscript =>
-                manifest.ProcessingOverrides?.ForceTranscription == true,
-            MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels =>
-                manifest.ProcessingOverrides?.SkipSpeakerLabeling == true &&
-                manifest.DiarizationStatus.State is StageExecutionState.Skipped or StageExecutionState.Failed,
-            _ => false,
-        };
-    }
 }
