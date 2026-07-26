@@ -1365,7 +1365,7 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
-    public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_True_After_Sustained_Specific_Window_Without_PerSession_Attribution()
+    public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_False_Without_Attributed_Audio_Or_A_Probe_Failure()
     {
         var policy = new AutoRecordingContinuityPolicy();
         var now = DateTimeOffset.UtcNow;
@@ -1389,7 +1389,7 @@ public sealed class AutoRecordingContinuityPolicyTests
             now.AddSeconds(-30),
             now);
 
-        Assert.True(shouldStart);
+        Assert.False(shouldStart);
     }
 
     [Fact]
@@ -1914,7 +1914,14 @@ public sealed class AutoRecordingContinuityPolicyTests
                 new DetectionSignal("browser-window", "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge", 0.15d, now),
                 new DetectionSignal("audio-silence", "Speakers; peak=0.000; status=below-threshold", 0d, now),
             ],
-            Reason: "Meeting-like window detected, but no active system audio was observed.");
+            Reason: "Meeting-like window detected, but no active system audio was observed.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Google Meet",
+                "Meet - fkx-wxbo-vcg and 22 more pages - Work - Microsoft Edge",
+                "Meet - fkx-wxbo-vcg",
+                AudioSourceMatchKind.BrowserTab,
+                AudioSourceConfidence.High,
+                now));
 
         var shouldStart = policy.ShouldAutoStartQuietSpecificGoogleMeet(
             decision,
@@ -1925,7 +1932,7 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
-    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_True_For_Sustained_Named_Meet()
+    public void ShouldAutoStartQuietSpecificGoogleMeet_Returns_False_For_Sustained_Named_Meet_Without_Attributed_Audio()
     {
         var policy = new AutoRecordingContinuityPolicy();
         var now = DateTimeOffset.UtcNow;
@@ -1949,7 +1956,7 @@ public sealed class AutoRecordingContinuityPolicyTests
             now.AddSeconds(-20),
             now);
 
-        Assert.True(shouldStart);
+        Assert.False(shouldStart);
     }
 
     [Fact]

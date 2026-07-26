@@ -408,6 +408,49 @@ As of 2026-07-20, executable-policy facts are:
   email account metadata to call-window titles; revisit only with a different
   observed caption shape.
 
+### 2026-07-26: Silent stale meeting titles created repeated false sessions
+- Trigger / observed symptom: the Meetings library showed hundreds of sessions
+  with the same Teams title; an earlier Google Meet call was similarly split
+  into repeated sessions.
+- Exact runtime or CyberArk evidence: 551 July 26 work manifests persisted the
+  same Teams title. The false-start chain began at midnight UTC and produced
+  roughly 91-second sessions. Each sampled manifest had a specific Teams window
+  title plus `audio-silence` at peak `0.000`, no attributed audio source, and no
+  captured chunks. Automatic detection was disabled after the app was stopped
+  during a read-only catalog scan.
+- Hypothesis: confirmed policy loop. A visible specific meeting title qualified
+  for quiet auto-start after 20 seconds without attributed audio; auto-stop then
+  reset the quiet debounce and allowed the same stale window to start again.
+- APIs or signals added/removed: none. Quiet Teams and Google Meet auto-start
+  now requires an attributed audio source or an unavailable audio-probe signal.
+- Positive behavior expected: active attributed audio still starts immediately;
+  a quiet but attributed meeting or an audio-probe failure can still use the
+  debounce; a silent stale window alone cannot create sessions.
+- False-positive/security boundary retained: no new Windows APIs, UI Automation,
+  process lookup, browser inspection, or CyberArk-sensitive probes are added.
+- Tests added and results: live-shaped Teams and Google Meet policy regressions
+  passed with the focused detection/startup set (112/112); full verification
+  passed 1,060 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,107,521 bytes with SHA-256
+  `952C6D724C5BD64B6D79EFA1E0BEF9CDEFDF31203C0F0E2C6E3306F90724C4D5`;
+  MSI is 75,853,824 bytes with SHA-256
+  `6EC4CE230C228417F011F0D2F835C6E1C2AC68A687526F298D971802AF119647`.
+- Installed hash/version/signature status: local v0.3 deployment completed and
+  published/installed `MeetingRecorder.Core.dll` hashes match at
+  `52D6685C7B32EA204702BCAE523C80E7A376371A97F457A1E98ADC9BFFFBB8F4`;
+  automatic detection was re-enabled after validation.
+- Live-machine result: the installed app stayed responsive and created no work
+  manifests during a 60-second observation with the current Teams Calendar
+  shell visible. The exact stale-specific-title surface was not available for
+  a live reproduction. Incident evidence is preserved under
+  `%LOCALAPPDATA%\MeetingRecorder\incident-backups`; 251 header-only false
+  sessions were moved reversibly to an incident archive, while 59 files with
+  audio were left untouched because no authoritative original title exists.
+- Outcome: source, test, package, install, and current-shell live validation
+  retained. Exact stale-title live validation remains pending.
+- Follow-up / removal condition: retain unless live evidence proves a different
+  trustworthy joined-call signal can distinguish quiet calls from stale windows.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover

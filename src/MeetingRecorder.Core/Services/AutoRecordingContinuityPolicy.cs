@@ -630,7 +630,8 @@ public sealed class AutoRecordingContinuityPolicy
         if (IsGenericMeetingTitle(normalizedTitle, MeetingPlatform.Teams) ||
             HasSuppressedTeamsNavigationSignal(decision) ||
             !HasMeetingIdentityEvidence(decision) ||
-            !HasSilentAudioSignal(decision))
+            !HasSilentAudioSignal(decision) ||
+            (!HasSupportedMeetingAudioAttribution(decision) && !HasUnavailableAudioProbeSignal(decision)))
         {
             return false;
         }
@@ -651,7 +652,8 @@ public sealed class AutoRecordingContinuityPolicy
         if (!HasSpecificGoogleMeetIdentity(decision.SessionTitle) ||
             !HasMeetingIdentityEvidence(decision) ||
             !HasSilentAudioSignal(decision) ||
-            HasActiveAudioSignal(decision))
+            HasActiveAudioSignal(decision) ||
+            (!HasSupportedMeetingAudioAttribution(decision) && !HasUnavailableAudioProbeSignal(decision)))
         {
             return false;
         }

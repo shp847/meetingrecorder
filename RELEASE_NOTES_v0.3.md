@@ -10,6 +10,8 @@ Reliability fix: automatic meeting rollover now saves pending metadata without r
 
 Reliability fix: the Meetings library now virtualizes grouped rows and runs automatic-cleanup catalog scans in the background, preventing large libraries from freezing the window when the tab opens.
 
+Reliability fix: silent stale Teams and Google Meet windows no longer repeatedly auto-start short sessions; quiet auto-start now requires attributed meeting audio or an unavailable audio probe.
+
 ## What Meeting Recorder Is
 
 Meeting Recorder is built for users who need:
