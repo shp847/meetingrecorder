@@ -100,6 +100,31 @@ public sealed class MeetingWorkspaceRefreshXamlTests
     }
 
     [Fact]
+    public void Meetings_List_Virtualizes_Rows_While_Grouping()
+    {
+        var mainWindowXamlPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "MeetingRecorder.App",
+            "MainWindow.xaml"));
+
+        var mainWindowXaml = File.ReadAllText(mainWindowXamlPath);
+        var listStart = mainWindowXaml.IndexOf("x:Name=\"MeetingsDataGrid\"", StringComparison.Ordinal);
+        var listEnd = mainWindowXaml.IndexOf('>', listStart);
+        var listTag = mainWindowXaml[listStart..listEnd];
+
+        Assert.Contains("VirtualizingPanel.IsVirtualizing=\"True\"", listTag);
+        Assert.Contains("VirtualizingPanel.IsVirtualizingWhenGrouping=\"True\"", listTag);
+        Assert.Contains("VirtualizingPanel.VirtualizationMode=\"Recycling\"", listTag);
+        Assert.Contains("ScrollViewer.CanContentScroll=\"True\"", listTag);
+    }
+
+    [Fact]
     public void Meetings_List_Right_Click_Preserves_Current_Selection()
     {
         var sourcePath = Path.GetFullPath(Path.Combine(

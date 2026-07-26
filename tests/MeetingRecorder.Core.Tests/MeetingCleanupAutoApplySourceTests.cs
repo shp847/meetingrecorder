@@ -44,6 +44,19 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("RecordFailure(", methodBlock, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Cleanup_Execution_Offloads_The_Catalog_Scan_From_The_Ui_Thread()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task ExecuteMeetingCleanupRecommendationAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private static string ResolveMeetingCleanupArchiveCategory", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("var meetingsByStem = await Task.Run(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("cancellationToken);", methodBlock, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

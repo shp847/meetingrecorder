@@ -1181,6 +1181,10 @@
                                 <ListView x:Name="MeetingsDataGrid"
                                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                           ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                          ScrollViewer.CanContentScroll="True"
+                                          VirtualizingPanel.IsVirtualizing="True"
+                                          VirtualizingPanel.IsVirtualizingWhenGrouping="True"
+                                          VirtualizingPanel.VirtualizationMode="Recycling"
                                           SelectionMode="Extended"
                                           SelectionChanged="MeetingsDataGrid_OnSelectionChanged"
                                           MouseDoubleClick="MeetingsDataGrid_OnMouseDoubleClick">

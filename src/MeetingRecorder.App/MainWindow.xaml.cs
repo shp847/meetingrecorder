@@ -9752,11 +9752,14 @@ public partial class MainWindow : Window
         string archiveDirectory,
         CancellationToken cancellationToken)
     {
-        var meetingsByStem = _meetingOutputCatalogService.ListMeetings(
-                _liveConfig.Current.AudioOutputDir,
-                _liveConfig.Current.TranscriptOutputDir,
-                _liveConfig.Current.WorkDir)
-            .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase);
+        var config = _liveConfig.Current;
+        var meetingsByStem = await Task.Run(
+            () => _meetingOutputCatalogService.ListMeetings(
+                    config.AudioOutputDir,
+                    config.TranscriptOutputDir,
+                    config.WorkDir)
+                .ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase),
+            cancellationToken);
 
         switch (recommendation.Action)
         {

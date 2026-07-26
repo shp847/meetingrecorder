@@ -8,6 +8,8 @@ This release should be read as the product definition for Meeting Recorder as it
 
 Reliability fix: automatic meeting rollover now saves pending metadata without recursively starting another rollover. This prevents the app from exiting with a stack overflow when the detected Teams meeting title changes during recording.
 
+Reliability fix: the Meetings library now virtualizes grouped rows and runs automatic-cleanup catalog scans in the background, preventing large libraries from freezing the window when the tab opens.
+
 ## What Meeting Recorder Is
 
 Meeting Recorder is built for users who need:
