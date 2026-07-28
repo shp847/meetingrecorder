@@ -312,6 +312,41 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public async Task DetectBestCandidate_Does_Not_Start_When_Multiple_Specific_Teams_Windows_Only_Share_Endpoint_Audio()
+    {
+        var detector = await CreateDetectorAsync(
+            [
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "IonQ + Kearney (External) | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)200,
+                    2000),
+                new MeetingWindowCandidate(
+                    "ms-teams",
+                    "Kohl's Approach and pricing | Microsoft Teams",
+                    "TeamsWebView",
+                    (nint)201,
+                    2000),
+            ],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.49d,
+                true,
+                "active",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Teams, result.Platform);
+        Assert.False(result.ShouldStart);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.Contains(result.Signals, signal => signal.Source == "teams-identity-ambiguous");
+    }
+
+    [Fact]
     public async Task DetectBestCandidate_Uses_TeamsWebView_When_Process_Metadata_Is_Unavailable()
     {
         var detector = await CreateDetectorAsync(

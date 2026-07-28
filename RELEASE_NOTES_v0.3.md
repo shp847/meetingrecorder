@@ -14,6 +14,8 @@ Reliability fix: silent stale Teams and Google Meet windows no longer repeatedly
 
 Reliability fix: generic `Microsoft Teams | Pinned window` and `Google Meet and N more pages` shells no longer auto-start from unrelated endpoint audio; attributed Teams or Meet audio is required.
 
+Reliability fix: multiple stale specific Teams windows can no longer borrow the same endpoint audio and splinter one call into arbitrary title-based recordings.
+
 Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-label skips for prior automatic attempts. Automatic cleanup uses a clean suppression cache, queues at most five fixes per app run, reuses one catalog snapshot per batch, and reports waiting versus queued or attempted work.
 
 ## What Meeting Recorder Is

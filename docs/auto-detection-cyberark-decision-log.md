@@ -548,6 +548,53 @@ As of 2026-07-20, executable-policy facts are:
   email-only Teams shell cannot replace an active Google Meet without
   attributed Teams audio.
 
+### 2026-07-28: Multiple specific Teams windows shared endpoint audio
+- Trigger / observed symptom: one workday produced repeated 30-second to
+  three-minute Teams recordings under several stale meeting and attendee
+  titles, with occasional longer fragments under the real call title.
+- Exact runtime or CyberArk evidence: installed-app logs showed title
+  alternation between `Kohl's Blue Team & Client Q&A Preparation` and
+  `IonQ + Kearney (External)`, plus repeated same-title stop/restart sequences
+  for `Graszl, Kate, Villar, Juan Pablo`, `Harriss, Grant`, and other visible
+  Teams windows. Every false start used only endpoint-wide `audio-activity`;
+  none had attributed Teams window, process, browser, or official-match
+  evidence. No CyberArk or capture-device failure caused the title changes.
+- Hypothesis: confirmed candidate-selection gap. When several distinct
+  specific Teams windows remained visible, each borrowed the same endpoint
+  peak and qualified as a live meeting; scan ordering then selected an
+  arbitrary title for auto-start or rollover.
+- APIs or signals added/removed: added the internal
+  `teams-identity-ambiguous` decision signal when multiple distinct specific
+  Teams candidates share only endpoint audio.
+- Positive behavior expected: ambiguity cannot auto-start or roll over a
+  meeting. An already active Teams recording may continue while its captured
+  loopback remains active, without assigning that audio to a competing title.
+- False-positive/security boundary retained: a single specific Teams window
+  can still auto-start from endpoint audio, and attributed Teams audio still
+  resolves competing windows normally. No process, browser, UI Automation, or
+  CyberArk-sensitive probe was added.
+- Tests added and results: both live-shaped regressions failed before the fix
+  and passed afterward. Focused detection/lifecycle verification passed 250
+  tests; full verification passed 1,072 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,109,282 bytes with SHA-256
+  `D7CBF44A865D24F138C6FD480BE752917F968A5C5AC2705CF4CECCF462ECC778`;
+  MSI is 75,862,016 bytes with SHA-256
+  `4523E9963317340CE515820F0D0372187850047CC615B7ED60D25ECF58EDE426`.
+- Installed hash/version/signature status: local deployment completed while
+  capture was idle. Published and installed `MeetingRecorder.App.dll` hashes
+  match at
+  `D6251E34E362F1EC2E90F7FA7CC1F3AD44B3DFECD20DC49296F6F0CDD1A419DB`.
+- Live-machine result: the fixed installed app relaunched visible and
+  responsive and continued five-second detection scans. The current live
+  surface was a quiet Teams chat and remained suppressed; the exact
+  multi-specific-window plus active-endpoint-audio condition was not present
+  for direct live reproduction.
+- Outcome: source, tests, package, and local install retained; exact-condition
+  live validation remains pending.
+- Follow-up / removal condition: during the next real call with multiple stale
+  Teams windows visible, confirm logs report `teams-identity-ambiguous` without
+  creating a new session or rolling over the active one.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover

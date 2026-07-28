@@ -200,6 +200,57 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void Ambiguous_Teams_Identity_Continues_Active_Capture_Without_Rolling_Over()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.15d,
+            SessionTitle: "IonQ + Kearney (External)",
+            Signals:
+            [
+                new DetectionSignal("window-title", "IonQ + Kearney (External) | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.494; status=active", 0.1d, now),
+                new DetectionSignal("teams-identity-ambiguous", "Multiple specific Teams windows shared endpoint audio.", 0d, now),
+            ],
+            Reason: "Multiple specific Teams windows shared endpoint audio.");
+
+        Assert.False(policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.Teams,
+            "Kohl's Approach and pricing",
+            meetingLifecycleManaged: true));
+        Assert.True(policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.Teams,
+            "Kohl's Approach and pricing",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false));
+        Assert.True(policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            "Kohl's Approach and pricing",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false));
+        Assert.False(policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.Teams,
+            "Kohl's Approach and pricing",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: true));
+        Assert.False(policy.ShouldClearAutoStopCountdown(
+            decision,
+            MeetingPlatform.Teams,
+            "Kohl's Approach and pricing",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: true));
+    }
+
+    [Fact]
     public void ShouldRefreshLastPositiveSignal_Returns_False_For_Weak_Same_Platform_Signal_When_Only_Microphone_Activity_Is_Recent()
     {
         var policy = new AutoRecordingContinuityPolicy();

@@ -205,6 +205,25 @@ internal sealed class WindowMeetingDetector
         ArgumentNullException.ThrowIfNull(allCandidates);
 
         var hasMatchingSuppressedChatCandidate = HasMatchingSuppressedTeamsChatCandidate(candidate, allCandidates);
+        if (HasConflictingUnattributedSpecificTeamsCandidate(candidate, allCandidates))
+        {
+            return candidate with
+            {
+                ShouldStart = false,
+                ShouldKeepRecording = true,
+                Confidence = Math.Min(candidate.Confidence, 0.15d),
+                Signals =
+                [
+                    .. candidate.Signals,
+                    new DetectionSignal(
+                        "teams-identity-ambiguous",
+                        "Multiple specific Teams windows shared endpoint audio.",
+                        0d,
+                        DateTimeOffset.UtcNow),
+                ],
+                Reason = "Multiple specific Teams windows were visible, but endpoint audio could not identify the active meeting.",
+            };
+        }
 
         if (!IsAmbiguousPlainTeamsContentWindow(candidate) ||
             HasTeamsRenderEvidence(candidate) ||
@@ -226,6 +245,26 @@ internal sealed class WindowMeetingDetector
                 ? "The detected Teams window appears to be playback or chat-thread media, not a live meeting."
                 : "The detected Teams window appears to be Teams content without recent Teams render audio, not a live meeting.",
         };
+    }
+
+    private static bool HasConflictingUnattributedSpecificTeamsCandidate(
+        DetectionDecision candidate,
+        IReadOnlyList<DetectionDecision> allCandidates)
+    {
+        if (!HasEndpointAudioFallbackEvidence(candidate) || HasTeamsRenderEvidence(candidate))
+        {
+            return false;
+        }
+
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(candidate.SessionTitle);
+        return allCandidates.Any(other =>
+            !ReferenceEquals(other, candidate) &&
+            HasEndpointAudioFallbackEvidence(other) &&
+            !HasTeamsRenderEvidence(other) &&
+            !string.Equals(
+                normalizedTitle,
+                MeetingTitleNormalizer.NormalizeForComparison(other.SessionTitle),
+                StringComparison.OrdinalIgnoreCase));
     }
 
     internal static bool IsBetterCandidate(DetectionDecision candidate, DetectionDecision currentBest)

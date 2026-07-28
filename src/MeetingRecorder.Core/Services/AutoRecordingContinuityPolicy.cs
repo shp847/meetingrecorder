@@ -285,6 +285,13 @@ public sealed class AutoRecordingContinuityPolicy
                 hasRecentLoopbackActivity);
         }
 
+        if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentLoopbackActivity &&
+            HasAmbiguousTeamsIdentitySignal(decision))
+        {
+            return true;
+        }
+
         if (decision.ShouldStart)
         {
             return true;
@@ -375,6 +382,13 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         if (decision.Platform == MeetingPlatform.Teams &&
+            hasRecentLoopbackActivity &&
+            HasAmbiguousTeamsIdentitySignal(decision))
+        {
+            return true;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams &&
             HasOfficialTeamsNoCurrentMatchSignal(decision))
         {
             return false;
@@ -418,6 +432,12 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return false;
+    }
+
+    private static bool HasAmbiguousTeamsIdentitySignal(DetectionDecision decision)
+    {
+        return decision.Signals.Any(signal =>
+            string.Equals(signal.Source, "teams-identity-ambiguous", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HasTeamsSpecificQuietContinuation(
