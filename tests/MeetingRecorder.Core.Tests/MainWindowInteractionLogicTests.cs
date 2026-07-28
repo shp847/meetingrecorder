@@ -1946,8 +1946,8 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Theory]
-    [InlineData(395, 388, 388, 0, "388 safe fix(es) are waiting for automatic cleanup")]
-    [InlineData(395, 388, 0, 388, "388 safe fix(es) are already queued or were attempted automatically")]
+    [InlineData(395, 388, 388, 0, "388 safe fix(es) remain in the automatic backlog")]
+    [InlineData(395, 388, 0, 388, "388 safe fix(es) are already queued or need manual review after an automatic attempt")]
     public void BuildMeetingCleanupReviewBannerText_Explains_Automatic_State(
         int recommendationCount,
         int safeRecommendationCount,
@@ -1960,14 +1960,17 @@ public sealed class MainWindowInteractionLogicTests
             impactedMeetingCount: 388,
             safeRecommendationCount,
             eligibleAutomaticCount,
-            automaticBatchSize: 5);
+            automaticBatchSize: 5,
+            automaticBatchCooldown: TimeSpan.FromMinutes(15));
 
         Assert.Contains(expectedState, result, StringComparison.Ordinal);
         Assert.Contains(
-            $"{suppressedAutomaticCount} safe fix(es) are already queued or were attempted automatically",
+            $"{suppressedAutomaticCount} safe fix(es) are already queued or need manual review after an automatic attempt",
             result,
             StringComparison.Ordinal);
-        Assert.Contains("at most 5 fix(es) per app run", result, StringComparison.Ordinal);
+        Assert.Contains("at most 5 fix(es) at a time", result, StringComparison.Ordinal);
+        Assert.Contains("while Meetings remains open", result, StringComparison.Ordinal);
+        Assert.Contains("15-minute cooldown", result, StringComparison.Ordinal);
     }
 
     [Fact]

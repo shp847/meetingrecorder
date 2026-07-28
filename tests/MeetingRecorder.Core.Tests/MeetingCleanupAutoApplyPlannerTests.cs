@@ -147,7 +147,7 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
-    public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_App_Run()
+    public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_Batch()
     {
         var recommendations = Enumerable.Range(1, 10)
             .Select(index => CreateRecommendation(
@@ -168,6 +168,34 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
             recommendations,
             _cacheService,
             automaticAttemptCount: 5));
+    }
+
+    [Fact]
+    public void IsAutomaticBatchRefillDue_Requires_A_Full_Batch_Cooldown_And_Idle_Queue()
+    {
+        var lastBatchStartedUtc = DateTimeOffset.Parse("2026-07-28T12:00:00Z");
+        var afterCooldown = lastBatchStartedUtc + MeetingCleanupAutoApplyPlanner.AutomaticBatchCooldown;
+
+        Assert.False(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+            automaticAttemptCount: 4,
+            lastBatchStartedUtc,
+            afterCooldown,
+            isProcessingQueueIdle: true));
+        Assert.False(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+            automaticAttemptCount: 5,
+            lastBatchStartedUtc,
+            afterCooldown.AddSeconds(-1),
+            isProcessingQueueIdle: true));
+        Assert.False(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+            automaticAttemptCount: 5,
+            lastBatchStartedUtc,
+            afterCooldown,
+            isProcessingQueueIdle: false));
+        Assert.True(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+            automaticAttemptCount: 5,
+            lastBatchStartedUtc,
+            afterCooldown,
+            isProcessingQueueIdle: true));
     }
 
     [Fact]

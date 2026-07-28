@@ -129,7 +129,8 @@ public partial class MainWindow : Window
     private bool _isApplyingMeetingCleanupRecommendations;
     private bool _isDismissingMeetingCleanupRecommendations;
     private bool _isApplyingSafeMeetingCleanupFixes;
-    private int _meetingCleanupAutomaticAttemptCount;
+    private int _meetingCleanupAutomaticBatchAttemptCount;
+    private DateTimeOffset? _lastMeetingCleanupAutomaticBatchStartedUtc;
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isUpdatingRushProcessing;
@@ -1959,8 +1960,30 @@ public partial class MainWindow : Window
         }
 
         UpdateUpdateActionButtons();
+        TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
         await RunExternalAudioImportCycleAsync("background timer", _lifetimeCts.Token);
         await RunAutomaticUpdateCycleAsync("background timer", AppUpdateCheckTrigger.Scheduled, _lifetimeCts.Token);
+    }
+
+    private void TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset nowUtc)
+    {
+        if (!MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+                _meetingCleanupAutomaticBatchAttemptCount,
+                _lastMeetingCleanupAutomaticBatchStartedUtc,
+                nowUtc,
+                _latestProcessingQueueStatusSnapshot.RunState == ProcessingQueueRunState.Idle) ||
+            _recordingCoordinator.IsRecording ||
+            !ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem) ||
+            IsMeetingActionInProgress() ||
+            MeetingCleanupAutoApplyPlanner
+                .GetEligibleRecommendations(_meetingCleanupRecommendations, _meetingCleanupAutoApplyCacheService)
+                .Count == 0)
+        {
+            return;
+        }
+
+        _meetingCleanupAutomaticBatchAttemptCount = 0;
+        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "automatic cleanup batch refill");
     }
 
     private void AudioGraphTimer_OnTick(object? sender, EventArgs e)
@@ -9565,7 +9588,8 @@ public partial class MainWindow : Window
                 impactedMeetingCount,
                 safeRecommendations.Count,
                 eligibleAutomaticCount,
-                MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerAppRun);
+                MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch,
+                MeetingCleanupAutoApplyPlanner.AutomaticBatchCooldown);
     }
 
     private async Task TryAutoApplyMeetingCleanupSafeFixesAsync(
@@ -9577,7 +9601,7 @@ public partial class MainWindow : Window
         var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetNextAutomaticBatch(
             visibleRecommendations,
             _meetingCleanupAutoApplyCacheService,
-            _meetingCleanupAutomaticAttemptCount);
+            _meetingCleanupAutomaticBatchAttemptCount);
         if (!MeetingCleanupAutoApplyPlanner.ShouldStartAutomaticApply(
                 MeetingRefreshMode.Full,
                 refreshVersion == Volatile.Read(ref _meetingRefreshVersion),
@@ -9590,7 +9614,8 @@ public partial class MainWindow : Window
         }
 
         _isApplyingSafeMeetingCleanupFixes = true;
-        _meetingCleanupAutomaticAttemptCount += eligibleRecommendations.Count;
+        _meetingCleanupAutomaticBatchAttemptCount += eligibleRecommendations.Count;
+        _lastMeetingCleanupAutomaticBatchStartedUtc = DateTimeOffset.UtcNow;
         UpdateMeetingActionState();
         MeetingCleanupRecommendationsStatusTextBlock.Text =
             $"Automatically applying {eligibleRecommendations.Count} safe cleanup fix(es)...";

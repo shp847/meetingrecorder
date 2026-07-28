@@ -604,8 +604,8 @@ Important behavior:
 
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, retry-transcript, add-speaker-label, and repair-speaker-label actions
-- automatic cleanup queues at most five safe fixes per app run; `Responsive` processing still uses one below-normal worker and pauses new background work while recording
-- failed automatic safe-fix attempts and successfully dispatched retry-transcript or speaker-label queue requests are suppressed by recommendation fingerprint until the recommendation changes; the banner separates waiting work from queued or attempted work, while manual `Apply Safe Fixes` still retries every marked row immediately
+- automatic cleanup queues at most five safe fixes at a time and, while `Meetings` remains open, waits for the processing queue to become idle and enforces a 15-minute cooldown before refilling; `Responsive` processing still uses one below-normal worker and pauses new background work while recording
+- failed automatic safe-fix attempts and successfully dispatched retry-transcript or speaker-label queue requests are suppressed by recommendation fingerprint until the recommendation changes; the banner separates the automatic backlog from queued work or attempts that now need manual review, while manual `Apply Safe Fixes` still retries every marked row immediately
 - sparse-transcript recommendations stay manual so the app does not automatically spend time retranscribing long recordings that may contain unusable source audio
 - split and lower-confidence actions stay manual
 - on first launch after the updated build, the versioned `published-meeting-repair-v7` pass can now merge longer same-title split chains from repeated auto-stop / auto-start churn, auto-merge a short-gap exact-title split when the matching work manifests still point at the same specific meeting window/title evidence, republish repairable historical microphone sessions from `%LOCALAPPDATA%\MeetingRecorder\work`, and queue suspicious over-fragmented speaker labels for repair when speaker labeling is ready
