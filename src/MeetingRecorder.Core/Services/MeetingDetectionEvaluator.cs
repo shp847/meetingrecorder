@@ -22,6 +22,7 @@ public sealed class MeetingDetectionEvaluator
         var meetConfidence = 0d;
         string? title = null;
         var hasAudioActivity = false;
+        var hasAttributedAudioActivity = false;
         var hasUnverifiedBrowserAudio = false;
         var suppressedTeamsWindowDetected = false;
         var genericTeamsShellDetected = false;
@@ -31,6 +32,7 @@ public sealed class MeetingDetectionEvaluator
             if (IsActiveAudioSignal(signal))
             {
                 hasAudioActivity = true;
+                hasAttributedAudioActivity |= IsAttributedAudioSignal(signal);
             }
 
             if (string.Equals(signal.Source, "audio-browser-unverified", StringComparison.OrdinalIgnoreCase))
@@ -80,22 +82,34 @@ public sealed class MeetingDetectionEvaluator
             confidence = 0.74d;
         }
 
+        var sessionTitle = title ?? "Detected meeting";
+        var requiresAttributedAudioForStart = IsGenericMeetingTitle(platform, sessionTitle);
         var shouldKeepRecording = confidence >= 0.75d &&
             platform != MeetingPlatform.Unknown &&
             !suppressedTeamsWindowDetected &&
             !genericTeamsShellDetected;
-        var shouldStart = shouldKeepRecording && hasAudioActivity;
+        var shouldStart = shouldKeepRecording &&
+            hasAudioActivity &&
+            (!requiresAttributedAudioForStart || hasAttributedAudioActivity);
 
         var reason = shouldStart
             ? BuildStartReason(platform, hasAudioActivity)
-            : BuildReason(confidence, platform, hasAudioActivity, hasUnverifiedBrowserAudio, suppressedTeamsWindowDetected, genericTeamsShellDetected);
+            : BuildReason(
+                confidence,
+                platform,
+                hasAudioActivity,
+                hasAttributedAudioActivity,
+                hasUnverifiedBrowserAudio,
+                suppressedTeamsWindowDetected,
+                genericTeamsShellDetected,
+                requiresAttributedAudioForStart);
 
         return new DetectionDecision(
             platform,
             shouldStart,
             shouldKeepRecording,
             confidence,
-            title ?? "Detected meeting",
+            sessionTitle,
             signals,
             reason);
     }
@@ -104,9 +118,11 @@ public sealed class MeetingDetectionEvaluator
         double confidence,
         MeetingPlatform platform,
         bool hasAudioActivity,
+        bool hasAttributedAudioActivity,
         bool hasUnverifiedBrowserAudio,
         bool suppressedTeamsWindowDetected,
-        bool genericTeamsShellDetected)
+        bool genericTeamsShellDetected,
+        bool requiresAttributedAudioForStart)
     {
         if (suppressedTeamsWindowDetected)
         {
@@ -121,6 +137,13 @@ public sealed class MeetingDetectionEvaluator
         if (platform == MeetingPlatform.Unknown || confidence < 0.75d)
         {
             return "Detection confidence did not meet the recording threshold.";
+        }
+
+        if (requiresAttributedAudioForStart &&
+            hasAudioActivity &&
+            !hasAttributedAudioActivity)
+        {
+            return "Generic meeting window detected, but the active system audio could not be attributed to that meeting.";
         }
 
         if (platform == MeetingPlatform.GoogleMeet && hasUnverifiedBrowserAudio)
@@ -153,6 +176,31 @@ public sealed class MeetingDetectionEvaluator
         return signal.Source.StartsWith("audio-", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(signal.Source, "audio-silence", StringComparison.OrdinalIgnoreCase) &&
             signal.Weight > 0d;
+    }
+
+    private static bool IsAttributedAudioSignal(DetectionSignal signal)
+    {
+        return IsActiveAudioSignal(signal) &&
+            !string.Equals(signal.Source, "audio-activity", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(signal.Source, "audio-browser-unverified", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGenericMeetingTitle(MeetingPlatform platform, string title)
+    {
+        var normalized = MeetingTitleNormalizer.NormalizeForComparison(title);
+        return platform switch
+        {
+            MeetingPlatform.Teams => normalized is
+                "microsoft teams" or
+                "teams" or
+                "ms teams" or
+                "sharing control bar" or
+                "search",
+            MeetingPlatform.GoogleMeet =>
+                normalized is "google meet" or "meet" ||
+                normalized.StartsWith("google meet ", StringComparison.Ordinal),
+            _ => false,
+        };
     }
 
     private static string CleanTitle(string value, string suffix)

@@ -12,6 +12,8 @@ Reliability fix: the Meetings library now virtualizes grouped rows and runs auto
 
 Reliability fix: silent stale Teams and Google Meet windows no longer repeatedly auto-start short sessions; quiet auto-start now requires attributed meeting audio or an unavailable audio probe.
 
+Reliability fix: generic `Microsoft Teams | Pinned window` and `Google Meet and N more pages` shells no longer auto-start from unrelated endpoint audio; attributed Teams or Meet audio is required.
+
 Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-label skips for prior automatic attempts. Automatic cleanup uses a clean suppression cache, queues at most five fixes per app run, reuses one catalog snapshot per batch, and reports waiting versus queued or attempted work.
 
 ## What Meeting Recorder Is

@@ -79,6 +79,50 @@ public sealed class MeetingDetectionEvaluatorTests
         Assert.Contains("no active system audio", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(MeetingPlatform.Teams, "Microsoft Teams | Pinned window | Microsoft Teams")]
+    [InlineData(MeetingPlatform.GoogleMeet, "Google Meet and 1 more page - Work - Microsoft Edge")]
+    public void Evaluate_Does_Not_Start_A_Generic_Meeting_Shell_From_Unattributed_Endpoint_Audio(
+        MeetingPlatform expectedPlatform,
+        string windowTitle)
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", windowTitle, 0.85d, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-activity", "Speakers; peak=0.112; status=active", 0.10d, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.False(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
+        Assert.Equal(expectedPlatform, decision.Platform);
+        Assert.Contains("could not be attributed", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(MeetingPlatform.Teams, "Microsoft Teams | Pinned window | Microsoft Teams", "audio-window")]
+    [InlineData(MeetingPlatform.GoogleMeet, "Google Meet and 1 more page - Work - Microsoft Edge", "audio-browser-tab")]
+    public void Evaluate_Starts_A_Generic_Meeting_Shell_With_Attributed_Audio(
+        MeetingPlatform expectedPlatform,
+        string windowTitle,
+        string audioSignalSource)
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", windowTitle, 0.85d, DateTimeOffset.UtcNow),
+            new DetectionSignal(audioSignalSource, "Meeting audio; peak=0.112; confidence=High", 0.35d, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.True(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
+        Assert.Equal(expectedPlatform, decision.Platform);
+    }
+
     [Fact]
     public void Evaluate_Does_Not_Start_For_Teams_Signals_When_Audio_Is_Inactive()
     {

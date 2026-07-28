@@ -459,6 +459,51 @@ As of 2026-07-20, executable-policy facts are:
 - Follow-up / removal condition: retain unless live evidence proves a different
   trustworthy joined-call signal can distinguish quiet calls from stale windows.
 
+### 2026-07-28: Generic meeting shells used unrelated endpoint audio
+- Trigger / observed symptom: the Meetings library again showed repeated
+  30-35 second Teams and Google Meet rows with generic titles such as
+  `Microsoft Teams | Pinned window` and
+  `Google Meet and 1 more page - Work - Microsoft Edge`.
+- Exact runtime or CyberArk evidence: detector logs showed each session
+  auto-started from a generic window plus endpoint-wide `audio-activity`, with
+  no `audio-window`, `audio-process`, or `audio-browser-tab` attribution. The
+  next scan returned a Teams chat or silent browser shell, and auto-stop fired
+  at the 30-second timeout. No CyberArk block was observed.
+- Hypothesis: confirmed policy gap. The July 26 change gated quiet debounce,
+  but `MeetingDetectionEvaluator` still allowed generic shells to start
+  immediately from unrelated endpoint audio.
+- APIs or signals added/removed: no new Windows APIs or signal producers.
+  `MeetingDetectionEvaluator` now distinguishes attributed audio signals from
+  endpoint-wide `audio-activity` when the normalized title is generic.
+- Positive behavior expected: generic Teams and Google Meet shells require
+  attributed app, window, process, or browser-tab audio to auto-start; specific
+  meeting titles retain endpoint-audio start behavior.
+- False-positive/security boundary retained: endpoint-wide audio remains useful
+  for specific meeting windows, while generic shells cannot claim unrelated
+  playback. Existing recordings may continue across a temporary generic shell.
+- Tests added and results: two live-shaped evaluator regressions failed before
+  the source fix and passed afterward alongside positive attributed-audio
+  cases. The focused detector/continuity set passed 153 tests; full verification
+  passed 1,067 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,107,964 bytes with SHA-256
+  `EA746BFAEB11EC1DC689AE1CFF7AF43884D091697DA07E28CABD07AA6585E829`;
+  MSI is 75,837,440 bytes with SHA-256
+  `1D4C540B338646132A2F7A8041FE91994697F0362E38F9B45B05100D568B2ED9`.
+- Installed hash/version/signature status: local deployment completed and the
+  installed/published `MeetingRecorder.Core.dll` hashes match at
+  `1284ADEBAE7281D01AA660373162729723AD59DC5DF7658C6F35DFE94BAFC0BE`.
+- Live-machine result: the fixed app stayed responsive for 60 seconds with zero
+  auto-starts and zero new work folders. The exact generic surface was not
+  visible during observation. Nine confirmed 30-35 second, unattributed,
+  empty-transcript phantoms were moved reversibly with 63 verified SHA-256
+  entries under incident batch `20260728-041411-generic-shell-phantoms`; the
+  Meetings view then showed zero generic phantom titles.
+- Outcome: source, tests, package, install, bounded live observation, and
+  reversible artifact cleanup retained. Exact-surface live reproduction remains
+  pending.
+- Follow-up / removal condition: retain until a stronger generic-shell meeting
+  identity signal replaces audio attribution.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover
