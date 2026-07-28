@@ -595,6 +595,46 @@ As of 2026-07-20, executable-policy facts are:
   Teams windows visible, confirm logs report `teams-identity-ambiguous` without
   creating a new session or rolling over the active one.
 
+### 2026-07-28: Historical cleanup stopped at longer detector gaps
+- Trigger / observed symptom: after the detector fix and automatic cleanup,
+  the July 28 library still showed three `Graszl, Kate, Villar, Juan Pablo`
+  rows even though earlier fragments for Connect, Villar, and Harriss had
+  already merged.
+- Exact runtime or CyberArk evidence: archive-first cleanup successfully merged
+  adjacent pairs and preserved their originals under timestamped
+  `auto-safe-fixes\merge-split-pairs` folders. The remaining Graszl rows were
+  separated by 3:44 and 2:12, beyond the general two-minute merge limit, while
+  their preserved manifests contained the exact same specific Teams title and
+  window identity. No CyberArk failure was involved.
+- Hypothesis: confirmed cleanup-policy gap. The conservative global limit could
+  not repair longer pauses created by the known endpoint-audio detector churn,
+  even when durable manifest identity made the relationship unambiguous.
+- APIs or signals added/removed: none. Cleanup can now bridge up to five minutes
+  only for Teams pairs with exact manifest title/window identity when at least
+  one fragment is three minutes or shorter.
+- Positive behavior expected: the remaining same-call Graszl fragments become
+  high-confidence archive-first safe merges.
+- False-positive/security boundary retained: ordinary pairs still use the
+  two-minute limit; long recurring calls, non-Teams meetings, generic titles,
+  missing manifests, or differing window identities cannot use the extension.
+- Tests added and results: the live-shaped 3:44-gap regression failed before
+  the change and passed afterward; a same-title long-session negative case
+  remains separate. All 18 cleanup-engine tests passed; full verification
+  passed 1,074 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,109,521 bytes with SHA-256
+  `27FD7F27B87EE8596221E4035A9A013FEEB1422172782C9D589F69F46B5CB59B`;
+  MSI is 75,853,824 bytes with SHA-256
+  `D999E091C470E6134E3077DC693B3258129885C1DFAFD941B69ECDDEB4A63F80`.
+- Installed hash/version/signature status: pending. The first local deployment
+  attempt rolled back cleanly because a below-normal speaker-labeling worker
+  was still active and the app correctly refused installer shutdown.
+- Live-machine result: pending deployment and automatic cleanup refresh.
+- Outcome: source, tests, and package retained; install and artifact repair
+  remain pending.
+- Follow-up / removal condition: deploy after the active worker exits, then
+  verify one surviving Graszl artifact plus archived originals and ensure long
+  same-title sessions remain separate.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover

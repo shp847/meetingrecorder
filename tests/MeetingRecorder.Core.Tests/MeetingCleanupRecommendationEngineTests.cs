@@ -209,6 +209,111 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Returns_HighConfidence_Merge_For_Short_Teams_Fragment_After_Extended_Exact_Continuity_Gap()
+    {
+        var firstStem = "2026-07-28_194443_teams_graszl-kate-villar-juan-pablo";
+        var secondStem = "2026-07-28_195219_teams_graszl-kate-villar-juan-pablo";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        var firstDuration = TimeSpan.FromMinutes(3) + TimeSpan.FromSeconds(52);
+        var secondDuration = TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(21);
+        var firstStartedAtUtc = DateTimeOffset.Parse("2026-07-28T19:44:43Z");
+        var secondStartedAtUtc = DateTimeOffset.Parse("2026-07-28T19:52:19Z");
+        const string title = "Graszl, Kate, Villar, Juan Pablo";
+        const string windowTitle = "Graszl, Kate, Villar, Juan Pablo | Kearney | psharm04@atkearney.com | Microsoft Teams";
+        await WriteSilentWaveFileAsync(firstAudioPath, firstDuration);
+        await WriteSilentWaveFileAsync(secondAudioPath, secondDuration);
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    firstStem,
+                    title,
+                    firstStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    firstDuration,
+                    firstAudioPath,
+                    Path.Combine(_root, $"{firstStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "first-session",
+                        title,
+                        firstStartedAtUtc,
+                        firstStartedAtUtc + firstDuration,
+                        windowTitle)),
+                CreateInspection(
+                    secondStem,
+                    title,
+                    secondStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    secondDuration,
+                    secondAudioPath,
+                    Path.Combine(_root, $"{secondStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "second-session",
+                        title,
+                        secondStartedAtUtc,
+                        secondStartedAtUtc + secondDuration,
+                        windowTitle)),
+            });
+
+        var recommendation = Assert.Single(recommendations, item => item.Action == MeetingCleanupAction.Merge);
+        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
+        Assert.True(recommendation.CanApplyAutomatically);
+    }
+
+    [Fact]
+    public async Task Analyze_Does_Not_Merge_Long_Teams_Sessions_Across_Extended_Gap()
+    {
+        var firstStem = "2026-07-28_140000_teams-recurring-connect";
+        var secondStem = "2026-07-28_143300_teams-recurring-connect";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        var duration = TimeSpan.FromMinutes(30);
+        var firstStartedAtUtc = DateTimeOffset.Parse("2026-07-28T14:00:00Z");
+        var secondStartedAtUtc = DateTimeOffset.Parse("2026-07-28T14:33:00Z");
+        const string title = "Recurring connect";
+        const string windowTitle = "Recurring connect | Microsoft Teams";
+        await WriteSilentWaveFileAsync(firstAudioPath, duration);
+        await WriteSilentWaveFileAsync(secondAudioPath, duration);
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    firstStem,
+                    title,
+                    firstStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    duration,
+                    firstAudioPath,
+                    Path.Combine(_root, $"{firstStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "first-session",
+                        title,
+                        firstStartedAtUtc,
+                        firstStartedAtUtc + duration,
+                        windowTitle)),
+                CreateInspection(
+                    secondStem,
+                    title,
+                    secondStartedAtUtc,
+                    MeetingPlatform.Teams,
+                    duration,
+                    secondAudioPath,
+                    Path.Combine(_root, $"{secondStem}.md"),
+                    manifest: CreateTeamsManifest(
+                        "second-session",
+                        title,
+                        secondStartedAtUtc,
+                        secondStartedAtUtc + duration,
+                        windowTitle)),
+            });
+
+        Assert.DoesNotContain(recommendations, item => item.Action == MeetingCleanupAction.Merge);
+    }
+
+    [Fact]
     public void Analyze_Returns_Rename_For_Generic_Title_With_Suggested_Title()
     {
         var recommendation = AnalyzeSingle(

@@ -604,6 +604,7 @@ Important behavior:
 
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, retry-transcript, add-speaker-label, and repair-speaker-label actions
+- split-pair cleanup uses a two-minute gap by default; a Teams pair can extend to five minutes only when both preserved manifests match the exact specific meeting and window identity and at least one fragment is no longer than three minutes
 - automatic cleanup queues at most five safe fixes at a time and, while `Meetings` remains open, waits for the processing queue to become idle and enforces a 15-minute cooldown before refilling; `Responsive` processing still uses one below-normal worker and pauses new background work while recording
 - failed automatic safe-fix attempts and successfully dispatched retry-transcript or speaker-label queue requests are suppressed by recommendation fingerprint until the recommendation changes; the banner separates the automatic backlog from queued work or attempts that now need manual review, while manual `Apply Safe Fixes` still retries every marked row immediately
 - sparse-transcript recommendations stay manual so the app does not automatically spend time retranscribing long recordings that may contain unusable source audio

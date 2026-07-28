@@ -343,6 +343,7 @@ Recommendation classes currently target:
 - transcript-only orphan rows
 - duplicate publishes
 - likely split meeting pairs
+- extended-gap Teams split pairs only when preserved manifests match the exact specific title and window identity and at least one fragment is three minutes or shorter
 - generic titles with a stronger local suggestion
 - missing transcript cases that can be retried safely
 - missing speaker labels when the diarization sidecar is already ready and the published meeting can be reprocessed deterministically

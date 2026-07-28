@@ -18,6 +18,8 @@ Reliability fix: multiple stale specific Teams windows can no longer borrow the 
 
 Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-label skips for prior automatic attempts. Automatic cleanup uses a clean suppression cache, queues at most five fixes per app run, reuses one catalog snapshot per batch, and reports waiting versus queued or attempted work.
 
+Reliability fix: historical Teams fragments separated by brief detector gaps can now merge safely when preserved manifests prove the exact same meeting/window identity and one fragment is short.
+
 ## What Meeting Recorder Is
 
 Meeting Recorder is built for users who need:

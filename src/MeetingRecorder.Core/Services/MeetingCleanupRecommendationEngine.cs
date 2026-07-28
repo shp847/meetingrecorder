@@ -46,6 +46,8 @@ internal static class MeetingCleanupRecommendationEngine
 {
     private static readonly TimeSpan MaximumMergeGap = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MaximumStrongContinuityMergeGap = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan MaximumExtendedContinuityMergeGap = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumExtendedContinuitySegmentDuration = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan MaximumShortGenericTeamsDuration = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan MaximumShortSplitSegmentDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MinimumSplitEligibleDuration = TimeSpan.FromMinutes(10);
@@ -542,7 +544,18 @@ internal static class MeetingCleanupRecommendationEngine
 
         var previousEnd = previous.StartedAtUtc + previousDuration;
         var gap = current.StartedAtUtc - previousEnd;
-        if (gap < TimeSpan.Zero || gap > MaximumMergeGap)
+        if (gap < TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        var hasExtendedManifestContinuity =
+            previous.Platform == MeetingPlatform.Teams &&
+            gap <= MaximumExtendedContinuityMergeGap &&
+            (previousDuration <= MaximumExtendedContinuitySegmentDuration ||
+             currentDuration <= MaximumExtendedContinuitySegmentDuration) &&
+            HasMatchingManifestContinuityEvidence(previousInspection, currentInspection);
+        if (gap > MaximumMergeGap && !hasExtendedManifestContinuity)
         {
             return false;
         }
@@ -550,7 +563,7 @@ internal static class MeetingCleanupRecommendationEngine
         var titlesDiffer = !string.Equals(previous.Title.Trim(), current.Title.Trim(), StringComparison.OrdinalIgnoreCase);
         var hasShortSegment = previousDuration <= MaximumShortSplitSegmentDuration || currentDuration <= MaximumShortSplitSegmentDuration;
         var hasStrongManifestContinuity = HasStrongManifestContinuityEvidence(previousInspection, currentInspection, gap);
-        confidence = titlesDiffer || hasShortSegment || hasStrongManifestContinuity
+        confidence = titlesDiffer || hasShortSegment || hasStrongManifestContinuity || hasExtendedManifestContinuity
             ? MeetingCleanupConfidence.High
             : MeetingCleanupConfidence.Medium;
         return true;
@@ -563,6 +576,19 @@ internal static class MeetingCleanupRecommendationEngine
     {
         if (gap > MaximumStrongContinuityMergeGap ||
             previousInspection.Manifest is null ||
+            currentInspection.Manifest is null)
+        {
+            return false;
+        }
+
+        return HasMatchingManifestContinuityEvidence(previousInspection, currentInspection);
+    }
+
+    private static bool HasMatchingManifestContinuityEvidence(
+        MeetingInspectionRecord previousInspection,
+        MeetingInspectionRecord currentInspection)
+    {
+        if (previousInspection.Manifest is null ||
             currentInspection.Manifest is null)
         {
             return false;
