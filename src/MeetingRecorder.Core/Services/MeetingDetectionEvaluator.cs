@@ -76,13 +76,17 @@ public sealed class MeetingDetectionEvaluator
                     ? MeetingPlatform.Teams
                     : MeetingPlatform.Unknown;
 
+        var sessionTitle = title ?? "Detected meeting";
+        genericTeamsShellDetected |=
+            platform == MeetingPlatform.Teams &&
+            LooksLikeEmailAddress(sessionTitle) &&
+            !hasAttributedAudioActivity;
         var confidence = Math.Min(1d, Math.Max(meetConfidence, teamsConfidence));
         if (platform == MeetingPlatform.Teams && genericTeamsShellDetected)
         {
             confidence = 0.74d;
         }
 
-        var sessionTitle = title ?? "Detected meeting";
         var requiresAttributedAudioForStart = IsGenericMeetingTitle(platform, sessionTitle);
         var shouldKeepRecording = confidence >= 0.75d &&
             platform != MeetingPlatform.Unknown &&
@@ -217,12 +221,17 @@ public sealed class MeetingDetectionEvaluator
 
         var parts = cleaned.Split('|', StringSplitOptions.TrimEntries);
         var account = parts.Length >= 3 ? parts[^1] : string.Empty;
-        return account.IndexOf('@') > 0 &&
-               account.IndexOf('@') == account.LastIndexOf('@') &&
-               account[^1] != '@' &&
-               !account.Any(char.IsWhiteSpace)
+        return LooksLikeEmailAddress(account)
             ? string.Join(" | ", parts[..^2])
             : cleaned;
+    }
+
+    private static bool LooksLikeEmailAddress(string value)
+    {
+        return value.IndexOf('@') > 0 &&
+               value.IndexOf('@') == value.LastIndexOf('@') &&
+               value[^1] != '@' &&
+               !value.Any(char.IsWhiteSpace);
     }
 
     private static bool IsSuppressedTeamsWindowTitle(string value)

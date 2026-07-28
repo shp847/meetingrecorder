@@ -504,6 +504,50 @@ As of 2026-07-20, executable-policy facts are:
 - Follow-up / removal condition: retain until a stronger generic-shell meeting
   identity signal replaces audio attribution.
 
+### 2026-07-28: Email-only Teams account shell split active Google Meet
+- Trigger / observed symptom: one Google Meet appeared as alternating Google
+  Meet recordings and 21-51 second Teams recordings titled
+  `psharm04@atkearney.com`.
+- Exact runtime or CyberArk evidence: at 15:08, 15:09, and 15:52 UTC the
+  installed app rolled an active Google Meet session into
+  `psharm04@atkearney.com | Microsoft Teams`, then back to the same Meet title.
+  Each false Teams decision used endpoint-wide `audio-activity` and had no
+  attributed Teams audio signal. No CyberArk block or capture-device failure
+  caused those transitions.
+- Hypothesis: confirmed evaluator gap. Teams account decoration was removed
+  only from captions with at least three pipe-delimited segments, so an
+  email-only account shell was treated as a specific meeting and borrowed
+  unrelated endpoint audio.
+- APIs or signals added/removed: none. `MeetingDetectionEvaluator` now treats
+  an email-only Teams title as a generic shell only when audio is not attributed
+  to Teams.
+- Positive behavior expected: a visible Google Meet remains the selected
+  meeting when an unrelated Teams account shell is also open; a legitimate
+  email-titled Teams call can still start when app, window, process, or browser
+  audio is attributed to Teams.
+- False-positive/security boundary retained: the guard does not suppress
+  email-titled Teams calls with attributed audio and adds no process, browser,
+  UI Automation, or CyberArk-sensitive probe.
+- Tests added and results: the live-shaped unattributed email-shell regression
+  failed before the fix and passed afterward; the opposite attributed-audio
+  case also passes. Focused detection/lifecycle verification passed 126 tests;
+  full verification passed 1,070 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,108,567 bytes with SHA-256
+  `D1874F8F70E4187FEEF4C812A6BDB8EC3669ABD4FEECF0E15C4155118AA6BA5A`;
+  MSI is 75,837,440 bytes with SHA-256
+  `4199F74FF23A93203240E443D60DC28FD626CAD2CBB460F645C018C04D50BFBA`.
+- Installed hash/version/signature status: deployment deferred because the
+  installed app is actively recording a Teams meeting; interrupting it would
+  splinter the current call.
+- Live-machine result: runtime logs conclusively reproduced the pre-fix
+  cross-platform rollovers. The fixed package has not yet been installed or
+  exercised against the exact email-only shell.
+- Outcome: source, tests, and package retained; installed and live-fixed states
+  remain pending.
+- Follow-up / removal condition: deploy when capture is idle, then verify the
+  email-only Teams shell cannot replace an active Google Meet without
+  attributed Teams audio.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover

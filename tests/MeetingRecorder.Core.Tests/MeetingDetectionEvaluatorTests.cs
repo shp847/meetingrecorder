@@ -237,6 +237,43 @@ public sealed class MeetingDetectionEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_Does_Not_Start_For_Unattributed_Email_Only_Teams_Account_Shell()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", "psharm04@atkearney.com | Microsoft Teams", 0.85, DateTimeOffset.UtcNow),
+            new DetectionSignal("teams-host", "Microsoft Teams", 0.15, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-activity", "Headphones; peak=0.263; status=active", 0.10, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.False(decision.ShouldStart);
+        Assert.False(decision.ShouldKeepRecording);
+        Assert.Equal(MeetingPlatform.Teams, decision.Platform);
+        Assert.Contains("generic teams shell", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Evaluate_Starts_Email_Titled_Teams_Call_With_Attributed_Audio()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal("window-title", "external.user@example.com | Microsoft Teams", 0.85, DateTimeOffset.UtcNow),
+            new DetectionSignal("teams-host", "Microsoft Teams", 0.15, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-window", "Microsoft Teams; peak=0.263; confidence=High", 0.35, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.True(decision.ShouldStart);
+        Assert.True(decision.ShouldKeepRecording);
+        Assert.Equal(MeetingPlatform.Teams, decision.Platform);
+    }
+
+    [Fact]
     public void Evaluate_Treats_Audio_Window_Attribution_As_Active_Audio_For_Teams()
     {
         var evaluator = new MeetingDetectionEvaluator();
