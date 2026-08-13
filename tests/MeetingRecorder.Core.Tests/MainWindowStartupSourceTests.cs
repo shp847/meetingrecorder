@@ -200,7 +200,7 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Meeting_Refresh_Request_Is_Context_Aware_And_Only_Queues_Full_Loads_When_Meetings_Is_Active()
+    public void Meeting_Refresh_Request_Is_Context_Aware_And_Can_Run_Outside_Meetings_Tab()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -211,6 +211,7 @@ public sealed class MainWindowStartupSourceTests
         Assert.Contains("_recordingCoordinator.IsRecording", helperBlock);
         Assert.Contains("MainWindowInteractionLogic.ShouldDeferMeetingRefresh(", helperBlock);
         Assert.Contains("ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", helperBlock);
+        Assert.DoesNotContain("!ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", helperBlock);
         Assert.Contains("_hasPendingMeetingsRefreshRequest = true;", helperBlock);
         Assert.Contains("SchedulePendingMeetingsRefreshIfReady();", helperBlock);
         Assert.Contains("_hasCompletedFullMeetingsRefresh = false;", helperBlock);

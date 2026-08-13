@@ -70,6 +70,28 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
+    public void Baseline_Meeting_Refresh_Preserves_Previous_Cleanup_Recommendations_Until_Background_Scan_Completes()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task RefreshMeetingListAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void StartMeetingCleanupRecommendationRefresh", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+        var successStart = methodBlock.IndexOf("var records = await Task.Run(", StringComparison.Ordinal);
+        var successEnd = methodBlock.IndexOf("catch (OperationCanceledException)", successStart, StringComparison.Ordinal);
+        var successBlock = methodBlock[successStart..successEnd];
+
+        Assert.DoesNotContain(
+            "_meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();",
+            successBlock,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);",
+            successBlock,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Cleanup_Execution_Offloads_The_Catalog_Scan_From_The_Ui_Thread()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

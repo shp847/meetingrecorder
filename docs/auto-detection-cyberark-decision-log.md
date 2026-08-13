@@ -728,6 +728,20 @@ As of 2026-07-20, executable-policy facts are:
 
 ## What We Must Not Repeat
 
+### 2026-08-13: Background cleanup tab gate and Meetings visual stability
+- Trigger / observed symptom: automatic cleanup still appeared tied to opening or keeping the Meetings tab active, and opening the tab caused visible layout jumping while cleanup recommendations disappeared during baseline loading and reappeared after background analysis.
+- Exact runtime or CyberArk evidence: source inspection showed `TryScheduleMeetingCleanupAutomaticBatchRefill` required `ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)`, `ShouldDeferMeetingRefresh` deferred when the Meetings tab was not selected, and `RefreshMeetingListAsync` cleared `_meetingCleanupRecommendations` before the replacement cleanup scan completed.
+- Hypothesis: confirmed source issue. The background refill request could be queued but not executed until Meetings was selected, and the baseline refresh rebuilt the meeting grid without cleanup recommendations before the background scan rebuilt it again with recommendations.
+- APIs or signals added/removed: no meeting detection APIs changed. Meeting refresh deferral now depends on active recording, not tab selection; cleanup refill no longer checks the selected tab; baseline row refresh preserves the prior cleanup recommendation set until the new scan publishes.
+- Positive behavior expected: automatic cleanup can continue draining safe fixes while the app is idle even if the user is on Home or Settings, and opening Meetings keeps the previous cleanup banner/grid stable while the current scan refreshes.
+- False-positive/security boundary retained: no new automatic cleanup actions or confidence thresholds were introduced; five-fix batching, idle queue gating, recording deferral, fingerprint suppression, and manual retry boundaries remain.
+- Tests added and results: focused cleanup refresh/source/banner tests passed 22/22; full `Test-All.ps1` passed 1,088 core tests and 8 integration tests.
+- Package status: pending in this run.
+- Installed hash/version/signature status: pending in this run.
+- Live-machine result: pending in this run.
+- Outcome: retained.
+- Follow-up / removal condition: replace the refresh source tests with direct UI-state tests if MainWindow is refactored into a testable view model.
+
 ### 2026-08-13: Automatic cleanup backlog drain throttle
 - Trigger / observed symptom: the Meetings cleanup banner kept showing a growing safe-fix backlog, for example 578 cleanup suggestions with 547 still in automatic backlog, making it look like automatic safe fixes were not being worked through.
 - Exact runtime or CyberArk evidence: local cache `meeting-cleanup-auto-apply-v2.json` contained only 52 suppressed automatic attempts (49 queued successes and 3 failures), while `app.log` showed only one recent automatic cleanup batch on 2026-08-13T11:30:50Z applying five safe fixes after local deploy; the prior logged run on 2026-08-11T14:52:32Z applied three fixes and suppressed two failures.

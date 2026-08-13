@@ -530,7 +530,7 @@ internal static class MainWindowInteractionLogic
 
     public static bool ShouldDeferMeetingRefresh(bool isRecording, bool isMeetingsTabSelected)
     {
-        return isRecording || !isMeetingsTabSelected;
+        return isRecording;
     }
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
@@ -2211,7 +2211,7 @@ internal static class MainWindowInteractionLogic
             $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
             $"{eligibleAutomaticCount} safe fix(es) remain in the automatic backlog; " +
             $"{suppressedAutomaticCount} safe fix(es) are already queued or need manual review after an automatic attempt. " +
-            $"Automatic cleanup queues at most {automaticBatchSize} fix(es) at a time and, while Meetings remains open, starts another batch after the processing queue is idle and the {automaticBatchCooldown.TotalMinutes:0}-minute cooldown has elapsed. " +
+            $"Automatic cleanup queues at most {automaticBatchSize} fix(es) at a time and starts another batch after the processing queue is idle and the {automaticBatchCooldown.TotalMinutes:0}-minute cooldown has elapsed. " +
             "Apply Safe Fixes retries all marked rows manually.";
     }
 

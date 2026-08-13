@@ -598,10 +598,10 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void ShouldDeferMeetingRefresh_Returns_True_While_Recording_Or_When_Meetings_Is_Not_Visible()
+    public void ShouldDeferMeetingRefresh_Returns_True_Only_While_Recording()
     {
         Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: true, isMeetingsTabSelected: true));
-        Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
+        Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
         Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: true));
     }
 
@@ -1969,7 +1969,7 @@ public sealed class MainWindowInteractionLogicTests
             result,
             StringComparison.Ordinal);
         Assert.Contains("at most 5 fix(es) at a time", result, StringComparison.Ordinal);
-        Assert.Contains("while Meetings remains open", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("while Meetings remains open", result, StringComparison.Ordinal);
         Assert.Contains("2-minute cooldown", result, StringComparison.Ordinal);
     }
 

@@ -1973,7 +1973,6 @@ public partial class MainWindow : Window
                 nowUtc,
                 _latestProcessingQueueStatusSnapshot.RunState == ProcessingQueueRunState.Idle) ||
             _recordingCoordinator.IsRecording ||
-            !ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem) ||
             IsMeetingActionInProgress() ||
             MeetingCleanupAutoApplyPlanner
                 .GetEligibleRecommendations(_meetingCleanupRecommendations, _meetingCleanupAutoApplyCacheService)
@@ -4679,7 +4678,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();
             _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
             MeetingsDataGrid.ItemsSource = _allMeetingRows;
             ApplyMeetingsWorkspaceView(selectedStems);
