@@ -736,10 +736,10 @@ As of 2026-07-20, executable-policy facts are:
 - Positive behavior expected: automatic cleanup can continue draining safe fixes while the app is idle even if the user is on Home or Settings, and opening Meetings keeps the previous cleanup banner/grid stable while the current scan refreshes without pushing the meeting list down when the banner appears.
 - False-positive/security boundary retained: no new automatic cleanup actions or confidence thresholds were introduced; five-fix batching, idle queue gating, recording deferral, fingerprint suppression, and manual retry boundaries remain.
 - Tests added and results: focused cleanup refresh/source/banner tests passed 23/23 after adding the reserved-layout banner guard; full `Test-All.ps1` passed 1,089 core tests and 8 integration tests.
-- Package status: pending in this run.
-- Installed hash/version/signature status: pending in this run.
-- Live-machine result: pending in this run.
-- Outcome: retained.
+- Package status: release asset rebuild completed successfully from clean source commit `7a6fadc`, including `MeetingRecorder-v0.3-win-x64.zip` and `MeetingRecorderInstaller.msi`; GitHub `alpha-release` contains `Install-LatestFromGitHub.cmd`, `Install-LatestFromGitHub.ps1`, `MeetingRecorder-v0.3-win-x64.zip`, and `MeetingRecorderInstaller.msi`.
+- Installed hash/version/signature status: local deploy completed and launched from clean source commit `7a6fadc`; `release-source.json` recorded `isWorktreeDirty=false`. Published and installed `MeetingRecorder.App.dll` hashes match at `693BF8C2B4562155681760C5E93A2E9F12A0C23CE176BD5AAF420B67994FFF87`.
+- Live-machine result: app relaunched responsive from `C:\Users\psharm04\AppData\Local\Programs\Meeting Recorder\MeetingRecorder.App.exe`.
+- Outcome: retained and deployed locally and to GitHub release assets.
 - Follow-up / removal condition: replace the refresh source tests with direct UI-state tests if MainWindow is refactored into a testable view model.
 
 ### 2026-08-13: Automatic cleanup backlog drain throttle
