@@ -7,7 +7,7 @@ namespace MeetingRecorder.App.Services;
 internal static class MeetingCleanupAutoApplyPlanner
 {
     public const int MaxAutomaticFixesPerBatch = 5;
-    public static readonly TimeSpan AutomaticBatchCooldown = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan AutomaticBatchCooldown = TimeSpan.FromMinutes(2);
 
     public static IReadOnlyList<MeetingCleanupRecommendation> GetEligibleRecommendations(
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
@@ -62,7 +62,7 @@ internal static class MeetingCleanupAutoApplyPlanner
         DateTimeOffset nowUtc,
         bool isProcessingQueueIdle)
     {
-        return automaticAttemptCount >= MaxAutomaticFixesPerBatch &&
+        return automaticAttemptCount > 0 &&
                lastBatchStartedUtc.HasValue &&
                nowUtc - lastBatchStartedUtc.Value >= AutomaticBatchCooldown &&
                isProcessingQueueIdle;

@@ -728,6 +728,20 @@ As of 2026-07-20, executable-policy facts are:
 
 ## What We Must Not Repeat
 
+### 2026-08-13: Automatic cleanup backlog drain throttle
+- Trigger / observed symptom: the Meetings cleanup banner kept showing a growing safe-fix backlog, for example 578 cleanup suggestions with 547 still in automatic backlog, making it look like automatic safe fixes were not being worked through.
+- Exact runtime or CyberArk evidence: local cache `meeting-cleanup-auto-apply-v2.json` contained only 52 suppressed automatic attempts (49 queued successes and 3 failures), while `app.log` showed only one recent automatic cleanup batch on 2026-08-13T11:30:50Z applying five safe fixes after local deploy; the prior logged run on 2026-08-11T14:52:32Z applied three fixes and suppressed two failures.
+- Hypothesis: confirmed source throttle issue. Automatic cleanup could refill only after a full five-attempt batch and then waited 15 minutes while Meetings stayed open and the processing queue was idle. Partial batches did not unlock later refills, and the 15-minute cooldown made large historical backlogs grow faster than they drained.
+- APIs or signals added/removed: no detection APIs changed. The automatic cleanup planner now treats any previous automatic batch as refill-eligible after cooldown, and the cooldown is reduced to two minutes while preserving the five-fix batch cap and idle-queue gate.
+- Positive behavior expected: when Meetings remains open and the app is not recording, automatic cleanup continues draining safe fixes in small batches after the processing queue becomes idle instead of stopping after a partial batch or waiting 15 minutes between batches.
+- False-positive/security boundary retained: no new safe-fix types became automatic; failed attempts and queued transcript or speaker-label work remain suppressed by recommendation fingerprint until the recommendation changes, and manual `Apply Safe Fixes` remains the explicit bulk retry path.
+- Tests added and results: focused cleanup/banner tests passed 14/14; the first full `Test-All.ps1` run hit an unrelated transient `voice-profiles.json.tmp` lock in `SpeakerNameCorrectionServiceTests`, that exact test passed on rerun, and the second full `Test-All.ps1` run passed 1,087 core tests and 8 integration tests.
+- Package status: installer rebuild completed successfully, including `MeetingRecorder-v0.3-win-x64.zip` and `MeetingRecorderInstaller.msi`.
+- Installed hash/version/signature status: local deploy completed and launched. Published and installed `MeetingRecorder.App.dll` hashes match at `D498364FF721CD24DDB0148507CE978245BE3992C609315EDCF53F2B9CEA5E48`.
+- Live-machine result: app relaunched responsive with the new automatic cleanup planner deployed. The previous installed build had applied five safe cleanup fixes at 2026-08-13T11:30:50Z; this change keeps that five-item resource cap but allows the next eligible refill after the shorter idle cooldown and after partial batches.
+- Outcome: retained.
+- Follow-up / removal condition: replace this heuristic with a persisted cleanup scheduler ledger if automatic cleanup needs to run outside the open Meetings tab or survive app restarts.
+
 ### 2026-07-21: Meeting window disappeared during automatic rollover
 - Trigger / observed symptom: Meeting Recorder disappeared while recording after the detected Teams title changed.
 - Exact runtime or CyberArk evidence: no Meeting Recorder process remained; Windows Application events at 15:33 and 18:08 local time reported `0xc00000fd` stack overflow. Logs ended immediately after a different Teams title was detected and preserved raw chunks were recovered on restart.

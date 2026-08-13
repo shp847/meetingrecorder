@@ -16,7 +16,7 @@ Reliability fix: generic `Microsoft Teams | Pinned window` and `Google Meet and 
 
 Reliability fix: multiple stale specific Teams windows can no longer borrow the same endpoint audio and splinter one call into arbitrary title-based recordings.
 
-Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-label skips for prior automatic attempts. Automatic cleanup uses a clean suppression cache, queues at most five fixes per app run, reuses one catalog snapshot per batch, and reports waiting versus queued or attempted work.
+Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-label skips for prior automatic attempts. Automatic cleanup uses a clean suppression cache, queues at most five fixes per idle batch, refills after a short cooldown even when the prior batch was partial, reuses one catalog snapshot per batch, and reports waiting versus queued or attempted work.
 
 Reliability fix: historical Teams fragments separated by brief detector gaps can now merge safely when preserved manifests prove the exact same meeting/window identity and one fragment is short.
 

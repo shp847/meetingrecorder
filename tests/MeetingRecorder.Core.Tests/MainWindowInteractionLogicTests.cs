@@ -1961,7 +1961,7 @@ public sealed class MainWindowInteractionLogicTests
             safeRecommendationCount,
             eligibleAutomaticCount,
             automaticBatchSize: 5,
-            automaticBatchCooldown: TimeSpan.FromMinutes(15));
+            automaticBatchCooldown: TimeSpan.FromMinutes(2));
 
         Assert.Contains(expectedState, result, StringComparison.Ordinal);
         Assert.Contains(
@@ -1970,7 +1970,7 @@ public sealed class MainWindowInteractionLogicTests
             StringComparison.Ordinal);
         Assert.Contains("at most 5 fix(es) at a time", result, StringComparison.Ordinal);
         Assert.Contains("while Meetings remains open", result, StringComparison.Ordinal);
-        Assert.Contains("15-minute cooldown", result, StringComparison.Ordinal);
+        Assert.Contains("2-minute cooldown", result, StringComparison.Ordinal);
     }
 
     [Fact]

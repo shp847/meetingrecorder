@@ -171,13 +171,13 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
-    public void IsAutomaticBatchRefillDue_Requires_A_Full_Batch_Cooldown_And_Idle_Queue()
+    public void IsAutomaticBatchRefillDue_Requires_A_Previous_Batch_Cooldown_And_Idle_Queue()
     {
         var lastBatchStartedUtc = DateTimeOffset.Parse("2026-07-28T12:00:00Z");
         var afterCooldown = lastBatchStartedUtc + MeetingCleanupAutoApplyPlanner.AutomaticBatchCooldown;
 
         Assert.False(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
-            automaticAttemptCount: 4,
+            automaticAttemptCount: 0,
             lastBatchStartedUtc,
             afterCooldown,
             isProcessingQueueIdle: true));
@@ -192,7 +192,12 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
             afterCooldown,
             isProcessingQueueIdle: false));
         Assert.True(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
-            automaticAttemptCount: 5,
+            automaticAttemptCount: 1,
+            lastBatchStartedUtc,
+            afterCooldown,
+            isProcessingQueueIdle: true));
+        Assert.True(MeetingCleanupAutoApplyPlanner.IsAutomaticBatchRefillDue(
+            automaticAttemptCount: MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch,
             lastBatchStartedUtc,
             afterCooldown,
             isProcessingQueueIdle: true));
