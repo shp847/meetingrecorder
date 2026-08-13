@@ -10,6 +10,9 @@ internal static partial class MeetingTitleNormalizer
     [GeneratedRegex("\\b([a-z]{3}-[a-z]{4}-[a-z]{3})\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex GoogleMeetCodePattern();
 
+    [GeneratedRegex("\\s+and\\s+\\d+\\s+more\\s+pages?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BrowserTabCountPattern();
+
     public static string NormalizeForComparison(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -30,6 +33,11 @@ internal static partial class MeetingTitleNormalizer
             normalized = normalized[..^"| Pinned window".Length].Trim();
         }
 
+        if (normalized.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = RemoveGoogleMeetBrowserDecoration(normalized);
+        }
+
         var meetCodeMatch = GoogleMeetCodePattern().Match(normalized);
         if (meetCodeMatch.Success)
         {
@@ -39,6 +47,20 @@ internal static partial class MeetingTitleNormalizer
         normalized = normalized.Trim('|', ' ');
         normalized = NonAlphaNumericPattern().Replace(normalized, " ");
         return CollapseWhitespace(normalized).ToLowerInvariant();
+    }
+
+    private static string RemoveGoogleMeetBrowserDecoration(string value)
+    {
+        var profileMarkerIndex = value.LastIndexOf(" - Work - ", StringComparison.OrdinalIgnoreCase);
+        if (profileMarkerIndex < 0)
+        {
+            profileMarkerIndex = value.LastIndexOf(" - Personal - ", StringComparison.OrdinalIgnoreCase);
+        }
+
+        var title = profileMarkerIndex > "Meet -".Length
+            ? value[..profileMarkerIndex]
+            : value;
+        return BrowserTabCountPattern().Replace(title, string.Empty).Trim();
     }
 
     private static string CollapseWhitespace(string value)

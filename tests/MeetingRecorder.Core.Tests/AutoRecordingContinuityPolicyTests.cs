@@ -1692,6 +1692,116 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldRollOverManagedSession_Returns_False_For_Endpoint_Only_Teams_Takeover_Of_Google_Meet()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Tyler Yang",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Tyler Yang | IonQ, Inc. | pranav.sharma@ionq.co | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.137; status=active", 0.10d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.");
+
+        var shouldRollOver = policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - VIP | Working session: Contracting and 27 more pages - Work - Microsoft Edge",
+            meetingLifecycleManaged: true);
+
+        Assert.False(shouldRollOver);
+        Assert.Equal(
+            ActiveSessionTransitionKind.None,
+            MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
+                decision,
+                MeetingPlatform.GoogleMeet,
+                activeSessionTitle: "Meet - VIP | Working session: Contracting and 27 more pages - Work - Microsoft Edge",
+                meetingLifecycleManaged: true,
+                policy));
+        Assert.True(policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - VIP | Working session: Contracting and 27 more pages - Work - Microsoft Edge",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false));
+    }
+
+    [Fact]
+    public void Ambiguous_Teams_Windows_Do_Not_Expire_An_Active_Google_Meet_With_Recent_Loopback()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.15d,
+            SessionTitle: "Nick Ducey-Gallina, +2",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Nick Ducey-Gallina, +2 | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("audio-activity", "Headphones; peak=0.178; status=active", 0.10d, now),
+                new DetectionSignal("teams-identity-ambiguous", "Multiple specific Teams windows shared endpoint audio.", 0d, now),
+            ],
+            Reason: "Multiple specific Teams windows were visible, but endpoint audio could not identify the active meeting.");
+
+        Assert.True(policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - VIP | Working session: Contracting and 27 more pages - Work - Microsoft Edge",
+            hasRecentLoopbackActivity: true,
+            hasRecentMicrophoneActivity: false));
+        Assert.False(policy.ShouldRefreshLastPositiveSignal(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - VIP | Working session: Contracting and 27 more pages - Work - Microsoft Edge",
+            hasRecentLoopbackActivity: false,
+            hasRecentMicrophoneActivity: true));
+    }
+
+    [Fact]
+    public void ShouldRollOverManagedSession_Returns_True_For_Attributed_Teams_Takeover_Of_Google_Meet()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Customer review",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Customer review | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-window", "Microsoft Teams; peak=0.420; confidence=Medium", 0.15d, now),
+            ],
+            Reason: "Detection confidence met the recording threshold and active system audio was present.",
+            DetectedAudioSource: new DetectedAudioSource(
+                "Microsoft Teams",
+                "Customer review | Microsoft Teams",
+                null,
+                AudioSourceMatchKind.Window,
+                AudioSourceConfidence.Medium,
+                now));
+
+        var shouldRollOver = policy.ShouldRollOverManagedSession(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - Earlier review - Work - Microsoft Edge",
+            meetingLifecycleManaged: true);
+
+        Assert.True(shouldRollOver);
+    }
+
+    [Fact]
     public void ShouldRollOverManagedSession_Returns_False_For_Google_Meet_Title_Variants_Sharing_The_Same_Meet_Code()
     {
         var policy = new AutoRecordingContinuityPolicy();

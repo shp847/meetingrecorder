@@ -15,4 +15,15 @@ public sealed class MeetingTitleNormalizerTests
 
         Assert.Equal("dbh eecx utm", normalized);
     }
+
+    [Theory]
+    [InlineData("Meet - Commercial Model Discussion with Kearney and 29 more pages - Work - Microsoft Edge")]
+    [InlineData("Meet - Commercial Model Discussion with Kearney and 28 more pages - Work - Microsoft Edge")]
+    [InlineData("Meet - Commercial Model Discussion with Kearney - Work - Microsoft Edge")]
+    public void NormalizeForComparison_Ignores_Named_Meet_Browser_Decoration(string title)
+    {
+        var normalized = MeetingTitleNormalizer.NormalizeForComparison(title);
+
+        Assert.Equal("meet commercial model discussion with kearney", normalized);
+    }
 }

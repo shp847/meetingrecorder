@@ -180,6 +180,28 @@ public sealed class MeetingDetectionEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_Does_Not_Start_An_Account_Decorated_Sharing_Control_Bar()
+    {
+        var evaluator = new MeetingDetectionEvaluator();
+        var signals = new[]
+        {
+            new DetectionSignal(
+                "window-title",
+                "Sharing control bar | Kearney | psharm04@atkearney.com | Microsoft Teams | Pinned window",
+                0.85d,
+                DateTimeOffset.UtcNow),
+            new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, DateTimeOffset.UtcNow),
+            new DetectionSignal("audio-activity", "Speakers; peak=0.087; status=active", 0.10d, DateTimeOffset.UtcNow),
+        };
+
+        var decision = evaluator.Evaluate(signals);
+
+        Assert.False(decision.ShouldStart);
+        Assert.False(decision.ShouldKeepRecording);
+        Assert.Contains("generic Teams shell", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Evaluate_Extracts_Attendee_Name_From_Suppressed_Teams_Chat_Window()
     {
         var evaluator = new MeetingDetectionEvaluator();

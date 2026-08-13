@@ -249,6 +249,12 @@ public sealed class AutoRecordingContinuityPolicy
             return false;
         }
 
+        if (decision.Platform != activePlatform &&
+            !HasReliableCrossPlatformTakeoverEvidence(decision))
+        {
+            return false;
+        }
+
         var normalizedActiveTitle = NormalizeMeetingTitle(activeSessionTitle ?? string.Empty);
         var normalizedDetectedTitle = NormalizeMeetingTitle(decision.SessionTitle);
         if (string.IsNullOrWhiteSpace(normalizedActiveTitle) ||
@@ -278,6 +284,12 @@ public sealed class AutoRecordingContinuityPolicy
 
         if (decision.Platform != activePlatform)
         {
+            if (hasRecentLoopbackActivity &&
+                HasUntrustedEndpointTeamsCandidateOverGoogleMeet(decision, activePlatform, activeSessionTitle))
+            {
+                return true;
+            }
+
             return HasCrossPlatformBrowserContinuation(
                 decision,
                 activePlatform,
@@ -378,7 +390,8 @@ public sealed class AutoRecordingContinuityPolicy
 
         if (decision.Platform != activePlatform)
         {
-            return false;
+            return hasRecentLoopbackActivity &&
+                HasUntrustedEndpointTeamsCandidateOverGoogleMeet(decision, activePlatform, activeSessionTitle);
         }
 
         if (decision.Platform == MeetingPlatform.Teams &&
@@ -503,6 +516,28 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return true;
+    }
+
+    private static bool HasReliableCrossPlatformTakeoverEvidence(DetectionDecision decision)
+    {
+        return HasSupportedMeetingAudioAttribution(decision) ||
+            (decision.Platform == MeetingPlatform.Teams &&
+             HasOfficialTeamsMatchSignal(decision) &&
+             !HasOfficialTeamsNoCurrentMatchSignal(decision)) ||
+            (decision.Platform == MeetingPlatform.Zoom && HasCalendarZoomEvidence(decision));
+    }
+
+    private static bool HasUntrustedEndpointTeamsCandidateOverGoogleMeet(
+        DetectionDecision decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        return activePlatform == MeetingPlatform.GoogleMeet &&
+            decision.Platform == MeetingPlatform.Teams &&
+            decision.ShouldKeepRecording &&
+            HasSpecificGoogleMeetIdentity(activeSessionTitle) &&
+            HasActiveAudioSignal(decision) &&
+            !HasReliableCrossPlatformTakeoverEvidence(decision);
     }
 
     private static bool HasSilentGoogleMeetObscuredByTeamsNavigationSignal(
@@ -808,7 +843,8 @@ public sealed class AutoRecordingContinuityPolicy
 
         return platform switch
         {
-            MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms teams" or "sharing control bar",
+            MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms teams" ||
+                normalized.StartsWith("sharing control bar", StringComparison.Ordinal),
             MeetingPlatform.GoogleMeet => IsGenericGoogleMeetTitle(normalized),
             _ => false,
         };

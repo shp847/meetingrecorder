@@ -1,6 +1,6 @@
 # Auto-Detection and CyberArk Decision Log
 
-Last updated: 2026-07-21
+Last updated: 2026-08-12
 
 ## Purpose
 
@@ -634,6 +634,55 @@ As of 2026-07-20, executable-policy facts are:
 - Follow-up / removal condition: deploy after the active worker exits, then
   verify one surviving Graszl artifact plus archived originals and ensure long
   same-title sessions remain separate.
+
+### 2026-08-12: Endpoint-only cross-platform and browser-title fragmentation
+- Trigger / observed symptom: the August 12 library showed one Google Meet
+  alternating with short Teams attendee recordings, named Meet rows split when
+  Edge changed its tab count, and a standalone 29-second Teams recording titled
+  `Sharing control bar | Kearney | psharm04@atkearney.com | Pinned window`.
+- Exact runtime or CyberArk evidence: live logs recorded repeated managed
+  rollovers between the named Meet and `Tyler Yang`; every false Teams takeover
+  contained only `window-title`, `teams-host`, and endpoint-wide
+  `audio-activity`, with no Teams-attributed audio. Another rollover changed
+  `Commercial Model Discussion ... and 29 more pages` to the same title with
+  `28 more pages`. No CyberArk error or capture-device failure accompanied the
+  transitions.
+- Hypothesis: confirmed shared continuity gaps. Managed cross-platform rollover
+  accepted endpoint audio as target-platform proof, named Meet comparison kept
+  Chromium tab-count/profile decoration, and generic Teams shell matching only
+  recognized the exact `sharing control bar` title.
+- APIs or signals added/removed: none. Existing attributed audio, official
+  Teams match, calendar Zoom, title, and recent loopback signals are reused.
+- Positive behavior expected: endpoint-only Teams candidates cannot replace an
+  active Meet, ambiguous Teams windows preserve that Meet only while recent
+  captured loopback remains active, named Meet browser-title variants stay in
+  one session, and sharing controls remain continuation-only.
+- False-positive/security boundary retained: attributed Teams handoffs and
+  different same-platform meetings still roll over; silent endpoint-only
+  candidates cannot sustain a session. No process, browser-tab, UI Automation,
+  Core Audio session, or CyberArk-sensitive probe was added.
+- Tests added and results: five live-shaped assertions failed before the fix.
+  After the fix, 223 focused evaluator, title-normalizer, continuity, and
+  transition tests pass, including attributed-handoff and no-loopback negatives.
+  Full verification passed 1,081 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,111,745 bytes with SHA-256
+  `067767E1A00758E114B54C19D18FF3433D9B360966A539F72AEEE6256B6F794F`;
+  MSI is 75,841,536 bytes with SHA-256
+  `31B5F00981D8733BE9BA99A8376589DD110D015DA4E0C0EC29D3206CCF8E86E4`.
+- Installed hash/version/signature status: local deployment completed while
+  capture and processing were idle. Installed and published
+  `MeetingRecorder.Core.dll` hashes match at
+  `E47433122C8738292C8B89A13D542CB170440F9A56453F3CACB2F941539EC0FB`;
+  `MeetingRecorder.App.dll` hashes match at
+  `C305660720C6C3A39C215466CC64F096DAA1B4E40F08CFB0C0EC75C3DF0DD2B4`.
+- Live-machine result: pre-fix failure was reproduced from logs. Fixed app
+  relaunched responsive and suppressed the current Teams calendar shell with
+  zero recording starts during a 30-second observation. Exact overlapping
+  Teams/Meet and changing-tab-count conditions were not present after deploy.
+- Outcome: source, tests, package, local install, and bounded idle observation
+  retained; exact-condition live validation remains pending.
+- Follow-up / removal condition: retain until platform-specific meeting identity
+  is available reliably enough to replace endpoint fallback during rollover.
 
 ## What We Must Not Repeat
 

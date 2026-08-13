@@ -198,8 +198,8 @@ public sealed class MeetingDetectionEvaluator
                 "microsoft teams" or
                 "teams" or
                 "ms teams" or
-                "sharing control bar" or
-                "search",
+                "search" ||
+                normalized.StartsWith("sharing control bar", StringComparison.Ordinal),
             MeetingPlatform.GoogleMeet =>
                 normalized is "google meet" or "meet" ||
                 normalized.StartsWith("google meet ", StringComparison.Ordinal),
@@ -251,7 +251,8 @@ public sealed class MeetingDetectionEvaluator
     {
         var normalized = CleanTitle(value, "Microsoft Teams").Trim();
         return normalized.Equals("Microsoft Teams", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase);
+            normalized.Equals("ms-teams", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("Sharing control bar", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? TryExtractTeamsAttendeeTitle(string value)

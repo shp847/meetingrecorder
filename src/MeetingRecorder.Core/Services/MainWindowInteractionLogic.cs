@@ -482,6 +482,13 @@ internal static class MainWindowInteractionLogic
             return ActiveSessionTransitionKind.RollOver;
         }
 
+        if (meetingLifecycleManaged &&
+            decision is not null &&
+            decision.Platform != activePlatform)
+        {
+            return ActiveSessionTransitionKind.None;
+        }
+
         return continuityPolicy.ShouldReclassifyActiveSession(
                 decision,
                 activePlatform,

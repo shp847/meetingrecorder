@@ -20,6 +20,8 @@ Reliability fix: cleanup auto-apply no longer mistakes normal Deferred speaker-l
 
 Reliability fix: historical Teams fragments separated by brief detector gaps can now merge safely when preserved manifests prove the exact same meeting/window identity and one fragment is short.
 
+Reliability fix: endpoint-only Teams windows no longer split an active Google Meet, changing Edge tab counts no longer split named Meet sessions, and account-decorated `Sharing control bar` windows cannot create standalone recordings.
+
 ## What Meeting Recorder Is
 
 Meeting Recorder is built for users who need:
