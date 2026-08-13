@@ -92,6 +92,25 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
+    public void Cleanup_Review_Banner_Reserves_Layout_Space_While_Background_Scan_Loads()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(sourcePath);
+        var bannerStart = xaml.IndexOf("x:Name=\"MeetingCleanupReviewBannerBorder\"", StringComparison.Ordinal);
+        var bannerEnd = xaml.IndexOf("</Border>", bannerStart, StringComparison.Ordinal);
+        var bannerBlock = xaml[bannerStart..bannerEnd];
+        var methodStart = source.IndexOf("private void UpdateMeetingCleanupReviewBanner", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private async Task TryAutoApplyMeetingCleanupSafeFixesAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("Visibility=\"Hidden\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Cleanup_Execution_Offloads_The_Catalog_Scan_From_The_Ui_Thread()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

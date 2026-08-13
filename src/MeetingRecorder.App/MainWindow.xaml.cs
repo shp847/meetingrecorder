@@ -9565,7 +9565,7 @@ public partial class MainWindow : Window
     {
         if (HasCompletedMeetingCleanupHistoricalReview() || _meetingCleanupRecommendations.Length == 0)
         {
-            MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;
+            MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;
             MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
             return;
         }

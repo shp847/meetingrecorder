@@ -958,7 +958,7 @@
                                     Padding="14"
                                     CornerRadius="4"
                                     Background="#FFF6E5"
-                                    Visibility="Collapsed">
+                                    Visibility="Hidden">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
