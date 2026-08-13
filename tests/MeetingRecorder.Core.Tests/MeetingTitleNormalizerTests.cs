@@ -26,4 +26,14 @@ public sealed class MeetingTitleNormalizerTests
 
         Assert.Equal("meet commercial model discussion with kearney", normalized);
     }
+
+    [Theory]
+    [InlineData("Google Meet and 19 more pages - Work - Microsoft Edge")]
+    [InlineData("Google Meet and 1 more page - Work - Microsoft Edge")]
+    public void NormalizeForComparison_Treats_Generic_Google_Meet_Browser_Shell_As_Generic(string title)
+    {
+        var normalized = MeetingTitleNormalizer.NormalizeForComparison(title);
+
+        Assert.Equal("google meet", normalized);
+    }
 }

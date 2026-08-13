@@ -5,12 +5,14 @@ namespace MeetingRecorder.Core.Services;
 
 public static partial class PublishedMeetingRepairService
 {
-    private const string RepairMarkerFileName = "published-meeting-repair-v7.done";
-    private const string RepairArchiveDirectoryName = "published-meeting-repair-v7";
+    private const string RepairMarkerFileName = "published-meeting-repair-v8.done";
+    private const string RepairArchiveDirectoryName = "published-meeting-repair-v8";
     private const string EchoRepairReportFileName = "echo-repair-report.txt";
     private const string EchoRepairPublishMessage = "Published audio was republished after one-time echo repair v6.";
     private static readonly TimeSpan MaximumRepeatedSplitChainGap = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan MaximumRepeatedSplitChainSegmentDuration = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan MaximumRepeatedSplitChainOverlap = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaximumRepeatedSplitChainShortSegmentDuration = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan MaximumRepeatedSplitChainTotalSpan = TimeSpan.FromHours(3);
     private const int MinimumRepeatedSplitChainLength = 3;
 
     public static async Task<PublishedMeetingRepairResult> RepairKnownIssuesAsync(
@@ -22,7 +24,8 @@ public static partial class PublishedMeetingRepairService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var markerPath = Path.Combine(appRoot, "repairs", RepairMarkerFileName);
+        var repairsDirectory = Path.Combine(appRoot, "repairs");
+        var markerPath = Path.Combine(repairsDirectory, RepairMarkerFileName);
         if (File.Exists(markerPath))
         {
             return new PublishedMeetingRepairResult(markerPath, string.Empty, 0, 0, 0, 0, true);
@@ -152,13 +155,17 @@ public static partial class PublishedMeetingRepairService
             }
         }
 
-        echoRepairResult = await RepairPublishedMicrophoneEchoAsync(
-            audioOutputDir,
-            workDir,
-            archiveDirectory,
-            manifestStore,
-            pathBuilder,
-            cancellationToken);
+        if (!HasPreviousEchoRepairMarker(repairsDirectory))
+        {
+            echoRepairResult = await RepairPublishedMicrophoneEchoAsync(
+                audioOutputDir,
+                workDir,
+                archiveDirectory,
+                manifestStore,
+                pathBuilder,
+                cancellationToken);
+        }
+
         var archivedMeetingCount = archivedMeetingStems.Count;
 
         Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
@@ -176,6 +183,11 @@ public static partial class PublishedMeetingRepairService
             archivedShortGenericTeamsMeetingCount,
             false,
             queuedSpeakerLabelRepairCount);
+    }
+
+    private static bool HasPreviousEchoRepairMarker(string repairsDirectory)
+    {
+        return File.Exists(Path.Combine(repairsDirectory, "published-meeting-repair-v7.done"));
     }
 
     private static async Task<IReadOnlyList<MeetingInspectionRecord>> BuildInspections(
@@ -284,7 +296,7 @@ public static partial class PublishedMeetingRepairService
                 var current = ordered[index];
                 var previousEnd = previous.StartedAtUtc + (previous.Duration ?? TimeSpan.Zero);
                 var gap = current.StartedAtUtc - previousEnd;
-                if (gap < TimeSpan.Zero || gap > MaximumRepeatedSplitChainGap)
+                if (gap < -MaximumRepeatedSplitChainOverlap || gap > MaximumRepeatedSplitChainGap)
                 {
                     AddChainIfEligible(chains, currentChain);
                     currentChain = new List<MeetingOutputRecord> { current };
@@ -309,6 +321,15 @@ public static partial class PublishedMeetingRepairService
             return;
         }
 
+        var first = candidateChain[0];
+        var last = candidateChain[^1];
+        var lastEnd = last.StartedAtUtc + (last.Duration ?? TimeSpan.Zero);
+        if (lastEnd - first.StartedAtUtc > MaximumRepeatedSplitChainTotalSpan ||
+            !candidateChain.Any(IsShortRepeatedSplitChainSegment))
+        {
+            return;
+        }
+
         chains.Add(candidateChain.ToArray());
     }
 
@@ -317,12 +338,35 @@ public static partial class PublishedMeetingRepairService
         return meeting.Platform != MeetingPlatform.Unknown &&
             meeting.StartedAtUtc != DateTimeOffset.MinValue &&
             meeting.Duration is { } duration &&
-            duration <= MaximumRepeatedSplitChainSegmentDuration &&
+            duration > TimeSpan.Zero &&
             !string.IsNullOrWhiteSpace(meeting.AudioPath) &&
             !string.IsNullOrWhiteSpace(meeting.MarkdownPath) &&
             File.Exists(meeting.AudioPath) &&
             File.Exists(meeting.MarkdownPath) &&
-            !string.IsNullOrWhiteSpace(MeetingTitleNormalizer.NormalizeForComparison(meeting.Title));
+            !IsGenericTitle(meeting.Platform, meeting.Title);
+    }
+
+    private static bool IsShortRepeatedSplitChainSegment(MeetingOutputRecord meeting)
+    {
+        return meeting.Duration is { } duration &&
+            duration <= MaximumRepeatedSplitChainShortSegmentDuration;
+    }
+
+    private static bool IsGenericTitle(MeetingPlatform platform, string? title)
+    {
+        var normalizedComparable = MeetingTitleNormalizer.NormalizeForComparison(title);
+        if (normalizedComparable is "" or "meeting" or "detected meeting")
+        {
+            return true;
+        }
+
+        return platform switch
+        {
+            MeetingPlatform.Teams => normalizedComparable is "microsoft teams" or "teams" or "ms teams" or "sharing control bar" or "search" or "calls" or "chat",
+            MeetingPlatform.GoogleMeet => normalizedComparable is "google meet" or "meet",
+            MeetingPlatform.Manual => normalizedComparable.StartsWith("manual session ", StringComparison.Ordinal),
+            _ => false,
+        };
     }
 
     private static string ChoosePreferredTitle(IReadOnlyList<MeetingOutputRecord> meetings)

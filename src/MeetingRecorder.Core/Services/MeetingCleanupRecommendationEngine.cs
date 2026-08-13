@@ -45,6 +45,7 @@ internal sealed record MeetingInspectionRecord(
 internal static class MeetingCleanupRecommendationEngine
 {
     private static readonly TimeSpan MaximumMergeGap = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaximumMergeOverlap = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaximumStrongContinuityMergeGap = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan MaximumExtendedContinuityMergeGap = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumExtendedContinuitySegmentDuration = TimeSpan.FromMinutes(3);
@@ -544,25 +545,26 @@ internal static class MeetingCleanupRecommendationEngine
 
         var previousEnd = previous.StartedAtUtc + previousDuration;
         var gap = current.StartedAtUtc - previousEnd;
-        if (gap < TimeSpan.Zero)
+        if (gap < -MaximumMergeOverlap)
         {
             return false;
         }
 
+        var effectiveGap = gap < TimeSpan.Zero ? TimeSpan.Zero : gap;
         var hasExtendedManifestContinuity =
             previous.Platform == MeetingPlatform.Teams &&
-            gap <= MaximumExtendedContinuityMergeGap &&
+            effectiveGap <= MaximumExtendedContinuityMergeGap &&
             (previousDuration <= MaximumExtendedContinuitySegmentDuration ||
              currentDuration <= MaximumExtendedContinuitySegmentDuration) &&
             HasMatchingManifestContinuityEvidence(previousInspection, currentInspection);
-        if (gap > MaximumMergeGap && !hasExtendedManifestContinuity)
+        if (effectiveGap > MaximumMergeGap && !hasExtendedManifestContinuity)
         {
             return false;
         }
 
         var titlesDiffer = !string.Equals(previous.Title.Trim(), current.Title.Trim(), StringComparison.OrdinalIgnoreCase);
         var hasShortSegment = previousDuration <= MaximumShortSplitSegmentDuration || currentDuration <= MaximumShortSplitSegmentDuration;
-        var hasStrongManifestContinuity = HasStrongManifestContinuityEvidence(previousInspection, currentInspection, gap);
+        var hasStrongManifestContinuity = HasStrongManifestContinuityEvidence(previousInspection, currentInspection, effectiveGap);
         confidence = titlesDiffer || hasShortSegment || hasStrongManifestContinuity || hasExtendedManifestContinuity
             ? MeetingCleanupConfidence.High
             : MeetingCleanupConfidence.Medium;

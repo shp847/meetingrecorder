@@ -33,7 +33,8 @@ internal static partial class MeetingTitleNormalizer
             normalized = normalized[..^"| Pinned window".Length].Trim();
         }
 
-        if (normalized.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase))
+        if (normalized.StartsWith("Meet -", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("Google Meet", StringComparison.OrdinalIgnoreCase))
         {
             normalized = RemoveGoogleMeetBrowserDecoration(normalized);
         }

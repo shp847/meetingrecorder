@@ -263,6 +263,42 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Returns_HighConfidence_Merge_For_Same_Meet_Title_With_Small_Publish_Overlap()
+    {
+        var firstStem = "2026-08-12_200217_gmeet_meet-chips-discussion-sw-ionq-and-29-more-pages-work-microsoft-edge";
+        var secondStem = "2026-08-12_200333_gmeet_meet-chips-discussion-sw-ionq-work-microsoft-edge";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        await WriteSilentWaveFileAsync(firstAudioPath, TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(16));
+        await WriteSilentWaveFileAsync(secondAudioPath, TimeSpan.FromMinutes(31) + TimeSpan.FromSeconds(38));
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+            new[]
+            {
+                CreateInspection(
+                    firstStem,
+                    "Meet - CHIPS Discussion (SW/IonQ) and 29 more pages - Work - Microsoft Edge",
+                    DateTimeOffset.Parse("2026-08-12T20:02:17Z"),
+                    MeetingPlatform.GoogleMeet,
+                    TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(16),
+                    firstAudioPath,
+                    Path.Combine(_root, $"{firstStem}.md")),
+                CreateInspection(
+                    secondStem,
+                    "Meet - CHIPS Discussion (SW/IonQ) - Work - Microsoft Edge",
+                    DateTimeOffset.Parse("2026-08-12T20:03:33Z"),
+                    MeetingPlatform.GoogleMeet,
+                    TimeSpan.FromMinutes(31) + TimeSpan.FromSeconds(38),
+                    secondAudioPath,
+                    Path.Combine(_root, $"{secondStem}.md")),
+            });
+
+        var recommendation = Assert.Single(recommendations, item => item.Action == MeetingCleanupAction.Merge);
+        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
+        Assert.True(recommendation.CanApplyAutomatically);
+    }
+
+    [Fact]
     public async Task Analyze_Does_Not_Merge_Long_Teams_Sessions_Across_Extended_Gap()
     {
         var firstStem = "2026-07-28_140000_teams-recurring-connect";

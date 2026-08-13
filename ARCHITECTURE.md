@@ -334,7 +334,7 @@ Core pieces:
 - `MeetingCleanupExecutionService`
   - executes archive, merge, rename, and other recommended cleanup actions
 - `PublishedMeetingRepairService`
-- runs a versioned one-time repair pass on startup against the durable app-data root under `%LOCALAPPDATA%\MeetingRecorder`, loads preserved work manifests for stronger continuity evidence, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution instead of only healing isolated adjacent pairs, can also auto-merge a short-gap exact-title split when those manifests still agree on the same specific meeting identity, republish repairable historical microphone sessions from preserved raw chunks under `work`, and writes an `echo-repair-report.txt` summary alongside archived backup WAVs under the versioned archive directory
+- runs a versioned one-time repair pass on startup against the durable app-data root under `%LOCALAPPDATA%\MeetingRecorder`, loads preserved work manifests for stronger continuity evidence, mutates published artifacts archive-first, can collapse longer same-title split chains in one execution when tight timing includes at least one short fragment, can also auto-merge a short-gap exact-title split when those manifests still agree on the same specific meeting identity, republish repairable historical microphone sessions from preserved raw chunks under `work` when the earlier v7 echo repair did not already run, and writes an `echo-repair-report.txt` summary alongside archived backup WAVs under the versioned archive directory
 - persistent dismissed recommendation state in `AppConfig`
   - keeps the system unobtrusive until the underlying meeting changes enough to produce a new fingerprint
 

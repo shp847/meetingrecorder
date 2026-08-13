@@ -684,6 +684,48 @@ As of 2026-07-20, executable-policy facts are:
 - Follow-up / removal condition: retain until platform-specific meeting identity
   is available reliably enough to replace endpoint fallback during rollover.
 
+### 2026-08-13: Historical fragment merge pass
+- Trigger / observed symptom: Meetings library still showed many historical
+  Google Meet and Teams fragments after the live fragmentation fix shipped.
+- Exact runtime or CyberArk evidence: local library had 647 published WAV and
+  Markdown artifacts before repair; `published-meeting-repair-v7.done` existed
+  and reported zero prior merges. After local v8 deployment, the app logged
+  `Published meeting repair completed: mergedSplitPairCount=75;
+  archivedArtifactCount=114; queuedSpeakerLabelRepairCount=0`.
+- Hypothesis: the historical repair pass was too narrow: it only merged chains
+  where every segment was short, treated generic `Google Meet and N more pages`
+  browser shells as distinct titles, and reran old echo repair work even when
+  v7 had already completed.
+- APIs or signals added/removed: no new external signals. Title comparison now
+  normalizes generic Google Meet browser shells, pair merges tolerate up to 30
+  seconds of publish overlap, and `published-meeting-repair-v8` merges
+  non-generic same-title chains within five-minute gaps when at least one
+  fragment is short. The v8 pass skips echo repair if v7 already ran.
+- Positive behavior expected: historical same-call fragments collapse into one
+  published audio/Markdown artifact while originals move archive-first under
+  `Meetings\Archive\published-meeting-repair-v8`.
+- False-positive/security boundary retained: generic titles stay excluded, long
+  repeated same-title meetings without a short fragment stay separate, total
+  chain span is capped at three hours, and no CyberArk or privileged API path
+  changed.
+- Tests added and results: focused cleanup/title tests passed 40/40; full
+  `scripts\Test-All.ps1` passed 1,087 core tests and 8 integration tests.
+- Package status: rebuilt successfully. ZIP is 88,112,194 bytes with SHA-256
+  `394B289251D546529B7B0591B16620F5F00356092479136A3A22D8E16D383256`; MSI is
+  75,849,728 bytes with SHA-256
+  `08C61592B64520A4032F34E7C9AA102BFE60C6DDF7DB16EAED25D65D0CA63058`.
+- Installed hash/version/signature status: local deploy completed and launched.
+  Published and installed `MeetingRecorder.Core.dll` hashes match at
+  `B0352EE71B30875A4E1CA0F7057B6BC7AC9A1CA1BC6F0E01637E3A6EDA5581EF`.
+- Live-machine result: app relaunched responsive; v8 marker wrote
+  `mergedSplitPairCount=75;archivedMeetingCount=114;...;echoRepairedCount=0`.
+  Published counts settled at 572 WAV, 573 Markdown, and 511 JSON artifacts,
+  with 113 merge archive folders and one orphan-transcript archive folder.
+- Outcome: retained.
+- Follow-up / removal condition: keep v8 until future repairs are replaced by a
+  manifest-backed migration ledger that can merge exact historical fragments
+  incrementally without a one-time startup pass.
+
 ## What We Must Not Repeat
 
 ### 2026-07-21: Meeting window disappeared during automatic rollover
