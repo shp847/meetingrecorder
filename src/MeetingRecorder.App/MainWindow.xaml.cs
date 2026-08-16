@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     private const string TeamsThirdPartyApiGuideUrl = "https://support.microsoft.com/en-au/office/connect-to-third-party-devices-in-microsoft-teams-aabca9f2-47bb-407f-9f9b-81a104a883d6";
     private static readonly TimeSpan ShutdownUpdateCheckTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RecordingStorageAutoStartBackoff = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan TeamsRecordingPlaybackAbsentBeforeMerge = TimeSpan.FromMinutes(2);
     private static readonly Brush HealthyModelStatusBrush = CreateBrush(0x2E, 0x7D, 0x32);
     private static readonly Brush HealthyModelStatusChipBackgroundBrush = CreateBrush(0xE8, 0xF3, 0xE8);
     private static readonly Brush HealthyModelStatusChipBorderBrush = CreateBrush(0xA8, 0xCC, 0xAB);
@@ -838,16 +839,24 @@ public partial class MainWindow : Window
             _manualStopSuppressionContext = null;
             _recordingStorageBackoffUntilUtc = null;
             ClearAutoStopVisualState();
+            var observedAtUtc = DateTimeOffset.UtcNow;
+            var playbackProvenance = TryCreateTeamsRecordingPlaybackProvenance(_lastObservedDetectionDecision, observedAtUtc);
             await _recordingCoordinator.StartAsync(
-                MeetingPlatform.Manual,
-                $"Manual session {DateTimeOffset.Now:yyyy-MM-dd HH:mm}",
-                Array.Empty<DetectionSignal>(),
-                autoStarted: false);
+                playbackProvenance is null ? MeetingPlatform.Manual : MeetingPlatform.Teams,
+                playbackProvenance is null
+                    ? $"Manual session {DateTimeOffset.Now:yyyy-MM-dd HH:mm}"
+                    : _lastObservedDetectionDecision!.SessionTitle,
+                playbackProvenance is null ? Array.Empty<DetectionSignal>() : _lastObservedDetectionDecision!.Signals,
+                autoStarted: false,
+                detectedAudioSource: playbackProvenance is null ? null : _lastObservedDetectionDecision!.DetectedAudioSource,
+                teamsRecordingPlayback: playbackProvenance);
 
             UpdateCurrentMeetingEditor();
             UpdateUi("Recording in progress.", "Manual recording started.");
             UpdateAudioCaptureGraph();
-            AppendActivity("Manual recording started.");
+            AppendActivity(playbackProvenance is null
+                ? "Manual recording started."
+                : "Manual recording started for detected Teams recording playback.");
         }
         catch (Exception exception)
         {
@@ -1510,6 +1519,10 @@ public partial class MainWindow : Window
             DetectionTextBlock.Text = MainWindowInteractionLogic.BuildDetectionSummary(
                 decision,
                 _liveConfig.Current.AutoDetectEnabled);
+            if (TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc) is not null)
+            {
+                DetectionTextBlock.Text += " Teams recording playback detected; fragments will merge after the player closes.";
+            }
             UpdateDetectedAudioSourceSurface(decision);
             UpdateCurrentMeetingTitleStatus();
 
@@ -1545,7 +1558,8 @@ public partial class MainWindow : Window
                         decision.SessionTitle,
                         decision.Signals,
                         autoStarted: true,
-                        decision.DetectedAudioSource);
+                        decision.DetectedAudioSource,
+                        teamsRecordingPlayback: TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc));
                     _lastPositiveDetectionUtc = nowUtc;
                     _recentAutoStopContext = null;
                     _manualStopSuppressionContext = null;
@@ -1578,6 +1592,12 @@ public partial class MainWindow : Window
                     _lifetimeCts.Token))
             {
                 activeSession = _recordingCoordinator.ActiveSession;
+            }
+
+            var playbackProvenance = TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc);
+            if (playbackProvenance is not null)
+            {
+                await _recordingCoordinator.UpdateTeamsRecordingPlaybackAsync(playbackProvenance, _lifetimeCts.Token);
             }
 
             if (activeSession is not null)
@@ -1854,7 +1874,8 @@ public partial class MainWindow : Window
                 decision.Signals,
                 autoStarted: true,
                 decision.DetectedAudioSource,
-                cancellationToken);
+                cancellationToken,
+                TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc));
 
             _lastPositiveDetectionUtc = nowUtc;
             _recentAutoStopContext = null;
@@ -4821,6 +4842,7 @@ public partial class MainWindow : Window
             _meetingCleanupRecommendations = visibleRecommendations;
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
+            UpdateTeamsPlaybackCleanupStatus(inspections, visibleRecommendations);
             await TryAutoApplyMeetingCleanupSafeFixesAsync(
                 visibleRecommendations,
                 records,
@@ -9530,11 +9552,102 @@ public partial class MainWindow : Window
                     suggestedTitleSource = suggestion?.Source;
                 }
 
-                inspections.Add(new MeetingInspectionRecord(record, manifest, suggestedTitle, suggestedTitleSource, isDiarizationReady));
+                var isTeamsPlaybackMergeReady = manifest?.TeamsRecordingPlayback is { } playback &&
+                    DateTimeOffset.UtcNow - playback.LastObservedAtUtc >= TeamsRecordingPlaybackAbsentBeforeMerge;
+                inspections.Add(new MeetingInspectionRecord(
+                    record,
+                    manifest,
+                    suggestedTitle,
+                    suggestedTitleSource,
+                    isDiarizationReady,
+                    isTeamsPlaybackMergeReady));
             }
 
             return (IReadOnlyList<MeetingInspectionRecord>)inspections;
         }, cancellationToken);
+    }
+
+    private static TeamsRecordingPlaybackProvenance? TryCreateTeamsRecordingPlaybackProvenance(
+        DetectionDecision? decision,
+        DateTimeOffset observedAtUtc)
+    {
+        if (decision?.Platform != MeetingPlatform.Teams)
+        {
+            return null;
+        }
+
+        var recordingId = decision.Signals
+            .FirstOrDefault(signal => string.Equals(
+                signal.Source,
+                TeamsRecordingPlaybackProvenance.DetectionSignalSource,
+                StringComparison.OrdinalIgnoreCase))
+            ?.Value;
+        if (!Guid.TryParse(recordingId, out var parsedRecordingId))
+        {
+            return null;
+        }
+
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(decision.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedTitle) ||
+            normalizedTitle is "microsoft teams" or "teams" or "ms teams" or "meeting" or "detected meeting")
+        {
+            return null;
+        }
+
+        return new TeamsRecordingPlaybackProvenance(
+            parsedRecordingId.ToString("D"),
+            normalizedTitle,
+            observedAtUtc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            observedAtUtc);
+    }
+
+    private void UpdateTeamsPlaybackCleanupStatus(
+        IReadOnlyList<MeetingInspectionRecord> inspections,
+        IReadOnlyList<MeetingCleanupRecommendation> recommendations)
+    {
+        var groups = inspections
+            .Where(inspection => inspection.Manifest?.TeamsRecordingPlayback is not null)
+            .GroupBy(inspection => inspection.Manifest!.TeamsRecordingPlayback!.GroupKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.ToArray())
+            .Where(group => group.Length >= 2)
+            .ToArray();
+        if (groups.Length == 0 || IsMeetingActionInProgress())
+        {
+            return;
+        }
+
+        var group = groups[0];
+        var stems = group.Select(inspection => inspection.Meeting.Stem).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mergeRecommendation = recommendations.FirstOrDefault(recommendation =>
+            string.Equals(recommendation.ReasonCode, "merge-teams-recording-playback-fragments", StringComparison.Ordinal) &&
+            recommendation.RelatedStems.All(stems.Contains));
+        if (mergeRecommendation is not null)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text =
+                $"Teams recording playback group ready to merge ({group.Length} fragments).";
+            return;
+        }
+
+        if (group.Any(inspection => inspection.Meeting.ManifestState is SessionState.Queued or SessionState.Processing or SessionState.Finalizing))
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text =
+                $"Teams recording playback group detected; waiting for {group.Length} fragments to finish processing.";
+            return;
+        }
+
+        if (group.Any(inspection =>
+                string.IsNullOrWhiteSpace(inspection.Meeting.AudioPath) ||
+                string.IsNullOrWhiteSpace(inspection.Meeting.MarkdownPath) ||
+                !File.Exists(inspection.Meeting.AudioPath) ||
+                !File.Exists(inspection.Meeting.MarkdownPath)))
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text =
+                $"Teams recording playback group blocked; one or more fragments are missing audio or transcript output.";
+            return;
+        }
+
+        MeetingCleanupRecommendationsStatusTextBlock.Text =
+            "Teams recording playback group detected; waiting for the player to be absent for two minutes.";
     }
 
     private Dictionary<string, MeetingSessionManifest> LoadMeetingManifestsByStem(
@@ -9957,16 +10070,21 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                if (!meetingsByStem.TryGetValue(recommendation.RelatedStems[0], out var firstMeeting) ||
-                    !meetingsByStem.TryGetValue(recommendation.RelatedStems[1], out var secondMeeting))
+                var mergeMeetings = recommendation.RelatedStems
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(stem => meetingsByStem.TryGetValue(stem, out var meeting) ? meeting : null)
+                    .ToArray();
+                if (mergeMeetings.Length != recommendation.RelatedStems.Distinct(StringComparer.OrdinalIgnoreCase).Count() ||
+                    mergeMeetings.Any(meeting => meeting is null))
                 {
                     return;
                 }
 
+                var orderedMergeMeetings = mergeMeetings.Select(meeting => meeting!).ToArray();
+
                 await _meetingCleanupExecutionService.MergeMeetingsAsync(
-                    firstMeeting,
-                    secondMeeting,
-                    recommendation.SuggestedTitle ?? firstMeeting.Title,
+                    orderedMergeMeetings,
+                    recommendation.SuggestedTitle ?? orderedMergeMeetings[0].Title,
                     _liveConfig.Current.AudioOutputDir,
                     _liveConfig.Current.TranscriptOutputDir,
                     archiveDirectory,

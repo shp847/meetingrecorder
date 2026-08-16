@@ -209,6 +209,120 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Merges_All_Completed_Teams_Playback_Fragments_After_Player_Absence()
+    {
+        var startedAtUtc = DateTimeOffset.UtcNow.AddHours(-1);
+        var recordingId = Guid.NewGuid().ToString("D");
+        var inspections = new List<MeetingInspectionRecord>();
+        for (var index = 0; index < 3; index++)
+        {
+            var stem = $"2026-08-15_150{index}00_teams_alignbridge";
+            var audioPath = Path.Combine(_root, $"{stem}.wav");
+            var markdownPath = Path.Combine(_root, $"{stem}.md");
+            await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(2));
+            await File.WriteAllTextAsync(markdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
+            var manifest = CreateTeamsManifest(
+                $"session-{index}",
+                "Alignbridge - sandbox access and demo",
+                startedAtUtc.AddMinutes(index * 4),
+                startedAtUtc.AddMinutes(index * 4 + 2),
+                "Alignbridge - sandbox access and demo | Microsoft Teams") with
+            {
+                TeamsRecordingPlayback = new TeamsRecordingPlaybackProvenance(
+                    recordingId,
+                    "alignbridge sandbox access and demo",
+                    "2026-08-15",
+                    DateTimeOffset.UtcNow.AddMinutes(-3)),
+            };
+            inspections.Add(CreateInspection(
+                stem,
+                "Alignbridge - sandbox access and demo",
+                startedAtUtc.AddMinutes(index * 4),
+                MeetingPlatform.Teams,
+                TimeSpan.FromSeconds(2),
+                audioPath,
+                markdownPath,
+                manifest: manifest,
+                teamsPlaybackMergeReady: true));
+        }
+
+        var recommendation = Assert.Single(MeetingCleanupRecommendationEngine.Analyze(inspections));
+
+        Assert.Equal("merge-teams-recording-playback-fragments", recommendation.ReasonCode);
+        Assert.True(recommendation.CanApplyAutomatically);
+        Assert.Equal(3, recommendation.RelatedStems.Count);
+    }
+
+    [Fact]
+    public async Task Analyze_Defers_Teams_Playback_Merge_When_A_Fragment_Is_Still_Processing()
+    {
+        var startedAtUtc = DateTimeOffset.UtcNow.AddHours(-1);
+        var recordingId = Guid.NewGuid().ToString("D");
+        var inspections = new List<MeetingInspectionRecord>();
+        for (var index = 0; index < 2; index++)
+        {
+            var stem = $"2026-08-15_160{index}00_teams_alignbridge";
+            var audioPath = Path.Combine(_root, $"{stem}.wav");
+            var markdownPath = Path.Combine(_root, $"{stem}.md");
+            await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(2));
+            await File.WriteAllTextAsync(markdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
+            var manifest = CreateTeamsManifest(
+                $"processing-session-{index}",
+                "Alignbridge - sandbox access and demo",
+                startedAtUtc.AddMinutes(index * 4),
+                startedAtUtc.AddMinutes(index * 4 + 2),
+                "Alignbridge - sandbox access and demo | Microsoft Teams") with
+            {
+                TeamsRecordingPlayback = new TeamsRecordingPlaybackProvenance(
+                    recordingId,
+                    "alignbridge sandbox access and demo",
+                    "2026-08-15",
+                    DateTimeOffset.UtcNow.AddMinutes(-3)),
+            };
+            inspections.Add(CreateInspection(
+                stem,
+                "Alignbridge - sandbox access and demo",
+                startedAtUtc.AddMinutes(index * 4),
+                MeetingPlatform.Teams,
+                TimeSpan.FromSeconds(2),
+                audioPath,
+                markdownPath,
+                manifest: manifest,
+                manifestState: index == 1 ? SessionState.Processing : SessionState.Published,
+                teamsPlaybackMergeReady: true));
+        }
+
+        Assert.DoesNotContain(
+            MeetingCleanupRecommendationEngine.Analyze(inspections),
+            recommendation => recommendation.ReasonCode == "merge-teams-recording-playback-fragments");
+    }
+
+    [Fact]
+    public async Task Analyze_Merges_Historical_SameDay_Exact_NonGeneric_Teams_Titles()
+    {
+        var firstStem = "2026-08-15_140000_teams_alignbridge";
+        var secondStem = "2026-08-15_180000_teams_alignbridge";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        var firstMarkdownPath = Path.Combine(_root, $"{firstStem}.md");
+        var secondMarkdownPath = Path.Combine(_root, $"{secondStem}.md");
+        await WriteSilentWaveFileAsync(firstAudioPath, TimeSpan.FromSeconds(2));
+        await WriteSilentWaveFileAsync(secondAudioPath, TimeSpan.FromSeconds(2));
+        await File.WriteAllTextAsync(firstMarkdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
+        await File.WriteAllTextAsync(secondMarkdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
+
+        var recommendation = Assert.Single(MeetingCleanupRecommendationEngine.Analyze(
+        [
+            CreateInspection(firstStem, "Alignbridge - sandbox access and demo", DateTimeOffset.Parse("2026-08-15T14:00:00-04:00"), MeetingPlatform.Teams, TimeSpan.FromSeconds(2), firstAudioPath, firstMarkdownPath),
+            CreateInspection(secondStem, "Alignbridge - sandbox access and demo", DateTimeOffset.Parse("2026-08-15T18:00:00-04:00"), MeetingPlatform.Teams, TimeSpan.FromSeconds(2), secondAudioPath, secondMarkdownPath),
+        ]));
+
+        Assert.Equal("merge-historical-same-day-teams-title", recommendation.ReasonCode);
+        Assert.True(recommendation.CanApplyAutomatically);
+        Assert.Equal([firstStem, secondStem], recommendation.RelatedStems);
+    }
+
+    [Fact]
     public async Task Analyze_Returns_HighConfidence_Merge_For_Short_Teams_Fragment_After_Extended_Exact_Continuity_Gap()
     {
         var firstStem = "2026-07-28_194443_teams_graszl-kate-villar-juan-pablo";
@@ -630,7 +744,8 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         SessionState? manifestState = null,
         bool diarizationReady = false,
         bool hasSpeakerLabels = false,
-        bool hasSuspiciousSpeakerLabels = false)
+        bool hasSuspiciousSpeakerLabels = false,
+        bool teamsPlaybackMergeReady = false)
     {
         return new MeetingInspectionRecord(
             new MeetingOutputRecord(
@@ -652,7 +767,8 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
             manifest,
             suggestedTitle,
             suggestedTitleSource,
-            diarizationReady);
+            diarizationReady,
+            teamsPlaybackMergeReady);
     }
 
     private static MeetingSessionManifest CreateTeamsManifest(

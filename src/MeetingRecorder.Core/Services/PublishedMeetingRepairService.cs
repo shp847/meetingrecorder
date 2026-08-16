@@ -116,24 +116,35 @@ public static partial class PublishedMeetingRepairService
                     break;
 
                 case MeetingCleanupAction.Merge:
-                    if (recommendation.RelatedStems.Count < 2 ||
-                        !meetingsByStem.TryGetValue(recommendation.RelatedStems[0], out var firstMeeting) ||
-                        !meetingsByStem.TryGetValue(recommendation.RelatedStems[1], out var secondMeeting))
+                    if (recommendation.RelatedStems.Count < 2)
                     {
                         continue;
                     }
 
+                    var mergeMeetings = recommendation.RelatedStems
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Select(stem => meetingsByStem.TryGetValue(stem, out var meeting) ? meeting : null)
+                        .ToArray();
+                    if (mergeMeetings.Any(meeting => meeting is null))
+                    {
+                        continue;
+                    }
+
+                    var orderedMergeMeetings = mergeMeetings.Select(meeting => meeting!).ToArray();
+
                     await executionService.MergeMeetingsAsync(
-                        firstMeeting,
-                        secondMeeting,
-                        recommendation.SuggestedTitle ?? firstMeeting.Title,
+                        orderedMergeMeetings,
+                        recommendation.SuggestedTitle ?? orderedMergeMeetings[0].Title,
                         audioOutputDir,
                         transcriptOutputDir,
                         archiveDirectory,
                         cancellationToken);
-                    archivedMeetingStems.Add(firstMeeting.Stem);
-                    archivedMeetingStems.Add(secondMeeting.Stem);
-                    mergedSplitPairCount++;
+                    foreach (var meeting in orderedMergeMeetings)
+                    {
+                        archivedMeetingStems.Add(meeting.Stem);
+                    }
+
+                    mergedSplitPairCount += orderedMergeMeetings.Length - 1;
                     break;
 
                 case MeetingCleanupAction.RepairSpeakerLabels:

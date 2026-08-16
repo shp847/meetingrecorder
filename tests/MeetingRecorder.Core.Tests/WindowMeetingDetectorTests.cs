@@ -11,6 +11,60 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class WindowMeetingDetectorTests
 {
     [Fact]
+    public async Task DetectBestCandidate_Attaches_Teams_Recording_Playback_Signal()
+    {
+        var recordingId = Guid.NewGuid().ToString("D");
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate("", "Alignbridge - sandbox access and demo | Microsoft Teams", "TeamsWebView", (nint)123)],
+            teamsRecordingPlaybackProbe: new StubTeamsRecordingPlaybackProbe(recordingId));
+
+        var decision = detector.DetectBestCandidate();
+
+        Assert.Equal(MeetingPlatform.Teams, decision?.Platform);
+        Assert.Contains(decision!.Signals, signal =>
+            signal.Source == TeamsRecordingPlaybackProvenance.DetectionSignalSource &&
+            signal.Value == recordingId);
+    }
+
+    [Fact]
+    public void TeamsRecordingPlaybackProbeParser_Accepts_Observed_Teams_Player_Tree()
+    {
+        var recordingId = Guid.NewGuid().ToString("D");
+        var root = new TeamsAutomationNode(
+            "Alignbridge - sandbox access and demo",
+            string.Empty,
+            "TeamsWebView",
+            "ControlType.Window",
+            [
+                new TeamsAutomationNode("Meeting recording video", "streamEmbedVideoContainer", "video-container", "ControlType.Group", []),
+                new TeamsAutomationNode("", recordingId, "critical-playback-container media-player", "ControlType.Group", []),
+                new TeamsAutomationNode("Media player. Press enter to play", string.Empty, string.Empty, "ControlType.Group", []),
+                new TeamsAutomationNode("Progress bar", string.Empty, string.Empty, "ControlType.Slider", []),
+                new TeamsAutomationNode("Media playback controls", string.Empty, string.Empty, "ControlType.Group", []),
+            ]);
+
+        var result = TeamsRecordingPlaybackProbeParser.TryExtract(root);
+
+        Assert.Equal(recordingId, result?.RecordingId);
+    }
+
+    [Fact]
+    public void TeamsRecordingPlaybackProbeParser_Rejects_Ordinary_Teams_Content()
+    {
+        var root = new TeamsAutomationNode(
+            "Meeting chat",
+            string.Empty,
+            "TeamsWebView",
+            "ControlType.Window",
+            [
+                new TeamsAutomationNode("Meeting recording video", "streamEmbedVideoContainer", "video-container", "ControlType.Group", []),
+                new TeamsAutomationNode("Progress bar", string.Empty, string.Empty, "ControlType.Slider", []),
+            ]);
+
+        Assert.Null(TeamsRecordingPlaybackProbeParser.TryExtract(root));
+    }
+
+    [Fact]
     public void LooksLikeTeamsWindowTitle_Returns_False_For_Transcript_File_Open_In_VisualStudioCode()
     {
         var result = WindowMeetingDetector.LooksLikeTeamsWindowTitle(
@@ -1127,7 +1181,8 @@ public sealed class WindowMeetingDetectorTests
         TimeSpan? audioTimeout = null,
         TimeSpan? audioBackoff = null,
         ICalendarMeetingTitleProvider? calendarMeetingTitleProvider = null,
-        bool calendarTitleFallbackEnabled = false)
+        bool calendarTitleFallbackEnabled = false,
+        ITeamsRecordingPlaybackProbe? teamsRecordingPlaybackProbe = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var configPath = Path.Combine(root, "config", "appsettings.json");
@@ -1145,7 +1200,16 @@ public sealed class WindowMeetingDetectorTests
             new MeetingTitleEnricher(calendarMeetingTitleProvider ?? new StubCalendarMeetingTitleProvider()),
             () => candidates,
             audioTimeout ?? TimeSpan.FromMilliseconds(750),
-            audioBackoff ?? TimeSpan.FromMinutes(2));
+            audioBackoff ?? TimeSpan.FromMinutes(2),
+            teamsRecordingPlaybackProbe: teamsRecordingPlaybackProbe);
+    }
+
+    private sealed class StubTeamsRecordingPlaybackProbe(string recordingId) : ITeamsRecordingPlaybackProbe
+    {
+        public TeamsRecordingPlaybackProbeResult? TryProbe(MeetingWindowCandidate candidate)
+        {
+            return new TeamsRecordingPlaybackProbeResult(recordingId);
+        }
     }
 
     private sealed class StubAudioActivityProbe : IAudioActivityProbe

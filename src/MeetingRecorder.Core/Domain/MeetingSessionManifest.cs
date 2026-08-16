@@ -57,6 +57,20 @@ public sealed record MeetingSessionManifest
         new("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null);
 
     public string? ErrorSummary { get; init; }
+
+    // Recorded only when the Teams accessibility tree proves this was playback.
+    public TeamsRecordingPlaybackProvenance? TeamsRecordingPlayback { get; init; }
+}
+
+public sealed record TeamsRecordingPlaybackProvenance(
+    string RecordingId,
+    string NormalizedTitle,
+    string LocalDate,
+    DateTimeOffset LastObservedAtUtc)
+{
+    public const string DetectionSignalSource = "teams-recording-playback";
+
+    public string GroupKey => $"{RecordingId.Trim().ToUpperInvariant()}|{LocalDate}";
 }
 
 public enum ExternalAudioImportMethod

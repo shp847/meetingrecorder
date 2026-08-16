@@ -142,6 +142,49 @@ public sealed class MeetingCleanupExecutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task MergeMeetingsAsync_Merges_A_ThreeFragment_Chain_In_Chronological_Order()
+    {
+        var audioDir = CreateDirectory("audio-chain");
+        var transcriptDir = CreateDirectory("transcripts-chain");
+        var archiveRoot = CreateDirectory("archive-chain");
+        var meetings = new List<MeetingOutputRecord>();
+        for (var index = 0; index < 3; index++)
+        {
+            var stem = $"2026-08-15_150{index}00_teams_alignbridge";
+            var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+            var markdownPath = Path.Combine(transcriptDir, $"{stem}.md");
+            await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(1));
+            await File.WriteAllTextAsync(
+                markdownPath,
+                $"# Alignbridge{Environment.NewLine}{Environment.NewLine}## Transcript{Environment.NewLine}{Environment.NewLine}[00:00:00 - 00:00:01] **Speaker:** Fragment {index + 1}");
+            meetings.Add(new MeetingOutputRecord(
+                stem,
+                "Alignbridge - sandbox access and demo",
+                DateTimeOffset.Parse("2026-08-15T15:00:00Z").AddMinutes(index * 4),
+                MeetingPlatform.Teams,
+                TimeSpan.FromSeconds(1),
+                audioPath,
+                markdownPath,
+                null,
+                null,
+                null,
+                SessionState.Published,
+                Array.Empty<MeetingAttendee>(),
+                false,
+                null));
+        }
+
+        var service = new MeetingCleanupExecutionService(_pathBuilder, _catalog);
+        var merged = await service.MergeMeetingsAsync(meetings, "Alignbridge - sandbox access and demo", audioDir, transcriptDir, archiveRoot, CancellationToken.None);
+        var markdown = await File.ReadAllTextAsync(Path.Combine(transcriptDir, $"{merged.SurvivingStem}.md"));
+
+        Assert.True(markdown.IndexOf("Fragment 1", StringComparison.Ordinal) < markdown.IndexOf("Fragment 2", StringComparison.Ordinal));
+        Assert.True(markdown.IndexOf("Fragment 2", StringComparison.Ordinal) < markdown.IndexOf("Fragment 3", StringComparison.Ordinal));
+        Assert.Contains("[00:00:02 - 00:00:03]", markdown);
+        Assert.All(meetings, meeting => Assert.True(Directory.Exists(Path.Combine(archiveRoot, "merge-split-pairs", meeting.Stem))));
+    }
+
+    [Fact]
     public async Task DeleteMeetingPermanentlyAsync_Removes_All_Published_Artifacts_And_Linked_Session_Folder()
     {
         var audioDir = CreateDirectory("audio");

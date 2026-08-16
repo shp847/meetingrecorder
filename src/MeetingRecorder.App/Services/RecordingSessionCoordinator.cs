@@ -114,7 +114,8 @@ internal sealed class RecordingSessionCoordinator
         IReadOnlyList<DetectionSignal> detectionEvidence,
         bool autoStarted,
         DetectedAudioSource? detectedAudioSource = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TeamsRecordingPlaybackProvenance? teamsRecordingPlayback = null)
     {
         if (ActiveSession is not null)
         {
@@ -129,6 +130,14 @@ internal sealed class RecordingSessionCoordinator
             initialManifest = initialManifest with
             {
                 DetectedAudioSource = detectedAudioSource,
+            };
+        }
+
+        if (teamsRecordingPlayback is not null)
+        {
+            initialManifest = initialManifest with
+            {
+                TeamsRecordingPlayback = teamsRecordingPlayback,
             };
         }
 
@@ -210,6 +219,32 @@ internal sealed class RecordingSessionCoordinator
             microphoneRecorder?.Dispose();
             throw;
         }
+    }
+
+    public async Task UpdateTeamsRecordingPlaybackAsync(
+        TeamsRecordingPlaybackProvenance playback,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(playback);
+        var activeSession = ActiveSession;
+        if (activeSession is null ||
+            !string.Equals(
+                activeSession.Manifest.TeamsRecordingPlayback?.GroupKey,
+                playback.GroupKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var existing = activeSession.Manifest.TeamsRecordingPlayback;
+        if (existing is not null && playback.LastObservedAtUtc <= existing.LastObservedAtUtc + TimeSpan.FromSeconds(20))
+        {
+            return;
+        }
+
+        var manifest = activeSession.Manifest with { TeamsRecordingPlayback = playback };
+        await _manifestStore.SaveAsync(manifest, activeSession.ManifestPath, cancellationToken);
+        activeSession.Manifest = manifest;
     }
 
     private void EnsureRecordingStorageAvailable(string directoryPath)

@@ -497,7 +497,7 @@ internal sealed class TeamsUiAutomationRosterSource : ITeamsRosterAutomationSour
         }
     }
 
-    private sealed class TeamsAutomationNodeSource : ITeamsAutomationNodeSource
+    internal sealed class TeamsAutomationNodeSource : ITeamsAutomationNodeSource
     {
         private const int MaxTraversalDepth = 6;
         private const int MaxTraversalNodes = 1200;

@@ -32,6 +32,7 @@ internal sealed class WindowMeetingDetector
     private readonly MeetingDetectionEvaluator _evaluator;
     private readonly IAudioActivityProbe _audioActivityProbe;
     private readonly MeetingTitleEnricher _meetingTitleEnricher;
+    private readonly ITeamsRecordingPlaybackProbe _teamsRecordingPlaybackProbe;
     private readonly Func<IReadOnlyList<MeetingWindowCandidate>> _enumerateCandidates;
     private readonly TimeSpan _audioProbeTimeout;
     private readonly TimeSpan _audioProbeBackoff;
@@ -53,6 +54,7 @@ internal sealed class WindowMeetingDetector
             EnumerateCandidateWindows,
             DefaultAudioProbeTimeout,
             DefaultAudioProbeBackoff,
+            null,
             null)
     {
     }
@@ -65,12 +67,14 @@ internal sealed class WindowMeetingDetector
         Func<IReadOnlyList<MeetingWindowCandidate>> enumerateCandidates,
         TimeSpan audioProbeTimeout,
         TimeSpan audioProbeBackoff,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        ITeamsRecordingPlaybackProbe? teamsRecordingPlaybackProbe = null)
     {
         _config = config;
         _evaluator = evaluator;
         _audioActivityProbe = audioActivityProbe;
         _meetingTitleEnricher = meetingTitleEnricher;
+        _teamsRecordingPlaybackProbe = teamsRecordingPlaybackProbe ?? new TeamsRecordingPlaybackProbe();
         _enumerateCandidates = enumerateCandidates ?? throw new ArgumentNullException(nameof(enumerateCandidates));
         _audioProbeTimeout = audioProbeTimeout > TimeSpan.Zero
             ? audioProbeTimeout
@@ -94,9 +98,10 @@ internal sealed class WindowMeetingDetector
                 continue;
             }
 
+            var playback = _teamsRecordingPlaybackProbe.TryProbe(candidateWindow);
             foreach (var detectionTitle in EnumerateDetectionTitles(candidateWindow, audioAttribution))
             {
-                var signals = BuildSignals(candidateWindow, audioAttribution, detectionTitle, out var audioMatch);
+                var signals = BuildSignals(candidateWindow, audioAttribution, detectionTitle, playback, out var audioMatch);
                 if (signals.Count == 0)
                 {
                     continue;
@@ -392,6 +397,7 @@ internal sealed class WindowMeetingDetector
         MeetingWindowCandidate candidateWindow,
         AudioSourceAttributionSnapshot audioAttribution,
         CandidateDetectionTitle detectionTitle,
+        TeamsRecordingPlaybackProbeResult? playback,
         out AudioSourceAttributionMatch? audioMatch)
     {
         var title = detectionTitle.Title;
@@ -436,6 +442,15 @@ internal sealed class WindowMeetingDetector
             if (LooksLikeSupportedMeetingWindowClass(candidateWindow.WindowClassName))
             {
                 signals.Add(new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now));
+            }
+
+            if (playback is not null)
+            {
+                signals.Add(new DetectionSignal(
+                    TeamsRecordingPlaybackProvenance.DetectionSignalSource,
+                    playback.RecordingId,
+                    0d,
+                    now));
             }
         }
 

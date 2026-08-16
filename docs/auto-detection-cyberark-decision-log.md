@@ -85,6 +85,24 @@ As of 2026-07-20, executable-policy facts are:
   installed build hash, and one live-machine result separately.
 - Do not repeat the rename/relocation matrix until all Meeting Recorder app and
   worker processes are stopped first.
+### 2026-08-15: Teams recording-playback provenance and merge recovery
+
+- Trigger: Teams recording playback pauses create intentional 90-second
+  auto-stops, then same-player capture fragments restart and publish separately.
+- Source change: inspect only the current Teams window's bounded UI Automation
+  tree. A playback signal requires the observed recording-video container,
+  media-player controls, progress slider, and GUID-backed
+  `critical-playback-container`; no process lookup or Core Audio session sweep
+  was added.
+- Intended behavior: retain the 90-second anti-phantom timeout. Persist the
+  proven playback identifier, normalized non-generic title, local date, and
+  last-seen timestamp, then automatically consolidate complete same-player
+  fragment chains after the player has been absent for two minutes.
+- Tests: focused probe, manifest, multi-fragment merge, cleanup planner, and
+  full application/integration suites passed.
+- Package: installer build completed successfully with a fresh portable ZIP and
+  MSI. Install/live-machine: pending. This source change must not be treated as
+  live-validated until an observed Teams recording playback run is recorded.
 
 ## Timeline
 

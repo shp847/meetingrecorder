@@ -80,6 +80,28 @@ public sealed class SessionManifestStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_RoundTrips_Teams_Recording_Playback_Provenance()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+        var manifest = await store.CreateAsync(workDir, MeetingPlatform.Teams, "Playback", Array.Empty<DetectionSignal>());
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var expected = manifest with
+        {
+            TeamsRecordingPlayback = new TeamsRecordingPlaybackProvenance(
+                Guid.NewGuid().ToString("D"),
+                "alignbridge sandbox access and demo",
+                "2026-08-15",
+                DateTimeOffset.Parse("2026-08-15T21:00:00Z")),
+        };
+
+        await store.SaveAsync(expected, manifestPath);
+        var saved = await store.LoadAsync(manifestPath);
+
+        Assert.Equal(expected.TeamsRecordingPlayback, saved.TeamsRecordingPlayback);
+    }
+
+    [Fact]
     public async Task SaveAsync_RoundTrips_Summary_Status_And_Content()
     {
         var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");

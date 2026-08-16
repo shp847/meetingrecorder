@@ -40,7 +40,8 @@ internal sealed record MeetingInspectionRecord(
     MeetingSessionManifest? Manifest,
     string? SuggestedTitle,
     string? SuggestedTitleSource,
-    bool IsDiarizationReady = false);
+    bool IsDiarizationReady = false,
+    bool IsTeamsPlaybackMergeReady = false);
 
 internal static class MeetingCleanupRecommendationEngine
 {
@@ -50,6 +51,7 @@ internal static class MeetingCleanupRecommendationEngine
     private static readonly TimeSpan MaximumExtendedContinuityMergeGap = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumExtendedContinuitySegmentDuration = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan MaximumShortGenericTeamsDuration = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan TeamsPlaybackAbsentBeforeMerge = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MaximumShortSplitSegmentDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MinimumSplitEligibleDuration = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan MinimumSparseTranscriptReviewDuration = TimeSpan.FromMinutes(10);
@@ -273,8 +275,13 @@ internal static class MeetingCleanupRecommendationEngine
         IReadOnlySet<string> blockedStems)
     {
         var recommendations = new List<MeetingCleanupRecommendation>();
+        var reservedPlaybackStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        recommendations.AddRange(BuildTeamsPlaybackMergeRecommendations(inspections, blockedStems, reservedPlaybackStems));
+        recommendations.AddRange(BuildHistoricalTeamsTitleMergeRecommendations(inspections, blockedStems, reservedPlaybackStems));
         var ordered = inspections
-            .Where(inspection => !blockedStems.Contains(inspection.Meeting.Stem))
+            .Where(inspection =>
+                !blockedStems.Contains(inspection.Meeting.Stem) &&
+                !reservedPlaybackStems.Contains(inspection.Meeting.Stem))
             .OrderBy(inspection => inspection.Meeting.StartedAtUtc)
             .ToArray();
 
@@ -301,6 +308,124 @@ internal static class MeetingCleanupRecommendationEngine
         }
 
         return recommendations;
+    }
+
+    private static IReadOnlyList<MeetingCleanupRecommendation> BuildTeamsPlaybackMergeRecommendations(
+        IReadOnlyList<MeetingInspectionRecord> inspections,
+        IReadOnlySet<string> blockedStems,
+        ISet<string> reservedStems)
+    {
+        var recommendations = new List<MeetingCleanupRecommendation>();
+        foreach (var group in inspections
+                     .Where(inspection =>
+                         !blockedStems.Contains(inspection.Meeting.Stem) &&
+                         inspection.Meeting.Platform == MeetingPlatform.Teams &&
+                         inspection.Manifest?.TeamsRecordingPlayback is not null)
+                     .GroupBy(inspection => inspection.Manifest!.TeamsRecordingPlayback!.GroupKey, StringComparer.OrdinalIgnoreCase))
+        {
+            var members = group
+                .OrderBy(inspection => inspection.Meeting.StartedAtUtc)
+                .ThenBy(inspection => inspection.Meeting.Stem, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (members.Length < 2)
+            {
+                continue;
+            }
+
+            foreach (var member in members)
+            {
+                reservedStems.Add(member.Meeting.Stem);
+            }
+
+            var lastObservedAtUtc = members.Max(member => member.Manifest!.TeamsRecordingPlayback!.LastObservedAtUtc);
+            if (members.Any(member => !member.IsTeamsPlaybackMergeReady) ||
+                DateTimeOffset.UtcNow - lastObservedAtUtc < TeamsPlaybackAbsentBeforeMerge ||
+                !CanMergePlaybackGroup(members))
+            {
+                continue;
+            }
+
+            var preferredTitle = ChoosePreferredTitle(members.Select(member => member.Meeting.Title));
+            recommendations.Add(BuildRecommendation(
+                members[0].Meeting.Stem,
+                MeetingCleanupAction.Merge,
+                MeetingCleanupConfidence.High,
+                "Merge Teams recording playback fragments",
+                $"Teams recording playback was detected for {members.Length} fragments. The player has been absent for at least two minutes, so they are ready to merge without pause padding.",
+                members.Select(member => member.Meeting.Stem).ToArray(),
+                canApplyAutomatically: true,
+                preferredTitle,
+                suggestedSplitPoint: null,
+                reasonCode: "merge-teams-recording-playback-fragments"));
+        }
+
+        return recommendations;
+    }
+
+    private static IReadOnlyList<MeetingCleanupRecommendation> BuildHistoricalTeamsTitleMergeRecommendations(
+        IReadOnlyList<MeetingInspectionRecord> inspections,
+        IReadOnlySet<string> blockedStems,
+        ISet<string> reservedStems)
+    {
+        var recommendations = new List<MeetingCleanupRecommendation>();
+        foreach (var group in inspections
+                     .Where(inspection =>
+                         !blockedStems.Contains(inspection.Meeting.Stem) &&
+                         !reservedStems.Contains(inspection.Meeting.Stem) &&
+                         inspection.Meeting.Platform == MeetingPlatform.Teams &&
+                         inspection.Manifest?.TeamsRecordingPlayback is null &&
+                         !IsGenericTitle(MeetingPlatform.Teams, inspection.Meeting.Title))
+                     .GroupBy(inspection => new
+                     {
+                         LocalDate = inspection.Meeting.StartedAtUtc.LocalDateTime.Date,
+                         Title = MeetingTitleNormalizer.NormalizeForComparison(inspection.Meeting.Title),
+                     }))
+        {
+            var members = group
+                .OrderBy(inspection => inspection.Meeting.StartedAtUtc)
+                .ThenBy(inspection => inspection.Meeting.Stem, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (members.Length < 2 || string.IsNullOrWhiteSpace(group.Key.Title))
+            {
+                continue;
+            }
+
+            if (!CanMergePlaybackGroup(members))
+            {
+                continue;
+            }
+
+            foreach (var member in members)
+            {
+                reservedStems.Add(member.Meeting.Stem);
+            }
+
+            var preferredTitle = ChoosePreferredTitle(members.Select(member => member.Meeting.Title));
+
+            recommendations.Add(BuildRecommendation(
+                members[0].Meeting.Stem,
+                MeetingCleanupAction.Merge,
+                MeetingCleanupConfidence.High,
+                "Merge historical Teams playback fragments",
+                $"{members.Length} same-day Teams fragments have the exact non-generic title '{members[0].Meeting.Title}' and are ready to consolidate.",
+                members.Select(member => member.Meeting.Stem).ToArray(),
+                canApplyAutomatically: true,
+                preferredTitle,
+                suggestedSplitPoint: null,
+                reasonCode: "merge-historical-same-day-teams-title"));
+        }
+
+        return recommendations;
+    }
+
+    private static bool CanMergePlaybackGroup(IReadOnlyList<MeetingInspectionRecord> members)
+    {
+        return members.All(member =>
+            !IsProcessingPending(member.Meeting) &&
+            !string.IsNullOrWhiteSpace(member.Meeting.AudioPath) &&
+            !string.IsNullOrWhiteSpace(member.Meeting.MarkdownPath) &&
+            File.Exists(member.Meeting.AudioPath) &&
+            File.Exists(member.Meeting.MarkdownPath));
     }
 
     private static MeetingCleanupRecommendation? TryBuildRenameRecommendation(MeetingInspectionRecord inspection)
@@ -807,6 +932,16 @@ internal static class MeetingCleanupRecommendationEngine
         }
 
         return secondTitle.Length > firstTitle.Length ? secondTitle.Trim() : firstTitle.Trim();
+    }
+
+    private static string ChoosePreferredTitle(IEnumerable<string> titles)
+    {
+        var candidates = titles
+            .Where(title => !string.IsNullOrWhiteSpace(title))
+            .ToArray();
+        return candidates.Length == 0
+            ? "Teams recording playback"
+            : candidates.Aggregate(ChoosePreferredTitle);
     }
 
     private static int CountHelpfulPunctuation(string title)
