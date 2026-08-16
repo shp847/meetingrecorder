@@ -6,6 +6,25 @@ namespace MeetingRecorder.Core.Tests;
 
 public sealed class BackgroundProcessingPolicyTests
 {
+    [Theory]
+    [InlineData("22:00", "06:00", "23:00", true)]
+    [InlineData("22:00", "06:00", "05:59", true)]
+    [InlineData("22:00", "06:00", "12:00", false)]
+    public void IsOvernightDrainWindowActive_Uses_Configured_Local_Window(
+        string start,
+        string end,
+        string localTime,
+        bool expected)
+    {
+        var config = new AppConfig
+        {
+            OvernightDrainStartLocal = start,
+            OvernightDrainEndLocal = end,
+        };
+
+        Assert.Equal(expected, BackgroundProcessingPolicy.IsOvernightDrainWindowActive(config, TimeSpan.Parse(localTime)));
+    }
+
     [Fact]
     public void App_Config_Defaults_To_Responsive_Background_Processing_And_Deferred_Speaker_Labeling()
     {

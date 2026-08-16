@@ -2215,6 +2215,23 @@ internal static class MainWindowInteractionLogic
             "Apply Safe Fixes retries all marked rows manually.";
     }
 
+    public static string BuildMeetingCleanupSchedulerBannerText(
+        int recommendationCount,
+        int impactedMeetingCount,
+        int safeRecommendationCount,
+        int pendingCount,
+        int queuedCount,
+        int processingCount,
+        int manualReviewCount,
+        string schedulerDetail)
+    {
+        return
+            $"Found {recommendationCount} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
+            $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
+            $"{pendingCount} safe fix(es) are waiting; {queuedCount} queued; {processingCount} processing; " +
+            $"{manualReviewCount} need manual review. {schedulerDetail}";
+    }
+
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)
     {
         return IsSafeMeetingCleanupRecommendation(recommendation)

@@ -132,6 +132,14 @@ internal sealed class MeetingCleanupAutoApplyCacheService
         }
     }
 
+    public IReadOnlyList<MeetingCleanupAutoApplyEntry> GetEntries()
+    {
+        lock (_gate)
+        {
+            return LoadEntriesByFingerprint().Values.ToArray();
+        }
+    }
+
     private Dictionary<string, MeetingCleanupAutoApplyEntry> LoadEntriesByFingerprint()
     {
         if (_entriesByFingerprint is not null)

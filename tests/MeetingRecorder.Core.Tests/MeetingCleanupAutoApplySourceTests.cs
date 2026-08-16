@@ -36,7 +36,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
-    public void Automatic_Queue_Style_Successes_Are_Persisted_Instead_Of_Cleared()
+    public void Automatic_Queue_Style_Work_Is_Persisted_In_Ledger_Until_Worker_Completion()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -44,15 +44,26 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodEnd = source.IndexOf("private static string BuildAutomaticMeetingCleanupApplyStatusText", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        var suppressionIndex = methodBlock.IndexOf("RecordQueuedSuccess(", StringComparison.Ordinal);
         var executionIndex = methodBlock.IndexOf("await ExecuteMeetingCleanupRecommendationAsync(", StringComparison.Ordinal);
 
         Assert.Contains("ShouldSuppressSuccessfulAutomaticApply(recommendation.Action)", methodBlock, StringComparison.Ordinal);
-        Assert.Contains("RecordQueuedSuccess(", methodBlock, StringComparison.Ordinal);
-        Assert.True(suppressionIndex >= 0 && suppressionIndex < executionIndex,
-            "Queue-style automatic fixes should persist suppression before dispatch.");
-        Assert.Contains("RecordSuccess(recommendation.Fingerprint)", methodBlock, StringComparison.Ordinal);
-        Assert.Contains("RecordFailure(", methodBlock, StringComparison.Ordinal);
+        Assert.True(executionIndex >= 0, "Queue-style automatic fixes should execute through the shared queue path.");
+        Assert.Contains("_meetingCleanupWorkLedgerService.Record(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("CleanupWorkState.Failed", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecordQueuedSuccess(", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cleanup_Scheduler_Uses_A_Persisted_Ledger_And_Priority_Queue()
+    {
+        var mainWindow = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var queue = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "Services", "ProcessingQueueService.cs"));
+
+        Assert.Contains("MeetingCleanupWorkLedgerService", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("ProcessingQueue_OnWorkCompleted", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("ProcessingWorkPriority.Cleanup", mainWindow, StringComparison.Ordinal);
+        Assert.Contains("SelectFairQueueIndexLocked", queue, StringComparison.Ordinal);
+        Assert.Contains("IsOvernightDrainWindowActive", queue, StringComparison.Ordinal);
     }
 
     [Fact]

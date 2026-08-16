@@ -11,24 +11,31 @@ internal static class MeetingCleanupAutoApplyPlanner
 
     public static IReadOnlyList<MeetingCleanupRecommendation> GetEligibleRecommendations(
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
-        MeetingCleanupAutoApplyCacheService cacheService)
+        MeetingCleanupAutoApplyCacheService cacheService,
+        MeetingCleanupWorkLedgerService? ledger = null)
     {
         return MainWindowInteractionLogic
             .GetAutoApplicableMeetingCleanupRecommendations(recommendations)
-            .Where(recommendation => !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint))
+            .Where(recommendation => ledger is null
+                ? !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint)
+                : ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint))
             .ToArray();
     }
 
     public static IReadOnlyList<MeetingCleanupRecommendation> GetNextAutomaticBatch(
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
         MeetingCleanupAutoApplyCacheService cacheService,
-        int automaticAttemptCount)
+        int automaticAttemptCount,
+        MeetingCleanupWorkLedgerService? ledger = null,
+        int maximumBatchSize = MaxAutomaticFixesPerBatch)
     {
-        var availableSlots = Math.Max(0, MaxAutomaticFixesPerBatch - automaticAttemptCount);
+        var availableSlots = Math.Max(0, maximumBatchSize - automaticAttemptCount);
 
         return MainWindowInteractionLogic
             .GetAutoApplicableMeetingCleanupRecommendations(recommendations)
-            .Where(recommendation => !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint))
+            .Where(recommendation => ledger is null
+                ? !cacheService.ShouldSkipAutomaticApply(recommendation.Fingerprint)
+                : ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint))
             .Take(availableSlots)
             .ToArray();
     }

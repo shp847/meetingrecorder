@@ -195,6 +195,105 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_Daytime_Cleanup_Waits_For_A_Normal_Job()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+                OvernightDrainStartLocal = "00:00",
+                OvernightDrainEndLocal = "00:00",
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new SequencedWorkerProcessFactory(new FakeWorkerProcess(), new FakeWorkerProcess());
+        var isRecording = true;
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory,
+            () => isRecording);
+
+        var normalManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+        var cleanupManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+        await service.EnqueueAsync(normalManifestPath, ProcessingWorkPriority.Normal);
+        await service.EnqueueAsync(cleanupManifestPath, ProcessingWorkPriority.Cleanup);
+
+        isRecording = false;
+        var firstProcess = await processFactory.WaitForStartAsync(0);
+        await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, normalManifestPath, StringComparison.Ordinal));
+        firstProcess.CompleteExit();
+
+        var secondProcess = await processFactory.WaitForStartAsync(1);
+        await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, cleanupManifestPath, StringComparison.Ordinal));
+        secondProcess.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_Overnight_Cleanup_Runs_Five_Items_Before_Normal_Work()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(
+            configStore,
+            await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
+            {
+                BackgroundProcessingMode = BackgroundProcessingMode.Responsive,
+                OvernightDrainStartLocal = DateTimeOffset.Now.AddMinutes(-10).ToString("HH:mm"),
+                OvernightDrainEndLocal = DateTimeOffset.Now.AddMinutes(10).ToString("HH:mm"),
+            }));
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
+        var processFactory = new SequencedWorkerProcessFactory(
+            new FakeWorkerProcess(), new FakeWorkerProcess(), new FakeWorkerProcess(),
+            new FakeWorkerProcess(), new FakeWorkerProcess(), new FakeWorkerProcess());
+        var isRecording = true;
+        var service = new ProcessingQueueService(
+            liveConfig,
+            manifestStore,
+            logger,
+            meetingMetadataEnricher: null,
+            () => new WorkerLaunch("fake-worker.exe", string.Empty),
+            processFactory,
+            () => isRecording);
+
+        var cleanupManifestPaths = new List<string>();
+        for (var index = 0; index < 5; index++)
+        {
+            var manifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+            cleanupManifestPaths.Add(manifestPath);
+            await service.EnqueueAsync(manifestPath, ProcessingWorkPriority.Cleanup);
+        }
+
+        var normalManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+        await service.EnqueueAsync(normalManifestPath, ProcessingWorkPriority.Normal);
+
+        isRecording = false;
+        for (var index = 0; index < 5; index++)
+        {
+            var process = await processFactory.WaitForStartAsync(index);
+            await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, cleanupManifestPaths[index], StringComparison.Ordinal));
+            process.CompleteExit();
+        }
+
+        var normalProcess = await processFactory.WaitForStartAsync(5);
+        await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, normalManifestPath, StringComparison.Ordinal));
+        normalProcess.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
     public async Task RequestRushProcessingAsync_Moves_The_Selected_Queued_Item_To_The_Front_Of_Backlog()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

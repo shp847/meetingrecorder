@@ -40,8 +40,11 @@ internal sealed class ProcessingQueueService
     private ActiveQueueItemState? _currentItemState;
     private ProcessingQueueStatusSnapshot _statusSnapshot;
     private string? _preemptedManifestPath;
+    private int _normalJobsSinceCleanup;
+    private int _overnightCleanupBurstCount;
 
     internal event Action<ProcessingQueueStatusSnapshot>? StatusChanged;
+    internal event Action<ProcessingWorkCompletion>? WorkCompleted;
 
     public ProcessingQueueService(
         LiveAppConfig config,
@@ -94,7 +97,9 @@ internal sealed class ProcessingQueueService
         }
     }
 
-    public async Task ResumePendingSessionsAsync(CancellationToken cancellationToken = default)
+    public async Task ResumePendingSessionsAsync(
+        IReadOnlySet<string>? cleanupManifestPaths = null,
+        CancellationToken cancellationToken = default)
     {
         await NormalizeRushProcessingRequestAsync(cancellationToken);
         await _tempCleanupService.RunStartupCleanupAsync(cancellationToken);
@@ -154,7 +159,12 @@ internal sealed class ProcessingQueueService
                 continue;
             }
 
-            await EnqueueAsync(manifestPath, cancellationToken);
+            await EnqueueAsync(
+                manifestPath,
+                cleanupManifestPaths is not null && cleanupManifestPaths.Contains(manifestPath)
+                    ? ProcessingWorkPriority.Cleanup
+                    : ProcessingWorkPriority.Normal,
+                cancellationToken);
         }
 
         if (excludedSupersededImportedCount > 0)
@@ -171,7 +181,15 @@ internal sealed class ProcessingQueueService
         }
     }
 
-    public async Task EnqueueAsync(string manifestPath, CancellationToken cancellationToken = default)
+    public Task EnqueueAsync(string manifestPath, CancellationToken cancellationToken)
+    {
+        return EnqueueAsync(manifestPath, ProcessingWorkPriority.Normal, cancellationToken);
+    }
+
+    public async Task EnqueueAsync(
+        string manifestPath,
+        ProcessingWorkPriority priority = ProcessingWorkPriority.Normal,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -181,7 +199,7 @@ internal sealed class ProcessingQueueService
             return;
         }
 
-        var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
+        var queueEntry = await LoadQueueEntryAsync(manifestPath, priority, cancellationToken);
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
         var shouldSignal = false;
         lock (_processSyncRoot)
@@ -306,7 +324,7 @@ internal sealed class ProcessingQueueService
                     cancellationToken))
             {
                 deferredCount++;
-                var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
+            var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken: cancellationToken);
                 lock (_processSyncRoot)
                 {
                     ReplaceQueuedEntryLocked(queueEntry);
@@ -420,6 +438,7 @@ internal sealed class ProcessingQueueService
 
     private async Task ProcessManifestSafelyAsync(string manifestPath, CancellationToken cancellationToken)
     {
+        var workPriority = GetWorkPriority(manifestPath);
         try
         {
             await ProcessManifestAsync(manifestPath, cancellationToken);
@@ -433,6 +452,7 @@ internal sealed class ProcessingQueueService
             _logger.Log($"Queued processing failed unexpectedly for '{manifestPath}': {exception}");
             await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
             RemoveQueuedEntryAfterFailure(manifestPath);
+            PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: exception.Message);
         }
     }
 
@@ -445,6 +465,7 @@ internal sealed class ProcessingQueueService
         }
 
         manifestPath = selectedManifestPath;
+        var workPriority = GetWorkPriority(manifestPath);
         await ApplyDeferredSpeakerLabelingIfConfiguredAsync(manifestPath, cancellationToken);
         await TryEnrichManifestAsync(manifestPath, cancellationToken);
         var workerResult = await RunWorkerAsync(manifestPath, AppDataPaths.GetConfigPath(), cancellationToken);
@@ -456,18 +477,21 @@ internal sealed class ProcessingQueueService
         if (workerResult.ExitCode == 0)
         {
             await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
+            PublishWorkCompletion(manifestPath, workPriority, succeeded: true, detail: null);
             return;
         }
 
         if (await TryRecoverFromDiarizationWorkerCrashAsync(manifestPath, workerResult, cancellationToken))
         {
             await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
+            PublishWorkCompletion(manifestPath, workPriority, succeeded: true, detail: "Recovered from worker crash.");
             return;
         }
 
         LogWorkerFailure(manifestPath, workerResult);
         await MarkManifestFailedAfterWorkerFailureAsync(manifestPath, workerResult, cancellationToken);
         await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
+        PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: workerResult.StandardError);
     }
 
     private async Task TryEnrichManifestAsync(string manifestPath, CancellationToken cancellationToken)
@@ -1778,12 +1802,15 @@ internal sealed class ProcessingQueueService
         return Path.Combine(appRoot, "maintenance", "archived-imported-source-work");
     }
 
-    private async Task<QueuedManifestStatusEntry> LoadQueueEntryAsync(string manifestPath, CancellationToken cancellationToken)
+    private async Task<QueuedManifestStatusEntry> LoadQueueEntryAsync(
+        string manifestPath,
+        ProcessingWorkPriority priority = ProcessingWorkPriority.Normal,
+        CancellationToken cancellationToken = default)
     {
         try
         {
             var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
-            return CreateQueueEntry(manifest, manifestPath);
+            return CreateQueueEntry(manifest, manifestPath, priority);
         }
         catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
         {
@@ -1796,11 +1823,15 @@ internal sealed class ProcessingQueueService
                 true,
                 new ProcessingStageStatus("transcription", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
                 new ProcessingStageStatus("diarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
-                new ProcessingStageStatus("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null));
+                new ProcessingStageStatus("publish", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, null),
+                Priority: priority);
         }
     }
 
-    private static QueuedManifestStatusEntry CreateQueueEntry(MeetingSessionManifest manifest, string manifestPath)
+    private static QueuedManifestStatusEntry CreateQueueEntry(
+        MeetingSessionManifest manifest,
+        string manifestPath,
+        ProcessingWorkPriority priority = ProcessingWorkPriority.Normal)
     {
         var recordingDuration = ResolveRecordingDuration(manifest);
         var expectsSpeakerLabeling = !manifest.ProcessingOverrides?.SkipSpeakerLabeling ?? true;
@@ -1813,7 +1844,8 @@ internal sealed class ProcessingQueueService
             expectsSpeakerLabeling,
             manifest.TranscriptionStatus,
             manifest.DiarizationStatus,
-            manifest.PublishStatus);
+            manifest.PublishStatus,
+            Priority: priority);
     }
 
     private static TimeSpan? ResolveRecordingDuration(MeetingSessionManifest manifest)
@@ -1841,7 +1873,7 @@ internal sealed class ProcessingQueueService
 
     private async Task MarkManifestProcessingStartedAsync(string manifestPath, CancellationToken cancellationToken)
     {
-        var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
+        var queueEntry = await LoadQueueEntryAsync(manifestPath, GetWorkPriority(manifestPath), cancellationToken);
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
         lock (_processSyncRoot)
         {
@@ -1936,7 +1968,11 @@ internal sealed class ProcessingQueueService
             return;
         }
 
-        _queuedManifestEntries[existingIndex] = queueEntry with { WasPreempted = _queuedManifestEntries[existingIndex].WasPreempted };
+        _queuedManifestEntries[existingIndex] = queueEntry with
+        {
+            WasPreempted = _queuedManifestEntries[existingIndex].WasPreempted,
+            Priority = _queuedManifestEntries[existingIndex].Priority,
+        };
     }
 
     private bool TryDequeueNextManifestPath(out string manifestPath)
@@ -1955,6 +1991,11 @@ internal sealed class ProcessingQueueService
                 : _queuedManifestEntries.FindIndex(entry =>
                     string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal) &&
                     !_reservedManifestPaths.Contains(entry.ManifestPath));
+            if (rushRequest is null)
+            {
+                dequeueIndex = SelectFairQueueIndexLocked();
+            }
+
             if (dequeueIndex < 0)
             {
                 dequeueIndex = _queuedManifestEntries.FindIndex(entry => !_reservedManifestPaths.Contains(entry.ManifestPath));
@@ -1966,10 +2007,68 @@ internal sealed class ProcessingQueueService
                 return false;
             }
 
-            manifestPath = _queuedManifestEntries[dequeueIndex].ManifestPath;
+            var selected = _queuedManifestEntries[dequeueIndex];
+            if (selected.Priority == ProcessingWorkPriority.Cleanup)
+            {
+                _normalJobsSinceCleanup = 0;
+                _overnightCleanupBurstCount++;
+            }
+            else
+            {
+                _normalJobsSinceCleanup++;
+                _overnightCleanupBurstCount = 0;
+            }
+
+            manifestPath = selected.ManifestPath;
             _reservedManifestPaths.Add(manifestPath);
             return true;
         }
+    }
+
+    private int SelectFairQueueIndexLocked()
+    {
+        var normalIndex = _queuedManifestEntries.FindIndex(entry =>
+            entry.Priority == ProcessingWorkPriority.Normal && !_reservedManifestPaths.Contains(entry.ManifestPath));
+        var cleanupIndex = _queuedManifestEntries.FindIndex(entry =>
+            entry.Priority == ProcessingWorkPriority.Cleanup && !_reservedManifestPaths.Contains(entry.ManifestPath));
+
+        if (cleanupIndex < 0)
+        {
+            return normalIndex;
+        }
+
+        if (normalIndex < 0)
+        {
+            return cleanupIndex;
+        }
+
+        return BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_config.Current)
+            ? _overnightCleanupBurstCount < MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
+                ? cleanupIndex
+                : normalIndex
+            : _normalJobsSinceCleanup > 0
+                ? cleanupIndex
+                : normalIndex;
+    }
+
+    private ProcessingWorkPriority GetWorkPriority(string manifestPath)
+    {
+        lock (_processSyncRoot)
+        {
+            return _activeItemStatesByManifestPath.TryGetValue(manifestPath, out var active)
+                ? active.Summary.Priority
+                : _queuedManifestEntries.FirstOrDefault(entry => string.Equals(entry.ManifestPath, manifestPath, StringComparison.Ordinal))?.Priority
+                    ?? ProcessingWorkPriority.Normal;
+        }
+    }
+
+    private void PublishWorkCompletion(
+        string manifestPath,
+        ProcessingWorkPriority priority,
+        bool succeeded,
+        string? detail)
+    {
+        WorkCompleted?.Invoke(new ProcessingWorkCompletion(manifestPath, priority, succeeded, detail));
     }
 
     private void InitializeRunningStageTrackingLocked(ActiveQueueItemState activeItem)
@@ -2003,7 +2102,7 @@ internal sealed class ProcessingQueueService
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-                var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken);
+                var queueEntry = await LoadQueueEntryAsync(manifestPath, cancellationToken: cancellationToken);
                 ProcessingQueueStatusSnapshot? snapshotToPublish = null;
                 lock (_processSyncRoot)
                 {
@@ -2588,6 +2687,18 @@ internal sealed record WorkerRunResult(
 
 internal sealed record WorkerRecoveryConfig(string ConfigPath, AppConfig Config);
 
+internal enum ProcessingWorkPriority
+{
+    Normal = 0,
+    Cleanup = 1,
+}
+
+internal sealed record ProcessingWorkCompletion(
+    string ManifestPath,
+    ProcessingWorkPriority Priority,
+    bool Succeeded,
+    string? Detail);
+
 internal sealed record QueuedManifestStatusEntry(
     string ManifestPath,
     string Title,
@@ -2597,7 +2708,8 @@ internal sealed record QueuedManifestStatusEntry(
     ProcessingStageStatus TranscriptionStatus,
     ProcessingStageStatus DiarizationStatus,
     ProcessingStageStatus PublishStatus,
-    bool WasPreempted = false)
+    bool WasPreempted = false,
+    ProcessingWorkPriority Priority = ProcessingWorkPriority.Normal)
 {
     public IEnumerable<ProcessingStageStatus> GetStageStatuses()
     {
