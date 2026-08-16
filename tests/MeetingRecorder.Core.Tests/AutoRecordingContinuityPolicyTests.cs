@@ -1416,6 +1416,90 @@ public sealed class AutoRecordingContinuityPolicyTests
     }
 
     [Fact]
+    public void ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting_Returns_True_For_Sustained_Ambiguous_Teams_Title_With_Active_Endpoint_Audio()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.15d,
+            SessionTitle: "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward",
+            Signals:
+            [
+                new DetectionSignal("window-title", "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-activity", "Headphones; peak=0.021; status=active", 0.10d, now),
+                new DetectionSignal("teams-identity-ambiguous", "Multiple specific Teams windows shared endpoint audio.", 0d, now),
+            ],
+            Reason: "Multiple specific Teams windows were visible, but endpoint audio could not identify the active meeting.");
+
+        var shouldStart = policy.ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting(
+            decision,
+            now.AddSeconds(-25),
+            now);
+
+        Assert.True(shouldStart);
+    }
+
+    [Fact]
+    public void ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting_Returns_False_Before_The_Sustained_Delay_Elapses()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.15d,
+            SessionTitle: "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward",
+            Signals:
+            [
+                new DetectionSignal("window-title", "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-activity", "Headphones; peak=0.021; status=active", 0.10d, now),
+                new DetectionSignal("teams-identity-ambiguous", "Multiple specific Teams windows shared endpoint audio.", 0d, now),
+            ],
+            Reason: "Multiple specific Teams windows were visible, but endpoint audio could not identify the active meeting.");
+
+        var shouldStart = policy.ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting(
+            decision,
+            now.AddSeconds(-10),
+            now);
+
+        Assert.False(shouldStart);
+    }
+
+    [Fact]
+    public void ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting_Returns_False_For_Ambiguous_Teams_Title_With_Silent_Endpoint_Audio()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward",
+            Signals:
+            [
+                new DetectionSignal("window-title", "D&A Associate Round 1 Mixed Interview: Pranav Sharma & Stephen Ward | Microsoft Teams", 0.85d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Headphones; peak=0.000; status=below-threshold", 0d, now),
+                new DetectionSignal("teams-identity-ambiguous", "Multiple specific Teams windows shared endpoint audio.", 0d, now),
+            ],
+            Reason: "Multiple specific Teams windows were visible, but endpoint audio could not identify the active meeting.");
+
+        var shouldStart = policy.ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting(
+            decision,
+            now.AddSeconds(-25),
+            now);
+
+        Assert.False(shouldStart);
+    }
+
+    [Fact]
     public void ShouldAutoStartQuietSpecificTeamsMeeting_Returns_False_Without_Attributed_Audio_Or_A_Probe_Failure()
     {
         var policy = new AutoRecordingContinuityPolicy();

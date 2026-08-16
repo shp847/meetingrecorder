@@ -156,9 +156,34 @@ public sealed class AutoRecordingContinuityPolicy
         return nowUtc - firstObservedUtc >= QuietSpecificMeetingAutoStartDelay;
     }
 
+    internal bool ShouldAutoStartAmbiguousActiveSpecificTeamsMeeting(
+        DetectionDecision? decision,
+        DateTimeOffset firstObservedUtc,
+        DateTimeOffset nowUtc)
+    {
+        if (!IsAmbiguousActiveSpecificTeamsAutoStartCandidate(decision))
+        {
+            return false;
+        }
+
+        return nowUtc - firstObservedUtc >= QuietSpecificMeetingAutoStartDelay;
+    }
+
     internal bool IsQuietSpecificTeamsMeetingCandidate(DetectionDecision? decision)
     {
         return IsQuietSpecificTeamsMeetingCandidateCore(decision);
+    }
+
+    internal bool IsSpecificTeamsAutoStartObservation(DetectionDecision? decision)
+    {
+        return IsSpecificTeamsAutoStartObservationCore(decision);
+    }
+
+    internal bool IsAmbiguousActiveSpecificTeamsAutoStartCandidate(DetectionDecision? decision)
+    {
+        return IsSpecificTeamsAutoStartObservationCore(decision) &&
+            HasAmbiguousTeamsIdentitySignal(decision!) &&
+            HasActiveAudioSignal(decision!);
     }
 
     internal bool ShouldAutoStartQuietSpecificGoogleMeet(
@@ -692,6 +717,22 @@ public sealed class AutoRecordingContinuityPolicy
         }
 
         return true;
+    }
+
+    private static bool IsSpecificTeamsAutoStartObservationCore(DetectionDecision? decision)
+    {
+        if (decision is null ||
+            decision.Platform != MeetingPlatform.Teams ||
+            decision.ShouldStart ||
+            !decision.ShouldKeepRecording)
+        {
+            return false;
+        }
+
+        var normalizedTitle = NormalizeMeetingTitle(decision.SessionTitle);
+        return !IsGenericMeetingTitle(normalizedTitle, MeetingPlatform.Teams) &&
+            !HasSuppressedTeamsNavigationSignal(decision) &&
+            HasMeetingIdentityEvidence(decision);
     }
 
     private static bool IsQuietSpecificGoogleMeetCandidateCore(DetectionDecision? decision)

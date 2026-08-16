@@ -85,6 +85,7 @@ As of 2026-07-20, executable-policy facts are:
   installed build hash, and one live-machine result separately.
 - Do not repeat the rename/relocation matrix until all Meeting Recorder app and
   worker processes are stopped first.
+
 ### 2026-08-15: Teams recording-playback provenance and merge recovery
 
 - Trigger: Teams recording playback pauses create intentional 90-second
@@ -805,6 +806,20 @@ As of 2026-07-20, executable-policy facts are:
   path policy.
 - Combining source, packaged, deployed, and live-validated states into one
   ambiguous word such as "fixed."
+
+### 2026-08-13: Sustained ambiguous Teams auto-start
+- Trigger / observed symptom: a real Teams call was not auto-detected, forcing a manual session start.
+- Exact runtime or CyberArk evidence: installed app logs after the manual start showed the detector repeatedly found `D&A Associate (Agentic Procurement) Round 1 Mixed Interview: Pranav Sharma & Stephen Ward` as Teams, but returned `shouldStart=False` with `teams-identity-ambiguous` because multiple specific Teams windows were visible and endpoint audio could not identify the active meeting; active endpoint audio was present in the same decision (`Headphones (Jabra Elite 7 Pro); peak=0.021; status=active`).
+- Hypothesis: confirmed policy gap. The ambiguous-window guard correctly blocked immediate auto-start to avoid phantom/splinter sessions, but sustained Teams auto-start only accepted quiet attributed audio or audio-probe failure, so active ambiguous endpoint evidence had no delayed recovery path.
+- APIs or signals added/removed: no detector signals were removed. `AutoRecordingContinuityPolicy` now distinguishes generic same-title Teams auto-start observations from delayed ambiguous-active Teams auto-start evidence, and `MainWindow` keeps the same-title observation clock while allowing auto-start only after the existing 20-second delay.
+- Positive behavior expected: a stable, specific Teams meeting title with `teams-identity-ambiguous` and active endpoint audio can auto-start after sustained detection instead of requiring manual start.
+- False-positive/security boundary retained: ambiguous Teams evidence still cannot start immediately, generic Teams shells and suppressed Teams navigation remain blocked, silent ambiguous endpoint evidence remains blocked, and ambiguous active evidence still does not trigger managed-session rollover.
+- Tests added and results: focused `AutoRecordingContinuityPolicyTests` passed 74/74 after adding coverage for sustained ambiguous active Teams auto-start, before-delay suppression, silent ambiguous suppression, and preserving the existing no-rollover behavior. Full `scripts\Test-All.ps1` verification passed 1,092 core tests and 8 integration tests.
+- Package status: installer rebuild completed successfully, including `MeetingRecorder-v0.3-win-x64.zip` (88,112,634 bytes) and `MeetingRecorderInstaller.msi` (75,866,112 bytes).
+- Installed hash/version/signature status: not changed; this is currently a source/test fix only.
+- Live-machine result: not deployed to the running local app during the investigation, so installed auto-detection behavior remains unchanged until the next local deploy or release package.
+- Outcome: retained in source; pending package/install/live validation.
+- Follow-up / removal condition: remove this delayed fallback only if Teams audio attribution becomes reliable enough to identify the active specific Teams window without endpoint ambiguity.
 
 ## Open Work
 
