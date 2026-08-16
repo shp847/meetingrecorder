@@ -188,6 +188,34 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Leaves_ManualReview_And_Failed_Work_Out_Of_Automatic_Eligibility()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        var manualReview = CreateRecommendation(
+            "manual-review-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var failed = CreateRecommendation(
+            "failed-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        ledger.Record(manualReview.Fingerprint, CleanupWorkState.ManualReview, detail: "Needs confirmation");
+        ledger.Record(failed.Fingerprint, CleanupWorkState.Failed, detail: "Worker failed");
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            [manualReview, failed],
+            ledger,
+            _ => true,
+            _ => false);
+
+        Assert.Equal(0, status.EligibleNowCount);
+        Assert.Equal(2, status.ManualReviewCount);
+    }
+
+    [Fact]
     public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_Batch()
     {
         var recommendations = Enumerable.Range(1, 10)

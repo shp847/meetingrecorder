@@ -5,7 +5,7 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class MeetingCleanupAutoApplySourceTests
 {
     [Fact]
-    public void Full_Cleanup_Refresh_Triggers_Automatic_Safe_Fixes_Only_From_The_Background_Recommendation_Path()
+    public void Full_Cleanup_Refresh_Hands_Off_Automatic_Work_After_Recommendations_Are_Published()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -14,13 +14,32 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         var publishIndex = methodBlock.IndexOf("ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);", StringComparison.Ordinal);
-        var autoApplyIndex = methodBlock.IndexOf("await TryAutoApplyMeetingCleanupSafeFixesAsync(", StringComparison.Ordinal);
+        var dispatchRequestIndex = methodBlock.IndexOf("RequestPendingMeetingCleanupWorkDispatch(", StringComparison.Ordinal);
 
         Assert.True(publishIndex >= 0, "Expected cleanup refresh to publish the visible recommendations.");
-        Assert.True(autoApplyIndex > publishIndex, "Automatic safe fixes should start only after recommendation rows are published.");
-        Assert.Contains("Dispatcher.InvokeAsync", methodBlock, StringComparison.Ordinal);
+        Assert.True(dispatchRequestIndex > publishIndex, "Automatic safe fixes should be handed off only after recommendation rows are published.");
+        Assert.DoesNotContain("Dispatcher.InvokeAsync", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts", methodBlock, StringComparison.Ordinal);
-        Assert.Equal(1, CountOccurrences(methodBlock, "await TryAutoApplyMeetingCleanupSafeFixesAsync("));
+        Assert.Contains("RequestPendingMeetingCleanupWorkDispatch(", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Automatic_Cleanup_Dispatch_Waits_For_Baseline_Refresh_Release()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var refreshStart = source.IndexOf("private async Task RefreshMeetingListAsync", StringComparison.Ordinal);
+        var refreshEnd = source.IndexOf("private void StartMeetingCleanupRecommendationRefresh", refreshStart, StringComparison.Ordinal);
+        var refreshBlock = source[refreshStart..refreshEnd];
+        var decrementIndex = refreshBlock.IndexOf("Interlocked.Decrement(ref _meetingBaselineRefreshOperations);", StringComparison.Ordinal);
+        var dispatchIndex = refreshBlock.IndexOf("TryDispatchPendingMeetingCleanupWork();", StringComparison.Ordinal);
+        var dispatcherStart = source.IndexOf("private void TryDispatchPendingMeetingCleanupWork()", StringComparison.Ordinal);
+        var dispatcherEnd = source.IndexOf("private async Task DispatchPendingMeetingCleanupWorkAsync", dispatcherStart, StringComparison.Ordinal);
+        var dispatcherBlock = source[dispatcherStart..dispatcherEnd];
+
+        Assert.True(decrementIndex >= 0, "Expected the baseline refresh to release its busy state.");
+        Assert.True(dispatchIndex > decrementIndex, "Cleanup dispatch must run only after the baseline refresh is released.");
+        Assert.Contains("Volatile.Read(ref _meetingBaselineRefreshOperations) > 0", dispatcherBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsMeetingActionInProgress()", dispatcherBlock, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -129,6 +148,8 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
 
         Assert.Contains("private bool IsAutomaticCleanupSchedulerBlocked()", source, StringComparison.Ordinal);
+        Assert.Contains("GetAutomaticCleanupSchedulerBlockerReason()", source, StringComparison.Ordinal);
+        Assert.Contains("IsUserMeetingMaintenanceInProgress()", source, StringComparison.Ordinal);
         Assert.Contains("IsAutomaticCleanupSchedulerBlocked()", source, StringComparison.Ordinal);
         Assert.Contains("GetCleanupSchedulerStatus()", source, StringComparison.Ordinal);
         Assert.Contains("disabledLabels=", source, StringComparison.Ordinal);
@@ -163,16 +184,4 @@ public sealed class MeetingCleanupAutoApplySourceTests
         return Path.GetFullPath(Path.Combine(pathSegments));
     }
 
-    private static int CountOccurrences(string source, string value)
-    {
-        var count = 0;
-        var index = 0;
-        while ((index = source.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
-        {
-            count++;
-            index += value.Length;
-        }
-
-        return count;
-    }
 }

@@ -142,9 +142,12 @@ public partial class MainWindow : Window
     private bool _isApplyingMeetingCleanupRecommendations;
     private bool _isDismissingMeetingCleanupRecommendations;
     private bool _isApplyingSafeMeetingCleanupFixes;
+    private bool _isDispatchingPendingMeetingCleanupWork;
     private DateTimeOffset? _meetingCleanupSchedulerFailureBackoffUntilUtc;
     private DateTimeOffset? _lastMeetingCleanupSchedulerRefreshUtc;
     private string? _lastCleanupSchedulerStatusLog;
+    private string? _lastCleanupSchedulerDispatchDetail;
+    private CleanupSchedulerDispatchRequest? _pendingCleanupSchedulerDispatch;
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isUpdatingRushProcessing;
@@ -2053,8 +2056,6 @@ public partial class MainWindow : Window
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         if (IsAutomaticCleanupSchedulerBlocked() ||
             outstandingCleanupCount >= maximumOutstanding ||
-            (_meetingCleanupSchedulerFailureBackoffUntilUtc.HasValue &&
-             nowUtc < _meetingCleanupSchedulerFailureBackoffUntilUtc.Value) ||
             GetEligibleScheduledIncrementalRecommendations().Count == 0)
         {
             return;
@@ -2065,8 +2066,55 @@ public partial class MainWindow : Window
 
     private bool IsAutomaticCleanupSchedulerBlocked()
     {
-        return _recordingCoordinator.IsRecording ||
-               _isRenamingMeeting ||
+        return !string.IsNullOrWhiteSpace(GetAutomaticCleanupSchedulerBlockerReason());
+    }
+
+    private string? GetAutomaticCleanupSchedulerBlockerReason()
+    {
+        if (IsShutdownRequested)
+        {
+            return "Automatic cleanup is stopping because the app is shutting down.";
+        }
+
+        if (_recordingCoordinator.IsRecording)
+        {
+            return "Automatic cleanup is paused by the live recording.";
+        }
+
+        if (_isApplyingSafeMeetingCleanupFixes)
+        {
+            return "Automatic cleanup is waiting for the active cleanup batch.";
+        }
+
+        if (_meetingCleanupSchedulerFailureBackoffUntilUtc is { } backoffUntil &&
+            DateTimeOffset.UtcNow < backoffUntil)
+        {
+            return "Automatic cleanup is waiting for the cleanup catalog retry backoff.";
+        }
+
+        if (IsUserMeetingMaintenanceInProgress())
+        {
+            return "Automatic cleanup is waiting for the current user maintenance action.";
+        }
+
+        return null;
+    }
+
+    private void RecordCleanupSchedulerDispatchDetail(string detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail) ||
+            string.Equals(_lastCleanupSchedulerDispatchDetail, detail, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastCleanupSchedulerDispatchDetail = detail;
+        _logger.Log($"Cleanup scheduler dispatch: {detail}");
+    }
+
+    private bool IsUserMeetingMaintenanceInProgress()
+    {
+        return _isRenamingMeeting ||
                _isRetryingMeeting ||
                _isSuggestingMeetingTitle ||
                _isApplyingSuggestedMeetingTitles ||
@@ -2080,7 +2128,6 @@ public partial class MainWindow : Window
                _isDeletingMeetings ||
                _isApplyingMeetingCleanupRecommendations ||
                _isDismissingMeetingCleanupRecommendations ||
-               _isApplyingSafeMeetingCleanupFixes ||
                _isRushingBacklog ||
                _isQueueingExternalAudioImports;
     }
@@ -4849,6 +4896,7 @@ public partial class MainWindow : Window
             Interlocked.Decrement(ref _meetingBaselineRefreshOperations);
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
+            TryDispatchPendingMeetingCleanupWork();
         }
     }
 
@@ -4881,9 +4929,7 @@ public partial class MainWindow : Window
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
             UpdateTeamsPlaybackCleanupStatus(inspections, visibleRecommendations);
-            // Let the baseline refresh release its UI busy state before scheduler dispatch evaluates blockers.
-            await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background, cancellationToken);
-            await TryAutoApplyMeetingCleanupSafeFixesAsync(
+            RequestPendingMeetingCleanupWorkDispatch(
                 visibleRecommendations,
                 records,
                 refreshVersion,
@@ -4905,6 +4951,54 @@ public partial class MainWindow : Window
             TryMarkFullMeetingsRefreshCompleted(refreshVersion);
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
+        }
+    }
+
+    private void RequestPendingMeetingCleanupWorkDispatch(
+        IReadOnlyList<MeetingCleanupRecommendation> recommendations,
+        IReadOnlyList<MeetingOutputRecord> records,
+        int refreshVersion,
+        CancellationToken cancellationToken)
+    {
+        _pendingCleanupSchedulerDispatch = new CleanupSchedulerDispatchRequest(
+            recommendations,
+            records,
+            refreshVersion,
+            cancellationToken);
+        TryDispatchPendingMeetingCleanupWork();
+    }
+
+    private void TryDispatchPendingMeetingCleanupWork()
+    {
+        if (_pendingCleanupSchedulerDispatch is null ||
+            _isDispatchingPendingMeetingCleanupWork ||
+            Volatile.Read(ref _meetingBaselineRefreshOperations) > 0 ||
+            IsShutdownRequested)
+        {
+            return;
+        }
+
+        var dispatch = _pendingCleanupSchedulerDispatch;
+        _pendingCleanupSchedulerDispatch = null;
+        _isDispatchingPendingMeetingCleanupWork = true;
+        _ = DispatchPendingMeetingCleanupWorkAsync(dispatch);
+    }
+
+    private async Task DispatchPendingMeetingCleanupWorkAsync(CleanupSchedulerDispatchRequest dispatch)
+    {
+        try
+        {
+            await TryAutoApplyMeetingCleanupSafeFixesAsync(
+                dispatch.Recommendations,
+                dispatch.Records,
+                dispatch.RefreshVersion,
+                dispatch.CancellationToken);
+        }
+        finally
+        {
+            _isDispatchingPendingMeetingCleanupWork = false;
+            UpdateMeetingCleanupReviewBanner();
+            TryDispatchPendingMeetingCleanupWork();
         }
     }
 
@@ -10347,13 +10441,17 @@ public partial class MainWindow : Window
         var overnight = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current);
         var schedulerDetail = _recordingCoordinator.IsRecording
             ? "Automatic cleanup is paused by the live recording."
+            : !string.IsNullOrWhiteSpace(GetAutomaticCleanupSchedulerBlockerReason())
+                ? GetAutomaticCleanupSchedulerBlockerReason()!
             : schedulerStatus.ProcessingCount > 0
                 ? "Automatic cleanup resumes after the current cleanup worker completes."
                 : schedulerStatus.QueuedCount > 0
                     ? $"Automatic cleanup is queued behind processing. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
                     : !string.IsNullOrWhiteSpace(schedulerStatus.PrimaryBlocker)
                         ? schedulerStatus.PrimaryBlocker
-                    : overnight
+                        : !string.IsNullOrWhiteSpace(_lastCleanupSchedulerDispatchDetail)
+                            ? _lastCleanupSchedulerDispatchDetail
+                        : overnight
                         ? "Eligible work can run in overnight batches of up to 5 items."
                         : "Eligible work runs one item after normal work.";
         LogCleanupSchedulerStatus(schedulerStatus, schedulerDetail);
@@ -10415,6 +10513,7 @@ public partial class MainWindow : Window
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         if (IsAutomaticCleanupSchedulerBlocked())
         {
+            RecordCleanupSchedulerDispatchDetail(GetAutomaticCleanupSchedulerBlockerReason()!);
             return;
         }
 
@@ -10433,10 +10532,18 @@ public partial class MainWindow : Window
                 _isApplyingSafeMeetingCleanupFixes,
                 eligibleRecommendations.Count))
         {
+            if (eligibleRecommendations.Count == 0)
+            {
+                RecordCleanupSchedulerDispatchDetail(queueIsIdle
+                    ? "No eligible scheduled cleanup work is ready to dispatch."
+                    : "Automatic cleanup is waiting for the processing queue to become idle before scheduling summary work.");
+            }
             return;
         }
 
         _isApplyingSafeMeetingCleanupFixes = true;
+        RecordCleanupSchedulerDispatchDetail(
+            $"Dispatched {eligibleRecommendations.Count} scheduled cleanup item(s) after the meeting refresh completed.");
         UpdateMeetingActionState();
         MeetingCleanupRecommendationsStatusTextBlock.Text =
             $"Running {eligibleRecommendations.Count} scheduled incremental work item(s)...";
@@ -13412,6 +13519,12 @@ public partial class MainWindow : Window
             return value.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
         }
     }
+
+    private sealed record CleanupSchedulerDispatchRequest(
+        IReadOnlyList<MeetingCleanupRecommendation> Recommendations,
+        IReadOnlyList<MeetingOutputRecord> Records,
+        int RefreshVersion,
+        CancellationToken CancellationToken);
 
     private sealed class MeetingCleanupRecommendationRow
     {
