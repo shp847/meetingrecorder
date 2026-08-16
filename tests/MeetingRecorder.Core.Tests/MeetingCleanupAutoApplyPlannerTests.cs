@@ -216,6 +216,29 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Includes_Active_Ledger_Work_When_The_Next_Scan_No_Longer_Returns_Its_Recommendation()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        var visibleRecommendation = CreateRecommendation(
+            "visible-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        ledger.Record("queued-from-prior-scan", CleanupWorkState.Queued, manifestPath: "C:\\work\\queued.json");
+        ledger.Record("processing-from-prior-scan", CleanupWorkState.Processing, manifestPath: "C:\\work\\processing.json");
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            [visibleRecommendation],
+            ledger,
+            _ => true,
+            _ => false);
+
+        Assert.Equal(1, status.QueuedCount);
+        Assert.Equal(1, status.ProcessingCount);
+    }
+
+    [Fact]
     public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_Batch()
     {
         var recommendations = Enumerable.Range(1, 10)

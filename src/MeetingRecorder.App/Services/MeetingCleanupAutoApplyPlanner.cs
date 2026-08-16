@@ -66,11 +66,7 @@ internal static class MeetingCleanupAutoApplyPlanner
         var pendingSafeFixes = safeFixes
             .Where(recommendation => ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint))
             .ToArray();
-        var recommendationFingerprints = recommendations
-            .Select(recommendation => recommendation.Fingerprint)
-            .ToHashSet(StringComparer.Ordinal);
         var ledgerEntries = ledger.GetEntries()
-            .Where(entry => recommendationFingerprints.Contains(entry.Fingerprint))
             .ToArray();
 
         return new CleanupSchedulerStatus(

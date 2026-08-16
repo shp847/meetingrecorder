@@ -98,6 +98,8 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("var meetingsByStem = records.ToDictionary(", methodBlock, StringComparison.Ordinal);
         Assert.Contains("meetingsByStem,", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("_meetingOutputCatalogService.ListMeetings(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("outstandingCleanupCount >= maximumOutstanding", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("worker allowance", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]

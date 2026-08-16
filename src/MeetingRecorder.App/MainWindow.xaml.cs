@@ -10517,6 +10517,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (outstandingCleanupCount >= maximumOutstanding)
+        {
+            RecordCleanupSchedulerDispatchDetail(
+                $"Automatic cleanup is using its {maximumOutstanding}-item {(maximumOutstanding == 1 ? "daytime" : "overnight")} worker allowance.");
+            return;
+        }
+
         var queueIsIdle = _processingQueue.GetStatusSnapshot().RunState == ProcessingQueueRunState.Idle;
         var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetNextScheduledBatch(
             visibleRecommendations,
