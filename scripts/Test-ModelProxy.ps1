@@ -10,13 +10,13 @@ Add-Type -AssemblyName System.Net.Http
 
 $normalizedBaseUrl = $BaseUrl.TrimEnd("/")
 $maxAttempts = 3
-$requestTimeoutSeconds = 60
+$requestTimeoutSeconds = 120
 
 if (-not $ApiKey) {
     $ApiKey = "sk-modelproxy-meeting-recorder"
 }
 
-function Get-ModelProxyErrorKind {
+function Get-ModelProxyErrorDetails {
     param([string]$ResponseContent)
 
     if (-not $ResponseContent) {
@@ -40,7 +40,10 @@ function Get-ModelProxyErrorKind {
         foreach ($propertyName in @("type", "category", "code")) {
             $value = $errorNode.$propertyName
             if ($value) {
-                return [string]$value
+                return [pscustomobject]@{
+                    Kind = [string]$value
+                    Retryable = [bool]$errorNode.retryable
+                }
             }
         }
     }
@@ -71,7 +74,7 @@ function New-ModelProxySmokeRequest {
         [System.Net.Http.HttpMethod]::Post,
         "$normalizedBaseUrl/responses")
     $request.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $ApiKey)
-    $request.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", "app-server") | Out-Null
+    $request.Headers.TryAddWithoutValidation("X-ModelProxy-Backend", "codex") | Out-Null
     $request.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search", "false") | Out-Null
     $request.Content = [System.Net.Http.StringContent]::new($body, [Text.Encoding]::UTF8, "application/json")
     return $request
@@ -128,12 +131,12 @@ function Read-ModelProxySmokeResponse {
     }
 
     if (-not $Response.IsSuccessStatusCode) {
-        $errorKind = Get-ModelProxyErrorKind -ResponseContent $responseContent
+        $errorDetails = Get-ModelProxyErrorDetails -ResponseContent $responseContent
         return [pscustomobject]@{
             RequestIndex = $RequestIndex
             Success = $false
-            RetryableBackendBusy = ($errorKind -eq "backend_busy")
-            ErrorKind = $errorKind
+            RetryableBackendBusy = ($errorDetails -and $errorDetails.Kind -eq "backend_busy" -and $errorDetails.Retryable -and [int]$Response.StatusCode -in @(502, 503))
+            ErrorKind = if ($errorDetails) { $errorDetails.Kind } else { $null }
             Routing = $routing
         }
     }
@@ -198,11 +201,13 @@ try {
             if ($advertisedModels.Count -eq 0) {
                 throw "ModelProxy models response did not include usable OpenAI-shaped model ids."
             }
-            $Model = "gpt-5.4-mini"
-            if (-not ($advertisedModels -contains $Model)) {
-                throw "ModelProxy models response did not advertise Meeting Recorder default model '$Model'."
+            $defaultModel = @($modelsPayload.data | Where-Object { $_.default -eq $true } | Select-Object -First 1)
+            if ($defaultModel.Count -ne 1 -or -not $defaultModel[0].id) {
+                throw "ModelProxy models response did not advertise exactly one default model."
             }
-            Write-Host "Meeting Recorder ModelProxy default model: $Model"
+            $Model = [string]$defaultModel[0].id
+            $catalogState = if ($modelsPayload.modelproxy.catalog_state) { [string]$modelsPayload.modelproxy.catalog_state } else { "unknown" }
+            Write-Host "Meeting Recorder ModelProxy default model: $Model (catalog=$catalogState)"
         }
         finally {
             if ($modelsResponse) {
@@ -216,7 +221,7 @@ try {
     $result = $null
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
-            Write-Host "ModelProxy app-server reported retryable backend_busy for synthetic validation; retrying shortly."
+            Write-Host "ModelProxy reported retryable backend_busy for synthetic validation; retrying shortly."
             Start-Sleep -Milliseconds (250 * ($attempt - 1))
         }
 
@@ -227,14 +232,14 @@ try {
     }
 
     if ($result.RetryableBackendBusy) {
-        throw "ModelProxy app-server remained temporarily saturated after retry attempts; retry shortly."
+        throw "ModelProxy remained temporarily saturated after retry attempts; retry shortly."
     }
 
     if (-not $result.Success) {
         throw "ModelProxy smoke failed for synthetic request with structured error '$($result.ErrorKind)'."
     }
 
-    Write-Host "Meeting Recorder ModelProxy synthetic smoke response matched expected marker for a lightweight no-search app-server request."
+    Write-Host "Meeting Recorder ModelProxy synthetic smoke response matched expected marker for a lightweight no-search codex-routed request."
 
     $printedRouting = $false
     foreach ($headerName in $result.Routing.Keys) {

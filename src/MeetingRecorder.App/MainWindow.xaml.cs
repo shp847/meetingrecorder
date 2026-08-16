@@ -85,6 +85,7 @@ public partial class MainWindow : Window
     private readonly SummaryProviderValidationService _summaryProviderValidationService;
     private readonly PublishedMeetingSummaryService _publishedMeetingSummaryService;
     private readonly HttpClient _summaryProviderHttpClient;
+    private readonly ModelProxyClient _summaryModelCatalogClient;
     private readonly SessionTitleDraftTracker _sessionTitleDraftTracker;
     private readonly SessionTitleDraftTracker _sessionProjectDraftTracker;
     private readonly SessionTitleDraftTracker _sessionKeyAttendeesDraftTracker;
@@ -116,6 +117,16 @@ public partial class MainWindow : Window
     private bool _skipShutdownUpdateCheck;
     private bool _isRecordingTransitionInProgress;
     private bool _isAutoStopTransitionInProgress;
+    private bool _isRefreshingModelProxySummaryModels;
+    private bool _isRefreshingOpenAiSummaryModels;
+    private bool _summaryProviderValidationIsCurrent;
+    private bool _isSynchronizingSummaryModelSelectors;
+    private IReadOnlyList<ModelProxyModelInfo> _modelProxySummaryModels = Array.Empty<ModelProxyModelInfo>();
+    private IReadOnlyList<ModelProxyModelInfo> _openAiSummaryModels = Array.Empty<ModelProxyModelInfo>();
+    private string? _modelProxySummaryDefaultModel;
+    private string? _modelProxySummaryCatalogState;
+    private const string ModelProxyProviderDefaultSelection = "__modelproxy_provider_default__";
+    private string? _openAiSummaryDefaultModel;
     private int? _autoStopCountdownSecondsRemaining;
     private int _meetingBaselineRefreshOperations;
     private int _meetingCleanupRefreshOperations;
@@ -133,6 +144,7 @@ public partial class MainWindow : Window
     private bool _isApplyingSafeMeetingCleanupFixes;
     private DateTimeOffset? _meetingCleanupSchedulerFailureBackoffUntilUtc;
     private DateTimeOffset? _lastMeetingCleanupSchedulerRefreshUtc;
+    private string? _lastCleanupSchedulerStatusLog;
     private bool _isDeletingMeetings;
     private bool _isArchivingMeetings;
     private bool _isUpdatingRushProcessing;
@@ -300,11 +312,12 @@ public partial class MainWindow : Window
         _summarySecretStore = FileSummarySecretStore.CreateDefault();
         _summaryProviderHttpClient = new HttpClient();
         var summaryChatClient = new SummaryChatClient(_summaryProviderHttpClient);
-        var modelProxyClient = new ModelProxyClient(_summaryProviderHttpClient);
+        _summaryModelCatalogClient = new ModelProxyClient(_summaryProviderHttpClient);
         _summaryProviderValidationService = new SummaryProviderValidationService(
-            summaryChatClient);
+            summaryChatClient,
+            _summaryModelCatalogClient);
         _publishedMeetingSummaryService = new PublishedMeetingSummaryService(
-            new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient, modelProxyClient),
+            new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient, _summaryModelCatalogClient),
             _manifestStore);
         _sessionTitleDraftTracker = new SessionTitleDraftTracker();
         _sessionProjectDraftTracker = new SessionTitleDraftTracker();
@@ -489,6 +502,7 @@ public partial class MainWindow : Window
 
             RefreshWhisperModelStatus();
             RefreshDiarizationAssetStatus();
+            await RefreshModelProxySummaryModelsAsync(manual: false, _lifetimeCts.Token);
             RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "startup warmup");
             ScheduleDeferredStartupMaintenance();
         }
@@ -704,17 +718,15 @@ public partial class MainWindow : Window
 
     private void ProcessingQueue_OnWorkCompleted(ProcessingWorkCompletion completion)
     {
-        if (completion.Priority != ProcessingWorkPriority.Cleanup)
-        {
-            return;
-        }
-
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
-            _meetingCleanupWorkLedgerService.RecordCompletionForManifest(
-                completion.ManifestPath,
-                completion.Succeeded,
-                completion.Detail);
+            if (completion.Priority == ProcessingWorkPriority.Cleanup)
+            {
+                _meetingCleanupWorkLedgerService.RecordCompletionForManifest(
+                    completion.ManifestPath,
+                    completion.Succeeded,
+                    completion.Detail);
+            }
             UpdateMeetingCleanupReviewBanner();
             TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
         }), DispatcherPriority.Background);
@@ -2039,22 +2051,38 @@ public partial class MainWindow : Window
             : 1;
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
-        if (_recordingCoordinator.IsRecording ||
-            IsMeetingActionInProgress() ||
+        if (IsAutomaticCleanupSchedulerBlocked() ||
             outstandingCleanupCount >= maximumOutstanding ||
             (_meetingCleanupSchedulerFailureBackoffUntilUtc.HasValue &&
              nowUtc < _meetingCleanupSchedulerFailureBackoffUntilUtc.Value) ||
-            MeetingCleanupAutoApplyPlanner
-                .GetEligibleRecommendations(
-                    _meetingCleanupRecommendations,
-                    _meetingCleanupAutoApplyCacheService,
-                    _meetingCleanupWorkLedgerService)
-                .Count == 0)
+            GetEligibleScheduledIncrementalRecommendations().Count == 0)
         {
             return;
         }
 
         RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "automatic cleanup batch refill");
+    }
+
+    private bool IsAutomaticCleanupSchedulerBlocked()
+    {
+        return _recordingCoordinator.IsRecording ||
+               _isRenamingMeeting ||
+               _isRetryingMeeting ||
+               _isSuggestingMeetingTitle ||
+               _isApplyingSuggestedMeetingTitles ||
+               _isUpdatingMeetingProject ||
+               _isApplyingSpeakerNames ||
+               _isGeneratingMeetingSummary ||
+               _isMergingMeetings ||
+               _isSplittingMeeting ||
+               _isArchivingMeetings ||
+               _isUpdatingRushProcessing ||
+               _isDeletingMeetings ||
+               _isApplyingMeetingCleanupRecommendations ||
+               _isDismissingMeetingCleanupRecommendations ||
+               _isApplyingSafeMeetingCleanupFixes ||
+               _isRushingBacklog ||
+               _isQueueingExternalAudioImports;
     }
 
     private void AudioGraphTimer_OnTick(object? sender, EventArgs e)
@@ -2238,6 +2266,7 @@ public partial class MainWindow : Window
             }
 
             RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "recording stop");
+            TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
             UpdateCurrentMeetingEditor();
             UpdateUi(
                 MainWindowInteractionLogic.BuildRecordingStoppedMessage(processingQueued),
@@ -3308,12 +3337,18 @@ public partial class MainWindow : Window
                 BackgroundSpeakerLabelingMode = ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                     ? backgroundSpeakerLabelingMode
                     : currentConfig.BackgroundSpeakerLabelingMode,
-                ProcessingSpeedProfile = ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile
-                    ? processingSpeedProfile
-                    : currentConfig.ProcessingSpeedProfile,
+                ProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
                 OvernightDrainStartLocal = ConfigOvernightDrainStartTextBox.Text.Trim(),
                 OvernightDrainEndLocal = ConfigOvernightDrainEndTextBox.Text.Trim(),
                 PreviousProcessingSpeedProfile = currentConfig.PreviousProcessingSpeedProfile,
+                ProcessingScheduleMigrationApplied = true,
+                InitialProcessingStrategy = ConfigInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy initialProcessingStrategy
+                    ? initialProcessingStrategy
+                    : currentConfig.InitialProcessingStrategy,
+                OvernightInitialProcessingStrategy = ConfigOvernightInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy overnightInitialProcessingStrategy
+                    ? overnightInitialProcessingStrategy
+                    : currentConfig.OvernightInitialProcessingStrategy,
+                IncrementalWorkPlan = BuildIncrementalWorkPlanFromEditor(),
                 TranscriptionProviderPreference = ConfigTranscriptionProviderPreferenceComboBox.SelectedValue is TranscriptionProviderPreference transcriptionProviderPreference
                     ? transcriptionProviderPreference
                     : currentConfig.TranscriptionProviderPreference,
@@ -3335,6 +3370,9 @@ public partial class MainWindow : Window
                 SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
                 SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
                 SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
+                SummaryReasoningEffort = ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort summaryReasoningEffort
+                    ? summaryReasoningEffort
+                    : currentConfig.SummaryReasoningEffort,
                 SummaryRequestTimeoutSeconds = summaryRequestTimeoutSeconds,
                 SummaryTranscriptChunkTokenTarget = summaryTranscriptChunkTarget,
                 SummaryTranscriptChunkOverlapTokens = summaryTranscriptChunkOverlap,
@@ -4843,6 +4881,8 @@ public partial class MainWindow : Window
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
             ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
             UpdateTeamsPlaybackCleanupStatus(inspections, visibleRecommendations);
+            // Let the baseline refresh release its UI busy state before scheduler dispatch evaluates blockers.
+            await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Background, cancellationToken);
             await TryAutoApplyMeetingCleanupSafeFixesAsync(
                 visibleRecommendations,
                 records,
@@ -6869,7 +6909,9 @@ public partial class MainWindow : Window
         ConfigAutoInstallUpdatesCheckBox.IsChecked = config.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = config.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = config.PreferredTeamsIntegrationMode;
-        ConfigProcessingSpeedProfileComboBox.SelectedValue = config.ProcessingSpeedProfile;
+        ConfigInitialProcessingStrategyComboBox.SelectedValue = config.InitialProcessingStrategy;
+        ConfigOvernightInitialProcessingStrategyComboBox.SelectedValue = config.OvernightInitialProcessingStrategy;
+        ApplyIncrementalWorkPlanToEditor(config.IncrementalWorkPlan);
         ConfigOvernightDrainStartTextBox.Text = config.OvernightDrainStartLocal;
         ConfigOvernightDrainEndTextBox.Text = config.OvernightDrainEndLocal;
         ConfigTranscriptionProviderPreferenceComboBox.SelectedValue = config.TranscriptionProviderPreference;
@@ -6879,16 +6921,29 @@ public partial class MainWindow : Window
         ConfigDiarizationCliPathTextBox.Text = config.DiarizationCliPath;
         ConfigDiarizationCliArgumentsTextBox.Text = config.DiarizationCliArguments;
         ConfigBackgroundProcessingModeComboBox.SelectedValue = config.BackgroundProcessingMode;
+        UpdateProcessingSchedulePresentation(config);
         ConfigSummaryGenerationEnabledCheckBox.IsChecked = config.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled;
         ConfigSummaryProviderPreferenceComboBox.SelectedValue = config.SummaryProviderPreference;
         ConfigSummaryModelProxyBaseUrlTextBox.Text = config.SummaryModelProxyBaseUrl;
         ConfigSummaryModelProxyModelTextBox.Text = config.SummaryModelProxyModel;
         ConfigSummaryOpenAiModelTextBox.Text = config.SummaryOpenAiModel;
+        PopulateSummaryReasoningEffortChoices(config.SummaryReasoningEffort);
+        PopulateSummaryModelChoices(
+            ConfigSummaryModelProxyModelComboBox,
+            config.SummaryModelProxyModel,
+            _modelProxySummaryModels,
+            _modelProxySummaryDefaultModel);
+        PopulateSummaryModelChoices(
+            ConfigSummaryOpenAiModelComboBox,
+            config.SummaryOpenAiModel,
+            _openAiSummaryModels,
+            _openAiSummaryDefaultModel);
         ConfigSummaryRequestTimeoutTextBox.Text = config.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture);
         ConfigSummaryTranscriptChunkTargetTextBox.Text = config.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture);
         ConfigSummaryTranscriptChunkOverlapTextBox.Text = config.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture);
         SetSpeakerLabelingModeSelectors(config.BackgroundSpeakerLabelingMode);
-        UpdateProcessingSpeedProfileHelpText(config.ProcessingSpeedProfile);
+        ConfigInitialProcessingStrategyHelpTextBlock.Text =
+            MainWindowInteractionLogic.BuildInitialProcessingStrategyHelpText(config.InitialProcessingStrategy);
         UpdateExternalProviderStatusText(config);
         UpdateBackgroundProcessingModeHelpText(config.BackgroundProcessingMode);
         UpdateDiarizationAccelerationStatusText(config, _currentDiarizationAssetStatus);
@@ -6915,12 +6970,19 @@ public partial class MainWindow : Window
             .Select(option => new SelectionOption<BackgroundProcessingMode>(option.Value, option.Label))
             .ToArray();
 
-        ConfigProcessingSpeedProfileComboBox.DisplayMemberPath = nameof(SelectionOption<ProcessingSpeedProfile>.Label);
-        ConfigProcessingSpeedProfileComboBox.SelectedValuePath = nameof(SelectionOption<ProcessingSpeedProfile>.Value);
-        ConfigProcessingSpeedProfileComboBox.ItemsSource = MainWindowInteractionLogic
-            .BuildProcessingSpeedProfileOptions()
-            .Select(option => new SelectionOption<ProcessingSpeedProfile>(option.Value, option.Label))
-            .ToArray();
+        foreach (var comboBox in new[]
+                 {
+                     ConfigInitialProcessingStrategyComboBox,
+                     ConfigOvernightInitialProcessingStrategyComboBox,
+                 })
+        {
+            comboBox.DisplayMemberPath = nameof(SelectionOption<InitialProcessingStrategy>.Label);
+            comboBox.SelectedValuePath = nameof(SelectionOption<InitialProcessingStrategy>.Value);
+            comboBox.ItemsSource = MainWindowInteractionLogic
+                .BuildInitialProcessingStrategyOptions()
+                .Select(option => new SelectionOption<InitialProcessingStrategy>(option.Value, option.Label))
+                .ToArray();
+        }
 
         ConfigTranscriptionProviderPreferenceComboBox.DisplayMemberPath = nameof(SelectionOption<TranscriptionProviderPreference>.Label);
         ConfigTranscriptionProviderPreferenceComboBox.SelectedValuePath = nameof(SelectionOption<TranscriptionProviderPreference>.Value);
@@ -6956,6 +7018,18 @@ public partial class MainWindow : Window
             new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.LocalThenOpenAi, "Local then OpenAI"),
             new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.LocalOnly, "Local only"),
             new SelectionOption<MeetingSummaryProviderPreference>(MeetingSummaryProviderPreference.OpenAiOnly, "OpenAI only"),
+        };
+
+        ConfigSummaryReasoningEffortComboBox.DisplayMemberPath = nameof(SelectionOption<SummaryReasoningEffort>.Label);
+        ConfigSummaryReasoningEffortComboBox.SelectedValuePath = nameof(SelectionOption<SummaryReasoningEffort>.Value);
+        ConfigSummaryReasoningEffortComboBox.ItemsSource = new[]
+        {
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.ProviderDefault, "Provider default"),
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.Minimal, "Minimal"),
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.Low, "Low"),
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.Medium, "Medium (recommended)"),
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.High, "High"),
+            new SelectionOption<SummaryReasoningEffort>(SummaryReasoningEffort.XHigh, "Extra high"),
         };
     }
 
@@ -6998,6 +7072,10 @@ public partial class MainWindow : Window
                      ConfigUpdateCheckEnabledCheckBox,
                      ConfigAutoInstallUpdatesCheckBox,
                      ConfigSummaryGenerationEnabledCheckBox,
+                     ConfigIncrementalQueuedRecordingsCheckBox,
+                     ConfigIncrementalSpeakerLabelsCheckBox,
+                     ConfigIncrementalAiSummariesCheckBox,
+                     ConfigIncrementalSafeCleanupCheckBox,
                  })
         {
             checkBox.Checked += ConfigEditorValueChanged;
@@ -7005,12 +7083,14 @@ public partial class MainWindow : Window
         }
 
         ConfigPreferredTeamsIntegrationModeComboBox.SelectionChanged += ConfigEditorValueChanged;
-        ConfigProcessingSpeedProfileComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigInitialProcessingStrategyComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigOvernightInitialProcessingStrategyComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigTranscriptionProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigDiarizationProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundProcessingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigBackgroundSpeakerLabelingModeComboBox.SelectionChanged += ConfigEditorValueChanged;
         ConfigSummaryProviderPreferenceComboBox.SelectionChanged += ConfigEditorValueChanged;
+        ConfigSummaryReasoningEffortComboBox.SelectionChanged += ConfigEditorValueChanged;
     }
 
     private void ConfigEditorValueChanged(object sender, RoutedEventArgs e)
@@ -7020,12 +7100,34 @@ public partial class MainWindow : Window
 
     private void ConfigEditorValueChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isSynchronizingSummaryModelSelectors)
+        {
+            return;
+        }
+
         UpdateConfigModeHelpTextFromSelection();
+        if (ReferenceEquals(sender, ConfigSummaryProviderPreferenceComboBox))
+        {
+            PopulateSummaryReasoningEffortChoices(
+                ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort selectedEffort
+                    ? selectedEffort
+                    : _liveConfig.Current.SummaryReasoningEffort);
+        }
+        if (ReferenceEquals(sender, ConfigSummaryReasoningEffortComboBox))
+        {
+            MarkSummaryProviderValidationStale();
+        }
         UpdateConfigActionState();
     }
 
     private void ConfigEditorValueChanged(object sender, TextChangedEventArgs e)
     {
+        if (ReferenceEquals(sender, ConfigSummaryModelProxyBaseUrlTextBox) ||
+            ReferenceEquals(sender, ConfigSummaryModelProxyModelTextBox) ||
+            ReferenceEquals(sender, ConfigSummaryOpenAiModelTextBox))
+        {
+            MarkSummaryProviderValidationStale();
+        }
         UpdateConfigActionState();
     }
 
@@ -7033,6 +7135,19 @@ public partial class MainWindow : Window
     {
         UpdateConfigDependencyState();
         UpdateConfigModeHelpTextFromSelection();
+        UpdateIncrementalWorkAvailability();
+        UpdateProcessingSchedulePresentation(_liveConfig.Current with
+        {
+            InitialProcessingStrategy = ConfigInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy initialStrategy
+                ? initialStrategy
+                : _liveConfig.Current.InitialProcessingStrategy,
+            OvernightInitialProcessingStrategy = ConfigOvernightInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy overnightStrategy
+                ? overnightStrategy
+                : _liveConfig.Current.OvernightInitialProcessingStrategy,
+            IncrementalWorkPlan = BuildIncrementalWorkPlanFromEditor(),
+            OvernightDrainStartLocal = ConfigOvernightDrainStartTextBox.Text.Trim(),
+            OvernightDrainEndLocal = ConfigOvernightDrainEndTextBox.Text.Trim(),
+        });
         UpdateExternalProviderStatusTextFromEditor();
         var hasPendingChanges = MainWindowInteractionLogic.HasPendingConfigChanges(
             _liveConfig.Current,
@@ -7212,6 +7327,7 @@ public partial class MainWindow : Window
                 string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password)
                     ? ConfigSummaryOpenAiKeyStatusTextBlock.Text
                     : "OpenAI key: new key pending save.";
+            MarkSummaryProviderValidationStale();
         }
 
         UpdateConfigActionState();
@@ -7447,7 +7563,7 @@ public partial class MainWindow : Window
 
         _isValidatingModelProxySummaryProvider = true;
         UpdateSummaryProviderValidationActionState();
-        ConfigSummaryProviderStatusTextBlock.Text = "Validating ModelProxy with a synthetic prompt...";
+        ConfigModelProxyValidationStatusTextBlock.Text = "Testing ModelProxy with a synthetic prompt...";
 
         try
         {
@@ -7457,16 +7573,19 @@ public partial class MainWindow : Window
                 config,
                 legacyApiKey,
                 _lifetimeCts.Token);
-            ConfigSummaryProviderStatusTextBlock.Text = result.StatusText;
+            _summaryProviderValidationIsCurrent = result.Success;
+            ConfigModelProxyValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(result, config);
             AppendActivity($"ModelProxy summary provider validation: {result.StatusText}");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
-            ConfigSummaryProviderStatusTextBlock.Text = "ModelProxy validation canceled.";
+            _summaryProviderValidationIsCurrent = false;
+            ConfigModelProxyValidationStatusTextBlock.Text = "Canceled: ModelProxy validation stopped during app shutdown.";
         }
         catch (Exception exception)
         {
-            ConfigSummaryProviderStatusTextBlock.Text = $"ModelProxy validation failed: {exception.Message}";
+            _summaryProviderValidationIsCurrent = false;
+            ConfigModelProxyValidationStatusTextBlock.Text = $"Failed: ModelProxy validation failed: {exception.Message}";
             AppendActivity($"ModelProxy summary provider validation failed: {exception.Message}");
         }
         finally
@@ -7485,7 +7604,7 @@ public partial class MainWindow : Window
 
         _isValidatingOpenAiSummaryProvider = true;
         UpdateSummaryProviderValidationActionState();
-        ConfigSummaryProviderStatusTextBlock.Text = "Validating OpenAI with a synthetic prompt...";
+        ConfigOpenAiValidationStatusTextBlock.Text = "Testing OpenAI with a synthetic prompt...";
 
         try
         {
@@ -7497,16 +7616,19 @@ public partial class MainWindow : Window
                 config,
                 apiKey,
                 _lifetimeCts.Token);
-            ConfigSummaryProviderStatusTextBlock.Text = result.StatusText;
+            _summaryProviderValidationIsCurrent = result.Success;
+            ConfigOpenAiValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(result, config);
             AppendActivity($"OpenAI summary provider validation: {result.StatusText}");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
-            ConfigSummaryProviderStatusTextBlock.Text = "OpenAI validation canceled.";
+            _summaryProviderValidationIsCurrent = false;
+            ConfigOpenAiValidationStatusTextBlock.Text = "Canceled: OpenAI validation stopped during app shutdown.";
         }
         catch (Exception exception)
         {
-            ConfigSummaryProviderStatusTextBlock.Text = $"OpenAI validation failed: {exception.Message}";
+            _summaryProviderValidationIsCurrent = false;
+            ConfigOpenAiValidationStatusTextBlock.Text = $"Failed: OpenAI validation failed: {exception.Message}";
             AppendActivity($"OpenAI summary provider validation failed: {exception.Message}");
         }
         finally
@@ -7560,6 +7682,315 @@ public partial class MainWindow : Window
         ValidateModelProxySummaryProviderButton.IsEnabled = !_isValidatingModelProxySummaryProvider;
         ValidateOpenAiSummaryProviderButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
         ClearOpenAiSummaryKeyButton.IsEnabled = !_isValidatingOpenAiSummaryProvider;
+        RefreshModelProxySummaryModelsButton.IsEnabled = !_isRefreshingModelProxySummaryModels;
+        RefreshOpenAiSummaryModelsButton.IsEnabled = !_isRefreshingOpenAiSummaryModels;
+        RefreshModelProxySummaryModelsButton.Content = _isRefreshingModelProxySummaryModels
+            ? "Refreshing..."
+            : "Refresh Models";
+        RefreshOpenAiSummaryModelsButton.Content = _isRefreshingOpenAiSummaryModels
+            ? "Refreshing..."
+            : "Refresh Models";
+    }
+
+    private async void RefreshModelProxySummaryModelsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        await RefreshModelProxySummaryModelsAsync(manual: true, _lifetimeCts.Token);
+    }
+
+    private async Task RefreshModelProxySummaryModelsAsync(bool manual, CancellationToken cancellationToken)
+    {
+        if (_isRefreshingModelProxySummaryModels)
+        {
+            return;
+        }
+
+        _isRefreshingModelProxySummaryModels = true;
+        ConfigModelProxyValidationStatusTextBlock.Text = manual
+            ? "Testing connection and loading available models..."
+            : "Loading current ModelProxy model capabilities...";
+        UpdateSummaryProviderValidationActionState();
+        try
+        {
+            var config = BuildSummaryValidationConfigFromEditor(_liveConfig.Current);
+            var legacyApiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, cancellationToken);
+            var options = SummaryChatProviderOptions.ForModelProxy(
+                string.IsNullOrWhiteSpace(legacyApiKey) ? MeetingSummaryDefaults.ModelProxyLocalApiKey : legacyApiKey,
+                config.SummaryModelProxyBaseUrl);
+            var catalog = await _summaryModelCatalogClient.GetModelsAsync(options, cancellationToken);
+            _modelProxySummaryModels = catalog.Models;
+            _modelProxySummaryDefaultModel = catalog.ResolveModel();
+            _modelProxySummaryCatalogState = catalog.CatalogState;
+            PopulateSummaryModelChoices(
+                ConfigSummaryModelProxyModelComboBox,
+                ConfigSummaryModelProxyModelTextBox.Text,
+                _modelProxySummaryModels,
+                _modelProxySummaryDefaultModel);
+            PopulateSummaryReasoningEffortChoices(
+                ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort effort
+                    ? effort
+                    : _liveConfig.Current.SummaryReasoningEffort);
+            var state = string.Equals(catalog.CatalogState, "fallback", StringComparison.OrdinalIgnoreCase)
+                ? "Degraded fallback catalog"
+                : "Live catalog";
+            ConfigModelProxyValidationStatusTextBlock.Text =
+                $"{state}: loaded {_modelProxySummaryModels.Count} text model(s); default is {_modelProxySummaryDefaultModel}.";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ConfigModelProxyValidationStatusTextBlock.Text = "Canceled: the app is closing before model refresh completed.";
+        }
+        catch (Exception exception)
+        {
+            _modelProxySummaryModels = Array.Empty<ModelProxyModelInfo>();
+            _modelProxySummaryDefaultModel = null;
+            _modelProxySummaryCatalogState = null;
+            PopulateSummaryReasoningEffortChoices(SummaryReasoningEffort.ProviderDefault);
+            ConfigModelProxyValidationStatusTextBlock.Text = $"Failed to load models: {exception.Message}";
+        }
+        finally
+        {
+            _isRefreshingModelProxySummaryModels = false;
+            UpdateSummaryProviderValidationActionState();
+        }
+    }
+
+    private async void RefreshOpenAiSummaryModelsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingOpenAiSummaryModels)
+        {
+            return;
+        }
+
+        _isRefreshingOpenAiSummaryModels = true;
+        ConfigOpenAiValidationStatusTextBlock.Text = "Testing connection and loading available models...";
+        UpdateSummaryProviderValidationActionState();
+        try
+        {
+            var apiKey = !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password)
+                ? ConfigSummaryOpenAiKeyPasswordBox.Password
+                : await _summarySecretStore.LoadAsync(SummarySecretKind.OpenAi, _lifetimeCts.Token);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                ConfigOpenAiValidationStatusTextBlock.Text = "Add an OpenAI key before refreshing models.";
+                return;
+            }
+
+            var catalog = await _summaryModelCatalogClient.GetModelsAsync(
+                SummaryChatProviderOptions.ForOpenAi(apiKey),
+                _lifetimeCts.Token);
+            _openAiSummaryModels = catalog.Models;
+            _openAiSummaryDefaultModel = catalog.DefaultModel;
+            PopulateSummaryModelChoices(
+                ConfigSummaryOpenAiModelComboBox,
+                ConfigSummaryOpenAiModelTextBox.Text,
+                _openAiSummaryModels,
+                _openAiSummaryDefaultModel);
+            ConfigOpenAiValidationStatusTextBlock.Text = $"Ready: loaded {_openAiSummaryModels.Count} OpenAI model(s).";
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            ConfigOpenAiValidationStatusTextBlock.Text = "Canceled: the app is closing before model refresh completed.";
+        }
+        catch (Exception exception)
+        {
+            ConfigOpenAiValidationStatusTextBlock.Text = $"Failed to load models: {exception.Message}";
+        }
+        finally
+        {
+            _isRefreshingOpenAiSummaryModels = false;
+            UpdateSummaryProviderValidationActionState();
+        }
+    }
+
+    private void ConfigSummaryModelProxyModelComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ApplySummaryModelSelection(ConfigSummaryModelProxyModelComboBox, ConfigSummaryModelProxyModelTextBox);
+    }
+
+    private void ConfigSummaryOpenAiModelComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ApplySummaryModelSelection(ConfigSummaryOpenAiModelComboBox, ConfigSummaryOpenAiModelTextBox);
+    }
+
+    private void PopulateSummaryModelChoices(
+        ComboBox comboBox,
+        string configuredModel,
+        IReadOnlyList<ModelProxyModelInfo> models,
+        string? defaultModel)
+    {
+        _isSynchronizingSummaryModelSelectors = true;
+        try
+        {
+            var isModelProxy = ReferenceEquals(comboBox, ConfigSummaryModelProxyModelComboBox);
+            var normalizedConfiguredModel = configuredModel.Trim();
+            var options = models
+                .OrderByDescending(model => model.IsDefault || string.Equals(model.Id, defaultModel, StringComparison.OrdinalIgnoreCase))
+                .ThenBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(model => new SelectionOption<string>(
+                    model.Id,
+                    model.IsDefault || string.Equals(model.Id, defaultModel, StringComparison.OrdinalIgnoreCase)
+                        ? $"{model.Id} (default)"
+                        : model.Id))
+                .ToList();
+            if (isModelProxy)
+            {
+                var defaultLabel = string.IsNullOrWhiteSpace(defaultModel)
+                    ? "Use ModelProxy default (loading catalog...)"
+                    : $"Use ModelProxy default ({defaultModel})";
+                options.Insert(0, new SelectionOption<string>(ModelProxyProviderDefaultSelection, defaultLabel));
+            }
+            if (!string.IsNullOrWhiteSpace(normalizedConfiguredModel) &&
+                !options.Any(option => string.Equals(option.Value, normalizedConfiguredModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                // Keep an unrefreshed or no-longer-advertised choice visible without treating it as a new value.
+                options.Insert(0, new SelectionOption<string>(normalizedConfiguredModel, $"Current: {normalizedConfiguredModel}"));
+            }
+            options.Add(new SelectionOption<string>("__custom_summary_model__", "Custom model..."));
+            comboBox.DisplayMemberPath = nameof(SelectionOption<string>.Label);
+            comboBox.SelectedValuePath = nameof(SelectionOption<string>.Value);
+            comboBox.ItemsSource = options;
+            comboBox.SelectedValue = isModelProxy && string.IsNullOrWhiteSpace(normalizedConfiguredModel)
+                ? ModelProxyProviderDefaultSelection
+                : options.Any(option => string.Equals(option.Value, normalizedConfiguredModel, StringComparison.OrdinalIgnoreCase))
+                    ? normalizedConfiguredModel
+                    : "__custom_summary_model__";
+            var customTextBox = isModelProxy
+                ? ConfigSummaryModelProxyModelTextBox
+                : ConfigSummaryOpenAiModelTextBox;
+            customTextBox.Visibility = string.Equals(comboBox.SelectedValue as string, "__custom_summary_model__", StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        finally
+        {
+            _isSynchronizingSummaryModelSelectors = false;
+        }
+    }
+
+    private void ApplySummaryModelSelection(ComboBox comboBox, TextBox customTextBox)
+    {
+        if (_isSynchronizingSummaryModelSelectors)
+        {
+            return;
+        }
+
+        var selectedModel = comboBox.SelectedValue as string;
+        var isProviderDefault = ReferenceEquals(comboBox, ConfigSummaryModelProxyModelComboBox) &&
+                                string.Equals(selectedModel, ModelProxyProviderDefaultSelection, StringComparison.Ordinal);
+        var isCustom = string.Equals(selectedModel, "__custom_summary_model__", StringComparison.Ordinal);
+        customTextBox.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+        if (isProviderDefault)
+        {
+            customTextBox.Text = string.Empty;
+        }
+        else if (!isCustom && !string.IsNullOrWhiteSpace(selectedModel))
+        {
+            customTextBox.Text = selectedModel;
+        }
+
+        PopulateSummaryReasoningEffortChoices(
+            ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort effort
+                ? effort
+                : _liveConfig.Current.SummaryReasoningEffort);
+        MarkSummaryProviderValidationStale();
+        UpdateConfigActionState();
+    }
+
+    private void MarkSummaryProviderValidationStale()
+    {
+        _summaryProviderValidationIsCurrent = false;
+        if (!_isValidatingModelProxySummaryProvider)
+        {
+            ConfigModelProxyValidationStatusTextBlock.Text = "Configuration changed. Validate ModelProxy before using this setup.";
+        }
+
+        if (!_isValidatingOpenAiSummaryProvider)
+        {
+            ConfigOpenAiValidationStatusTextBlock.Text = "Configuration changed. Validate OpenAI before using this setup.";
+        }
+    }
+
+    private void PopulateSummaryReasoningEffortChoices(SummaryReasoningEffort selectedEffort)
+    {
+        var openAiOnly = ConfigSummaryProviderPreferenceComboBox.SelectedValue is MeetingSummaryProviderPreference preference &&
+                         preference == MeetingSummaryProviderPreference.OpenAiOnly;
+        var supportedEfforts = openAiOnly
+            ? new[]
+            {
+                SummaryReasoningEffort.ProviderDefault,
+                SummaryReasoningEffort.Minimal,
+                SummaryReasoningEffort.Low,
+                SummaryReasoningEffort.Medium,
+                SummaryReasoningEffort.High,
+                SummaryReasoningEffort.XHigh,
+            }
+            : GetSelectedModelProxyReasoningEfforts();
+        var labels = new Dictionary<SummaryReasoningEffort, string>
+        {
+            [SummaryReasoningEffort.ProviderDefault] = "Provider default",
+            [SummaryReasoningEffort.Minimal] = "Minimal",
+            [SummaryReasoningEffort.Low] = "Low",
+            [SummaryReasoningEffort.Medium] = "Medium (recommended)",
+            [SummaryReasoningEffort.High] = "High",
+            [SummaryReasoningEffort.XHigh] = "Extra high",
+        };
+
+        _isSynchronizingSummaryModelSelectors = true;
+        try
+        {
+            var options = supportedEfforts
+                .Select(effort => new SelectionOption<SummaryReasoningEffort>(effort, labels[effort]))
+                .ToList();
+            if (!supportedEfforts.Contains(selectedEffort))
+            {
+                options.Add(new SelectionOption<SummaryReasoningEffort>(
+                    selectedEffort,
+                    $"{labels[selectedEffort]} (unavailable for the selected ModelProxy model)",
+                    IsEnabled: false));
+            }
+
+            ConfigSummaryReasoningEffortComboBox.ItemsSource = options;
+            ConfigSummaryReasoningEffortComboBox.SelectedValue = selectedEffort;
+        }
+        finally
+        {
+            _isSynchronizingSummaryModelSelectors = false;
+        }
+    }
+
+    private IReadOnlyList<SummaryReasoningEffort> GetSelectedModelProxyReasoningEfforts()
+    {
+        var selectedModel = ConfigSummaryModelProxyModelTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(selectedModel))
+        {
+            selectedModel = _modelProxySummaryDefaultModel ?? string.Empty;
+        }
+
+        var supported = _modelProxySummaryModels.FirstOrDefault(model =>
+            string.Equals(model.Id, selectedModel, StringComparison.OrdinalIgnoreCase))?.SupportedReasoningEfforts;
+        return supported is { Count: > 0 }
+            ? [SummaryReasoningEffort.ProviderDefault, .. supported]
+            : [SummaryReasoningEffort.ProviderDefault];
+    }
+
+    private static string FormatSummaryProviderValidationStatus(
+        SummaryProviderValidationResult result,
+        AppConfig config)
+    {
+        var effort = config.SummaryReasoningEffort == SummaryReasoningEffort.ProviderDefault
+            ? "provider default effort"
+            : $"{config.SummaryReasoningEffort} effort";
+        var model = result.ResolvedModel ?? (result.ProviderKind == SummaryChatProviderKind.ModelProxy
+            ? string.IsNullOrWhiteSpace(config.SummaryModelProxyModel)
+                ? "ModelProxy default"
+                : config.SummaryModelProxyModel
+            : config.SummaryOpenAiModel);
+        var catalog = string.IsNullOrWhiteSpace(result.CatalogState)
+            ? string.Empty
+            : $" Catalog: {result.CatalogState}.";
+        return result.Success
+            ? $"Ready: {model} validated with {effort}.{catalog}"
+            : $"Failed: {model} with {effort}.{catalog} {result.StatusText}";
     }
 
     private AppConfig BuildSummaryValidationConfigFromEditor(AppConfig currentConfig)
@@ -7577,6 +8008,9 @@ public partial class MainWindow : Window
             SummaryModelProxyBaseUrl = ConfigSummaryModelProxyBaseUrlTextBox.Text.Trim(),
             SummaryModelProxyModel = ConfigSummaryModelProxyModelTextBox.Text.Trim(),
             SummaryOpenAiModel = ConfigSummaryOpenAiModelTextBox.Text.Trim(),
+            SummaryReasoningEffort = ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort summaryReasoningEffort
+                ? summaryReasoningEffort
+                : currentConfig.SummaryReasoningEffort,
             SummaryRequestTimeoutSeconds = timeoutSeconds,
         };
     }
@@ -7610,9 +8044,13 @@ public partial class MainWindow : Window
             ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode backgroundSpeakerLabelingMode
                 ? backgroundSpeakerLabelingMode
                 : _liveConfig.Current.BackgroundSpeakerLabelingMode,
-            ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile
-                ? processingSpeedProfile
-                : _liveConfig.Current.ProcessingSpeedProfile,
+            ConfigInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy initialProcessingStrategy
+                ? initialProcessingStrategy
+                : _liveConfig.Current.InitialProcessingStrategy,
+            ConfigOvernightInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy overnightInitialProcessingStrategy
+                ? overnightInitialProcessingStrategy
+                : _liveConfig.Current.OvernightInitialProcessingStrategy,
+            BuildIncrementalWorkPlanFromEditor(),
             ConfigOvernightDrainStartTextBox.Text,
             ConfigOvernightDrainEndTextBox.Text,
             ConfigTranscriptionProviderPreferenceComboBox.SelectedValue is TranscriptionProviderPreference transcriptionProviderPreference
@@ -7637,7 +8075,10 @@ public partial class MainWindow : Window
             ConfigSummaryRequestTimeoutTextBox.Text,
             ConfigSummaryTranscriptChunkTargetTextBox.Text,
             ConfigSummaryTranscriptChunkOverlapTextBox.Text,
-            !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password));
+            !string.IsNullOrWhiteSpace(ConfigSummaryOpenAiKeyPasswordBox.Password),
+            ConfigSummaryReasoningEffortComboBox.SelectedValue is SummaryReasoningEffort summaryReasoningEffort
+                ? summaryReasoningEffort
+                : _liveConfig.Current.SummaryReasoningEffort);
     }
 
     private void ApplyConfigEditorSnapshot(ConfigEditorSnapshot snapshot)
@@ -7658,7 +8099,9 @@ public partial class MainWindow : Window
         ConfigAutoInstallUpdatesCheckBox.IsChecked = snapshot.AutoInstallUpdatesEnabled;
         ConfigUpdateFeedUrlTextBox.Text = snapshot.UpdateFeedUrl;
         ConfigPreferredTeamsIntegrationModeComboBox.SelectedValue = snapshot.PreferredTeamsIntegrationMode;
-        ConfigProcessingSpeedProfileComboBox.SelectedValue = snapshot.ProcessingSpeedProfile;
+        ConfigInitialProcessingStrategyComboBox.SelectedValue = snapshot.InitialProcessingStrategy;
+        ConfigOvernightInitialProcessingStrategyComboBox.SelectedValue = snapshot.OvernightInitialProcessingStrategy;
+        ApplyIncrementalWorkPlanToEditor(snapshot.IncrementalWorkPlan);
         ConfigOvernightDrainStartTextBox.Text = snapshot.OvernightDrainStartLocal;
         ConfigOvernightDrainEndTextBox.Text = snapshot.OvernightDrainEndLocal;
         ConfigTranscriptionProviderPreferenceComboBox.SelectedValue = snapshot.TranscriptionProviderPreference;
@@ -7674,6 +8117,17 @@ public partial class MainWindow : Window
         ConfigSummaryModelProxyBaseUrlTextBox.Text = snapshot.SummaryModelProxyBaseUrl;
         ConfigSummaryModelProxyModelTextBox.Text = snapshot.SummaryModelProxyModel;
         ConfigSummaryOpenAiModelTextBox.Text = snapshot.SummaryOpenAiModel;
+        PopulateSummaryReasoningEffortChoices(snapshot.SummaryReasoningEffort);
+        PopulateSummaryModelChoices(
+            ConfigSummaryModelProxyModelComboBox,
+            snapshot.SummaryModelProxyModel,
+            _modelProxySummaryModels,
+            _modelProxySummaryDefaultModel);
+        PopulateSummaryModelChoices(
+            ConfigSummaryOpenAiModelComboBox,
+            snapshot.SummaryOpenAiModel,
+            _openAiSummaryModels,
+            _openAiSummaryDefaultModel);
         ConfigSummaryRequestTimeoutTextBox.Text = snapshot.SummaryRequestTimeoutSecondsText;
         ConfigSummaryTranscriptChunkTargetTextBox.Text = snapshot.SummaryTranscriptChunkTokenTargetText;
         ConfigSummaryTranscriptChunkOverlapTextBox.Text = snapshot.SummaryTranscriptChunkOverlapTokensText;
@@ -7709,9 +8163,10 @@ public partial class MainWindow : Window
             UpdateBackgroundProcessingModeHelpText(backgroundProcessingMode);
         }
 
-        if (ConfigProcessingSpeedProfileComboBox.SelectedValue is ProcessingSpeedProfile processingSpeedProfile)
+        if (ConfigInitialProcessingStrategyComboBox.SelectedValue is InitialProcessingStrategy initialProcessingStrategy)
         {
-            UpdateProcessingSpeedProfileHelpText(processingSpeedProfile);
+            ConfigInitialProcessingStrategyHelpTextBlock.Text =
+                MainWindowInteractionLogic.BuildInitialProcessingStrategyHelpText(initialProcessingStrategy);
         }
 
         if (ConfigBackgroundSpeakerLabelingModeComboBox.SelectedValue is BackgroundSpeakerLabelingMode speakerLabelingMode)
@@ -7727,10 +8182,70 @@ public partial class MainWindow : Window
             MainWindowInteractionLogic.BuildBackgroundProcessingModeHelpText(mode, Environment.ProcessorCount);
     }
 
-    private void UpdateProcessingSpeedProfileHelpText(ProcessingSpeedProfile profile)
+    private IncrementalWorkPlan BuildIncrementalWorkPlanFromEditor()
     {
-        ConfigProcessingSpeedProfileHelpTextBlock.Text =
-            MainWindowInteractionLogic.BuildProcessingSpeedProfileHelpText(profile);
+        var plan = IncrementalWorkPlan.None;
+        if (ConfigIncrementalQueuedRecordingsCheckBox.IsChecked == true)
+        {
+            plan |= IncrementalWorkPlan.QueuedRecordings;
+        }
+        if (ConfigIncrementalSpeakerLabelsCheckBox.IsChecked == true)
+        {
+            plan |= IncrementalWorkPlan.DeferredSpeakerLabels;
+        }
+        if (ConfigIncrementalAiSummariesCheckBox.IsChecked == true)
+        {
+            plan |= IncrementalWorkPlan.MissingAiSummaries;
+        }
+        if (ConfigIncrementalSafeCleanupCheckBox.IsChecked == true)
+        {
+            plan |= IncrementalWorkPlan.SafeCleanup;
+        }
+        return plan;
+    }
+
+    private void UpdateIncrementalWorkAvailability()
+    {
+        var summariesEnabled = ConfigSummaryGenerationEnabledCheckBox.IsChecked == true;
+        // Keep an unavailable saved choice clearable rather than trapping it checked.
+        ConfigIncrementalAiSummariesCheckBox.IsEnabled = summariesEnabled ||
+            ConfigIncrementalAiSummariesCheckBox.IsChecked == true;
+        ConfigIncrementalAiSummariesCheckBox.ToolTip = summariesEnabled
+            ? _summaryProviderValidationIsCurrent
+                ? "Uses the validated provider, model, and reasoning effort configured below."
+                : "Validate the configured summary provider before scheduled summaries can run."
+            : "Enable AI summaries before scheduled summaries can run.";
+
+        var speakerLabelsAvailable = !string.IsNullOrWhiteSpace(_liveConfig.Current.DiarizationAssetPath) &&
+            Directory.Exists(_liveConfig.Current.DiarizationAssetPath);
+        ConfigIncrementalSpeakerLabelsCheckBox.IsEnabled = speakerLabelsAvailable ||
+            ConfigIncrementalSpeakerLabelsCheckBox.IsChecked == true;
+        ConfigIncrementalSpeakerLabelsCheckBox.ToolTip = speakerLabelsAvailable
+            ? "Queues only published transcripts that still need speaker labels."
+            : "Install or configure the speaker-labeling bundle before enabling this work.";
+    }
+
+    private void ApplyIncrementalWorkPlanToEditor(IncrementalWorkPlan plan)
+    {
+        ConfigIncrementalQueuedRecordingsCheckBox.IsChecked = plan.HasFlag(IncrementalWorkPlan.QueuedRecordings);
+        ConfigIncrementalSpeakerLabelsCheckBox.IsChecked = plan.HasFlag(IncrementalWorkPlan.DeferredSpeakerLabels);
+        ConfigIncrementalAiSummariesCheckBox.IsChecked = plan.HasFlag(IncrementalWorkPlan.MissingAiSummaries);
+        ConfigIncrementalSafeCleanupCheckBox.IsChecked = plan.HasFlag(IncrementalWorkPlan.SafeCleanup);
+    }
+
+    private void UpdateProcessingSchedulePresentation(AppConfig config)
+    {
+        var work = new List<string>();
+        if (config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.QueuedRecordings)) work.Add("queued recordings");
+        if (config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.DeferredSpeakerLabels)) work.Add("speaker labels");
+        if (config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries)) work.Add("AI summaries");
+        if (config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.SafeCleanup)) work.Add("safe cleanup");
+        var overnightStrategy = config.OvernightInitialProcessingStrategy == InitialProcessingStrategy.TranscriptFirst
+            ? "transcript first"
+            : "configured stages";
+        ConfigProcessingScheduleSummaryTextBlock.Text =
+            $"Idle: {(work.Count == 0 ? "manual only" : string.Join(", ", work))}. " +
+            $"Overnight {config.OvernightDrainStartLocal}-{config.OvernightDrainEndLocal}: five-item bursts; queued recordings use {overnightStrategy}.";
     }
 
     private void UpdateExternalProviderStatusText(AppConfig config)
@@ -7985,6 +8500,7 @@ public partial class MainWindow : Window
             }
 
             _ = EnsureConfiguredModelPathResolvedAsync($"config {e.Source.ToString().ToLowerInvariant()}", _lifetimeCts.Token);
+            TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
             if (meetingDataChanged)
             {
                 RequestMeetingRefreshForCurrentContext(
@@ -9529,6 +10045,11 @@ public partial class MainWindow : Window
         IReadOnlyList<MeetingOutputRecord> records,
         CancellationToken cancellationToken)
     {
+        var summaryConfig = _liveConfig.Current;
+        var hasOpenAiKey = summaryConfig.SummaryProviderPreference != MeetingSummaryProviderPreference.OpenAiOnly ||
+            !string.IsNullOrWhiteSpace(await _summarySecretStore.LoadAsync(SummarySecretKind.OpenAi, cancellationToken));
+        var canGenerateSummary = summaryConfig.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled && hasOpenAiKey;
+
         return await Task.Run(() =>
         {
             var manifestsByStem = LoadMeetingManifestsByStem(records, cancellationToken);
@@ -9554,13 +10075,22 @@ public partial class MainWindow : Window
 
                 var isTeamsPlaybackMergeReady = manifest?.TeamsRecordingPlayback is { } playback &&
                     DateTimeOffset.UtcNow - playback.LastObservedAtUtc >= TeamsRecordingPlaybackAbsentBeforeMerge;
+                var transcript = canGenerateSummary
+                    ? MeetingTranscriptDocumentReader.Read(record.JsonPath, record.MarkdownPath)
+                    : null;
+                var hasPublishedSummary =
+                    (transcript?.SummarizationStatus?.State == StageExecutionState.Succeeded && transcript.Summary is not null) ||
+                    (manifest?.SummarizationStatus.State == StageExecutionState.Succeeded && manifest.Summary is not null);
                 inspections.Add(new MeetingInspectionRecord(
                     record,
                     manifest,
                     suggestedTitle,
                     suggestedTitleSource,
                     isDiarizationReady,
-                    isTeamsPlaybackMergeReady));
+                    isTeamsPlaybackMergeReady,
+                    canGenerateSummary,
+                    transcript?.HasStructuredJson == true && transcript.StructuredSegments.Count > 0,
+                    hasPublishedSummary));
             }
 
             return (IReadOnlyList<MeetingInspectionRecord>)inspections;
@@ -9808,23 +10338,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var safeRecommendations = MainWindowInteractionLogic
-            .GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations);
-        var recommendationFingerprints = _meetingCleanupRecommendations
-            .Select(recommendation => recommendation.Fingerprint)
-            .ToHashSet(StringComparer.Ordinal);
-        var ledgerEntries = _meetingCleanupWorkLedgerService.GetEntries()
-            .Where(entry => recommendationFingerprints.Contains(entry.Fingerprint))
-            .ToArray();
-        var pendingCount = MeetingCleanupAutoApplyPlanner
-            .GetEligibleRecommendations(
-                _meetingCleanupRecommendations,
-                _meetingCleanupAutoApplyCacheService,
-                _meetingCleanupWorkLedgerService)
-            .Count;
-        var queuedCount = ledgerEntries.Count(entry => entry.State == CleanupWorkState.Queued);
-        var processingCount = ledgerEntries.Count(entry => entry.State == CleanupWorkState.Processing);
-        var manualReviewCount = ledgerEntries.Count(entry => entry.State is CleanupWorkState.ManualReview or CleanupWorkState.Failed);
+        var schedulerStatus = GetCleanupSchedulerStatus();
         var impactedMeetingCount = _meetingCleanupRecommendations
             .SelectMany(recommendation => recommendation.RelatedStems)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -9833,22 +10347,59 @@ public partial class MainWindow : Window
         var overnight = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current);
         var schedulerDetail = _recordingCoordinator.IsRecording
             ? "Automatic cleanup is paused by the live recording."
-            : processingCount > 0
+            : schedulerStatus.ProcessingCount > 0
                 ? "Automatic cleanup resumes after the current cleanup worker completes."
-                : queuedCount > 0
+                : schedulerStatus.QueuedCount > 0
                     ? $"Automatic cleanup is queued behind processing. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
+                    : !string.IsNullOrWhiteSpace(schedulerStatus.PrimaryBlocker)
+                        ? schedulerStatus.PrimaryBlocker
                     : overnight
-                        ? "Overnight batches allow up to 5 items."
-                        : "Daytime runs one item after normal work.";
+                        ? "Eligible work can run in overnight batches of up to 5 items."
+                        : "Eligible work runs one item after normal work.";
+        LogCleanupSchedulerStatus(schedulerStatus, schedulerDetail);
         MeetingCleanupReviewBannerTextBlock.Text = MainWindowInteractionLogic.BuildMeetingCleanupSchedulerBannerText(
             _meetingCleanupRecommendations.Length,
             impactedMeetingCount,
-            safeRecommendations.Count,
-            pendingCount,
-            queuedCount,
-            processingCount,
-            manualReviewCount,
+            schedulerStatus.SafeFixCount,
+            schedulerStatus.EligibleNowCount,
+            schedulerStatus.QueuedCount,
+            schedulerStatus.ProcessingCount,
+            schedulerStatus.DisabledSpeakerLabelCount,
+            schedulerStatus.BlockedSummaryCount,
+            schedulerStatus.DisabledCleanupCount,
+            schedulerStatus.ManualReviewCount,
             schedulerDetail);
+    }
+
+    private CleanupSchedulerStatus GetCleanupSchedulerStatus()
+    {
+        return MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            _meetingCleanupRecommendations,
+            _meetingCleanupWorkLedgerService,
+            IsScheduledIncrementalRecommendation,
+            IsSummaryBlockedBySchedule);
+    }
+
+    private bool IsSummaryBlockedBySchedule(MeetingCleanupRecommendation recommendation)
+    {
+        return recommendation.Action == MeetingCleanupAction.GenerateSummary &&
+               !IsScheduledIncrementalRecommendation(recommendation);
+    }
+
+    private void LogCleanupSchedulerStatus(CleanupSchedulerStatus status, string schedulerDetail)
+    {
+        var message =
+            $"Cleanup scheduler status changed. eligible={status.EligibleNowCount}, queued={status.QueuedCount}, " +
+            $"processing={status.ProcessingCount}, disabledLabels={status.DisabledSpeakerLabelCount}, " +
+            $"blockedSummaries={status.BlockedSummaryCount}, disabledCleanup={status.DisabledCleanupCount}, " +
+            $"manualReview={status.ManualReviewCount}. detail='{schedulerDetail}'";
+        if (string.Equals(message, _lastCleanupSchedulerStatusLog, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastCleanupSchedulerStatusLog = message;
+        _logger.Log(message);
     }
 
     private async Task TryAutoApplyMeetingCleanupSafeFixesAsync(
@@ -9862,17 +10413,23 @@ public partial class MainWindow : Window
             : 1;
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
-        var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetNextAutomaticBatch(
+        if (IsAutomaticCleanupSchedulerBlocked())
+        {
+            return;
+        }
+
+        var queueIsIdle = _processingQueue.GetStatusSnapshot().RunState == ProcessingQueueRunState.Idle;
+        var eligibleRecommendations = MeetingCleanupAutoApplyPlanner.GetNextScheduledBatch(
             visibleRecommendations,
-            _meetingCleanupAutoApplyCacheService,
-            automaticAttemptCount: 0,
             _meetingCleanupWorkLedgerService,
+            recommendation => IsScheduledIncrementalRecommendation(recommendation) &&
+                (queueIsIdle || recommendation.Action != MeetingCleanupAction.GenerateSummary),
             maximumBatchSize: Math.Max(0, maximumOutstanding - outstandingCleanupCount));
         if (!MeetingCleanupAutoApplyPlanner.ShouldStartAutomaticApply(
                 MeetingRefreshMode.Full,
                 refreshVersion == Volatile.Read(ref _meetingRefreshVersion),
                 IsShutdownRequested,
-                IsMeetingActionInProgress(),
+                IsAutomaticCleanupSchedulerBlocked(),
                 _isApplyingSafeMeetingCleanupFixes,
                 eligibleRecommendations.Count))
         {
@@ -9882,7 +10439,7 @@ public partial class MainWindow : Window
         _isApplyingSafeMeetingCleanupFixes = true;
         UpdateMeetingActionState();
         MeetingCleanupRecommendationsStatusTextBlock.Text =
-            $"Automatically applying {eligibleRecommendations.Count} safe cleanup fix(es)...";
+            $"Running {eligibleRecommendations.Count} scheduled incremental work item(s)...";
 
         try
         {
@@ -9918,6 +10475,29 @@ public partial class MainWindow : Window
             _isApplyingSafeMeetingCleanupFixes = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private IReadOnlyList<MeetingCleanupRecommendation> GetEligibleScheduledIncrementalRecommendations()
+    {
+        return MeetingCleanupAutoApplyPlanner.GetEligibleScheduledRecommendations(
+            _meetingCleanupRecommendations,
+            _meetingCleanupWorkLedgerService,
+            IsScheduledIncrementalRecommendation);
+    }
+
+    private bool IsScheduledIncrementalRecommendation(MeetingCleanupRecommendation recommendation)
+    {
+        var plan = _liveConfig.Current.IncrementalWorkPlan;
+        return recommendation.Action switch
+        {
+            MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels =>
+                plan.HasFlag(IncrementalWorkPlan.DeferredSpeakerLabels),
+            MeetingCleanupAction.GenerateSummary =>
+                plan.HasFlag(IncrementalWorkPlan.MissingAiSummaries) &&
+                _summaryProviderValidationIsCurrent,
+            _ => plan.HasFlag(IncrementalWorkPlan.SafeCleanup) &&
+                MainWindowInteractionLogic.IsSafeMeetingCleanupRecommendation(recommendation),
+        };
     }
 
     private async Task ExecuteAutomaticMeetingCleanupRecommendationAsync(
@@ -10132,6 +10712,24 @@ public partial class MainWindow : Window
                 }
 
                 await QueueSpeakerLabelRepairAsync(repairSpeakerLabelMeeting, cancellationToken, processingPriority, cleanupFingerprint);
+                return;
+
+            case MeetingCleanupAction.GenerateSummary:
+                if (!meetingsByStem.TryGetValue(recommendation.PrimaryStem, out var summaryMeeting))
+                {
+                    return;
+                }
+
+                var summaryResult = await _publishedMeetingSummaryService.GenerateAsync(
+                    summaryMeeting,
+                    _liveConfig.Current,
+                    cancellationToken);
+                if (summaryResult.Status.State != StageExecutionState.Succeeded)
+                {
+                    throw new InvalidOperationException(
+                        summaryResult.Status.Message ?? "AI summary generation did not produce a usable summary.");
+                }
+
                 return;
 
             case MeetingCleanupAction.Split:
@@ -12603,7 +13201,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record SelectionOption<TValue>(TValue Value, string Label);
+    private sealed record SelectionOption<TValue>(TValue Value, string Label, bool IsEnabled = true);
 
     private sealed class MeetingListRow
     {
@@ -12831,6 +13429,7 @@ public partial class MainWindow : Window
                 MeetingCleanupAction.RegenerateTranscript => "Retry Transcript",
                 MeetingCleanupAction.GenerateSpeakerLabels => "Add Speaker Labels",
                 MeetingCleanupAction.RepairSpeakerLabels => "Repair Speaker Labels",
+                MeetingCleanupAction.GenerateSummary => "Generate AI Summary",
                 _ => "Review",
             };
             ConfidenceLabel = source.Confidence.ToString();

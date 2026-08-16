@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Services;
 using System.Net;
 using System.Net.Http.Headers;
@@ -24,10 +25,10 @@ public sealed class ModelProxyClientTests
         Assert.Equal("http://127.0.0.1:8645/v1/responses", handler.Request.RequestUri!.ToString());
         Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
         Assert.Equal("sk-modelproxy-meeting-recorder", handler.Request.Headers.Authorization.Parameter);
-        Assert.Equal("app-server", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("codex", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
         Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
-        Assert.Contains("\"model\":\"gpt-5.4-mini\"", handler.Body, StringComparison.Ordinal);
+        Assert.Contains("\"model\":\"gpt-5.6-luna\"", handler.Body, StringComparison.Ordinal);
         Assert.Contains("\"input\"", handler.Body, StringComparison.Ordinal);
         Assert.Contains("\"type\":\"input_text\"", handler.Body, StringComparison.Ordinal);
         Assert.Contains("\"role\":\"user\"", handler.Body, StringComparison.Ordinal);
@@ -77,15 +78,22 @@ public sealed class ModelProxyClientTests
                     """
                     {
                       "object": "list",
+                      "default_model": "gpt-5.6-luna",
+                      "modelproxy": {
+                        "catalog_state": "live",
+                        "catalog_source": "app_server_model_list",
+                        "audio_capability": "unsupported"
+                      },
                       "data": [
                         {
-                          "id": "gpt-5.4-mini",
+                          "id": "gpt-5.6-luna",
                           "object": "model",
                           "owned_by": "modelproxy",
                           "created": 1710000000,
                           "default": true,
                           "backend": "codex",
-                          "default_backend_model": "ignored-legacy-field"
+                          "default_backend_model": "ignored-legacy-field",
+                          "reasoning_efforts": ["medium", "high"]
                         },
                         {
                           "id": "gpt-5.5",
@@ -109,16 +117,53 @@ public sealed class ModelProxyClientTests
         Assert.Equal("http://127.0.0.1:8645/v1/models", handler.Request.RequestUri!.ToString());
         Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
         Assert.Equal("sk-modelproxy-meeting-recorder", handler.Request.Headers.Authorization.Parameter);
-        Assert.Equal("gpt-5.4-mini", catalog.ResolveModel());
+        Assert.Equal("gpt-5.6-luna", catalog.ResolveModel());
+        Assert.Equal("gpt-5.6-luna", catalog.DefaultModel);
+        Assert.Equal("live", catalog.CatalogState);
+        Assert.Equal("app_server_model_list", catalog.CatalogSource);
+        Assert.Equal("unsupported", catalog.AudioCapability);
         Assert.Equal("gpt-5.5", catalog.ResolveModel(" gpt-5.5 "));
         Assert.Equal(2, catalog.Models.Count);
         Assert.Equal("model", catalog.Models[0].ObjectType);
         Assert.Equal(1710000000, catalog.Models[0].Created);
         Assert.Equal("modelproxy", catalog.Models[0].OwnedBy);
+        Assert.True(catalog.Models[0].IsDefault);
+        Assert.Equal(
+            [SummaryReasoningEffort.Medium, SummaryReasoningEffort.High],
+            catalog.Models[0].SupportedReasoningEfforts);
     }
 
     [Fact]
-    public async Task SummaryChatClient_Posts_No_Search_AppServer_ModelProxy_Request()
+    public async Task SummaryChatClient_Sends_Selected_Reasoning_Effort_And_Omits_Provider_Default()
+    {
+        using var selectedHandler = new CapturingHandler(CreateResponsesTextHttpResponse("summary-provider-ok"));
+        using var selectedHttpClient = new HttpClient(selectedHandler);
+        var selectedClient = new SummaryChatClient(selectedHttpClient);
+        var selectedRequest = new SummaryChatRequest(
+            "gpt-5.4-mini",
+            [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
+            TimeSpan.FromSeconds(120))
+        {
+            ReasoningEffort = SummaryReasoningEffort.Medium,
+        };
+
+        _ = await selectedClient.CompleteAsync(SummaryChatProviderOptions.ForModelProxy(), selectedRequest);
+
+        Assert.Contains("\"reasoning\":{\"effort\":\"medium\"}", selectedHandler.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"text\":{\"format\"", selectedHandler.Body, StringComparison.Ordinal);
+
+        using var defaultHandler = new CapturingHandler(CreateResponsesTextHttpResponse("summary-provider-ok"));
+        using var defaultHttpClient = new HttpClient(defaultHandler);
+        var defaultClient = new SummaryChatClient(defaultHttpClient);
+        var defaultRequest = selectedRequest with { ReasoningEffort = SummaryReasoningEffort.ProviderDefault };
+
+        _ = await defaultClient.CompleteAsync(SummaryChatProviderOptions.ForModelProxy(), defaultRequest);
+
+        Assert.DoesNotContain("\"reasoning\"", defaultHandler.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SummaryChatClient_Posts_No_Search_Codex_ModelProxy_Request()
     {
         using var handler = new CapturingHandler(
             CreateResponsesTextHttpResponse("summary-provider-ok"));
@@ -126,7 +171,7 @@ public sealed class ModelProxyClientTests
         var client = new SummaryChatClient(httpClient);
         var providerOptions = SummaryChatProviderOptions.ForModelProxy(
             "sk-modelproxy-test",
-            backend: "app-server",
+            backend: "codex",
             webSearchEnabled: false);
         var request = new SummaryChatRequest(
             "gpt-5.4-mini",
@@ -138,7 +183,7 @@ public sealed class ModelProxyClientTests
         Assert.Equal("summary-provider-ok", result.Content);
         Assert.NotNull(handler.Request);
         Assert.Equal("http://127.0.0.1:8645/v1/responses", handler.Request!.RequestUri!.ToString());
-        Assert.Equal("app-server", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("codex", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
         Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
         Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         AssertDoesNotContainModelProxyOnlyBodyFields(handler.Body);
@@ -341,7 +386,7 @@ public sealed class ModelProxyClientTests
     }
 
     [Fact]
-    public async Task SummaryChatClient_Forced_AppServer_WebSearch_400_Surfaces_Capability_Message_Without_Secrets()
+    public async Task SummaryChatClient_ModelProxy_400_Fails_Without_Retrying_Or_Leaking_Request_Content()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
         {
@@ -350,10 +395,10 @@ public sealed class ModelProxyClientTests
                 """
                 {
                   "detail": {
-                    "category": "unsupported_web_search_backend",
+                    "category": "invalid_request",
                     "message": "raw prompt text should not leak",
                     "request_id": "mp-test",
-                    "backend": "app-server"
+                    "backend": "codex"
                   }
                 }
                 """,
@@ -361,18 +406,14 @@ public sealed class ModelProxyClientTests
                 "application/json"),
         };
         response.Headers.TryAddWithoutValidation("X-ModelProxy-Request-Id", "mp-test");
-        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "app-server");
-        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "app-server");
-        response.Headers.TryAddWithoutValidation("X-ModelProxy-Web-Search-Backend", "unsupported");
-        response.Headers.TryAddWithoutValidation("X-ModelProxy-App-Server-Web-Search-Supported", "false");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Requested-Backend", "codex");
+        response.Headers.TryAddWithoutValidation("X-ModelProxy-Effective-Backend", "codex");
 
         using var handler = new CapturingHandler(response);
         using var httpClient = new HttpClient(handler);
         var client = new SummaryChatClient(httpClient);
         var providerOptions = SummaryChatProviderOptions.ForModelProxy(
-            "sk-modelproxy-secret",
-            backend: "app-server",
-            webSearchEnabled: true);
+            "sk-modelproxy-secret");
         var request = new SummaryChatRequest(
             "gpt-5.4-mini",
             [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: private prompt marker")],
@@ -382,14 +423,12 @@ public sealed class ModelProxyClientTests
             client.CompleteAsync(providerOptions, request));
 
         Assert.Contains("HTTP 400", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("App-server web search is not available", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("retry without web search", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("mp-test", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("raw prompt text should not leak", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("private prompt marker", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("sk-modelproxy-secret", exception.Message, StringComparison.Ordinal);
-        Assert.Equal("app-server", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
-        Assert.Equal("true", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
+        Assert.Equal("codex", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("false", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
     }
 
     [Fact]
@@ -441,7 +480,7 @@ public sealed class ModelProxyClientTests
         Assert.Equal(SummaryChatProviderKind.ModelProxy, result.ProviderKind);
         Assert.NotNull(handler.Request);
         Assert.Equal("sk-modelproxy-meeting-recorder", handler.Request!.Headers.Authorization!.Parameter);
-        Assert.Equal("app-server", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
+        Assert.Equal("codex", Assert.Single(handler.Request.Headers.GetValues("X-ModelProxy-Backend")));
         Assert.False(handler.Request.Headers.Contains("X-ModelProxy-Codex-Model"));
         Assert.Contains("summary-provider-ok", handler.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("transcript", handler.Body, StringComparison.OrdinalIgnoreCase);
@@ -468,6 +507,7 @@ public sealed class ModelProxyClientTests
                         "request_id": "mp-busy-1",
                         "backend": "app-server",
                         "requested_backend": "app-server",
+                        "retryable": true,
                         "next_step": "Retry shortly."
                       }
                     }
@@ -489,7 +529,7 @@ public sealed class ModelProxyClientTests
         Assert.Equal(2, handler.Requests.Count);
         foreach (var capturedRequest in handler.Requests)
         {
-            Assert.Equal("app-server", Assert.Single(capturedRequest.Request.Headers.GetValues("X-ModelProxy-Backend")));
+            Assert.Equal("codex", Assert.Single(capturedRequest.Request.Headers.GetValues("X-ModelProxy-Backend")));
             Assert.Equal("false", Assert.Single(capturedRequest.Request.Headers.GetValues("X-ModelProxy-Web-Search")));
             Assert.DoesNotContain("transcript", capturedRequest.Body, StringComparison.OrdinalIgnoreCase);
         }
@@ -608,7 +648,7 @@ public sealed class ModelProxyClientTests
     }
 
     [Fact]
-    public void ModelProxyAudioContract_Requires_Advertised_Audio_Model_Before_Remote_Audio()
+    public void ModelProxyAudioContract_Remains_Fail_Closed_When_Audio_Models_Appear()
     {
         var catalog = new ModelProxyModelCatalog(
             [
@@ -616,7 +656,7 @@ public sealed class ModelProxyClientTests
                 new ModelProxyModelInfo(ModelProxyAudioContract.TranscriptionModel, "model", 1710000001, "modelproxy"),
             ]);
 
-        Assert.True(ModelProxyAudioContract.CanUseRemoteAudio(catalog, diarized: false));
+        Assert.False(ModelProxyAudioContract.CanUseRemoteAudio(catalog, diarized: false));
         Assert.False(ModelProxyAudioContract.CanUseRemoteAudio(catalog, diarized: true));
     }
 
@@ -642,7 +682,7 @@ public sealed class ModelProxyClientTests
     }
 
     [Fact]
-    public async Task SummaryChatClient_Sends_LocalOnly_Cloud_Deny_Header_When_Requested()
+    public async Task SummaryChatClient_Does_Not_Send_Legacy_Cloud_Deny_Header()
     {
         using var handler = new CapturingHandler(CreateResponsesTextHttpResponse("summary-provider-ok"));
         using var httpClient = new HttpClient(handler);
@@ -652,14 +692,9 @@ public sealed class ModelProxyClientTests
             [new SummaryChatMessage(SummaryChatRole.User, "Reply exactly: summary-provider-ok")],
             TimeSpan.FromSeconds(120));
 
-        await client.CompleteAsync(
-            SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test") with
-            {
-                ModelProxyCloudDenied = true,
-            },
-            request);
+        await client.CompleteAsync(SummaryChatProviderOptions.ForModelProxy("sk-modelproxy-test"), request);
 
-        Assert.Equal("deny", Assert.Single(handler.Request!.Headers.GetValues("X-ModelProxy-Cloud")));
+        Assert.False(handler.Request!.Headers.Contains("X-ModelProxy-Cloud"));
     }
 
     private static HttpResponseMessage CreateBackendBusyResponse(string requestId)
@@ -677,6 +712,7 @@ public sealed class ModelProxyClientTests
                     "request_id": "{{requestId}}",
                     "backend": "app-server",
                     "requested_backend": "app-server",
+                    "retryable": true,
                     "next_step": "Retry shortly."
                   }
                 }

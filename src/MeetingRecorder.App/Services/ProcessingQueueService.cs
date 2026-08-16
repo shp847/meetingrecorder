@@ -139,6 +139,13 @@ internal sealed class ProcessingQueueService
         }
 
         var pending = (await _manifestStore.FindPendingManifestPathsAsync(_config.Current.WorkDir, cancellationToken)).ToList();
+        if (!_config.Current.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.QueuedRecordings))
+        {
+            _logger.Log("Left existing queued recordings pending because queued-recording background work is disabled.");
+            PublishStatusSnapshot(UpdateStatusSnapshot());
+            return;
+        }
+
         if (_config.Current.RushProcessingRequest is { } rushRequest)
         {
             var rushIndex = pending.FindIndex(path => string.Equals(path, rushRequest.ManifestPath, StringComparison.Ordinal));

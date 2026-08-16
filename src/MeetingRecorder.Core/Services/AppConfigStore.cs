@@ -7,6 +7,9 @@ namespace MeetingRecorder.Core.Services;
 
 public sealed class AppConfigStore : IConfigStore<AppConfig>
 {
+    private const int CurrentIncrementalWorkPlanMigrationVersion = 1;
+    private const int CurrentSummaryModelProxyContractMigrationVersion = 1;
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -183,11 +186,19 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             OvernightDrainStartLocal = "22:00",
             OvernightDrainEndLocal = "06:00",
             PreviousProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
+            ProcessingScheduleMigrationApplied = true,
+            InitialProcessingStrategy = InitialProcessingStrategy.ConfiguredStages,
+            OvernightInitialProcessingStrategy = InitialProcessingStrategy.ConfiguredStages,
+            IncrementalWorkPlan = IncrementalWorkPlan.QueuedRecordings |
+                                  IncrementalWorkPlan.DeferredSpeakerLabels |
+                                  IncrementalWorkPlan.SafeCleanup,
+            IncrementalWorkPlanMigrationVersion = CurrentIncrementalWorkPlanMigrationVersion,
             SpeakerNameLearningMode = SpeakerNameLearningMode.LocalAutoLearn,
             SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
             SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
             SummaryModelProxyBaseUrl = MeetingSummaryDefaults.ModelProxyBaseUrl,
-            SummaryModelProxyModel = MeetingSummaryDefaults.ModelProxyModel,
+            SummaryModelProxyModel = string.Empty,
+            SummaryModelProxyContractMigrationVersion = CurrentSummaryModelProxyContractMigrationVersion,
             SummaryOpenAiModel = MeetingSummaryDefaults.OpenAiModel,
             SummaryRequestTimeoutSeconds = MeetingSummaryDefaults.RequestTimeoutSeconds,
             SummaryTranscriptChunkTokenTarget = MeetingSummaryDefaults.TranscriptChunkTokenTarget,
@@ -298,6 +309,17 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             config.SummaryTranscriptChunkOverlapTokens >= summaryTranscriptChunkTarget
                 ? defaults.SummaryTranscriptChunkOverlapTokens
                 : config.SummaryTranscriptChunkOverlapTokens;
+        var summaryModelProxyContractMigrationVersion = Math.Max(0, config.SummaryModelProxyContractMigrationVersion);
+        var summaryModelProxyModel = NormalizeOptionalText(config.SummaryModelProxyModel);
+        if (summaryModelProxyContractMigrationVersion < CurrentSummaryModelProxyContractMigrationVersion)
+        {
+            if (string.Equals(summaryModelProxyModel, "gpt-5.4-mini", StringComparison.OrdinalIgnoreCase))
+            {
+                summaryModelProxyModel = string.Empty;
+            }
+
+            summaryModelProxyContractMigrationVersion = CurrentSummaryModelProxyContractMigrationVersion;
+        }
         if (speakerNameSuggestionThreshold > speakerNameAutoApplyThreshold)
         {
             speakerNameSuggestionThreshold = defaults.SpeakerNameSuggestionConfidenceThreshold;
@@ -306,6 +328,40 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         {
             speakerLabelingSecurityPromptMigrationApplied = true;
             backgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred;
+        }
+
+        var legacyProfile = NormalizeEnum(config.ProcessingSpeedProfile, defaults.ProcessingSpeedProfile);
+        var initialProcessingStrategy = NormalizeEnum(
+            config.InitialProcessingStrategy,
+            defaults.InitialProcessingStrategy);
+        var overnightInitialProcessingStrategy = NormalizeEnum(
+            config.OvernightInitialProcessingStrategy,
+            defaults.OvernightInitialProcessingStrategy);
+        var incrementalWorkPlan = NormalizeIncrementalWorkPlan(config.IncrementalWorkPlan);
+        var incrementalWorkPlanMigrationVersion = Math.Max(0, config.IncrementalWorkPlanMigrationVersion);
+        var processingScheduleMigrationApplied = config.ProcessingScheduleMigrationApplied;
+        if (!processingScheduleMigrationApplied)
+        {
+            initialProcessingStrategy = legacyProfile == ProcessingSpeedProfile.TranscriptOnlyDrain
+                ? InitialProcessingStrategy.TranscriptFirst
+                : InitialProcessingStrategy.ConfiguredStages;
+            overnightInitialProcessingStrategy = legacyProfile == ProcessingSpeedProfile.OvernightDrain
+                ? InitialProcessingStrategy.TranscriptFirst
+                : initialProcessingStrategy;
+            incrementalWorkPlan = IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup;
+            processingScheduleMigrationApplied = true;
+        }
+
+        if (incrementalWorkPlanMigrationVersion < CurrentIncrementalWorkPlanMigrationVersion)
+        {
+            // Ready local installs can include labels in their bounded background plan.
+            if (!string.IsNullOrWhiteSpace(config.DiarizationAssetPath) &&
+                Directory.Exists(config.DiarizationAssetPath.Trim()))
+            {
+                incrementalWorkPlan |= IncrementalWorkPlan.DeferredSpeakerLabels;
+            }
+
+            incrementalWorkPlanMigrationVersion = CurrentIncrementalWorkPlanMigrationVersion;
         }
 
         return config with
@@ -341,16 +397,24 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,
-            ProcessingSpeedProfile = NormalizeEnum(config.ProcessingSpeedProfile, defaults.ProcessingSpeedProfile),
+            // Retained for deserializing old config files. New saves use the explicit schedule fields below.
+            ProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
             OvernightDrainStartLocal = NormalizeLocalTimeText(config.OvernightDrainStartLocal, defaults.OvernightDrainStartLocal),
             OvernightDrainEndLocal = NormalizeLocalTimeText(config.OvernightDrainEndLocal, defaults.OvernightDrainEndLocal),
             PreviousProcessingSpeedProfile = NormalizeEnum(config.PreviousProcessingSpeedProfile, defaults.PreviousProcessingSpeedProfile),
+            ProcessingScheduleMigrationApplied = processingScheduleMigrationApplied,
+            InitialProcessingStrategy = initialProcessingStrategy,
+            OvernightInitialProcessingStrategy = overnightInitialProcessingStrategy,
+            IncrementalWorkPlan = incrementalWorkPlan,
+            IncrementalWorkPlanMigrationVersion = incrementalWorkPlanMigrationVersion,
             SpeakerNameLearningMode = NormalizeEnum(config.SpeakerNameLearningMode, defaults.SpeakerNameLearningMode),
             SummaryGenerationMode = NormalizeEnum(config.SummaryGenerationMode, defaults.SummaryGenerationMode),
             SummaryProviderPreference = NormalizeEnum(config.SummaryProviderPreference, defaults.SummaryProviderPreference),
             SummaryModelProxyBaseUrl = NormalizeOptionalSummaryText(config.SummaryModelProxyBaseUrl, defaults.SummaryModelProxyBaseUrl).TrimEnd('/'),
-            SummaryModelProxyModel = NormalizeOptionalSummaryText(config.SummaryModelProxyModel, defaults.SummaryModelProxyModel),
+            SummaryModelProxyModel = summaryModelProxyModel,
+            SummaryModelProxyContractMigrationVersion = summaryModelProxyContractMigrationVersion,
             SummaryOpenAiModel = NormalizeOptionalSummaryText(config.SummaryOpenAiModel, defaults.SummaryOpenAiModel),
+            SummaryReasoningEffort = NormalizeEnum(config.SummaryReasoningEffort, defaults.SummaryReasoningEffort),
             SummaryRequestTimeoutSeconds = config.SummaryRequestTimeoutSeconds <= 0
                 ? defaults.SummaryRequestTimeoutSeconds
                 : config.SummaryRequestTimeoutSeconds,
@@ -634,6 +698,16 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         return legacyPaths.Any(path => PathsEqual(path, normalizedConfiguredPath))
             ? defaultPath
             : configuredPath;
+    }
+
+    private static IncrementalWorkPlan NormalizeIncrementalWorkPlan(IncrementalWorkPlan value)
+    {
+        const IncrementalWorkPlan known =
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.MissingAiSummaries |
+            IncrementalWorkPlan.SafeCleanup;
+        return value & known;
     }
 
     private static void MigrateManagedPublishedOutputsIfNeeded(

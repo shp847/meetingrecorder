@@ -98,37 +98,54 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var activeCandidate = candidate;
 
-            try
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                var content = chunks.Count == 1
-                    ? await SummarizeSingleChunkAsync(candidate, chunks[0], request.Config, cancellationToken)
-                    : await SummarizeAndCombineChunksAsync(candidate, chunks, request.Config, cancellationToken);
-                var summary = new MeetingSummary(
-                    content.Overview,
-                    content.KeyPoints,
-                    content.Decisions,
-                    content.ActionItems,
-                    content.RisksAndOpenQuestions,
-                    new MeetingSummaryProviderInfo(
-                        candidate.ProviderOptions.ProviderKind,
-                        candidate.ProviderOptions.ProviderName,
-                        candidate.Model,
-                        candidate.FallbackUsed,
-                        content.ModelProxyRouting),
-                    DateTimeOffset.UtcNow,
-                    fingerprint);
-                return new MeetingSummaryResult(
-                    new ProcessingStageStatus(
-                        "summarization",
-                        StageExecutionState.Succeeded,
+                try
+                {
+                    var content = chunks.Count == 1
+                        ? await SummarizeSingleChunkAsync(activeCandidate, chunks[0], request.Config, cancellationToken)
+                        : await SummarizeAndCombineChunksAsync(activeCandidate, chunks, request.Config, cancellationToken);
+                    var summary = new MeetingSummary(
+                        content.Overview,
+                        content.KeyPoints,
+                        content.Decisions,
+                        content.ActionItems,
+                        content.RisksAndOpenQuestions,
+                        new MeetingSummaryProviderInfo(
+                            activeCandidate.ProviderOptions.ProviderKind,
+                            activeCandidate.ProviderOptions.ProviderName,
+                            activeCandidate.Model,
+                            activeCandidate.FallbackUsed,
+                            content.ModelProxyRouting),
                         DateTimeOffset.UtcNow,
-                        "Summary generated."),
-                    summary);
-            }
-            catch (Exception exception) when (IsProviderFailure(exception))
-            {
-                failureMessages.Add(BuildSafeFailureMessage(candidate.ProviderOptions.ProviderName, exception));
+                        fingerprint);
+                    return new MeetingSummaryResult(
+                        new ProcessingStageStatus(
+                            "summarization",
+                            StageExecutionState.Succeeded,
+                            DateTimeOffset.UtcNow,
+                            "Summary generated."),
+                        summary);
+                }
+                catch (ModelProxyRequestException exception) when (
+                    attempt == 0 &&
+                    activeCandidate.UsesModelProxyDefault &&
+                    exception.RequiresCatalogRefresh)
+                {
+                    var refreshed = await ResolveModelProxyModelAsync(
+                        activeCandidate.ProviderOptions,
+                        request.Config.SummaryModelProxyModel,
+                        request.Config.SummaryReasoningEffort,
+                        cancellationToken);
+                    activeCandidate = activeCandidate with { Model = refreshed.Model };
+                }
+                catch (Exception exception) when (IsProviderFailure(exception))
+                {
+                    failureMessages.Add(BuildSafeFailureMessage(activeCandidate.ProviderOptions.ProviderName, exception));
+                    break;
+                }
             }
         }
 
@@ -158,18 +175,17 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
 
             var providerOptions = SummaryChatProviderOptions.ForModelProxy(
                 apiKey,
-                config.SummaryModelProxyBaseUrl) with
-            {
-                ModelProxyCloudDenied = config.SummaryProviderPreference == MeetingSummaryProviderPreference.LocalOnly,
-            };
-            var model = await ResolveModelProxyModelAsync(
+                config.SummaryModelProxyBaseUrl);
+            var resolution = await ResolveModelProxyModelAsync(
                 providerOptions,
                 config.SummaryModelProxyModel,
+                config.SummaryReasoningEffort,
                 cancellationToken);
             candidates.Add(new ProviderCandidate(
                 providerOptions,
-                model,
-                FallbackUsed: false));
+                resolution.Model,
+                FallbackUsed: false,
+                UsesModelProxyDefault: string.IsNullOrWhiteSpace(config.SummaryModelProxyModel)));
         }
 
         async Task AddOpenAiAsync(bool fallbackUsed)
@@ -183,7 +199,8 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
             candidates.Add(new ProviderCandidate(
                 SummaryChatProviderOptions.ForOpenAi(secret),
                 config.SummaryOpenAiModel,
-                fallbackUsed));
+                fallbackUsed,
+                UsesModelProxyDefault: false));
         }
 
         switch (config.SummaryProviderPreference)
@@ -207,29 +224,36 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         return candidates;
     }
 
-    private async Task<string> ResolveModelProxyModelAsync(
+    private async Task<ModelProxyModelResolution> ResolveModelProxyModelAsync(
         SummaryChatProviderOptions providerOptions,
         string configuredModel,
+        SummaryReasoningEffort reasoningEffort,
         CancellationToken cancellationToken)
     {
-        var normalizedConfiguredModel = NormalizeModelName(configuredModel, MeetingSummaryDefaults.ModelProxyModel);
-        if (!string.Equals(normalizedConfiguredModel, MeetingSummaryDefaults.ModelProxyModel, StringComparison.OrdinalIgnoreCase))
+        if (_modelCatalogClient is null)
         {
-            return normalizedConfiguredModel;
+            return new ModelProxyModelResolution(
+                NormalizeModelName(configuredModel, MeetingSummaryDefaults.ModelProxyModel),
+                null);
         }
 
-        if (_modelCatalogClient is not null)
+        var catalog = await _modelCatalogClient.GetModelsAsync(providerOptions, cancellationToken);
+        var model = catalog.ResolveModel(configuredModel);
+        if (!catalog.ContainsModel(model))
         {
-            try
-            {
-                await _modelCatalogClient.GetModelsAsync(providerOptions, cancellationToken);
-            }
-            catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or JsonException or ArgumentException)
-            {
-            }
+            throw new InvalidOperationException($"ModelProxy model '{model}' is not in the current catalog.");
         }
 
-        return normalizedConfiguredModel;
+        var supportedEfforts = catalog.Models.First(modelInfo =>
+                string.Equals(modelInfo.Id, model, StringComparison.OrdinalIgnoreCase))
+            .SupportedReasoningEfforts;
+        if (reasoningEffort != SummaryReasoningEffort.ProviderDefault &&
+            (supportedEfforts is null || !supportedEfforts.Contains(reasoningEffort)))
+        {
+            throw new InvalidOperationException($"ModelProxy model '{model}' does not advertise {reasoningEffort} reasoning effort.");
+        }
+
+        return new ModelProxyModelResolution(model, catalog);
     }
 
     private async Task<MeetingSummaryContent> SummarizeSingleChunkAsync(
@@ -241,7 +265,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
         var timeoutSeconds = GetSummaryRequestTimeoutSeconds(candidate, config);
         var response = await _chatClient.CompleteAsync(
             candidate.ProviderOptions,
-            BuildSummaryRequest(candidate.Model, transcriptChunk, timeoutSeconds),
+            BuildSummaryRequest(candidate.Model, transcriptChunk, timeoutSeconds, config.SummaryReasoningEffort),
             cancellationToken);
         return ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content) with
         {
@@ -264,7 +288,8 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 BuildSummaryRequest(
                     candidate.Model,
                     $"Transcript chunk {index + 1} of {chunks.Count}:{Environment.NewLine}{chunks[index]}",
-                    timeoutSeconds),
+                    timeoutSeconds,
+                    config.SummaryReasoningEffort),
                 cancellationToken);
             partialSummaries.Add(ParseSummaryContent(candidate.ProviderOptions.ProviderName, response.Content));
         }
@@ -295,6 +320,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 TimeSpan.FromSeconds(timeoutSeconds))
             {
                 JsonOutput = true,
+                ReasoningEffort = config.SummaryReasoningEffort,
             },
             cancellationToken);
         return ParseSummaryContent(candidate.ProviderOptions.ProviderName, combineResponse.Content) with
@@ -318,7 +344,8 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
     private static SummaryChatRequest BuildSummaryRequest(
         string model,
         string transcriptText,
-        int timeoutSeconds)
+        int timeoutSeconds,
+        SummaryReasoningEffort reasoningEffort)
     {
         var prompt = $$"""
         Summarize this speaker-labeled transcript. Use only the transcript content below.
@@ -343,6 +370,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
             TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)))
         {
             JsonOutput = true,
+            ReasoningEffort = reasoningEffort,
         };
     }
 
@@ -496,7 +524,12 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
     private sealed record ProviderCandidate(
         SummaryChatProviderOptions ProviderOptions,
         string Model,
-        bool FallbackUsed);
+        bool FallbackUsed,
+        bool UsesModelProxyDefault);
+
+    private sealed record ModelProxyModelResolution(
+        string Model,
+        ModelProxyModelCatalog? Catalog);
 
     private sealed record MeetingSummaryContent(
         string Overview,

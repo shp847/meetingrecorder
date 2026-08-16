@@ -215,9 +215,8 @@ public sealed class MeetingSummarizationProviderTests
         var call = Assert.Single(chatClient.Calls);
         Assert.Equal(MeetingSummaryDefaults.ModelProxyModel, call.Request.Model);
         Assert.Equal(MeetingSummaryDefaults.ModelProxyModel, result.Summary!.Provider.Model);
-        Assert.Equal("app-server", call.ProviderOptions.ModelProxyBackend);
+        Assert.Equal("codex", call.ProviderOptions.ModelProxyBackend);
         Assert.False(call.ProviderOptions.ModelProxyWebSearchEnabled);
-        Assert.True(call.ProviderOptions.ModelProxyCloudDenied);
     }
 
     [Fact]
@@ -243,7 +242,7 @@ public sealed class MeetingSummarizationProviderTests
     }
 
     [Fact]
-    public async Task SummarizeAsync_Does_Not_Deny_ModelProxy_Cloud_When_Fallback_Preference_Is_Enabled()
+    public async Task SummarizeAsync_Uses_Codex_ModelProxy_Routing_When_Fallback_Preference_Is_Enabled()
     {
         var secrets = new TrackingSummarySecretStore
         {
@@ -262,7 +261,7 @@ public sealed class MeetingSummarizationProviderTests
             CancellationToken.None);
 
         var call = Assert.Single(chatClient.Calls);
-        Assert.False(call.ProviderOptions.ModelProxyCloudDenied);
+        Assert.Equal("codex", call.ProviderOptions.ModelProxyBackend);
         Assert.False(call.ProviderOptions.ModelProxyWebSearchEnabled);
     }
 

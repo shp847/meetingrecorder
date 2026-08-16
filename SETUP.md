@@ -104,14 +104,14 @@ Local-first setup uses ModelProxy:
 - ModelProxy should be running on `127.0.0.1:8645`.
 - Meeting Recorder should call `http://127.0.0.1:8645/v1/responses` for transcript enrichment.
 - Meeting Recorder uses ModelProxy's documented local default key automatically; the Settings screen only asks for the local base URL and model.
-- Model discovery uses `GET http://127.0.0.1:8645/v1/models` as an OpenAI-shaped model list only. Meeting Recorder defaults to `gpt-5.4-mini` unless Settings names another model.
-- Summary and validation requests must send `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. Local-only summary requests also send `X-ModelProxy-Cloud: deny`. ModelProxy enables public web search by default for requests that do not opt out.
-- Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, app-server web-search support, and fallback reason. Safe routing headers are persisted with summary provider metadata when present. A web-enabled request may route to CLI search when app-server search has not been proved safe.
-- Streaming clients must ignore SSE comment lines beginning with `:` and parse terminal `event: error` frames as structured ModelProxy failures. A `cli_timeout` terminal stream error means the local endpoint was reachable and the effective CLI web-search backend timed out.
-- `backend_busy` means temporary ModelProxy saturation. Meeting Recorder retries it with short backoff and should not report the endpoint as unreachable while `/v1/models` is reachable.
+- Settings uses refreshable provider model choices. ModelProxy discovery reads `GET http://127.0.0.1:8645/v1/models`; the default selection follows the model marked `default: true` (currently `gpt-5.6-luna`) while explicit custom values are preserved. OpenAI discovery is available only after an OpenAI key is saved. Both selectors offer an explicit Custom model field rather than silently replacing a configured value.
+- Reasoning effort defaults to Medium for new and migrated settings. Select Provider default to omit the field, or choose an advertised supported level. Higher effort can increase latency and local resource use.
+- Summary and validation requests send `X-ModelProxy-Backend: codex` and `X-ModelProxy-Web-Search: false` so the model uses only the supplied transcript or synthetic prompt. `Local only` means ModelProxy only; ModelProxy may safely fall back between its own Codex routes. ModelProxy enables public web search by default for requests that do not opt out.
+- Meeting Recorder reads ModelProxy routing headers for diagnostics: request id, requested/effective backend, web-search backend, and fallback reason. Safe routing headers are persisted with summary provider metadata when present.
+- `backend_busy` means temporary ModelProxy saturation. Meeting Recorder retries only an explicitly retryable `502` or `503` response with short backoff and should not report the endpoint as unreachable while `/v1/models` is reachable.
 - The app uses non-streaming Responses for automatic summary generation.
-- Remote audio remains parked unless `GET /v1/models` advertises `gpt-4o-transcribe` or `gpt-4o-transcribe-diarize`. When ModelProxy returns `audio_disabled`, `unsupported_model`, `backend_unavailable`, `backend_busy`, `timeout`, `quota`, `config_error`, or protocol mismatch, Meeting Recorder stays on local Whisper plus local diarization.
-- Local ModelProxy transcript summaries use an effective minimum timeout of 240 seconds. The Settings validation action remains a short synthetic probe and does not send transcript content.
+- ModelProxy is text-only for Meeting Recorder. The catalog's `audio_capability=unsupported` boundary is enforced, so transcription and diarization remain local.
+- Local ModelProxy transcript summaries use an effective minimum timeout of 120 seconds. The Settings validation action remains a short synthetic probe and does not send transcript content.
 
 Synthetic validation is allowed and should never use real meeting content:
 
@@ -119,9 +119,9 @@ Synthetic validation is allowed and should never use real meeting content:
 .\scripts\Test-ModelProxy.ps1
 ```
 
-The synthetic smoke script defaults to `sk-modelproxy-meeting-recorder`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script sends five parallel no-search app-server requests, retries `backend_busy`, and prints safe routing headers when ModelProxy returns them; it does not print prompt text, response text, API keys, bearer headers, or raw response bodies.
+The synthetic smoke script defaults to `sk-modelproxy-meeting-recorder`. Set `MODELPROXY_MEETING_RECORDER_API_KEY` only if your ignored ModelProxy config uses a different local key. The script discovers the live default model, sends no-search `codex` requests, retries retryable `backend_busy`, and prints safe routing headers when ModelProxy returns them; it does not print prompt text, response text, API keys, bearer headers, or raw response bodies.
 
-Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. The detail window links back to Settings for provider setup and hosted credential clearing.
+Hosted OpenAI fallback is also optional. A user can provide an OpenAI API key under Settings when they want summaries to work on machines where ModelProxy is not installed or not running. Hosted provider keys are stored in a DPAPI-protected user-scope secret file under the app data root instead of plaintext `appsettings.json`, and Settings validation uses only the synthetic `summary-provider-ok` prompt. Validation shows its running, ready, failed, or canceled state directly below the provider action without sending meeting content. The detail window links back to Settings for provider setup and hosted credential clearing.
 
 ## 2. Data Layout
 
@@ -201,7 +201,7 @@ The app now keeps the main workflow in two primary destinations inside one visib
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, the detected audio source summary, live audio graph, start/stop controls, and quick settings for microphone capture and auto-detection
 - `Meetings` for the recent-and-published meetings library, grouped browsing, queue status, cleanup review, artifact shortcuts, and `Open Details` for single-meeting transcript review and maintenance
 Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is intentionally simpler for non-technical users: pick `Use Standard`, `Use Higher Accuracy`, or `Import approved file` for transcription, and use `Skip for now` when you want to leave optional speaker labeling off. `Speaker labeling` now also includes a direct `When to run speaker labeling` selector so you can move between `Deferred`, `Throttled`, and `Inline` without leaving Setup. Recording and auto-detect stay blocked until transcription is ready.
-When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
+When you open `Meetings`, the app now shows the current recent-and-published list first and then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. A readable published transcript with a missing or failed AI summary is shown as `Generate AI Summary` only when summaries and a provider path are configured. That action is always `Review First`, generates from the existing transcript without reprocessing audio, and reports a provider failure instead of silently marking the fix complete. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 Recent sessions that have stopped recording but are still finalizing, queued, processing, or failed in the work queue now stay visible in `Meetings` even if their publish artifacts have not landed yet.
 Imported recordings now start from `Meetings > Add Audio Files` or by dragging files onto the `Meetings` surface. The review tray shows inferred title, local start time, duration, and import status before anything is queued. You can adjust the title, time, and optional project there, and the original source file stays in place by default. The legacy watched audio folder is still scanned for compatibility, but the explicit review flow is the primary import path.
 If the app restarts after a crash while a live recording manifest is still open or only captured the first chunk paths, startup now rediscovers recoverable raw chunks from the session folder, seals stale raw-chunk sessions, requeues them, and keeps them visible for normal processing instead of leaving the meeting hidden or truncated in the work folder.
@@ -212,24 +212,23 @@ Secondary maintenance and support actions live in the header:
 - `Settings` for Setup, General, Files, Updates, and Advanced, surfaced through a dedicated section button strip so labels stay readable at the default window size
 - `Help` for About details, setup/help links, logs/data folder shortcuts, and release notes entry points
 
-`Settings > Advanced` now also exposes two machine-performance controls:
+`Settings > Advanced` separates what the app may process from how much of the PC it may use:
 
-- `Background processing mode`
+- `What gets processed`
+  - `Initial processing strategy` is either `Use configured stages` or `Transcript first`. Transcript first publishes audio and transcripts before optional labeling and summaries.
+  - `Incremental work plan` explicitly selects queued recordings, deferred speaker labels, missing AI summaries, and safe cleanup fixes. Selected items can run whenever the queue is idle and receive bounded five-item bursts during the configured overnight window. New installs, and existing installations with a configured local speaker-labeling bundle, select deferred speaker labels by default; clear the checkbox to opt out.
+  - Missing AI summaries run only after summaries are enabled and the selected provider configuration has been validated. A failed or unsupported attempt moves to manual review and is not retried automatically.
+- `Resource usage`
   - Each dropdown label shows the local thread budget, for example `Fast (8 transcription / 4 labeling)`.
   - `Light` (default): pauses new background queue work while a recording is active, lowers worker priority, and uses the smallest CPU budgets.
   - `Balanced`: keeps background work moving with moderate thread budgets.
   - `Fast`: favors queue throughput over responsiveness with larger thread budgets, while keeping the worker process below normal OS priority.
-  - `Maximum`: skips the live-recording pause and caps local work at up to 12 transcription threads and 6 speaker-labeling threads, while keeping the worker process below normal OS priority.
+  - `Maximum`: skips the live-recording pause, uses up to two workers, and caps local work at 12 transcription threads and 6 speaker-labeling threads while keeping worker processes below normal priority.
 - `Speaker labeling mode`
   - `Deferred` (default): publish audio and transcript first, skip labels in the primary pass, and leave `Add Speaker Labels` for follow-up. An explicit or cleanup-triggered add/repair action bypasses this setting for one speaker-labeling attempt, then normal scheduling resumes.
   - `Throttled`: run speaker labeling automatically after transcription while the selected background processing mode controls thread budgets.
   - `Inline`: keep speaker labeling in the primary pass for labeled output sooner, with processing speed controlled by the selected background mode.
   - Settings and Setup saves mark the one-time legacy safety migration as applied, so explicit `Throttled` and `Inline` choices survive later app restarts and in-app updates.
-- `Processing speed profile`
-  - `Normal`: follow the selected background processing, speaker-labeling, and summary settings.
-  - `Transcript only`: publish audio/transcript artifacts first, skip speaker labels and automatic summaries, and allow up to two transcript-only workers at once.
-  - `Overnight transcript only`: apply the same transcript-only drain during the configured local window, defaulting to `22:00` through `06:00`.
-
 Background workers always launch below normal OS priority. The responsive defaults add smaller thread budgets and live-recording pauses so the app prioritizes keeping the machine usable during active work over draining the backlog as quickly as possible.
 That same responsiveness rule now applies to the shell: supported-call detection runs off the foreground thread, and routine Meetings refreshes can wait until `Meetings` is visible instead of interrupting editing or start/stop flows on `Home`.
 
@@ -607,7 +606,7 @@ Important behavior:
 - cleanup recommendations and safe automatic fixes never permanently delete meetings
 - safe automatic fixes only apply high-confidence archive, merge, retry-transcript, add-speaker-label, and repair-speaker-label actions
 - split-pair cleanup uses a two-minute gap by default; a Teams pair can extend to five minutes only when both preserved manifests match the exact specific meeting and window identity and at least one fragment is no longer than three minutes
-- automatic cleanup uses a persisted ledger rather than treating queue acceptance as completion; it runs independently of the selected Meetings tab, keeps the current worker limit, pauses during a live recording, dispatches one low-priority cleanup item after normal work during the day, and dispatches up to five cleanup items per burst during the configured overnight window
+- automatic cleanup uses a persisted ledger rather than treating queue acceptance as completion; it runs independently of the selected Meetings tab, keeps the current worker limit, pauses during a live recording, dispatches one low-priority cleanup item after normal work during the day, and dispatches up to five cleanup items per burst during the configured overnight window. The cleanup banner reports eligible, queued, processing, disabled speaker-label, provider-blocked summary, other disabled cleanup, and manual-review counts separately so an ineligible recommendation is never presented as a stuck worker
 - failed automatic work and unprovable legacy queued work need manual review; queued and processing rows are reconciled from their work manifests, completed rows resolve only after worker completion, and manual `Apply Safe Fixes` still retries every marked row immediately
 - sparse-transcript recommendations stay manual so the app does not automatically spend time retranscribing long recordings that may contain unusable source audio
 - split and lower-confidence actions stay manual

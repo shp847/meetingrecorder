@@ -11,6 +11,14 @@ public static class BackgroundProcessingPolicy
 
     public static ProcessingSpeedProfile GetEffectiveSpeedProfile(AppConfig config)
     {
+        // Compatibility for direct callers that construct a legacy config in memory.
+        if (config.ProcessingScheduleMigrationApplied)
+        {
+            return GetEffectiveInitialProcessingStrategy(config) == InitialProcessingStrategy.TranscriptFirst
+                ? ProcessingSpeedProfile.TranscriptOnlyDrain
+                : ProcessingSpeedProfile.Normal;
+        }
+
         if (config.ProcessingSpeedProfile == ProcessingSpeedProfile.OvernightDrain)
         {
             return IsOvernightDrainWindowActiveCore(config, DateTimeOffset.Now.TimeOfDay)
@@ -23,7 +31,21 @@ public static class BackgroundProcessingPolicy
 
     public static bool IsTranscriptOnlyDrainActive(AppConfig config)
     {
-        return GetEffectiveSpeedProfile(config) == ProcessingSpeedProfile.TranscriptOnlyDrain;
+        return GetEffectiveInitialProcessingStrategy(config) == InitialProcessingStrategy.TranscriptFirst;
+    }
+
+    public static InitialProcessingStrategy GetEffectiveInitialProcessingStrategy(AppConfig config, TimeSpan? localTime = null)
+    {
+        if (!config.ProcessingScheduleMigrationApplied)
+        {
+            return GetEffectiveSpeedProfile(config) == ProcessingSpeedProfile.TranscriptOnlyDrain
+                ? InitialProcessingStrategy.TranscriptFirst
+                : InitialProcessingStrategy.ConfiguredStages;
+        }
+
+        return IsOvernightDrainWindowActive(config, localTime)
+            ? config.OvernightInitialProcessingStrategy
+            : config.InitialProcessingStrategy;
     }
 
     public static bool IsOvernightDrainWindowActive(AppConfig config, TimeSpan? localTime = null)
@@ -33,7 +55,15 @@ public static class BackgroundProcessingPolicy
 
     public static int GetMaxWorkerCount(AppConfig config)
     {
-        return IsTranscriptOnlyDrainActive(config) ? TranscriptOnlyDrainWorkerCount : 1;
+        if (!config.ProcessingScheduleMigrationApplied &&
+            GetEffectiveSpeedProfile(config) == ProcessingSpeedProfile.TranscriptOnlyDrain)
+        {
+            return TranscriptOnlyDrainWorkerCount;
+        }
+
+        return config.BackgroundProcessingMode == BackgroundProcessingMode.MaximumThroughput
+            ? TranscriptOnlyDrainWorkerCount
+            : 1;
     }
 
     public static bool ShouldPauseNewBackgroundWork(AppConfig config, bool isRecording)
@@ -84,7 +114,7 @@ public static class BackgroundProcessingPolicy
 
     private static BackgroundProcessingMode GetEffectiveBackgroundProcessingMode(AppConfig config)
     {
-        return IsTranscriptOnlyDrainActive(config)
+        return !config.ProcessingScheduleMigrationApplied && IsTranscriptOnlyDrainActive(config)
             ? BackgroundProcessingMode.MaximumThroughput
             : config.BackgroundProcessingMode;
     }

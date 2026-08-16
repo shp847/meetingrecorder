@@ -18,6 +18,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
 
         Assert.True(publishIndex >= 0, "Expected cleanup refresh to publish the visible recommendations.");
         Assert.True(autoApplyIndex > publishIndex, "Automatic safe fixes should start only after recommendation rows are published.");
+        Assert.Contains("Dispatcher.InvokeAsync", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts", methodBlock, StringComparison.Ordinal);
         Assert.Equal(1, CountOccurrences(methodBlock, "await TryAutoApplyMeetingCleanupSafeFixesAsync("));
     }
@@ -117,8 +118,21 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         Assert.Contains("Visibility=\"Hidden\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MinHeight=\"88\"", bannerBlock, StringComparison.Ordinal);
         Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cleanup_Scheduler_Uses_A_Narrow_Blocker_And_Reports_Plan_Disabled_Work()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("private bool IsAutomaticCleanupSchedulerBlocked()", source, StringComparison.Ordinal);
+        Assert.Contains("IsAutomaticCleanupSchedulerBlocked()", source, StringComparison.Ordinal);
+        Assert.Contains("GetCleanupSchedulerStatus()", source, StringComparison.Ordinal);
+        Assert.Contains("disabledLabels=", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsMeetingActionInProgress() ||\r\n            outstandingCleanupCount", source, StringComparison.Ordinal);
     }
 
     [Fact]

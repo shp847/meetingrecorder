@@ -32,6 +32,12 @@ public sealed class BackgroundProcessingPolicyTests
 
         Assert.Equal(BackgroundProcessingMode.Responsive, config.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, config.BackgroundSpeakerLabelingMode);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, config.InitialProcessingStrategy);
+        Assert.Equal(
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
+            config.IncrementalWorkPlan);
     }
 
     [Fact]
@@ -80,6 +86,27 @@ public sealed class BackgroundProcessingPolicyTests
         Assert.Equal(12, BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, processorCount: 16));
         Assert.Equal(6, BackgroundProcessingPolicy.GetDiarizationThreadCount(config, processorCount: 16));
         Assert.False(BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(config));
+        Assert.Equal(2, BackgroundProcessingPolicy.GetMaxWorkerCount(config));
+    }
+
+    [Fact]
+    public void Migrated_Overnight_Strategy_Uses_Transcript_First_Only_Inside_Window()
+    {
+        var config = new AppConfig
+        {
+            ProcessingScheduleMigrationApplied = true,
+            InitialProcessingStrategy = InitialProcessingStrategy.ConfiguredStages,
+            OvernightInitialProcessingStrategy = InitialProcessingStrategy.TranscriptFirst,
+            OvernightDrainStartLocal = "22:00",
+            OvernightDrainEndLocal = "06:00",
+        };
+
+        Assert.Equal(
+            InitialProcessingStrategy.ConfiguredStages,
+            BackgroundProcessingPolicy.GetEffectiveInitialProcessingStrategy(config, TimeSpan.Parse("12:00")));
+        Assert.Equal(
+            InitialProcessingStrategy.TranscriptFirst,
+            BackgroundProcessingPolicy.GetEffectiveInitialProcessingStrategy(config, TimeSpan.Parse("23:00")));
     }
 
     [Fact]

@@ -209,6 +209,65 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public void Analyze_Returns_Manual_GenerateSummary_For_Missing_Summary_With_Readable_Transcript()
+    {
+        var recommendation = AnalyzeSingle(
+            CreateInspection(
+                "summary-missing",
+                "Client planning",
+                DateTimeOffset.Parse("2026-08-16T14:00:00Z"),
+                MeetingPlatform.Teams,
+                TimeSpan.FromMinutes(30),
+                audioPath: Path.Combine(_root, "summary-missing.wav"),
+                markdownPath: Path.Combine(_root, "summary-missing.md"),
+                jsonPath: Path.Combine(_root, "summary-missing.json"),
+                manifest: CreateTeamsManifest(
+                    "summary-missing",
+                    "Client planning",
+                    DateTimeOffset.Parse("2026-08-16T14:00:00Z"),
+                    DateTimeOffset.Parse("2026-08-16T14:30:00Z"),
+                    "Client planning | Microsoft Teams"),
+                canGenerateSummary: true,
+                hasReadableStructuredTranscript: true));
+
+        Assert.Equal(MeetingCleanupAction.GenerateSummary, recommendation.Action);
+        Assert.Equal(MeetingCleanupConfidence.Medium, recommendation.Confidence);
+        Assert.False(recommendation.CanApplyAutomatically);
+        Assert.Equal("generate-missing-ai-summary", recommendation.ReasonCode);
+    }
+
+    [Fact]
+    public void Analyze_Skips_GenerateSummary_When_Disabled_Or_Already_Published()
+    {
+        var disabled = CreateInspection(
+            "summary-disabled",
+            "Client planning",
+            DateTimeOffset.Parse("2026-08-16T14:00:00Z"),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(30),
+            audioPath: null,
+            markdownPath: Path.Combine(_root, "summary-disabled.md"),
+            jsonPath: Path.Combine(_root, "summary-disabled.json"),
+            hasReadableStructuredTranscript: true);
+        var published = CreateInspection(
+            "summary-published",
+            "Client planning",
+            DateTimeOffset.Parse("2026-08-16T15:00:00Z"),
+            MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(30),
+            audioPath: null,
+            markdownPath: Path.Combine(_root, "summary-published.md"),
+            jsonPath: Path.Combine(_root, "summary-published.json"),
+            canGenerateSummary: true,
+            hasReadableStructuredTranscript: true,
+            hasPublishedSummary: true);
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze([disabled, published]);
+
+        Assert.DoesNotContain(recommendations, item => item.Action == MeetingCleanupAction.GenerateSummary);
+    }
+
+    [Fact]
     public async Task Analyze_Merges_All_Completed_Teams_Playback_Fragments_After_Player_Absence()
     {
         var startedAtUtc = DateTimeOffset.UtcNow.AddHours(-1);
@@ -745,7 +804,10 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         bool diarizationReady = false,
         bool hasSpeakerLabels = false,
         bool hasSuspiciousSpeakerLabels = false,
-        bool teamsPlaybackMergeReady = false)
+        bool teamsPlaybackMergeReady = false,
+        bool canGenerateSummary = false,
+        bool hasReadableStructuredTranscript = false,
+        bool hasPublishedSummary = false)
     {
         return new MeetingInspectionRecord(
             new MeetingOutputRecord(
@@ -768,7 +830,10 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
             suggestedTitle,
             suggestedTitleSource,
             diarizationReady,
-            teamsPlaybackMergeReady);
+            teamsPlaybackMergeReady,
+            canGenerateSummary,
+            hasReadableStructuredTranscript,
+            hasPublishedSummary);
     }
 
     private static MeetingSessionManifest CreateTeamsManifest(

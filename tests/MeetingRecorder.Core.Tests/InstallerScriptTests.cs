@@ -5,7 +5,7 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class InstallerScriptTests
 {
     [Fact]
-    public void TestModelProxyScript_Uses_AppServer_NoSearch_Lightweight_Smoke_Without_Printing_Response_Text()
+    public void TestModelProxyScript_Uses_Codex_NoSearch_Live_Default_Smoke_Without_Printing_Response_Text()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -17,18 +17,18 @@ public sealed class InstallerScriptTests
         var scriptContents = File.ReadAllText(scriptPath);
 
         Assert.Contains("/responses", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("\"gpt-5.4-mini\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$defaultModel", scriptContents, StringComparison.Ordinal);
         Assert.Contains("sk-modelproxy-meeting-recorder", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("\"X-ModelProxy-Backend\", \"app-server\"", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("\"X-ModelProxy-Backend\", \"codex\"", scriptContents, StringComparison.Ordinal);
         Assert.Contains("\"X-ModelProxy-Web-Search\", \"false\"", scriptContents, StringComparison.Ordinal);
         Assert.Contains("$maxAttempts = 3", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("$requestTimeoutSeconds = 60", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("$requestTimeoutSeconds = 120", scriptContents, StringComparison.Ordinal);
         Assert.Contains("backend_busy", scriptContents, StringComparison.Ordinal);
         Assert.Contains("retryable", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("synthetic smoke response: $content", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("parallel request", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("synthetic smoke response matched expected marker", scriptContents, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("lightweight no-search app-server request", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lightweight no-search codex-routed request", scriptContents, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

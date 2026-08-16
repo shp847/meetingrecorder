@@ -23,7 +23,9 @@ internal sealed record ConfigEditorSnapshot(
     PreferredTeamsIntegrationMode PreferredTeamsIntegrationMode,
     BackgroundProcessingMode BackgroundProcessingMode,
     BackgroundSpeakerLabelingMode BackgroundSpeakerLabelingMode,
-    ProcessingSpeedProfile ProcessingSpeedProfile,
+    InitialProcessingStrategy InitialProcessingStrategy,
+    InitialProcessingStrategy OvernightInitialProcessingStrategy,
+    IncrementalWorkPlan IncrementalWorkPlan,
     string OvernightDrainStartLocal,
     string OvernightDrainEndLocal,
     TranscriptionProviderPreference TranscriptionProviderPreference,
@@ -40,7 +42,8 @@ internal sealed record ConfigEditorSnapshot(
     string SummaryRequestTimeoutSecondsText,
     string SummaryTranscriptChunkTokenTargetText,
     string SummaryTranscriptChunkOverlapTokensText,
-    bool HasPendingSummaryOpenAiSecret);
+    bool HasPendingSummaryOpenAiSecret,
+    SummaryReasoningEffort SummaryReasoningEffort = SummaryReasoningEffort.Medium);
 
 internal sealed record SpeakerLabelDraft(string OriginalLabel, string EditedLabel);
 
@@ -314,29 +317,6 @@ internal static class MainWindowInteractionLogic
             (BackgroundProcessingMode.FastestDrain, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.FastestDrain, processorCount)),
             (BackgroundProcessingMode.MaximumThroughput, BuildBackgroundProcessingModeOptionLabel(BackgroundProcessingMode.MaximumThroughput, processorCount)),
         ];
-    }
-
-    public static IReadOnlyList<(ProcessingSpeedProfile Value, string Label)> BuildProcessingSpeedProfileOptions()
-    {
-        return
-        [
-            (ProcessingSpeedProfile.Normal, "Normal"),
-            (ProcessingSpeedProfile.TranscriptOnlyDrain, "Transcript only"),
-            (ProcessingSpeedProfile.OvernightDrain, "Overnight transcript only"),
-        ];
-    }
-
-    public static string BuildProcessingSpeedProfileHelpText(ProcessingSpeedProfile profile)
-    {
-        return profile switch
-        {
-            ProcessingSpeedProfile.TranscriptOnlyDrain =>
-                "Transcript only skips speaker labels and summaries, runs up to two transcript workers, and publishes audio/transcripts first.",
-            ProcessingSpeedProfile.OvernightDrain =>
-                "Overnight transcript only applies transcript-only drain during the configured local window, then returns to normal processing.",
-            _ =>
-                "Normal follows the selected background processing, speaker-labeling, and summary settings.",
-        };
     }
 
     public static IReadOnlyList<(TranscriptionProviderPreference Value, string Label)> BuildTranscriptionProviderOptions()
@@ -2002,6 +1982,7 @@ internal static class MainWindowInteractionLogic
             MeetingCleanupAction.RegenerateTranscript => "Retry Transcript",
             MeetingCleanupAction.GenerateSpeakerLabels => "Add Speaker Labels",
             MeetingCleanupAction.RepairSpeakerLabels => "Repair Speaker Labels",
+            MeetingCleanupAction.GenerateSummary => "Generate AI Summary",
             _ => "Review",
         };
     }
@@ -2197,6 +2178,22 @@ internal static class MainWindowInteractionLogic
                recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
     }
 
+    public static IReadOnlyList<(InitialProcessingStrategy Value, string Label)> BuildInitialProcessingStrategyOptions()
+    {
+        return
+        [
+            (InitialProcessingStrategy.ConfiguredStages, "Use configured stages"),
+            (InitialProcessingStrategy.TranscriptFirst, "Transcript first"),
+        ];
+    }
+
+    public static string BuildInitialProcessingStrategyHelpText(InitialProcessingStrategy strategy)
+    {
+        return strategy == InitialProcessingStrategy.TranscriptFirst
+            ? "Publish audio and transcript first. Speaker labels and AI summaries are handled only by the selected incremental work plan."
+            : "Use the configured speaker-labeling and AI-summary settings in the primary pass.";
+    }
+
     public static string BuildMeetingCleanupReviewBannerText(
         int recommendationCount,
         int impactedMeetingCount,
@@ -2219,17 +2216,21 @@ internal static class MainWindowInteractionLogic
         int recommendationCount,
         int impactedMeetingCount,
         int safeRecommendationCount,
-        int pendingCount,
+        int eligibleNowCount,
         int queuedCount,
         int processingCount,
+        int disabledSpeakerLabelCount,
+        int blockedSummaryCount,
+        int disabledCleanupCount,
         int manualReviewCount,
         string schedulerDetail)
     {
         return
             $"Found {recommendationCount} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
             $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
-            $"{pendingCount} safe fix(es) are waiting; {queuedCount} queued; {processingCount} processing; " +
-            $"{manualReviewCount} need manual review. {schedulerDetail}";
+            $"{eligibleNowCount} eligible now; {queuedCount} queued; {processingCount} processing. " +
+            $"{disabledSpeakerLabelCount} speaker-label fix(es) disabled; {blockedSummaryCount} summary fix(es) blocked; " +
+            $"{disabledCleanupCount} other safe fix(es) disabled; {manualReviewCount} need manual review. {schedulerDetail}";
     }
 
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)
@@ -2280,7 +2281,9 @@ internal static class MainWindowInteractionLogic
             currentConfig.PreferredTeamsIntegrationMode != editor.PreferredTeamsIntegrationMode ||
             currentConfig.BackgroundProcessingMode != editor.BackgroundProcessingMode ||
             currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode ||
-            currentConfig.ProcessingSpeedProfile != editor.ProcessingSpeedProfile ||
+            currentConfig.InitialProcessingStrategy != editor.InitialProcessingStrategy ||
+            currentConfig.OvernightInitialProcessingStrategy != editor.OvernightInitialProcessingStrategy ||
+            currentConfig.IncrementalWorkPlan != editor.IncrementalWorkPlan ||
             !string.Equals(currentConfig.OvernightDrainStartLocal, NormalizeText(editor.OvernightDrainStartLocal), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.OvernightDrainEndLocal, NormalizeText(editor.OvernightDrainEndLocal), StringComparison.OrdinalIgnoreCase) ||
             currentConfig.TranscriptionProviderPreference != editor.TranscriptionProviderPreference ||
@@ -2294,6 +2297,7 @@ internal static class MainWindowInteractionLogic
             !string.Equals(NormalizeSummaryBaseUrl(currentConfig.SummaryModelProxyBaseUrl), NormalizeSummaryBaseUrl(editor.SummaryModelProxyBaseUrl), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.SummaryModelProxyModel, NormalizeText(editor.SummaryModelProxyModel), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryOpenAiModel, NormalizeText(editor.SummaryOpenAiModel), StringComparison.Ordinal) ||
+            currentConfig.SummaryReasoningEffort != editor.SummaryReasoningEffort ||
             !string.Equals(currentConfig.SummaryRequestTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryRequestTimeoutSecondsText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryTranscriptChunkTokenTarget.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkTokenTargetText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.SummaryTranscriptChunkOverlapTokens.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.SummaryTranscriptChunkOverlapTokensText), StringComparison.Ordinal) ||
@@ -2373,6 +2377,7 @@ internal static class MainWindowInteractionLogic
             MeetingCleanupAction.RegenerateTranscript => 3,
             MeetingCleanupAction.GenerateSpeakerLabels => 4,
             MeetingCleanupAction.RepairSpeakerLabels => 4,
+            MeetingCleanupAction.GenerateSummary => 5,
             MeetingCleanupAction.Split => 5,
             _ => 10,
         };

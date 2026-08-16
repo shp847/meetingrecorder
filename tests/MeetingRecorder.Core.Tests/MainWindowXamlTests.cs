@@ -333,9 +333,11 @@ public sealed class MainWindowXamlTests
         var code = File.ReadAllText(codePath);
 
         Assert.Contains("x:Name=\"ConfigBackgroundProcessingModeComboBox\"", xaml);
-        Assert.Contains("Text=\"Background processing mode\"", xaml);
-        Assert.Contains("x:Name=\"ConfigProcessingSpeedProfileComboBox\"", xaml);
-        Assert.Contains("Text=\"Processing speed profile\"", xaml);
+        Assert.Contains("Text=\"How much of this PC it may use\"", xaml);
+        Assert.Contains("x:Name=\"ConfigInitialProcessingStrategyComboBox\"", xaml);
+        Assert.Contains("Text=\"Initial processing strategy\"", xaml);
+        Assert.Contains("x:Name=\"ConfigIncrementalAiSummariesCheckBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigIncrementalSafeCleanupCheckBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigOvernightDrainStartTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigTranscriptionProviderPreferenceComboBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigTranscriptionCliPathTextBox\"", xaml);
@@ -365,8 +367,15 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"ConfigSummaryProviderPreferenceComboBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryModelProxyBaseUrlTextBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryModelProxyModelTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryModelProxyModelComboBox\"", xaml);
+        Assert.Contains("x:Name=\"RefreshModelProxySummaryModelsButton\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryReasoningEffortComboBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigModelProxyValidationStatusTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ValidateModelProxySummaryProviderButton\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiModelTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigSummaryOpenAiModelComboBox\"", xaml);
+        Assert.Contains("x:Name=\"RefreshOpenAiSummaryModelsButton\"", xaml);
+        Assert.Contains("x:Name=\"ConfigOpenAiValidationStatusTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyPasswordBox\"", xaml);
         Assert.Contains("x:Name=\"ConfigSummaryOpenAiKeyStatusTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ValidateOpenAiSummaryProviderButton\"", xaml);

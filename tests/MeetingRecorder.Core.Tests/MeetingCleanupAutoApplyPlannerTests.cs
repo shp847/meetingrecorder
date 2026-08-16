@@ -147,6 +147,47 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Separates_Disabled_SpeakerLabels_From_Eligible_Cleanup()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        var archive = CreateRecommendation(
+            "archive-1",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var speakerLabels = CreateRecommendation(
+            "labels-1",
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var manualReview = CreateRecommendation(
+            "archive-manual",
+            MeetingCleanupAction.Archive,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var summary = CreateRecommendation(
+            "summary-1",
+            MeetingCleanupAction.GenerateSummary,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: false);
+        ledger.Record(manualReview.Fingerprint, CleanupWorkState.ManualReview, detail: "Needs confirmation");
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            [archive, speakerLabels, manualReview, summary],
+            ledger,
+            recommendation => recommendation.Action == MeetingCleanupAction.Archive,
+            recommendation => recommendation.Action == MeetingCleanupAction.GenerateSummary);
+
+        Assert.Equal(3, status.SafeFixCount);
+        Assert.Equal(1, status.EligibleNowCount);
+        Assert.Equal(1, status.DisabledSpeakerLabelCount);
+        Assert.Equal(1, status.BlockedSummaryCount);
+        Assert.Equal(1, status.ManualReviewCount);
+        Assert.Contains("speaker-label", status.PrimaryBlocker, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_Batch()
     {
         var recommendations = Enumerable.Range(1, 10)

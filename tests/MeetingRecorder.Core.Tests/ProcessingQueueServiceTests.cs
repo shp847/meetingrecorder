@@ -821,7 +821,7 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
-    public async Task TranscriptOnlyDrain_Starts_Two_Workers()
+    public async Task Maximum_Resource_Usage_Starts_Two_Workers()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -831,7 +831,9 @@ public sealed class ProcessingQueueServiceTests
             configStore,
             await configStore.SaveAsync((await configStore.LoadOrCreateAsync()) with
             {
-                ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain,
+                BackgroundProcessingMode = BackgroundProcessingMode.MaximumThroughput,
+                InitialProcessingStrategy = InitialProcessingStrategy.TranscriptFirst,
+                OvernightInitialProcessingStrategy = InitialProcessingStrategy.TranscriptFirst,
                 BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Disabled,
             }));

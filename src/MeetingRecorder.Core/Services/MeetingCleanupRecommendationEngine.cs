@@ -13,6 +13,7 @@ public enum MeetingCleanupAction
     RegenerateTranscript = 4,
     GenerateSpeakerLabels = 5,
     RepairSpeakerLabels = 6,
+    GenerateSummary = 7,
 }
 
 public enum MeetingCleanupConfidence
@@ -41,7 +42,10 @@ internal sealed record MeetingInspectionRecord(
     string? SuggestedTitle,
     string? SuggestedTitleSource,
     bool IsDiarizationReady = false,
-    bool IsTeamsPlaybackMergeReady = false);
+    bool IsTeamsPlaybackMergeReady = false,
+    bool CanGenerateSummary = false,
+    bool HasReadableStructuredTranscript = false,
+    bool HasPublishedSummary = false);
 
 internal static class MeetingCleanupRecommendationEngine
 {
@@ -110,6 +114,11 @@ internal static class MeetingCleanupRecommendationEngine
             if (TryBuildRegenerateRecommendation(inspection) is { } regenerateRecommendation)
             {
                 recommendations.Add(regenerateRecommendation);
+            }
+
+            if (TryBuildGenerateSummaryRecommendation(inspection) is { } generateSummaryRecommendation)
+            {
+                recommendations.Add(generateSummaryRecommendation);
             }
 
             if (TryBuildGenerateSpeakerLabelsRecommendation(inspection) is { } generateSpeakerLabelsRecommendation)
@@ -711,6 +720,33 @@ internal static class MeetingCleanupRecommendationEngine
         return HasMatchingManifestContinuityEvidence(previousInspection, currentInspection);
     }
 
+    private static MeetingCleanupRecommendation? TryBuildGenerateSummaryRecommendation(MeetingInspectionRecord inspection)
+    {
+        if (!inspection.CanGenerateSummary ||
+            !inspection.HasReadableStructuredTranscript ||
+            inspection.HasPublishedSummary ||
+            IsProcessingPending(inspection.Meeting) ||
+            inspection.Manifest?.SummarizationStatus.State is StageExecutionState.Queued or StageExecutionState.Running)
+        {
+            return null;
+        }
+
+        var failedPreviously = inspection.Manifest?.SummarizationStatus.State == StageExecutionState.Failed;
+        return BuildRecommendation(
+            inspection.Meeting.Stem,
+            MeetingCleanupAction.GenerateSummary,
+            MeetingCleanupConfidence.Medium,
+            failedPreviously ? "Retry failed AI summary" : "Generate missing AI summary",
+            failedPreviously
+                ? $"'{inspection.Meeting.Title}' has a failed AI summary and can be retried from its published transcript."
+                : $"'{inspection.Meeting.Title}' has a readable published transcript but no AI summary yet.",
+            [inspection.Meeting.Stem],
+            canApplyAutomatically: false,
+            suggestedTitle: null,
+            suggestedSplitPoint: null,
+            reasonCode: failedPreviously ? "retry-failed-ai-summary" : "generate-missing-ai-summary");
+    }
+
     private static bool HasMatchingManifestContinuityEvidence(
         MeetingInspectionRecord previousInspection,
         MeetingInspectionRecord currentInspection)
@@ -820,6 +856,7 @@ internal static class MeetingCleanupRecommendationEngine
             MeetingCleanupAction.RegenerateTranscript => 3,
             MeetingCleanupAction.GenerateSpeakerLabels => 4,
             MeetingCleanupAction.RepairSpeakerLabels => 4,
+            MeetingCleanupAction.GenerateSummary => 5,
             MeetingCleanupAction.Split => 5,
             _ => 10,
         };

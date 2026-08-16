@@ -955,6 +955,7 @@
                             <Border x:Name="MeetingCleanupReviewBannerBorder"
                                     Grid.Row="0"
                                     Grid.ColumnSpan="3"
+                                    MinHeight="88"
                                     Padding="14"
                                     CornerRadius="4"
                                     Background="#FFF6E5"
@@ -965,6 +966,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="MeetingCleanupReviewBannerTextBlock"
+                                               MinHeight="48"
                                                VerticalAlignment="Center"
                                                Foreground="#5A3A00"
                                                TextWrapping="Wrap" />
@@ -2764,30 +2766,74 @@
                                                      Margin="0,8,0,8"
                                                      Height="32"
                                                      VerticalContentAlignment="Center" />
-                                            <TextBlock Grid.Row="4"
+                                             <TextBlock Grid.Row="4"
+                                                        Margin="0,0,12,8"
+                                                        VerticalAlignment="Center"
+                                                        Text="Model" />
+                                            <StackPanel Grid.Row="4"
+                                                        Grid.Column="1"
+                                                        Margin="0,0,0,8">
+                                                <WrapPanel>
+                                                    <ComboBox x:Name="ConfigSummaryModelProxyModelComboBox"
+                                                              Width="360"
+                                                              Height="32"
+                                                              VerticalContentAlignment="Center"
+                                                              SelectionChanged="ConfigSummaryModelProxyModelComboBox_OnSelectionChanged" />
+                                                    <Button x:Name="RefreshModelProxySummaryModelsButton"
+                                                            Width="132"
+                                                            Height="32"
+                                                            Margin="10,0,0,0"
+                                                            Click="RefreshModelProxySummaryModelsButton_OnClick"
+                                                            Content="Refresh Models" />
+                                                </WrapPanel>
+                                                <TextBox x:Name="ConfigSummaryModelProxyModelTextBox"
+                                                         Margin="0,8,0,0"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center"
+                                                         Visibility="Collapsed" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Row="5"
                                                        Margin="0,0,12,8"
                                                        VerticalAlignment="Center"
-                                                       Text="Model" />
-                                            <TextBox x:Name="ConfigSummaryModelProxyModelTextBox"
-                                                     Grid.Row="4"
-                                                     Grid.Column="1"
-                                                     Margin="0,0,0,8"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
-                                            <TextBlock Grid.Row="5"
+                                                       Text="Reasoning effort (both providers)" />
+                                            <ComboBox x:Name="ConfigSummaryReasoningEffortComboBox"
+                                                      Grid.Row="5"
+                                                      Grid.Column="1"
+                                                      Margin="0,0,0,8"
+                                                      Height="32"
+                                                      VerticalContentAlignment="Center">
+                                                <ComboBox.ItemContainerStyle>
+                                                    <Style TargetType="ComboBoxItem">
+                                                        <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                                                    </Style>
+                                                </ComboBox.ItemContainerStyle>
+                                            </ComboBox>
+                                            <TextBlock Grid.Row="6"
                                                        Grid.Column="1"
                                                        Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Meeting Recorder uses ModelProxy local auth automatically, defaults to gpt-5.4-mini unless you choose another model, and sends no-search private summary requests. OpenAI is the only provider key saved here." />
-                                            <WrapPanel Grid.Row="6"
-                                                       Grid.Column="1"
-                                                       Margin="0,10,0,0">
-                                                <Button x:Name="ValidateModelProxySummaryProviderButton"
-                                                        Width="170"
-                                                        Height="32"
-                                                        Margin="0,0,12,0"
-                                                        Click="ValidateModelProxySummaryProviderButton_OnClick"
-                                                        Content="Validate ModelProxy" />
-                                            </WrapPanel>
+                                                       Text="ModelProxy uses local auth automatically and sends no-search private summary requests. Higher reasoning effort can increase time and local resource use." />
+                                            <StackPanel Grid.Row="7"
+                                                        Grid.Column="1"
+                                                        Margin="0,10,0,0">
+                                                <WrapPanel>
+                                                    <Button x:Name="ValidateModelProxySummaryProviderButton"
+                                                            Width="170"
+                                                            Height="32"
+                                                            Margin="0,0,12,0"
+                                                            Click="ValidateModelProxySummaryProviderButton_OnClick"
+                                                            Content="Validate ModelProxy" />
+                                                </WrapPanel>
+                                                <Border MinHeight="48"
+                                                        Margin="0,8,0,0"
+                                                        Padding="8,6"
+                                                        Background="{StaticResource AppMutedCardBrush}"
+                                                        BorderBrush="{StaticResource AppOutlineBrush}"
+                                                        BorderThickness="1">
+                                                    <TextBlock x:Name="ConfigModelProxyValidationStatusTextBlock"
+                                                               Style="{StaticResource ConfigHelpTextStyle}"
+                                                               Text="Not checked. Validation uses the unsaved values above." />
+                                                </Border>
+                                            </StackPanel>
                                         </Grid>
 
                                         <Grid Margin="0,18,0,0">
@@ -2810,12 +2856,28 @@
                                                        Margin="0,8,12,8"
                                                        VerticalAlignment="Center"
                                                        Text="Model" />
-                                            <TextBox x:Name="ConfigSummaryOpenAiModelTextBox"
-                                                     Grid.Row="1"
-                                                     Grid.Column="1"
-                                                     Margin="0,8,0,8"
-                                                     Height="32"
-                                                     VerticalContentAlignment="Center" />
+                                            <StackPanel Grid.Row="1"
+                                                        Grid.Column="1"
+                                                        Margin="0,8,0,8">
+                                                <WrapPanel>
+                                                    <ComboBox x:Name="ConfigSummaryOpenAiModelComboBox"
+                                                              Width="360"
+                                                              Height="32"
+                                                              VerticalContentAlignment="Center"
+                                                              SelectionChanged="ConfigSummaryOpenAiModelComboBox_OnSelectionChanged" />
+                                                    <Button x:Name="RefreshOpenAiSummaryModelsButton"
+                                                            Width="132"
+                                                            Height="32"
+                                                            Margin="10,0,0,0"
+                                                            Click="RefreshOpenAiSummaryModelsButton_OnClick"
+                                                            Content="Refresh Models" />
+                                                </WrapPanel>
+                                                <TextBox x:Name="ConfigSummaryOpenAiModelTextBox"
+                                                         Margin="0,8,0,0"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center"
+                                                         Visibility="Collapsed" />
+                                            </StackPanel>
                                             <TextBlock Grid.Row="2"
                                                        Margin="0,0,12,8"
                                                        VerticalAlignment="Center"
@@ -2828,7 +2890,7 @@
                                                          VerticalContentAlignment="Center"
                                                          PasswordChanged="ConfigSummaryProviderPasswordBox_OnPasswordChanged" />
                                             <StackPanel Grid.Row="3"
-                                                        Grid.Column="1">
+                                                         Grid.Column="1">
                                                 <TextBlock x:Name="ConfigSummaryOpenAiKeyStatusTextBlock"
                                                            Style="{StaticResource ConfigHelpTextStyle}"
                                                            Text="OpenAI key: not saved." />
@@ -2845,6 +2907,16 @@
                                                             Click="ClearOpenAiSummaryKeyButton_OnClick"
                                                             Content="Clear Key" />
                                                 </WrapPanel>
+                                                <Border MinHeight="48"
+                                                        Margin="0,8,0,0"
+                                                        Padding="8,6"
+                                                        Background="{StaticResource AppMutedCardBrush}"
+                                                        BorderBrush="{StaticResource AppOutlineBrush}"
+                                                        BorderThickness="1">
+                                                    <TextBlock x:Name="ConfigOpenAiValidationStatusTextBlock"
+                                                               Style="{StaticResource ConfigHelpTextStyle}"
+                                                               Text="Not checked. Validation uses the unsaved values above." />
+                                                </Border>
                                             </StackPanel>
                                         </Grid>
 
@@ -2896,7 +2968,7 @@
                                         <TextBlock x:Name="ConfigSummaryProviderStatusTextBlock"
                                                    Margin="0,14,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Summary providers are not validated yet." />
+                                                   Text="Model choices and validation results stay with each provider." />
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -3246,59 +3318,106 @@
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Point this at the shared release feed the app should use for update discovery." />
                                         </StackPanel>
-                                        <StackPanel Margin="0,14,0,0">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Processing speed profile" />
-                                            <ComboBox x:Name="ConfigProcessingSpeedProfileComboBox"
-                                                      Margin="0,6,0,0"
-                                                      Height="32"
-                                                      VerticalContentAlignment="Center" />
-                                            <TextBlock x:Name="ConfigProcessingSpeedProfileHelpTextBlock"
-                                                       Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Normal follows the selected background processing, speaker-labeling, and summary settings." />
-                                        </StackPanel>
-                                        <StackPanel Margin="0,14,0,0">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Overnight drain window" />
-                                            <StackPanel Margin="0,6,0,0"
-                                                        Orientation="Horizontal">
-                                                <TextBox x:Name="ConfigOvernightDrainStartTextBox"
-                                                         Width="76"
-                                                         Height="32"
-                                                         VerticalContentAlignment="Center" />
-                                                <TextBlock Margin="8,0"
-                                                           VerticalAlignment="Center"
-                                                           Text="to" />
-                                                <TextBox x:Name="ConfigOvernightDrainEndTextBox"
-                                                         Width="76"
-                                                         Height="32"
-                                                         VerticalContentAlignment="Center" />
+                                        <Border Margin="0,14,0,0"
+                                                Padding="12"
+                                                BorderBrush="{StaticResource AppOutlineBrush}"
+                                                BorderThickness="1"
+                                                Background="{StaticResource AppCardBrush}">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold"
+                                                           Text="What gets processed" />
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Choose the primary recording strategy and which incremental work can use idle time. Selected work receives a bounded boost overnight." />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Initial processing strategy" />
+                                                <ComboBox x:Name="ConfigInitialProcessingStrategyComboBox"
+                                                          Margin="0,6,0,0"
+                                                          Height="32"
+                                                          VerticalContentAlignment="Center" />
+                                                <TextBlock x:Name="ConfigInitialProcessingStrategyHelpTextBlock"
+                                                           Style="{StaticResource ConfigHelpTextStyle}" />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Speaker labeling mode" />
+                                                <ComboBox x:Name="ConfigBackgroundSpeakerLabelingModeComboBox"
+                                                          Margin="0,6,0,0"
+                                                          Height="32"
+                                                          VerticalContentAlignment="Center" />
+                                                <TextBlock x:Name="ConfigBackgroundSpeakerLabelingModeHelpTextBlock"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Deferred publishes audio and transcripts first, then leaves speaker labels for later." />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Incremental work plan" />
+                                                <CheckBox x:Name="ConfigIncrementalQueuedRecordingsCheckBox"
+                                                          Margin="0,6,0,0"
+                                                          Content="Process queued recordings when the queue is idle" />
+                                                <CheckBox x:Name="ConfigIncrementalSpeakerLabelsCheckBox"
+                                                          Margin="0,4,0,0"
+                                                          Content="Complete deferred speaker labels" />
+                                                <CheckBox x:Name="ConfigIncrementalAiSummariesCheckBox"
+                                                          Margin="0,4,0,0"
+                                                          Content="Generate missing AI summaries using the configured provider" />
+                                                <CheckBox x:Name="ConfigIncrementalSafeCleanupCheckBox"
+                                                          Margin="0,4,0,0"
+                                                          Content="Apply safe cleanup fixes" />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Queued recordings overnight" />
+                                                <ComboBox x:Name="ConfigOvernightInitialProcessingStrategyComboBox"
+                                                          Margin="0,6,0,0"
+                                                          Height="32"
+                                                          VerticalContentAlignment="Center" />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Overnight acceleration" />
+                                                <StackPanel Margin="0,6,0,0"
+                                                            Orientation="Horizontal">
+                                                    <TextBox x:Name="ConfigOvernightDrainStartTextBox"
+                                                             Width="76"
+                                                             Height="32"
+                                                             VerticalContentAlignment="Center" />
+                                                    <TextBlock Margin="8,0"
+                                                               VerticalAlignment="Center"
+                                                               Text="to" />
+                                                    <TextBox x:Name="ConfigOvernightDrainEndTextBox"
+                                                             Width="76"
+                                                             Height="32"
+                                                             VerticalContentAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Selected work can run whenever idle and receives five-item bursts during this local-time window. Format: HH:mm." />
+                                                <TextBlock x:Name="ConfigProcessingScheduleSummaryTextBlock"
+                                                           Margin="0,8,0,0"
+                                                           MinHeight="36"
+                                                           FontFamily="Cascadia Mono"
+                                                           Style="{StaticResource ConfigHelpTextStyle}" />
                                             </StackPanel>
-                                            <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Used only by Overnight transcript only. Format: HH:mm local time." />
-                                        </StackPanel>
-                                        <StackPanel Margin="0,14,0,0">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Background processing mode" />
-                                            <ComboBox x:Name="ConfigBackgroundProcessingModeComboBox"
-                                                      Margin="0,6,0,0"
-                                                      Height="32"
-                                                      VerticalContentAlignment="Center" />
-                                            <TextBlock x:Name="ConfigBackgroundProcessingModeHelpTextBlock"
-                                                       Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Background workers run below normal priority; responsive mode also pauses new backlog work during live recordings." />
-                                        </StackPanel>
-                                        <StackPanel Margin="0,14,0,0">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Speaker labeling mode" />
-                                            <ComboBox x:Name="ConfigBackgroundSpeakerLabelingModeComboBox"
-                                                      Margin="0,6,0,0"
-                                                      Height="32"
-                                                      VerticalContentAlignment="Center" />
-                                            <TextBlock x:Name="ConfigBackgroundSpeakerLabelingModeHelpTextBlock"
-                                                       Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Deferred publishes audio and transcripts first, then leaves speaker labels for manual follow-up later." />
-                                        </StackPanel>
+                                        </Border>
+                                        <Border Margin="0,14,0,0"
+                                                Padding="12"
+                                                BorderBrush="{StaticResource AppOutlineBrush}"
+                                                BorderThickness="1"
+                                                Background="{StaticResource AppCardBrush}">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold"
+                                                           Text="How much of this PC it may use" />
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Resource usage controls worker and thread budgets only. It does not change which work is eligible." />
+                                                <ComboBox x:Name="ConfigBackgroundProcessingModeComboBox"
+                                                          Margin="0,10,0,0"
+                                                          Height="32"
+                                                          VerticalContentAlignment="Center" />
+                                                <TextBlock x:Name="ConfigBackgroundProcessingModeHelpTextBlock"
+                                                           MinHeight="36"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Workers run below normal priority; Light also pauses new background work during live recordings." />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>

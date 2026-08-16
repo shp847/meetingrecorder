@@ -52,6 +52,22 @@ public enum ProcessingSpeedProfile
     OvernightDrain = 2,
 }
 
+public enum InitialProcessingStrategy
+{
+    ConfiguredStages = 0,
+    TranscriptFirst = 1,
+}
+
+[Flags]
+public enum IncrementalWorkPlan
+{
+    None = 0,
+    QueuedRecordings = 1,
+    DeferredSpeakerLabels = 2,
+    MissingAiSummaries = 4,
+    SafeCleanup = 8,
+}
+
 public enum TranscriptionProviderPreference
 {
     WhisperNet = 0,
@@ -160,19 +176,31 @@ public static class MeetingSummaryDefaults
 {
     public const string ModelProxyBaseUrl = "http://127.0.0.1:8645/v1";
 
-    public const string ModelProxyModel = "gpt-5.4-mini";
+    public const string ModelProxyModel = "gpt-5.6-luna";
 
     public const string ModelProxyLocalApiKey = "sk-modelproxy-meeting-recorder";
 
     public const string OpenAiModel = "gpt-5-mini";
 
+    public const SummaryReasoningEffort ReasoningEffort = SummaryReasoningEffort.Medium;
+
     public const int RequestTimeoutSeconds = 120;
 
-    public const int MinimumModelProxySummaryRequestTimeoutSeconds = 240;
+    public const int MinimumModelProxySummaryRequestTimeoutSeconds = 120;
 
     public const int TranscriptChunkTokenTarget = 6000;
 
     public const int TranscriptChunkOverlapTokens = 250;
+}
+
+public enum SummaryReasoningEffort
+{
+    ProviderDefault = 0,
+    Minimal = 1,
+    Low = 2,
+    Medium = 3,
+    High = 4,
+    XHigh = 5,
 }
 
 public sealed record TeamsThirdPartyApiCapability
@@ -313,6 +341,25 @@ public sealed record AppConfig
     public ProcessingSpeedProfile PreviousProcessingSpeedProfile { get; init; } =
         ProcessingSpeedProfile.Normal;
 
+    // Legacy profiles are translated once so subsequent saves use explicit processing settings.
+    public bool ProcessingScheduleMigrationApplied { get; init; }
+
+    public InitialProcessingStrategy InitialProcessingStrategy { get; init; } =
+        InitialProcessingStrategy.ConfiguredStages;
+
+    public InitialProcessingStrategy OvernightInitialProcessingStrategy { get; init; } =
+        InitialProcessingStrategy.ConfiguredStages;
+
+    public IncrementalWorkPlan IncrementalWorkPlan { get; init; } =
+        IncrementalWorkPlan.QueuedRecordings |
+        IncrementalWorkPlan.DeferredSpeakerLabels |
+        IncrementalWorkPlan.SafeCleanup;
+
+    /// <summary>
+    /// Tracks one-time defaults for incremental work without overriding a later user opt-out.
+    /// </summary>
+    public int IncrementalWorkPlanMigrationVersion { get; init; }
+
     public SpeakerNameLearningMode SpeakerNameLearningMode { get; init; } =
         SpeakerNameLearningMode.LocalAutoLearn;
 
@@ -324,9 +371,17 @@ public sealed record AppConfig
 
     public string SummaryModelProxyBaseUrl { get; init; } = MeetingSummaryDefaults.ModelProxyBaseUrl;
 
-    public string SummaryModelProxyModel { get; init; } = MeetingSummaryDefaults.ModelProxyModel;
+    // Empty follows the ModelProxy model marked default in its live catalog.
+    public string SummaryModelProxyModel { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Tracks migration from the retired fixed ModelProxy default to live catalog selection.
+    /// </summary>
+    public int SummaryModelProxyContractMigrationVersion { get; init; }
 
     public string SummaryOpenAiModel { get; init; } = MeetingSummaryDefaults.OpenAiModel;
+
+    public SummaryReasoningEffort SummaryReasoningEffort { get; init; } = MeetingSummaryDefaults.ReasoningEffort;
 
     public int SummaryRequestTimeoutSeconds { get; init; } = MeetingSummaryDefaults.RequestTimeoutSeconds;
 

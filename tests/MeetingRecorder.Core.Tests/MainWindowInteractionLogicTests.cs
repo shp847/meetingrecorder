@@ -1491,7 +1491,11 @@ public sealed class MainWindowInteractionLogicTests
             PreferredTeamsIntegrationMode.Auto,
             BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode.Deferred,
-            ProcessingSpeedProfile.Normal,
+            InitialProcessingStrategy.ConfiguredStages,
+            InitialProcessingStrategy.ConfiguredStages,
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
             "22:00",
             "06:00",
             TranscriptionProviderPreference.WhisperNet,
@@ -1503,7 +1507,7 @@ public sealed class MainWindowInteractionLogicTests
             MeetingSummaryGenerationMode.Disabled,
             MeetingSummaryProviderPreference.LocalThenOpenAi,
             " http://127.0.0.1:8645/v1 ",
-            " gpt-5.4-mini ",
+            string.Empty,
             " gpt-5-mini ",
             "120",
             "6000",
@@ -1555,7 +1559,11 @@ public sealed class MainWindowInteractionLogicTests
             PreferredTeamsIntegrationMode.ThirdPartyApi,
             BackgroundProcessingMode.Balanced,
             BackgroundSpeakerLabelingMode.Throttled,
-            ProcessingSpeedProfile.TranscriptOnlyDrain,
+            InitialProcessingStrategy.TranscriptFirst,
+            InitialProcessingStrategy.TranscriptFirst,
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
             "22:00",
             "06:00",
             TranscriptionProviderPreference.LocalCli,
@@ -1605,7 +1613,9 @@ public sealed class MainWindowInteractionLogicTests
             PreferredTeamsIntegrationMode.ThirdPartyApi,
             BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode.Deferred,
-            ProcessingSpeedProfile.Normal,
+            InitialProcessingStrategy.ConfiguredStages,
+            InitialProcessingStrategy.ConfiguredStages,
+            IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup,
             "22:00",
             "06:00",
             TranscriptionProviderPreference.WhisperNet,
@@ -1662,7 +1672,11 @@ public sealed class MainWindowInteractionLogicTests
             PreferredTeamsIntegrationMode.Auto,
             BackgroundProcessingMode.Responsive,
             BackgroundSpeakerLabelingMode.Deferred,
-            ProcessingSpeedProfile.Normal,
+            InitialProcessingStrategy.ConfiguredStages,
+            InitialProcessingStrategy.ConfiguredStages,
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
             "22:00",
             "06:00",
             TranscriptionProviderPreference.WhisperNet,

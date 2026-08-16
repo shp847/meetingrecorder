@@ -62,6 +62,14 @@ public sealed class AppConfigStoreTests
         Assert.Equal(BackgroundProcessingMode.Responsive, config.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Deferred, config.BackgroundSpeakerLabelingMode);
         Assert.Equal(ProcessingSpeedProfile.Normal, config.ProcessingSpeedProfile);
+        Assert.True(config.ProcessingScheduleMigrationApplied);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, config.InitialProcessingStrategy);
+        Assert.Equal(
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
+            config.IncrementalWorkPlan);
+        Assert.Equal(1, config.IncrementalWorkPlanMigrationVersion);
         Assert.Equal("22:00", config.OvernightDrainStartLocal);
         Assert.Equal("06:00", config.OvernightDrainEndLocal);
         Assert.Equal(SpeakerNameLearningMode.LocalAutoLearn, config.SpeakerNameLearningMode);
@@ -88,11 +96,85 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingSummaryGenerationMode.Disabled, config.SummaryGenerationMode);
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, config.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", config.SummaryModelProxyBaseUrl);
-        Assert.Equal("gpt-5.4-mini", config.SummaryModelProxyModel);
+        Assert.Equal(string.Empty, config.SummaryModelProxyModel);
+        Assert.Equal(1, config.SummaryModelProxyContractMigrationVersion);
         Assert.Equal("gpt-5-mini", config.SummaryOpenAiModel);
+        Assert.Equal(SummaryReasoningEffort.Medium, config.SummaryReasoningEffort);
         Assert.Equal(120, config.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, config.SummaryTranscriptChunkTokenTarget);
         Assert.Equal(250, config.SummaryTranscriptChunkOverlapTokens);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Enables_DeferredSpeakerLabels_For_A_Ready_Legacy_IncrementalPlan()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var diarizationPath = Path.Combine(root, "models", "diarization", "standard");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        Directory.CreateDirectory(diarizationPath);
+        await File.WriteAllTextAsync(
+            configPath,
+            $$"""
+            {
+              "diarizationAssetPath": "{{diarizationPath.Replace("\\", "\\\\")}}",
+              "processingScheduleMigrationApplied": true,
+              "incrementalWorkPlan": 9,
+              "incrementalWorkPlanMigrationVersion": 0
+            }
+            """);
+
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var migrated = await store.LoadOrCreateAsync();
+
+        Assert.Equal(
+            IncrementalWorkPlan.QueuedRecordings |
+            IncrementalWorkPlan.DeferredSpeakerLabels |
+            IncrementalWorkPlan.SafeCleanup,
+            migrated.IncrementalWorkPlan);
+        Assert.Equal(1, migrated.IncrementalWorkPlanMigrationVersion);
+
+        var optedOut = await store.SaveAsync(migrated with
+        {
+            IncrementalWorkPlan = IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup,
+        });
+        Assert.Equal(IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup, optedOut.IncrementalWorkPlan);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Migrates_Only_The_Retired_ModelProxy_Default()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "summaryModelProxyModel": "gpt-5.4-mini",
+              "summaryModelProxyContractMigrationVersion": 0
+            }
+            """);
+        var migrated = await new AppConfigStore(configPath, documentsRoot).LoadOrCreateAsync();
+
+        Assert.Equal(string.Empty, migrated.SummaryModelProxyModel);
+        Assert.Equal(1, migrated.SummaryModelProxyContractMigrationVersion);
+
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "summaryModelProxyModel": "gpt-5.6-terra",
+              "summaryModelProxyContractMigrationVersion": 0
+            }
+            """);
+        var preserved = await new AppConfigStore(configPath, documentsRoot).LoadOrCreateAsync();
+
+        Assert.Equal("gpt-5.6-terra", preserved.SummaryModelProxyModel);
+        Assert.Equal(1, preserved.SummaryModelProxyContractMigrationVersion);
     }
 
     [Fact]
@@ -229,7 +311,11 @@ public sealed class AppConfigStoreTests
         Assert.Equal("https://example.com/releases/latest.json", reloaded.UpdateFeedUrl);
         Assert.Equal(BackgroundProcessingMode.Balanced, reloaded.BackgroundProcessingMode);
         Assert.Equal(BackgroundSpeakerLabelingMode.Throttled, reloaded.BackgroundSpeakerLabelingMode);
-        Assert.Equal(ProcessingSpeedProfile.OvernightDrain, reloaded.ProcessingSpeedProfile);
+        Assert.Equal(ProcessingSpeedProfile.Normal, reloaded.ProcessingSpeedProfile);
+        Assert.True(reloaded.ProcessingScheduleMigrationApplied);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, reloaded.InitialProcessingStrategy);
+        Assert.Equal(InitialProcessingStrategy.TranscriptFirst, reloaded.OvernightInitialProcessingStrategy);
+        Assert.Equal(IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup, reloaded.IncrementalWorkPlan);
         Assert.Equal("21:30", reloaded.OvernightDrainStartLocal);
         Assert.Equal("05:15", reloaded.OvernightDrainEndLocal);
         Assert.Equal("0.2", reloaded.InstalledReleaseVersion);
@@ -256,7 +342,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingSummaryGenerationMode.Enabled, reloaded.SummaryGenerationMode);
         Assert.Equal(MeetingSummaryProviderPreference.OpenAiOnly, reloaded.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", reloaded.SummaryModelProxyBaseUrl);
-        Assert.Equal("gpt-5.4-mini", reloaded.SummaryModelProxyModel);
+        Assert.Equal(string.Empty, reloaded.SummaryModelProxyModel);
         Assert.Equal("gpt-5-mini", reloaded.SummaryOpenAiModel);
         Assert.Equal(180, reloaded.SummaryRequestTimeoutSeconds);
         Assert.Equal(5000, reloaded.SummaryTranscriptChunkTokenTarget);
@@ -666,8 +752,9 @@ public sealed class AppConfigStoreTests
         Assert.False(migrated.DiarizationCliProviderProbe.Succeeded);
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, migrated.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", migrated.SummaryModelProxyBaseUrl);
-        Assert.Equal("gpt-5.4-mini", migrated.SummaryModelProxyModel);
+        Assert.Equal(string.Empty, migrated.SummaryModelProxyModel);
         Assert.Equal("gpt-5-mini", migrated.SummaryOpenAiModel);
+        Assert.Equal(SummaryReasoningEffort.Medium, migrated.SummaryReasoningEffort);
         Assert.Equal(120, migrated.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, migrated.SummaryTranscriptChunkTokenTarget);
         Assert.Equal(250, migrated.SummaryTranscriptChunkOverlapTokens);
@@ -693,6 +780,7 @@ public sealed class AppConfigStoreTests
         Assert.Contains("\"summaryGenerationMode\"", json, StringComparison.Ordinal);
         Assert.Contains("\"summaryProviderPreference\"", json, StringComparison.Ordinal);
         Assert.Contains("\"summaryModelProxyModel\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"summaryReasoningEffort\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("summaryModelProxyBackend", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("summaryModelProxyCodexModel", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sk-modelproxy", json, StringComparison.OrdinalIgnoreCase);
