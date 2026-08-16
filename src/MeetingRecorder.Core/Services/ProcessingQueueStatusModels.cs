@@ -40,4 +40,5 @@ internal sealed record ProcessingQueueStatusSnapshot(
     DateTimeOffset LastUpdatedAtUtc,
     RushedProcessingQueueState? RushRequest = null,
     bool IsRushPauseBypassActive = false,
-    bool HasPreemptedItem = false);
+    bool HasPreemptedItem = false,
+    string? CurrentStageMessage = null);

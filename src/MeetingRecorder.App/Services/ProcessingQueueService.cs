@@ -2282,7 +2282,8 @@ internal sealed class ProcessingQueueService
             nowUtc,
             rushRequest,
             IsRushPauseBypassActiveLocked(rushRequest),
-            _queuedManifestEntries.Any(entry => entry.WasPreempted));
+            _queuedManifestEntries.Any(entry => entry.WasPreempted),
+            currentStageStatus?.Message);
     }
 
     private TimeSpan? EstimateActiveRemainingLocked(IReadOnlyList<ActiveQueueItemState> activeItems, DateTimeOffset nowUtc)
@@ -2338,6 +2339,13 @@ internal sealed class ProcessingQueueService
             if (_activeItemStatesByManifestPath.ContainsKey(queueEntry.ManifestPath) &&
                 stageStatus.State == StageExecutionState.Running)
             {
+                // Native speaker labeling has no incremental completion signal. Do not turn a
+                // static startup estimate into a false countdown while its heartbeat is alive.
+                if (string.Equals(stageStatus.StageName, "diarization", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
                 var stageElapsed = nowUtc - stageStatus.UpdatedAtUtc;
                 var stageRemaining = stageEstimate - stageElapsed;
                 if (stageRemaining > TimeSpan.Zero)

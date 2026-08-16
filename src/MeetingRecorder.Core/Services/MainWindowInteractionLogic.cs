@@ -529,6 +529,8 @@ internal static class MainWindowInteractionLogic
                     => "Paused by live recording",
                 ProcessingQueueRunState.Processing when FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) is { } eta
                     => eta,
+                ProcessingQueueRunState.Processing when string.Equals(snapshot.CurrentStageName, "diarization", StringComparison.OrdinalIgnoreCase)
+                    => "ETA learning",
                 ProcessingQueueRunState.Queued => $"{snapshot.TotalRemainingCount} waiting",
                 _ => $"{snapshot.TotalRemainingCount} remaining",
             };
@@ -703,7 +705,13 @@ internal static class MainWindowInteractionLogic
             parts.Add($"{FormatElapsed(nowUtc - startedAtUtc)} elapsed");
         }
 
-        parts.Add(FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ?? "ETA unavailable");
+        if (!string.IsNullOrWhiteSpace(snapshot.CurrentStageMessage))
+        {
+            parts.Add(snapshot.CurrentStageMessage);
+        }
+
+        parts.Add(FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ??
+            (string.Equals(snapshot.CurrentStageName, "diarization", StringComparison.OrdinalIgnoreCase) ? "ETA learning" : "ETA unavailable"));
         return string.Join(" · ", parts);
     }
 
@@ -717,16 +725,9 @@ internal static class MainWindowInteractionLogic
             return null;
         }
 
-        var elapsedSinceSnapshot = nowUtc - snapshotUpdatedAtUtc;
-        var adjustedRemaining = elapsedSinceSnapshot <= TimeSpan.Zero
-            ? estimatedRemaining.Value
-            : estimatedRemaining.Value - elapsedSinceSnapshot;
-        if (adjustedRemaining < TimeSpan.Zero)
-        {
-            adjustedRemaining = TimeSpan.Zero;
-        }
-
-        return $"ETA ~{FormatCompactDuration(adjustedRemaining)}";
+        _ = snapshotUpdatedAtUtc;
+        _ = nowUtc;
+        return $"ETA ~{FormatCompactDuration(estimatedRemaining.Value)}";
     }
 
     private static string FormatCompactDuration(TimeSpan duration)

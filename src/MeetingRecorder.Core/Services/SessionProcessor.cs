@@ -215,6 +215,16 @@ public sealed class SessionProcessor
         }
         else
         {
+            DiarizationProgress? latestDiarizationProgress = null;
+            var progressSource = DiarizationProvider as IDiarizationProgressSource;
+            void OnDiarizationProgress(DiarizationProgress progress) => latestDiarizationProgress = progress;
+            if (progressSource is not null)
+            {
+                progressSource.ProgressChanged += OnDiarizationProgress;
+            }
+
+            using var diarizationHeartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            Task? diarizationHeartbeatTask = null;
             try
             {
                 manifest = manifest with
@@ -222,6 +232,11 @@ public sealed class SessionProcessor
                     DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Running, DateTimeOffset.UtcNow, null),
                 };
                 await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+
+                diarizationHeartbeatTask = PersistDiarizationHeartbeatAsync(
+                    manifestPath,
+                    () => latestDiarizationProgress,
+                    diarizationHeartbeatCts.Token);
 
                 using var diarizationTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 diarizationTimeoutCts.CancelAfter(BackgroundProcessingPolicy.DiarizationTimeout);
@@ -243,6 +258,17 @@ public sealed class SessionProcessor
                         diarization.Message),
                 };
             }
+            catch (WavInputManualReviewException exception)
+            {
+                manifest = manifest with
+                {
+                    DiarizationStatus = new ProcessingStageStatus(
+                        "diarization",
+                        StageExecutionState.Skipped,
+                        DateTimeOffset.UtcNow,
+                        $"Speaker labeling needs manual review: {exception.Message}"),
+                };
+            }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 manifest = manifest with
@@ -260,6 +286,26 @@ public sealed class SessionProcessor
                 {
                     DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Failed, DateTimeOffset.UtcNow, exception.Message),
                 };
+            }
+            finally
+            {
+                diarizationHeartbeatCts.Cancel();
+                if (diarizationHeartbeatTask is not null)
+                {
+                    try
+                    {
+                        await diarizationHeartbeatTask;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when the diarization stage reaches a final state.
+                    }
+                }
+
+                if (progressSource is not null)
+                {
+                    progressSource.ProgressChanged -= OnDiarizationProgress;
+                }
             }
         }
 
@@ -619,6 +665,69 @@ public sealed class SessionProcessor
         return overrides?.ForceSpeakerLabeling == true
             ? overrides with { ForceSpeakerLabeling = false }
             : overrides;
+    }
+
+    private async Task PersistDiarizationHeartbeatAsync(
+        string manifestPath,
+        Func<DiarizationProgress?> getLatestProgress,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            var progress = getLatestProgress();
+            var current = await ManifestStore.LoadAsync(manifestPath, cancellationToken);
+            if (current.DiarizationStatus.State != StageExecutionState.Running)
+            {
+                return;
+            }
+
+            var message = progress is null
+                ? "Speaker labeling is running; waiting for the native provider to report its first pass."
+                : FormatDiarizationProgress(progress);
+            current = current with
+            {
+                DiarizationStatus = current.DiarizationStatus with
+                {
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    Message = message,
+                },
+            };
+            await ManifestStore.SaveAsync(current, manifestPath, cancellationToken);
+        }
+    }
+
+    private static string FormatDiarizationProgress(DiarizationProgress progress)
+    {
+        var parts = new List<string> { $"Speaker labeling: {progress.Phase}" };
+        if (!string.IsNullOrWhiteSpace(progress.ExecutionProvider))
+        {
+            parts.Add(progress.ExecutionProvider);
+        }
+
+        if (progress.Attempt > 0)
+        {
+            parts.Add(progress.AttemptCount is > 0
+                ? $"pass {progress.Attempt}/{progress.AttemptCount}"
+                : $"pass {progress.Attempt}");
+        }
+
+        if (progress.InputDuration is { } duration && duration > TimeSpan.Zero)
+        {
+            parts.Add($"input {duration:hh\\:mm\\:ss}");
+        }
+
+        if (progress.WorkingSetBytes is { } workingSetBytes && workingSetBytes > 0)
+        {
+            parts.Add($"memory {workingSetBytes / (1024d * 1024d):0} MB");
+        }
+
+        if (!string.IsNullOrWhiteSpace(progress.Detail))
+        {
+            parts.Add(progress.Detail);
+        }
+
+        return string.Join("; ", parts);
     }
 
     private async Task<string> ResolveSourceAudioPathAsync(

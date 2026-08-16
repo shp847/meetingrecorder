@@ -7,7 +7,7 @@ using SherpaOnnx;
 
 namespace MeetingRecorder.ProcessingWorker;
 
-internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
+internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, IDiarizationProgressSource
 {
     private const string DirectMlFallbackMessage =
         "DirectML GPU initialization failed; speaker labeling retried on CPU.";
@@ -36,6 +36,8 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
     private readonly VoiceProfileMatcher _voiceProfileMatcher;
     private readonly VoiceProfileStore _voiceProfileStore;
     private readonly SpeakerNameLearningService _speakerNameLearningService;
+
+    public event Action<DiarizationProgress>? ProgressChanged;
 
     public LocalSpeakerDiarizationProvider(
         string diarizationAssetPath,
@@ -116,7 +118,17 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         var preparedAudioPath = BuildPreparedAudioPath(audioPath);
         try
         {
-            await _audioPreparer.PrepareAsync(audioPath, preparedAudioPath, cancellationToken);
+            ReportProgress("Preparing normalized PCM", null, 0, null, null, null, "Inspecting and converting source audio.");
+            var preparedAudio = await _audioPreparer.PrepareWithInspectionAsync(audioPath, preparedAudioPath, cancellationToken);
+            var preparedBytes = new FileInfo(preparedAudio.PreparedAudioPath).Length;
+            ReportProgress(
+                "Prepared audio",
+                null,
+                0,
+                null,
+                preparedAudio.InputInspection.EffectiveDuration == TimeSpan.Zero ? null : preparedAudio.InputInspection.EffectiveDuration,
+                preparedBytes,
+                preparedAudio.InputInspection.DiagnosticMessage);
 
             var diarizationRun = await RunDiarizationAsync(
                 preparedAudioPath,
@@ -133,6 +145,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
                     DateTimeOffset.UtcNow),
                 cancellationToken);
 
+            ReportProgress("Completed", diarizationRun.EffectiveExecutionProvider.ToString(), 0, null, null, preparedBytes, diarizationRun.Result.Message);
             return diarizationRun.Result;
         }
         finally
@@ -166,6 +179,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             var directMlDecision = DiarizationAccelerationPolicy.Resolve(
                 _accelerationPreference,
                 directMlAvailable: true);
+            ReportProgress("Provider selected", "DirectML", 0, null, null, null, "Starting DirectML speaker labeling.");
 
             try
             {
@@ -198,6 +212,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 _logger.Log($"DirectML speaker-labeling attempt failed safely with {exception.GetType().Name}. Retrying on CPU.");
+                ReportProgress("Provider fallback", "CPU", 0, null, null, null, DirectMlFallbackMessage);
                 return await RunCpuFallbackAsync(
                     preparedAudioPath,
                     transcriptSegments,
@@ -210,6 +225,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         var cpuDecision = DiarizationAccelerationPolicy.Resolve(
             _accelerationPreference,
             directMlAvailable: false);
+        ReportProgress("Provider selected", "CPU", 0, null, null, null, cpuDecision.DiagnosticMessage ?? "Starting CPU speaker labeling.");
         var cpuResult = await RunWithProviderAsync(
             preparedAudioPath,
             transcriptSegments,
@@ -238,6 +254,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             InferenceAccelerationPreference.Auto,
             directMlAvailable: false,
             fallbackMessage);
+        ReportProgress("Provider selected", "CPU", 0, null, null, null, fallbackMessage);
         var fallbackResult = await RunWithProviderAsync(
             preparedAudioPath,
             transcriptSegments,
@@ -468,7 +485,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             .ToArray();
     }
 
-    private static DiarizationClusterSelection ProcessSpeakerTurns(
+    private DiarizationClusterSelection ProcessSpeakerTurns(
         string preparedAudioPath,
         DiarizationAssetInstallStatus installedAssets,
         string provider,
@@ -479,7 +496,9 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         var thresholdOptions = DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions();
         var selectionOptions = DiarizationCalibrationEnvironment.LoadClusterSelectionOptions();
         using var reader = new AudioFileReader(preparedAudioPath);
+        ReportProgress("Loading samples", provider, 0, null, reader.TotalTime, reader.Length, "Loading prepared PCM into one exact-size buffer.");
         var samples = ReadSamples(reader, cancellationToken);
+        ReportProgress("Samples loaded", provider, 0, null, reader.TotalTime, reader.Length, "Starting native diarization inference.");
         var candidates = new List<DiarizationClusterCandidate>();
 
         var defaultCandidate = BuildClusterCandidate(
@@ -488,7 +507,9 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
             installedAssets,
             provider,
             threadCount,
-            thresholdOptions.DefaultClusteringThreshold);
+            thresholdOptions.DefaultClusteringThreshold,
+            attempt: 1,
+            attemptCount: null);
         candidates.Add(defaultCandidate);
         var defaultSelection = clusterSelectionService.SelectBestCandidate(candidates);
         if (defaultSelection.IsAutomaticSpeakerCountSupported &&
@@ -500,24 +521,50 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
         var thresholds = defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount
             ? thresholdOptions.CollapsedSpeakerClusteringThresholds
             : thresholdOptions.OverSegmentedSpeakerClusteringThresholds;
-        foreach (var threshold in thresholds)
+        for (var index = 0; index < thresholds.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var candidate = BuildClusterCandidate(samples, reader.WaveFormat.SampleRate, installedAssets, provider, threadCount, threshold);
+            var candidate = BuildClusterCandidate(
+                samples,
+                reader.WaveFormat.SampleRate,
+                installedAssets,
+                provider,
+                threadCount,
+                thresholds[index],
+                attempt: index + 2,
+                attemptCount: thresholds.Count + 1);
             candidates.Add(candidate);
+
+            // The existing collapsed-cluster selector returns the first valid recovery.
+            // Stop only when that ordering proves this candidate cannot be superseded.
+            if (defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount &&
+                DiarizationClusterSelectionService.IsAutomaticSpeakerCountSupported(clusterSelectionService.CountSupportedSpeakers(candidate)))
+            {
+                return clusterSelectionService.SelectBestCandidate(candidates);
+            }
         }
 
         return clusterSelectionService.SelectBestCandidate(candidates);
     }
 
-    private static DiarizationClusterCandidate BuildClusterCandidate(
+    private DiarizationClusterCandidate BuildClusterCandidate(
         float[] samples,
         int preparedAudioSampleRate,
         DiarizationAssetInstallStatus installedAssets,
         string provider,
         int threadCount,
-        float threshold)
+        float threshold,
+        int attempt,
+        int? attemptCount)
     {
+        ReportProgress(
+            "Native inference",
+            provider,
+            attempt,
+            attemptCount,
+            TimeSpan.FromSeconds(samples.Length / (double)Math.Max(1, preparedAudioSampleRate)),
+            null,
+            $"Testing clustering threshold {threshold:0.##}.");
         return new DiarizationClusterCandidate(
             threshold,
             ProcessSpeakerTurnsAtThreshold(
@@ -604,16 +651,44 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider
 
     private static float[] ReadSamples(AudioFileReader reader, CancellationToken cancellationToken)
     {
-        var samples = new List<float>();
-        var buffer = new float[reader.WaveFormat.SampleRate];
-        int samplesRead;
-        while ((samplesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
+        var bytesPerSample = Math.Max(1, reader.WaveFormat.BitsPerSample / 8);
+        var sampleCount = checked((int)Math.Min(int.MaxValue, reader.Length / bytesPerSample));
+        var samples = new float[sampleCount];
+        var offset = 0;
+        while (offset < samples.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            samples.AddRange(buffer.Take(samplesRead));
+            var samplesRead = reader.Read(samples, offset, samples.Length - offset);
+            if (samplesRead == 0)
+            {
+                break;
+            }
+
+            offset += samplesRead;
         }
 
-        return samples.ToArray();
+        return offset == samples.Length ? samples : samples[..offset];
+    }
+
+    private void ReportProgress(
+        string phase,
+        string? executionProvider,
+        int attempt,
+        int? attemptCount,
+        TimeSpan? inputDuration,
+        long? inputBytes,
+        string? detail)
+    {
+        ProgressChanged?.Invoke(new DiarizationProgress(
+            phase,
+            executionProvider,
+            attempt,
+            attemptCount,
+            inputDuration,
+            inputBytes,
+            Environment.WorkingSet,
+            detail,
+            DateTimeOffset.UtcNow));
     }
 
     private static OfflineSpeakerDiarization CreateDiarizer(

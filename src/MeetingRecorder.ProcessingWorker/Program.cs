@@ -1,4 +1,5 @@
 using MeetingRecorder.Core.Services;
+using System.Text.Json;
 
 namespace MeetingRecorder.ProcessingWorker;
 
@@ -6,6 +7,11 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (HasArgument(args, "--run-local-diarization"))
+        {
+            return await RunLocalDiarizationHelperAsync(args);
+        }
+
         if (HasArgument(args, "--probe-directml"))
         {
             return await RunDirectMlProbeAsync(args);
@@ -55,7 +61,7 @@ internal static class Program
                 pathBuilder,
                 new WaveChunkMerger(),
                 CreateTranscriptionProvider(config, transcriptionThreadCount, logger),
-                CreateDiarizationProvider(config, diarizationThreadCount, logger),
+                CreateDiarizationProvider(config, diarizationThreadCount, logger, resolvedConfigPath),
                 new TranscriptRenderer(),
                 new FilePublishService(),
                 summarizationProvider);
@@ -148,7 +154,8 @@ internal static class Program
     private static MeetingRecorder.Core.Processing.IDiarizationProvider CreateDiarizationProvider(
         MeetingRecorder.Core.Configuration.AppConfig config,
         int diarizationThreadCount,
-        FileLogWriter logger)
+        FileLogWriter logger,
+        string configPath)
     {
         if (config.DiarizationProviderPreference == MeetingRecorder.Core.Configuration.DiarizationProviderPreference.LocalCli &&
             CliProviderProcess.HasCurrentSuccessfulProbe(config.DiarizationCliPath, config.DiarizationCliProviderProbe) &&
@@ -165,17 +172,54 @@ internal static class Program
             logger.Log("Falling back to local Sherpa diarization provider because the configured CLI provider has no current successful probe.");
         }
 
-        return new LocalSpeakerDiarizationProvider(
-            config.DiarizationAssetPath,
-            config.DiarizationAccelerationPreference,
-            diarizationThreadCount,
-            logger,
-            config.SpeakerNameLearningMode,
-            new SpeakerNameRecognitionOptions(
-                config.SpeakerNameAutoApplyConfidenceThreshold,
-                config.SpeakerNameSuggestionConfidenceThreshold,
-                config.SpeakerNameMatchMarginThreshold),
-            AppDataPaths.GetVoiceProfileStorePath());
+        return new BoundedLocalDiarizationProvider(configPath, logger);
+    }
+
+    private static async Task<int> RunLocalDiarizationHelperAsync(IReadOnlyList<string> args)
+    {
+        var requestPath = TryGetOption(args, "--diarization-request");
+        var resultPath = TryGetOption(args, "--diarization-result");
+        var configPath = TryGetOption(args, "--config") ?? AppDataPaths.GetConfigPath();
+        if (string.IsNullOrWhiteSpace(requestPath) || string.IsNullOrWhiteSpace(resultPath) || !File.Exists(requestPath))
+        {
+            Console.Error.WriteLine("Missing local diarization helper request or result path.");
+            return 1;
+        }
+
+        try
+        {
+            var request = JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(await File.ReadAllTextAsync(requestPath))
+                ?? throw new InvalidOperationException("Local diarization helper request was empty.");
+            var config = await new AppConfigStore(configPath).LoadOrCreateAsync();
+            var logger = new FileLogWriter(Path.Combine(Path.GetDirectoryName(requestPath)!, "helper.log"));
+            var provider = new LocalSpeakerDiarizationProvider(
+                config.DiarizationAssetPath,
+                config.DiarizationAccelerationPreference,
+                BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount),
+                logger,
+                config.SpeakerNameLearningMode,
+                new SpeakerNameRecognitionOptions(
+                    config.SpeakerNameAutoApplyConfidenceThreshold,
+                    config.SpeakerNameSuggestionConfidenceThreshold,
+                    config.SpeakerNameMatchMarginThreshold),
+                AppDataPaths.GetVoiceProfileStorePath());
+            provider.ProgressChanged += progress => WriteHelperProgress(request.ProgressPath, progress);
+            var result = await provider.ApplySpeakerLabelsAsync(request.AudioPath, request.TranscriptSegments, CancellationToken.None);
+            await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result));
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return 2;
+        }
+    }
+
+    private static void WriteHelperProgress(string progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
+    {
+        var temporaryPath = progressPath + ".tmp";
+        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(progress));
+        File.Move(temporaryPath, progressPath, overwrite: true);
     }
 
     private static async Task<int> RunExternalProviderProbeAsync(

@@ -755,10 +755,40 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Contains("AI Super Users", stripState.Line2);
         Assert.Contains("transcription running", stripState.Line2);
         Assert.Contains("00:03:00 elapsed", stripState.Line2);
-        Assert.Contains("ETA ~7m", stripState.Line2);
+        Assert.Contains("ETA ~8m", stripState.Line2);
         Assert.Contains("Overall queue", stripState.Line3);
-        Assert.Contains("ETA ~31m", stripState.Line3);
+        Assert.Contains("ETA ~32m", stripState.Line3);
         Assert.Equal("Loading cleanup suggestions in the background.", stripState.SecondaryText);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Shows_Diarization_Heartbeat_Without_A_False_Countdown()
+    {
+        var snapshotTime = new DateTimeOffset(2026, 03, 27, 18, 0, 0, TimeSpan.Zero);
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Processing,
+            ProcessingQueuePauseReason.None,
+            0,
+            1,
+            @"C:\Meetings\work\abc\manifest.json",
+            "Vendor review",
+            MeetingPlatform.Teams,
+            "diarization",
+            StageExecutionState.Running,
+            snapshotTime,
+            snapshotTime.AddMinutes(-45),
+            null,
+            null,
+            snapshotTime,
+            CurrentStageMessage: "Speaker labeling: Native inference; DirectML; pass 2/14; input 01:02:42; memory 2400 MB");
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, snapshotTime.AddMinutes(10));
+        var header = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, snapshotTime.AddMinutes(10));
+
+        Assert.Contains("ETA learning", stripState.Line2);
+        Assert.Contains("pass 2/14", stripState.Line2);
+        Assert.Contains("ETA unavailable", stripState.Line3);
+        Assert.Equal("ETA learning", header.Detail);
     }
 
     [Fact]

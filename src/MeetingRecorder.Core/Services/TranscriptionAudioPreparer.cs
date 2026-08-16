@@ -9,7 +9,23 @@ public sealed class TranscriptionAudioPreparer
     public const int WhisperChannelCount = 1;
     public const int WhisperBitsPerSample = 16;
 
-    public Task<string> PrepareAsync(
+    private readonly WavInputInspector _wavInputInspector;
+
+    public TranscriptionAudioPreparer(WavInputInspector? wavInputInspector = null)
+    {
+        _wavInputInspector = wavInputInspector ?? new WavInputInspector();
+    }
+
+    public async Task<string> PrepareAsync(
+        string sourceAudioPath,
+        string preparedAudioPath,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await PrepareWithInspectionAsync(sourceAudioPath, preparedAudioPath, cancellationToken);
+        return result.PreparedAudioPath;
+    }
+
+    public async Task<PreparedAudioResult> PrepareWithInspectionAsync(
         string sourceAudioPath,
         string preparedAudioPath,
         CancellationToken cancellationToken = default)
@@ -30,7 +46,18 @@ public sealed class TranscriptionAudioPreparer
             ?? throw new InvalidOperationException("Prepared audio path must include a directory.");
         Directory.CreateDirectory(outputDirectory);
 
-        using var reader = new AudioFileReader(sourceAudioPath);
+        var inspection = _wavInputInspector.Inspect(sourceAudioPath);
+        var normalizedSourcePath = preparedAudioPath + ".normalized-source.wav";
+        var decoderSourcePath = sourceAudioPath;
+        try
+        {
+            decoderSourcePath = await _wavInputInspector.CreateNormalizedTemporaryCopyAsync(
+                sourceAudioPath,
+                normalizedSourcePath,
+                inspection,
+                cancellationToken);
+
+            using var reader = new AudioFileReader(decoderSourcePath);
         ISampleProvider sampleProvider = reader;
 
         sampleProvider = MatchChannelCount(sampleProvider, WhisperChannelCount);
@@ -39,19 +66,27 @@ public sealed class TranscriptionAudioPreparer
             sampleProvider = new WdlResamplingSampleProvider(sampleProvider, WhisperSampleRate);
         }
 
-        using var writer = new WaveFileWriter(
-            preparedAudioPath,
-            new WaveFormat(WhisperSampleRate, WhisperBitsPerSample, WhisperChannelCount));
+            using var writer = new WaveFileWriter(
+                preparedAudioPath,
+                new WaveFormat(WhisperSampleRate, WhisperBitsPerSample, WhisperChannelCount));
 
-        var buffer = new float[8192];
-        int samplesRead;
-        while ((samplesRead = sampleProvider.Read(buffer, 0, buffer.Length)) > 0)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            writer.WriteSamples(buffer, 0, samplesRead);
+            var buffer = new float[8192];
+            int samplesRead;
+            while ((samplesRead = sampleProvider.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                writer.WriteSamples(buffer, 0, samplesRead);
+            }
+
+            return new PreparedAudioResult(preparedAudioPath, inspection);
         }
-
-        return Task.FromResult(preparedAudioPath);
+        finally
+        {
+            if (!string.Equals(decoderSourcePath, sourceAudioPath, StringComparison.OrdinalIgnoreCase) && File.Exists(normalizedSourcePath))
+            {
+                File.Delete(normalizedSourcePath);
+            }
+        }
     }
 
     private static ISampleProvider MatchChannelCount(ISampleProvider provider, int targetChannelCount)
@@ -75,3 +110,5 @@ public sealed class TranscriptionAudioPreparer
             $"Unable to convert audio from {provider.WaveFormat.Channels} channels to {targetChannelCount} channels.");
     }
 }
+
+public sealed record PreparedAudioResult(string PreparedAudioPath, WavInputInspection InputInspection);
