@@ -3763,183 +3763,140 @@ Sprint 8 acceptance criteria:
   evidence, stop and reassess rather than adding another layer of special-case
   split rules.
 
-# Further Pressure-Tested Granola-Inspired Meeting Recorder Roadmap
+# Unified Local Meeting Intelligence Roadmap
 
 ## Summary
 
-The previous Granola-inspired roadmap is directionally strong: notes, AI
-enhancement, chat, briefs, follow-ups, privacy, and local reliability are the
-right core bets. Further research suggests the biggest missing emphasis is
-friction removal around the meeting moment: calendar/start prompts, one-tap note
-creation, always-visible active capture, people/company memory, retention
-controls, and stronger "nothing silently failed" feedback.
+This unifies the previous Granola roadmap with the strongest Fireflies signals.
+Granola supplies the workflow shape: brief before the meeting, a minimal note
+canvas during it, then notes, actions, and follow-up afterward. Fireflies
+sharpens the priority: frictionless capture, searchable recall, and reviewed
+action outputs are the durable user value.
 
-Granola's product pattern is "before, during, after": brief before the meeting,
-minimal note canvas during, notes/actions/follow-ups afterward. Meeting Recorder
-should copy that workflow shape while keeping its local-first,
-explicit-recording posture.
+Meeting Recorder should adopt those workflow gains while keeping its
+Windows-first, local-first, explicit-recording posture. This section is the sole
+roadmap for these capabilities; do not add a parallel Granola or Fireflies track.
 
-## What Users Rave About
+## What To Preserve And What To Exclude
 
-- No meeting bot: computer-audio capture avoids the social friction of another
-  participant joining the call.
-- Presence in meetings: users like that they can stop typing nonstop and still
-  get useful summaries/action items afterward.
-- Raw notes plus AI enhancement: user notes guide generated notes, but the app
-  also works if the user leaves notes blank.
-- Actionable outputs: summaries, key points, decisions, action items, and
-  follow-up drafts are the payoff.
-- Cross-meeting recall: chat across meetings, people, companies, folders, and
-  selected meetings is a major differentiator.
-- Low-friction capture: calendar prompts, one-tap start, mobile capture, and
-  "it is instantly there" workflows are repeatedly praised.
-- Clean UI: reviewers praise the simple personal-notepad feel more than heavy
-  meeting-management dashboards.
+Users value bot-free capture, staying present instead of typing, useful summaries
+and actions, rapid recall of a past decision, and a clean personal-workspace UI.
+The roadmap therefore preserves raw notes plus AI enhancement, source-grounded
+outputs, local people/project memory, and clear capture confidence.
 
-## Plan Changes To Incorporate
+Do not add meeting bots, cloud sync, account login, automatic CRM/Slack/Notion/
+email writes, public sharing links, sentiment or coaching analytics, or a generic
+AI-skill marketplace. Speaker labels and generated actions remain reviewable
+suggestions, never asserted facts.
 
-- Add a meeting launch layer: a `Coming Up` strip on `Home` with
-  calendar-matched meetings, detected call candidates, and one-click
-  `Open Note + Start Recording`; accepted prompts should open the note, start
-  recording, focus raw notes, and prefill title/attendees/project when known.
-- Add People and Company memory: local relationship pages built from attendees,
-  key attendees, project/client fields, Outlook enrichment, and speaker-name
-  corrections; each page shows related meetings, unresolved actions, decisions,
-  and relationship-scoped chat.
-- Upgrade notes into the primary workbench: raw notes should be the live
-  meeting surface, with Markdown shortcuts, checkboxes, headings,
-  selected-text rewrite, local image attachments when feasible, source
-  inspection, and a bottom command bar for `Ask`, recipes, enhancement, actions,
-  follow-up, and transcript.
-- Make local recording more seamless: add a persistent active-recording
-  mini-controller visible from every app surface, loud silent-failure detection,
-  confidence states, and granular post-stop progress states.
-- Add smart follow-up rules: generate suggested follow-ups only when useful,
-  keep them local/editable in v1, expose a 48-hour suggestion shelf, and support
-  variants such as `Client follow-up`, `Internal recap`,
-  `Recruiting debrief`, and `Decision recap`.
-- Add retention and privacy controls earlier: local policies for keeping audio
-  forever, deleting audio after transcript, deleting transcript after a
-  retention period, or keeping notes only; destructive retention changes need
-  clear warnings and capability-degradation messaging.
-- Add vocabulary and correction feedback: local terms for client names, product
-  names, acronyms, and jargon should improve future transcription context,
-  notes, chat, and summaries without requiring shared/cloud profiles.
+## Unified Sprint Shape
 
-## Revised Sprint Shape
+### Sprint 1: Meeting Moment And Capture Confidence
 
-### Sprint 1: Meeting Launch And Capture Notes
+- Add a `Coming Up` strip with calendar-matched meetings and detected call
+  candidates, plus one-click `Open Note + Start Recording`.
+- Open a focused raw-note canvas, prefill known title/attendees/project, and add
+  a persistent active-recording mini-controller visible from every app surface.
+- Add `Ready`, `Capturing`, `Low signal`, `Endpoint changed`, `Recovering`, and
+  `Failed` states. Prompts may offer capture, but must never start it silently.
+- Acceptance: users can start from an upcoming or detected meeting, see capture
+  health throughout the app, and recover their notes after stop or failure.
 
-- Add the `Coming Up` strip, one-click `Open Note + Start Recording`, active
-  recording mini-controller, and raw notes sidecar.
-- Add capture confidence states: `Ready`, `Capturing`, `Low signal`,
-  `Endpoint changed`, `Recovering`, and `Failed`.
-- Acceptance: a user can start from an upcoming or detected meeting, land in a
-  focused note canvas, see capture health everywhere, and recover notes after
-  stop.
+### Sprint 2: Evidence-Aware Notes And Reviewed Actions
 
-### Sprint 2: Enhanced Notes With Evidence
+- Make raw notes the live surface; add optional enhanced notes, Markdown
+  shortcuts, source inspection, selected-text rewrite, and
+  regenerate-with-feedback without overwriting user-authored notes.
+- Extend the existing published-summary pipeline with editable decisions, action
+  items, and follow-up drafts rather than creating a parallel artifact store.
+- Acceptance: generated content is editable, traceable to local evidence, and
+  optional AI failure never blocks transcript publication.
 
-- Add enhanced notes, source inspection, selected-text rewrite, and
-  regenerate-with-feedback commands.
-- Preserve raw notes separately from generated content.
-- Acceptance: enhanced notes are editable, source-aware, regenerable, and do not
-  overwrite user-authored notes.
+### Sprint 3: Local Recall And Action Inbox
 
-### Sprint 3: Action Workbench And Follow-Up Drafts
+- Add timestamped, speaker-aware search across local meetings, notes, decisions,
+  and actions.
+- Add grounded Q&A over an explicit scope: one meeting, selected meetings,
+  project/client, attendee, or all local meetings. Every answer links to source
+  transcript or note evidence.
+- Add a local action inbox that keeps owner, due-text, meeting origin, and review
+  state visible without writing to an external task system.
+- Acceptance: users can find a past decision or promise in seconds and inspect
+  its local source before acting.
 
-- Add action/decision/follow-up artifacts and a smart follow-up shelf.
-- Keep drafts local and editable; no email or Teams sending in v1.
-- Acceptance: users can copy a client update, internal recap, action list,
-  decision log, or follow-up draft within one or two clicks after a meeting.
+### Sprint 4: Focused Recipes And Follow-Up Workbench
 
-### Sprint 4: Chat Workbench, Recipes, And Scoped Memory
+- Add a bottom workbench with `Ask`, `Actions`, and `Transcript` modes.
+- Deliver only four initial recipes: `Action list`, `Client follow-up`,
+  `Internal recap`, and `Decision log`.
+- Keep every result local and editable; users explicitly copy or export it. Do
+  not send email, Teams, or CRM updates in v1.
+- Acceptance: a user can produce and review each output within one or two clicks
+  after a meeting without a new integration setup flow.
 
-- Add the bottom workbench with `Ask`, `Actions`, and `Transcript` modes.
-- Add slash recipes and chat scopes for one meeting, selected meetings,
-  project/client, attendee, and all local meetings.
-- Acceptance: users can ask questions like "what did I promise this week?" and
-  get grounded answers from local transcripts/notes.
-
-### Sprint 5: Pre-Meeting Briefs And Daily Prep
+### Sprint 5: Preparation And Relationship Memory
 
 - Add pre-meeting briefs, daily prep, recurring-meeting detection, and
-  project/client auto-grouping.
-- Prefer silence over filler when there is not enough local context.
-- Acceptance: before a meeting, the user sees useful prior context without
-  slowing recording startup.
+  project/client grouping; prefer silence when local context is insufficient.
+- Add local People/Companies views from attendees, key attendees, calendar
+  enrichment, project/client fields, and speaker-name corrections.
+- Add local vocabulary and correction feedback for names, acronyms, and domain
+  terms while retaining manual project tags and speaker editing.
+- Acceptance: preparation adds useful local context without slowing recording
+  startup, and relationship-scoped recall improves as the library grows.
 
-### Sprint 6: People/Companies, Vocabulary, And Correction Feedback
+### Sprint 6: Retention, Transparency, And Explicit Export
 
-- Add People/Companies relationship memory, local vocabulary, and correction
-  feedback loops for names, acronyms, and domain terms.
-- Keep manual project tagging and speaker-name editing intact.
-- Acceptance: relationship-scoped views and chat improve as the local meeting
-  library grows, without requiring cloud sync.
+- Add local retention choices for audio, transcript, notes, workbench history,
+  and exports. Warn before destructive actions and explain every capability that
+  will degrade after deletion.
+- Add capture, consent, and AI-provider disclosure plus explicit local export
+  packages and documentation.
+- Defer read-only local MCP access until source provenance and local search are
+  demonstrably reliable.
+- Acceptance: users can explain what was captured, where it lives, what leaves
+  the machine, what is deleted, and what remains usable afterward.
 
-### Sprint 7: Retention, Privacy, Transparency, And Export Polish
+## Public Interfaces And Artifact Boundaries
 
-- Add retention policies, AI provider disclosure, chat history retention,
-  consent helpers, local export packages, and docs.
-- Keep all sharing explicit and local-first; no public links in v1.
-- Acceptance: users can explain what is captured, where it lives, what leaves
-  the machine, what is deleted, and what capabilities degrade after deletion.
-
-## UI Components To Adopt
-
-- `Raw Notes` / `Enhanced Notes` split, with raw notes as the live meeting
-  surface.
-- One blank note canvas with minimal chrome during meetings.
-- Floating or bottom `Ask anything` bar with slash recipes.
-- Suggested recipe chips: `List actions`, `Write follow-up`,
-  `Draft project plan`, and `Prep next meeting`.
-- Automatic brief at the top of the note, collapsed by default after reading.
-- Source/magnifier affordance beside generated bullets and actions.
-- People/Companies navigation as a relationship-memory layer.
-- Suggested follow-up shelf with time-bounded suggestions.
-- Active recording indicator that is always visible and always clickable.
-
-## Public Interfaces And Types
-
-- New artifacts: `<stem>.notes.json`, `<stem>.actions.md`,
-  `<stem>.decisions.md`, `<stem>.followup.md`, and `<stem>.brief.md`.
-- New services: `MeetingNotesStore`, `MeetingAiWorkbenchService`,
-  `MeetingRecipeService`, `PreMeetingBriefService`,
-  `MeetingCaptureConfidenceService`, `MeetingVocabularyService`, and local
+- Add `<stem>.notes.json`, `<stem>.actions.md`, `<stem>.decisions.md`,
+  `<stem>.followup.md`, and `<stem>.brief.md` alongside existing local artifacts.
+- Add `MeetingNotesStore`, `MeetingAiWorkbenchService`, `MeetingRecipeService`,
+  `MeetingCaptureConfidenceService`, `MeetingSearchIndex`,
+  `PreMeetingBriefService`, `MeetingVocabularyService`, and local
   People/Companies indexing services.
-- Extend `MeetingOutputRecord` with notes/action/brief paths,
-  generated-workbench status, relationship index keys, and availability flags.
-- Extend active manifests with raw notes draft path, capture confidence
-  snapshots, consent/transparency metadata, retention policy snapshot, and
-  optional vocabulary snapshot id.
-- Preserve existing `.wav`, `.md`, `.json`, and `.ready` semantics; AI workbench
-  failures must not block transcript publication.
+- Extend `MeetingOutputRecord` with local notes/action/brief paths, availability
+  flags, relationship-index keys, and generated-workbench status. Extend active
+  manifests with raw-note draft path, capture-confidence snapshots, consent and
+  retention snapshots, and an optional vocabulary snapshot identifier.
+- Preserve existing `.wav`, `.md`, `.json`, manifest, summary snapshot, and
+  `.ready` semantics. Optional workbench failures must not block transcript
+  publication.
 
 ## Test And Acceptance Additions
 
-- Test calendar/ad-hoc prompt flows without requiring external cloud
-  availability.
-- Test active recording visibility from `Home`, `Meetings`, and detail windows.
-- Test no-silent-failure paths for flat audio, missing chunks, stale writes, and
-  failed transcript generation.
-- Test retention policies preserve notes while correctly degrading
-  regeneration/chat/source-inspection states.
-- Test person/company scoped search and chat use only local authorized
-  artifacts.
-- Run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-All.ps1`; run
-  `dotnet test .\tests\AppPlatform.Tests\AppPlatform.Tests.csproj
-  -p:NuGetAudit=false` if shared AppPlatform settings/deployment surfaces
-  change; rebuild installer assets for shipped UI/runtime changes.
+- Test calendar and ad-hoc launch prompts without external-cloud availability;
+  test active-recording visibility from `Home`, `Meetings`, and detail windows.
+- Test flat audio, missing chunks, stale writes, endpoint changes, and failed
+  transcription for explicit recovery rather than silent failure.
+- Test raw-note preservation, evidence links, scoped local search/Q&A, action
+  editing, and prevention of external writes.
+- Test retention degradation: retained notes stay usable while regeneration,
+  source inspection, or chat correctly explain unavailable source material.
+- For shipped code changes, run `powershell -ExecutionPolicy Bypass -File
+  .\scripts\Test-All.ps1`; run `dotnet test
+  .\tests\AppPlatform.Tests\AppPlatform.Tests.csproj -p:NuGetAudit=false` when
+  shared AppPlatform surfaces change; rebuild installer assets and update
+  applicable docs.
 
 ## Assumptions
 
-- Custom note templates remain out of v1 unless explicitly re-added; recipes and
-  regenerate-with-feedback cover most immediate workflow needs.
-- No cloud transcription, account login, cross-device sync, workspace sharing,
-  CRM posting, Slack posting, Notion posting, or email sending in v1.
-- Meeting Recorder should adopt Granola's low-friction workflow, not its privacy
-  tradeoffs: all sharing/export is explicit and local-first by default.
-- UI must follow `DESIGN.md`: dense, opaque, no shadows, tonal nesting, 4px
+- Custom note templates remain out of v1; focused recipes and
+  regenerate-with-feedback cover the immediate need.
+- All sharing and export remains explicit and local-first. No cloud
+  transcription, account login, cross-device sync, workspace sharing, bots, or
+  external system writes appear in these sprints.
+- UI follows `DESIGN.md`: dense opaque surfaces, tonal nesting, no shadows, 4px
   radius, technical wells, Segoe UI for human text, and Cascadia Mono/Consolas
   for capture state and timestamps.
 
@@ -3960,3 +3917,15 @@ explicit-recording posture.
 - [Product Hunt reviews](https://www.producthunt.com/products/granola/reviews)
 - [Efficient App review](https://efficient.app/apps/granola)
 - [The Verge privacy critique](https://www.theverge.com/ai-artificial-intelligence/906253/granola-note-links-ai-training-psa)
+### Granola Workflow And Constraints
+
+
+### Fireflies Product And Review Signals
+
+- [Fireflies product overview](https://fireflies.ai/)
+- [Fireflies desktop capture workflow](https://guide.fireflies.ai/articles/1208704416-getting-started-with-the-fireflies-desktop-app)
+- [Fireflies Live Assist](https://guide.fireflies.ai/articles/6032274417-learn-about-fireflies-live-assist-get-real-time-suggestions-answers-and-notes-live-during-the-meeting)
+- [Fireflies conversation intelligence](https://fireflies.ai/conversation-intelligence)
+- [Capterra reviews](https://www.capterra.com/p/197037/Fireflies/reviews/)
+- [Trustpilot reviews](https://www.trustpilot.com/review/fireflies.ai)
+- [Reddit discussion: searchable history and actions](https://www.reddit.com/r/AiAutomations/comments/1s1dgip/i_tracked_every_meeting_for_60_days_with_ai_heres/)
