@@ -572,11 +572,29 @@ Workstream 1 - Automated refreshes:
 
 Workstream 2 - Safe automatic maintenance:
 
-- Auto-apply only reversible, non-destructive maintenance where eligibility is
-  proven and user value is clear.
-- Keep archive, delete, hosted fallback, microphone enablement, reprocessing,
-  and active-work interruption manual.
-- Record what automation did in safe product status or activity logs.
+- Run automatic cleanup only after a current full Meetings cleanup refresh,
+  never after fast refreshes or selection-only UI changes.
+- Keep `MeetingCleanupRecommendationEngine` and
+  `MainWindowInteractionLogic.IsSafeMeetingCleanupRecommendation` as the
+  authority for safe classification. Current automatic safe-fix types are
+  `Archive`, `Merge`, `Retry Transcript`, `Add Speaker Labels`, and
+  `Repair Speaker Labels`; permanent delete remains manual and excluded.
+- Start a bounded automatic batch only when the app is not shutting down, no
+  other meeting action or automatic batch is active, and at least one current
+  recommendation remains eligible.
+- Execute recommendations independently so one failure does not abort the
+  remaining safe batch, then refresh the meeting list once after completion.
+- Persist automatic failure state by recommendation fingerprint. Skip later
+  automatic attempts for the same failed fingerprint until it changes, while
+  leaving the recommendation visible for review.
+- Suppress successfully dispatched transcript and speaker-label queue actions
+  while the same fingerprint remains current so refreshes cannot enqueue the
+  same work repeatedly.
+- Keep manual `Apply Safe Fixes` and selected-recommendation actions available
+  even when automatic execution is suppressed for that fingerprint.
+- Do not mark historical cleanup review complete merely because automation ran.
+  Keep review-first suggestions visible and report concise applied/manual-review
+  counts in product status or activity text.
 
 Workstream 3 - Trust:
 
@@ -587,10 +605,15 @@ Workstream 3 - Trust:
 
 Sprint 11 acceptance criteria:
 
-- The app does more safe background housekeeping.
-- Users are not surprised by privacy-sensitive, destructive, or interrupting
-  behavior.
-- Automated work is visible and bounded.
+- Full cleanup refreshes automatically drain eligible safe fixes; fast and
+  selection-only refreshes do not.
+- Mixed batches continue after one item fails and refresh the catalog once.
+- Unchanged failed or already-dispatched queue recommendations do not enter
+  continuous automatic retry loops; changed fingerprints become eligible.
+- Manual actions bypass automatic suppression, permanent delete remains manual,
+  and non-safe recommendations remain visible.
+- Automated work is visible, bounded, non-overlapping, and does not falsely
+  complete historical cleanup review.
 
 ## Sprint 12: Summary And Hosted AI Trust Flow
 
