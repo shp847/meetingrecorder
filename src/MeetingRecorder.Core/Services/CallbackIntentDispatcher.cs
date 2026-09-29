@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace MeetingRecorder.Core.Services;
 
 public enum CallbackIntentOutcome { Accepted, Coalesced, DeclinedCycle, DeclinedOverload }
@@ -57,5 +59,33 @@ public sealed class CallbackIntentDispatcher
     {
         _trace.Add(new(++_sequence, intent.Key, intent.CorrelationId, intent.Edge, intent.Revision, outcome));
         if (_trace.Count > MaximumTraceLength) _trace.RemoveAt(0);
+    }
+}
+
+public sealed class CallbackIntentTraceStore
+{
+    private readonly string _path;
+    public CallbackIntentTraceStore(string path) => _path = Path.GetFullPath(path);
+
+    public async Task SaveAsync(IReadOnlyList<CallbackIntentTraceEntry> trace, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(trace);
+        if (trace.Count > 128 || trace.Any(entry => string.IsNullOrWhiteSpace(entry.Key) || string.IsNullOrWhiteSpace(entry.CorrelationId) || string.IsNullOrWhiteSpace(entry.Edge) || entry.Revision < 0))
+            throw new ArgumentException("Callback trace is invalid or exceeds its bounded capacity.", nameof(trace));
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var temporary = _path + ".tmp";
+        await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(trace), cancellationToken);
+        File.Move(temporary, _path, true);
+    }
+
+    public async Task<IReadOnlyList<CallbackIntentTraceEntry>> TryLoadAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(_path)) return Array.Empty<CallbackIntentTraceEntry>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<CallbackIntentTraceEntry>>(await File.ReadAllTextAsync(_path, cancellationToken)) is { Count: <= 128 } trace
+                ? trace : Array.Empty<CallbackIntentTraceEntry>();
+        }
+        catch (JsonException) { return Array.Empty<CallbackIntentTraceEntry>(); }
     }
 }

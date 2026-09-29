@@ -5,6 +5,24 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class CallbackIntentDispatcherTests
 {
     [Fact]
+    public async Task TraceStore_Is_Atomic_And_Treats_Corrupt_Trace_As_Empty()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var path = Path.Combine(root, "callback-trace.json");
+            var store = new CallbackIntentTraceStore(path);
+            var trace = new[] { new CallbackIntentTraceEntry(1, "refresh", "c", "edge", 1, CallbackIntentOutcome.Accepted) };
+            await store.SaveAsync(trace);
+            Assert.Equal(trace, await store.TryLoadAsync());
+            Assert.False(File.Exists(path + ".tmp"));
+            await File.WriteAllTextAsync(path, "not-json");
+            Assert.Empty(await store.TryLoadAsync());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public void Coalesces_Queued_Work_And_Declines_Reentrant_Cycles()
     {
         var dispatcher = new CallbackIntentDispatcher();
