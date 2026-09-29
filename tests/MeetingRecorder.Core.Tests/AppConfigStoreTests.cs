@@ -61,9 +61,10 @@ public sealed class AppConfigStoreTests
         Assert.True(config.LaunchOnLoginEnabled);
         Assert.True(config.AutoDetectEnabled);
         Assert.True(config.AutoDetectSecurityPromptMigrationApplied);
-        Assert.Equal(ContinuityEngineRolloutMode.Legacy, config.ContinuityEngineRolloutMode);
+        Assert.Equal(ContinuityEngineRolloutMode.Matcher, config.ContinuityEngineRolloutMode);
         Assert.Equal(OngoingMeetingHealRolloutMode.Off, config.OngoingMeetingHealRolloutMode);
         Assert.Equal(1, config.ContinuityRolloutMigrationVersion);
+        Assert.True(config.MeetingIdentityContinuityEnabled);
         Assert.False(config.CalendarTitleFallbackEnabled);
         Assert.True(config.MeetingAttendeeEnrichmentEnabled);
         Assert.True(config.UpdateCheckEnabled);
