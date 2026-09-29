@@ -6770,8 +6770,8 @@ Sprint 3 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: targeted continuity policy/tests and rollover paths exist); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: targeted continuity policy/tests and rollover paths exist); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: ambiguous same meeting stays coherent without opening generic-shell false starts or endless tail capture.
 - Scope / non-goals: integrate S2 matcher only after S3 cutover gate. Do not auto-merge published meetings, override manual stop/consent/capture safety, extend grace indefinitely, or cut over without rollback evidence.
 - Dependencies and decisions: S0–S3 required. Feature/config gate selects legacy or matcher path per decision snapshot; rollback affects next decision only. `Same` continues only if active-session/capture revision/manual-stop state valid; `Different` uses safe rollover/reclassify; `Unknown` never starts/new row/merge and may enter one bounded grace.
@@ -6783,7 +6783,8 @@ Sprint 3 acceptance criteria:
 - Tests and rendered checks: gate/rollback, tri-state action, grace deadline/idempotence/race/manual stop, auto-stop/crash/restart, generic/same-title negatives and opaque protected split fixture. Render user-visible grace only if needed with accessible status.
 - Documentation / installer / release work: document continuity/grace/rollback after verified cutover; runtime change requires full package gates.
 - Evidence and date: source audit found rich policy tests but no shared matcher cutover, bounded grace receipt, snapshot recovery, rollback gate or negative-case proof.
-- Remaining gap or next action: implement adapter/grace tests behind disabled feature gate before enabling cutover.
+- Evidence and date: 2026-09-29 added a disabled-by-default `MeetingIdentityContinuityEnabled` gate, tri-state adapter, bounded idempotent grace, stopped identity snapshot/revision, and transition cleanup. Matcher mode only controls an existing managed session; it cannot auto-start or merge. Focused continuity/config/lifecycle checks passed 172/172. Installer package rebuilt with ZIP SHA-256 `5FDA8AC343352A2AE7140490DDAFD203B598E76088808E585CB2E4F646EB6297` and MSI SHA-256 `EC715B78F40FE9969DA29436B7AF8F2912D4BFEDDF8E13BB873C37439995D44D`; installed and bundle apphosts match, and no app process remained after smoke.
+- Remaining gap or next action: keep the matcher gate disabled until a labeled shadow report passes its pre-registered cutover gate; Sprint 5 may use the same safe snapshots for recovery and publish-time healing.
 
 Goal: stop false splits during recording without creating endless over-recording.
 

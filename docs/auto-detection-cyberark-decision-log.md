@@ -858,12 +858,12 @@ As of 2026-07-20, executable-policy facts are:
 - APIs or signals added/removed: source work will add no external signal, audio probe, executable naming, signing, or install-location change. Any lifecycle route must retain the legacy fallback and decision trace.
 - Positive behavior expected: compatible strong identity can prevent a false split; generic/missing/key-rotated evidence remains `Unknown` and cannot start, merge, or resurrect an explicitly stopped recording.
 - False-positive/security boundary retained: manual stop, consent, capture readiness, storage safeguards, and bounded stop deadlines remain authoritative; no endpoint execution-control policy changes are authorized.
-- Tests added and results: pending.
-- Package status: not built for this change.
-- Installed hash/version/signature status: unchanged.
-- Live-machine result: not run.
-- Outcome: in progress.
-- Follow-up / removal condition: retain the disabled gate until protected-negative, recovery, and grace/rollback tests pass and package/install/startup validation completes.
+- Tests added and results: focused cutover, policy, configuration, recorder lifecycle, and XAML contract tests passed 172/172. The full script built all product and test projects before the runner lost its aggregate tail; no continuity failure was emitted.
+- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `5FDA8AC343352A2AE7140490DDAFD203B598E76088808E585CB2E4F646EB6297` and MSI SHA-256 `EC715B78F40FE9969DA29436B7AF8F2912D4BFEDDF8E13BB873C37439995D44D`.
+- Installed hash/version/signature status: the installed and portable `MeetingRecorder.App.exe` SHA-256 values match at `C5A27692134C7C774D3287EAF0ED2BC3DF82A61F78566E99DAC121A6C95B0BD6`; no signing or location policy changed.
+- Live-machine result: portable/MSI smoke completed with no remaining `MeetingRecorder.App` process; the installed apphost timestamp refreshed from this package.
+- Outcome: retained behind the disabled-by-default gate.
+- Follow-up / removal condition: retain the disabled gate until protected-negative, recovery, and grace/rollback tests pass and a labeled shadow-report gate authorizes activation.
 
 ### 2026-09-28: Generated apphost disappears during local package verification
 - Trigger / observed symptom: Sprint 3 installer rebuild stopped because the portable publish output did not contain `MeetingRecorder.App.exe`.
