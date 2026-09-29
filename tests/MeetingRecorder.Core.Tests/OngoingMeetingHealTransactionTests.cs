@@ -25,6 +25,9 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
         Assert.True(File.Exists(request.Candidate.Predecessor.MergedAudioPath!));
         Assert.False(File.Exists(request.PredecessorOutput.ReadyMarkerPath!));
         Assert.False(File.Exists(request.SuccessorOutput.ReadyMarkerPath!));
+        var healedMarkdown = await File.ReadAllTextAsync(Path.Combine(request.TranscriptOutputDirectory, $"{result.SurvivingStem}.md"));
+        Assert.Contains("## Continuity history", healedMarkdown);
+        Assert.Contains("Source session IDs: first, second", healedMarkdown);
 
         var repeat = await transaction.ExecuteAsync(request, Now.AddMinutes(1));
         Assert.Equal(OngoingMeetingHealTransactionStatus.AlreadyHealed, repeat.Status);

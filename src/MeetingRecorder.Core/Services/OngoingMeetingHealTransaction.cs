@@ -92,6 +92,12 @@ internal sealed class OngoingMeetingHealTransaction
                 request.ArchiveDirectory,
                 CancellationToken.None);
 
+            await AppendVisibleHistoryAsync(
+                Path.Combine(request.TranscriptOutputDirectory, $"{merge.SurvivingStem}.md"),
+                request.Candidate,
+                request.ReasonCode,
+                nowUtc);
+
             var receipt = new OngoingMeetingHealReceipt(
                 OngoingMeetingHealReceipt.CurrentSchemaVersion,
                 request.Candidate.Predecessor.SessionId,
@@ -120,6 +126,26 @@ internal sealed class OngoingMeetingHealTransaction
         !string.IsNullOrWhiteSpace(output.MarkdownPath) && File.Exists(output.MarkdownPath) &&
         !string.IsNullOrWhiteSpace(output.JsonPath) && File.Exists(output.JsonPath) &&
         !string.IsNullOrWhiteSpace(output.ReadyMarkerPath) && File.Exists(output.ReadyMarkerPath);
+
+    private static async Task AppendVisibleHistoryAsync(
+        string markdownPath,
+        OngoingMeetingHealCandidate candidate,
+        string reasonCode,
+        DateTimeOffset healedAtUtc)
+    {
+        var existing = await File.ReadAllTextAsync(markdownPath, CancellationToken.None);
+        var history = string.Join(
+            Environment.NewLine,
+            string.Empty,
+            "## Continuity history",
+            string.Empty,
+            $"- Healed automatically: {healedAtUtc:O}",
+            $"- Reason: {reasonCode}",
+            $"- Source session IDs: {candidate.Predecessor.SessionId}, {candidate.Successor.SessionId}",
+            "- Original published artifacts: retained in the local archive and can be reversed.",
+            string.Empty);
+        await File.WriteAllTextAsync(markdownPath, existing.TrimEnd() + Environment.NewLine + history, CancellationToken.None);
+    }
 
     private static void ValidateRequest(OngoingMeetingHealTransactionRequest request)
     {
