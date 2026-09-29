@@ -110,6 +110,26 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
         Assert.True(File.Exists(request.Candidate.Successor.MergedAudioPath!));
     }
 
+    [Fact]
+    public async Task ReviewOnly_Pass_Returns_Candidate_Without_Mutating_Artifacts_Or_Receipt()
+    {
+        var request = await CreateRequestAsync();
+        var result = await OngoingMeetingHealPass.RunOnceAsync(
+            new SessionManifestStore(new ArtifactPathBuilder()),
+            new ArtifactPathBuilder(),
+            Path.GetDirectoryName(Path.GetDirectoryName(request.PredecessorOutput.ManifestPath!)!)!,
+            request.AudioOutputDirectory,
+            request.TranscriptOutputDirectory,
+            Now,
+            reviewOnly: true);
+
+        Assert.NotNull(result);
+        Assert.Equal(OngoingMeetingHealTransactionStatus.ReviewOnly, result!.Status);
+        Assert.True(File.Exists(request.PredecessorOutput.AudioPath!));
+        Assert.True(File.Exists(request.SuccessorOutput.AudioPath!));
+        Assert.False(File.Exists(request.ReceiptPath));
+    }
+
     private OngoingMeetingHealTransaction CreateTransaction()
     {
         var builder = new ArtifactPathBuilder();

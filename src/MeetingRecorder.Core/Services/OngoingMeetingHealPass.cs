@@ -17,6 +17,7 @@ internal static class OngoingMeetingHealPass
         string audioOutputDirectory,
         string transcriptOutputDirectory,
         DateTimeOffset nowUtc,
+        bool reviewOnly = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(workDirectory) || !Directory.Exists(workDirectory))
@@ -76,6 +77,12 @@ internal static class OngoingMeetingHealPass
                 HasCompletePublishedArtifacts: HasCompletePublishedArtifacts(predecessorOutput) && HasCompletePublishedArtifacts(successorOutput),
                 ArtifactOrderIsMonotonic: predecessorOutput.StartedAtUtc <= successorOutput.StartedAtUtc,
                 HasLineageCycle: false);
+            if (reviewOnly && new OngoingMeetingHealEligibilityResolver().Evaluate(candidate, nowUtc) == OngoingMeetingHealEligibility.Eligible)
+            {
+                return new OngoingMeetingHealTransactionResult(
+                    OngoingMeetingHealTransactionStatus.ReviewOnly,
+                    predecessorOutput.Stem);
+            }
             var receiptPath = Path.Combine(workDirectory, ".ongoing-heal", $"{predecessor.Manifest.SessionId}-{successor.Manifest.SessionId}.json");
             var archiveDirectory = Path.Combine(
                 MeetingCleanupExecutionService.GetArchiveRoot(audioOutputDirectory),

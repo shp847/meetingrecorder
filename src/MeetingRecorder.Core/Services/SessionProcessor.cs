@@ -436,7 +436,9 @@ public sealed class SessionProcessor
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
             await TryMarkImportedJobPublishedAsync(input, activeImportJob, cancellationToken);
-            if (config.OngoingMeetingAutoHealEnabled)
+            var healMode = config.OngoingMeetingHealRolloutMode;
+            if (healMode == OngoingMeetingHealRolloutMode.Live ||
+                (healMode == OngoingMeetingHealRolloutMode.Off && config.OngoingMeetingAutoHealEnabled))
             {
                 try
                 {
@@ -447,13 +449,26 @@ public sealed class SessionProcessor
                         config.AudioOutputDir,
                         config.TranscriptOutputDir,
                         DateTimeOffset.UtcNow,
-                        cancellationToken);
+                        reviewOnly: false,
+                        cancellationToken: cancellationToken);
                 }
                 catch (IOException)
                 {
                     // Publishing has already succeeded; a transient healer issue
                     // must leave both published meetings available for review.
                 }
+            }
+            else if (healMode == OngoingMeetingHealRolloutMode.ReviewOnly)
+            {
+                await OngoingMeetingHealPass.RunOnceAsync(
+                    ManifestStore,
+                    PathBuilder,
+                    config.WorkDir,
+                    config.AudioOutputDir,
+                    config.TranscriptOutputDir,
+                    DateTimeOffset.UtcNow,
+                    reviewOnly: true,
+                    cancellationToken: cancellationToken);
             }
             await PublishedSessionWorkCleanupService.PrunePublishedSessionAsync(
                 ManifestStore,

@@ -6,6 +6,7 @@ public enum OngoingMeetingHealTransactionStatus
     AlreadyHealed = 1,
     Rejected = 2,
     Busy = 3,
+    ReviewOnly = 4,
 }
 
 public sealed record OngoingMeetingHealTransactionRequest(
