@@ -32,6 +32,17 @@ public sealed class OngoingMeetingHealEligibilityTests
         Assert.Equal(OngoingMeetingHealEligibility.DifferentMeeting, resolver.Evaluate(Candidate(Identity("a"), Identity("b")), Now));
     }
 
+    [Fact]
+    public void Admitted_Pair_Is_Not_Admitted_Twice()
+    {
+        var identity = Identity("a");
+        var candidate = Candidate(identity, identity);
+        var service = new OngoingMeetingHealService();
+
+        Assert.True(service.TryAdmit(candidate, Now));
+        Assert.False(service.TryAdmit(candidate, Now));
+    }
+
     private static OngoingMeetingHealCandidate Candidate(MeetingIdentitySnapshot? first, MeetingIdentitySnapshot? second, bool lease = false, bool conflict = false)
     {
         var predecessor = new MeetingSessionManifest { SessionId = "first", Platform = MeetingPlatform.Teams, StartedAtUtc = Now.AddMinutes(-10), EndedAtUtc = Now.AddMinutes(-1), State = SessionState.Published, MergedAudioPath = "first.wav" };
