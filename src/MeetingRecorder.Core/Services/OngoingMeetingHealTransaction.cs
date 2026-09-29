@@ -92,12 +92,6 @@ internal sealed class OngoingMeetingHealTransaction
                 request.ArchiveDirectory,
                 CancellationToken.None);
 
-            await AppendVisibleHistoryAsync(
-                Path.Combine(request.TranscriptOutputDirectory, $"{merge.SurvivingStem}.md"),
-                request.Candidate,
-                request.ReasonCode,
-                nowUtc);
-
             var receipt = new OngoingMeetingHealReceipt(
                 OngoingMeetingHealReceipt.CurrentSchemaVersion,
                 request.Candidate.Predecessor.SessionId,
@@ -109,6 +103,22 @@ internal sealed class OngoingMeetingHealTransaction
                 request.PredecessorOutput.Stem,
                 request.SuccessorOutput.Stem);
             await receiptStore.SaveAsync(receipt, CancellationToken.None);
+            try
+            {
+                await AppendVisibleHistoryAsync(
+                    Path.Combine(request.TranscriptOutputDirectory, $"{merge.SurvivingStem}.md"),
+                    request.Candidate,
+                    request.ReasonCode,
+                    nowUtc);
+            }
+            catch
+            {
+                await new OngoingMeetingHealReversalService().ReverseAsync(
+                    new(request.ReceiptPath, request.AudioOutputDirectory, request.TranscriptOutputDirectory),
+                    nowUtc,
+                    CancellationToken.None);
+                throw;
+            }
             return new(OngoingMeetingHealTransactionStatus.Healed, merge.SurvivingStem, merge.ArchiveDirectory);
         }
         finally
