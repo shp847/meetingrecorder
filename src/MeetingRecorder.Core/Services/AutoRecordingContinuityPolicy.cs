@@ -1021,7 +1021,10 @@ public sealed class AutoRecordingContinuityPolicy
 
 public sealed record RecentAutoStopContext(
     MeetingPlatform Platform,
-    DateTimeOffset StoppedAtUtc);
+    DateTimeOffset StoppedAtUtc,
+    MeetingIdentitySnapshot? IdentitySnapshot = null,
+    int SessionRevision = 0,
+    bool WasManuallyStopped = false);
 
 public sealed record ManualStopSuppressionContext(
     MeetingPlatform Platform,

@@ -359,6 +359,11 @@ public sealed record AppConfig
 
     public bool AutoDetectSecurityPromptMigrationApplied { get; init; }
 
+    /// <summary>
+    /// Opt-in continuity cutover. False preserves the legacy lifecycle policy.
+    /// </summary>
+    public bool MeetingIdentityContinuityEnabled { get; init; }
+
     public bool CalendarTitleFallbackEnabled { get; init; }
 
     public bool MeetingAttendeeEnrichmentEnabled { get; init; } = true;

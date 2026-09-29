@@ -92,6 +92,7 @@ public partial class MainWindow : Window
     private readonly ImportInboxIntakeService _importInboxIntakeService;
     private readonly Guid _importInboxLeaseOwnerId = Guid.NewGuid();
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
+    private readonly ContinuityCutoverPolicy _continuityCutoverPolicy = new();
     private readonly ContinuityShadowEngine _continuityShadowEngine = new();
     private readonly ContinuityShadowMeter _continuityShadowMeter = new();
     private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
@@ -126,6 +127,7 @@ public partial class MainWindow : Window
     private readonly PointCollection _audioGraphPoints = new(AudioGraphPointCount);
     private DateTimeOffset? _lastPositiveDetectionUtc;
     private RecentAutoStopContext? _recentAutoStopContext;
+    private ContinuityGraceReceipt? _continuityGraceReceipt;
     private ManualStopSuppressionContext? _manualStopSuppressionContext;
     private bool _allowClose;
     private bool _shutdownInProgress;
@@ -1801,6 +1803,25 @@ public partial class MainWindow : Window
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
+                if (shouldRecoverFromRecentAutoStop &&
+                    _liveConfig.Current.MeetingIdentityContinuityEnabled &&
+                    _recentAutoStopContext is { } recentAutoStop)
+                {
+                    var recoveryDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
+                        ContinuityCutoverMode.Matcher,
+                        recentAutoStop.SessionRevision,
+                        recentAutoStop.IdentitySnapshot,
+                        _manifestStore.CreateIdentitySnapshotForComparison(
+                            decision.Platform,
+                            decision.SessionTitle,
+                            decision.DetectedAudioSource,
+                            nowUtc),
+                        MeetingIdentityVerdict.SameMeeting,
+                        recentAutoStop.WasManuallyStopped,
+                        ExistingGrace: null,
+                        NowUtc: nowUtc));
+                    shouldRecoverFromRecentAutoStop = recoveryDecision.Action == ContinuityLifecycleAction.Continue;
+                }
                 var manualStopSuppressionDisposition = _autoRecordingContinuityPolicy.GetManualStopSuppressionDisposition(
                     decision,
                     _manualStopSuppressionContext);
@@ -1912,6 +1933,34 @@ public partial class MainWindow : Window
                      activeMeetingManagedSession.Manifest.DetectedTitle,
                      hasRecentLoopbackActivity,
                      hasRecentMicrophoneActivity));
+            if (activeMeetingManagedSession is not null && _liveConfig.Current.MeetingIdentityContinuityEnabled)
+            {
+                var legacyVerdict = shouldRefreshLastPositiveSignal
+                    ? MeetingIdentityVerdict.SameMeeting
+                    : MeetingIdentityVerdict.Unknown;
+                var cutover = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
+                    ContinuityCutoverMode.Matcher,
+                    (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                    _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
+                    decision is null
+                        ? null
+                        : _manifestStore.CreateIdentitySnapshotForComparison(
+                            decision.Platform,
+                            decision.SessionTitle,
+                            decision.DetectedAudioSource,
+                            nowUtc),
+                    legacyVerdict,
+                    IsManualStop: _manualStopSuppressionContext is not null,
+                    _continuityGraceReceipt,
+                    nowUtc));
+                _continuityGraceReceipt = cutover.GraceReceipt;
+                shouldRefreshLastPositiveSignal = cutover.Action is ContinuityLifecycleAction.Continue or ContinuityLifecycleAction.Grace;
+                shouldClearAutoStopCountdown = shouldRefreshLastPositiveSignal;
+            }
+            else
+            {
+                _continuityGraceReceipt = null;
+            }
             if (shouldRefreshLastPositiveSignal && shouldClearAutoStopCountdown)
             {
                 ClearAutoStopVisualState();
@@ -1946,7 +1995,12 @@ public partial class MainWindow : Window
                     var remaining = stopTimeout - elapsedSincePositive.Value;
                     if (remaining <= TimeSpan.Zero)
                     {
-                        _recentAutoStopContext = new RecentAutoStopContext(activePlatform, nowUtc);
+                        _recentAutoStopContext = new RecentAutoStopContext(
+                            activePlatform,
+                            nowUtc,
+                            _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
+                            (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue));
+                        _continuityGraceReceipt = null;
                         AppendAutoStopStatus($"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal.");
                         _isRecordingTransitionInProgress = true;
                         _isAutoStopTransitionInProgress = true;
