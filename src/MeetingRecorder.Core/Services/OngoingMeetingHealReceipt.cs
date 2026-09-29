@@ -28,4 +28,15 @@ public sealed class OngoingMeetingHealReceiptStore
         await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(receipt), cancellationToken);
         File.Move(temp, _path, true);
     }
+
+    public async Task<OngoingMeetingHealReceipt?> TryLoadAsync(CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(_path)) return null;
+        try
+        {
+            var receipt = JsonSerializer.Deserialize<OngoingMeetingHealReceipt>(await File.ReadAllTextAsync(_path, cancellationToken));
+            return receipt?.SchemaVersion == OngoingMeetingHealReceipt.CurrentSchemaVersion ? receipt : null;
+        }
+        catch (JsonException) { return null; }
+    }
 }
