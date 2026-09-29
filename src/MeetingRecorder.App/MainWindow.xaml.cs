@@ -1068,6 +1068,7 @@ public partial class MainWindow : Window
                 activeSession.Manifest.DetectedTitle,
                 DateTimeOffset.UtcNow);
         _recentAutoStopContext = null;
+        _continuityGraceReceipt = null;
         try
         {
             await StopCurrentRecordingAsync("Manual stop requested.");
@@ -2216,6 +2217,7 @@ public partial class MainWindow : Window
 
             _lastPositiveDetectionUtc = nowUtc;
             _recentAutoStopContext = null;
+            _continuityGraceReceipt = null;
             _manualStopSuppressionContext = null;
             _recordingStorageBackoffUntilUtc = null;
             _lastAutoStopFingerprint = null;
@@ -2298,6 +2300,7 @@ public partial class MainWindow : Window
 
         _lastPositiveDetectionUtc = nowUtc;
         _recentAutoStopContext = null;
+        _continuityGraceReceipt = null;
         _manualStopSuppressionContext = null;
         _lastAutoStopFingerprint = null;
         var wasMeetingLifecycleManaged = activeSession.MeetingLifecycleManaged;
