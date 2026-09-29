@@ -1831,6 +1831,10 @@ public partial class MainWindow : Window
                     _lastAutoStopFingerprint = null;
                     UpdateCurrentMeetingEditor();
                     UpdateUi("Recording in progress.", DetectionTextBlock.Text);
+                    if (shouldRecoverFromRecentAutoStop)
+                    {
+                        RecordRecentAutoStopShadow(decision, nowUtc);
+                    }
                     AppendActivity(
                         shouldRecoverFromRecentAutoStop && !decision.ShouldStart
                             ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
@@ -1922,6 +1926,7 @@ public partial class MainWindow : Window
 
                 _lastPositiveDetectionUtc = nowUtc;
             }
+
             else if (_recordingCoordinator.IsRecording &&
                      activeMeetingManagedSession is not null)
             {
@@ -1971,6 +1976,16 @@ public partial class MainWindow : Window
                             $"Auto-stop countdown active: {Math.Ceiling(remaining.TotalSeconds)} seconds remaining. Last strong meeting signal was at {lastPositiveUtc.Value:O}.");
                     }
                 }
+            }
+
+            if (activeMeetingManagedSession is not null)
+            {
+                RecordContinuationShadow(
+                    activeMeetingManagedSession,
+                    decision,
+                    shouldRefreshLastPositiveSignal ? MeetingIdentityVerdict.SameMeeting : MeetingIdentityVerdict.Unknown,
+                    shouldRefreshLastPositiveSignal ? "legacy-continuation" : "legacy-continuation-unknown",
+                    nowUtc);
             }
 
             var activeSessionForMicPrompt = _recordingCoordinator.ActiveSession;
@@ -2252,27 +2267,98 @@ public partial class MainWindow : Window
     {
         try
         {
-            var receipt = _continuityShadowEngine.Evaluate(
-                new ContinuityShadowInput(
-                    CreateOpaqueContinuityCorrelationId(activeSession.Manifest.SessionId),
-                    (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
-                    ContinuityDecisionBoundary.RolloverOrReclassify,
-                    _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
-                    _manifestStore.CreateIdentitySnapshotForComparison(
-                        decision.Platform,
-                        decision.SessionTitle,
-                        decision.DetectedAudioSource,
-                        nowUtc),
-                    legacyVerdict,
-                    legacyReasonCode,
-                    ContinuityShadowScenarioLabel.Unlabeled),
+            RecordContinuityShadow(
+                ContinuityDecisionBoundary.RolloverOrReclassify,
+                activeSession.Manifest.SessionId,
+                (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                decision,
+                legacyVerdict,
+                legacyReasonCode,
                 nowUtc);
-            _continuityShadowMeter.TryRecord(receipt, TimeSpan.FromMilliseconds(25));
         }
         catch
         {
             // Shadow evaluation is best-effort and must not change a committed legacy action.
         }
+    }
+
+    private void RecordContinuationShadow(
+        ActiveRecordingSession activeSession,
+        DetectionDecision? decision,
+        MeetingIdentityVerdict legacyVerdict,
+        string legacyReasonCode,
+        DateTimeOffset nowUtc)
+    {
+        if (decision is null)
+        {
+            return;
+        }
+
+        try
+        {
+            RecordContinuityShadow(
+                ContinuityDecisionBoundary.Continuation,
+                activeSession.Manifest.SessionId,
+                (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                decision,
+                legacyVerdict,
+                legacyReasonCode,
+                nowUtc);
+        }
+        catch
+        {
+            // Shadow evaluation is best-effort and must not change a committed legacy action.
+        }
+    }
+
+    private void RecordRecentAutoStopShadow(DetectionDecision decision, DateTimeOffset nowUtc)
+    {
+        try
+        {
+            RecordContinuityShadow(
+                ContinuityDecisionBoundary.RecentAutoStopRecovery,
+                $"auto-stop-{nowUtc.UtcDateTime.Ticks:x}",
+                0,
+                existingIdentity: null,
+                decision,
+                MeetingIdentityVerdict.SameMeeting,
+                "legacy-auto-stop-recovered",
+                nowUtc);
+        }
+        catch
+        {
+            // Shadow evaluation is best-effort and must not change a committed legacy action.
+        }
+    }
+
+    private void RecordContinuityShadow(
+        ContinuityDecisionBoundary boundary,
+        string correlationSource,
+        int inputRevision,
+        MeetingIdentitySnapshot? existingIdentity,
+        DetectionDecision decision,
+        MeetingIdentityVerdict legacyVerdict,
+        string legacyReasonCode,
+        DateTimeOffset nowUtc)
+    {
+        var receipt = _continuityShadowEngine.Evaluate(
+            new ContinuityShadowInput(
+                CreateOpaqueContinuityCorrelationId(correlationSource),
+                inputRevision,
+                boundary,
+                existingIdentity,
+                _manifestStore.CreateIdentitySnapshotForComparison(
+                    decision.Platform,
+                    decision.SessionTitle,
+                    decision.DetectedAudioSource,
+                    nowUtc),
+                legacyVerdict,
+                legacyReasonCode,
+                ContinuityShadowScenarioLabel.Unlabeled),
+            nowUtc);
+        _continuityShadowMeter.TryRecord(receipt, TimeSpan.FromMilliseconds(25));
     }
 
     private static string CreateOpaqueContinuityCorrelationId(string sessionId)
