@@ -29,4 +29,10 @@ public sealed class OngoingMeetingHealService
         _seenPairs.Add(pairKey);
         return true;
     }
+
+    public static bool IsCoveredBy(OngoingMeetingHealReceipt? receipt, OngoingMeetingHealCandidate candidate) =>
+        receipt is not null &&
+        receipt.SchemaVersion == OngoingMeetingHealReceipt.CurrentSchemaVersion &&
+        string.Equals(receipt.PredecessorSessionId, candidate.Predecessor.SessionId, StringComparison.Ordinal) &&
+        string.Equals(receipt.SuccessorSessionId, candidate.Successor.SessionId, StringComparison.Ordinal);
 }
