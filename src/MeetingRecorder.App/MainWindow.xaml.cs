@@ -1252,6 +1252,7 @@ public partial class MainWindow : Window
             !_callbackIntentDispatcher.TryBegin(out var scheduledIntent))
         {
             _isDeferredMeetingsRefreshQueued = false;
+            PersistCallbackTraceForRecovery();
             _logger.Log($"Deferred meeting refresh callback was not scheduled. outcome='{callbackOutcome}'.");
             UpdateMeetingsRefreshStateText();
             return;
