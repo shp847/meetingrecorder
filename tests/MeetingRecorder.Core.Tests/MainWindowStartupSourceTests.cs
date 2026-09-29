@@ -146,6 +146,26 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Startup_And_Published_Repair_Recovery_Use_Bounded_Callback_Intent_Lanes()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var warmupStart = source.IndexOf("private void ScheduleStartupWarmup", StringComparison.Ordinal);
+        var maintenanceStart = source.IndexOf("private void ScheduleDeferredStartupMaintenance", StringComparison.Ordinal);
+        var resumeStart = source.IndexOf("internal async Task ResumePendingProcessingAfterMaintenanceAsync", StringComparison.Ordinal);
+        var warmupBlock = source[warmupStart..maintenanceStart];
+        var maintenanceBlock = source[maintenanceStart..resumeStart];
+        var resumeBlock = source[resumeStart..source.IndexOf("private void ScheduleDeferredMeetingsRefresh", resumeStart, StringComparison.Ordinal)];
+
+        Assert.Contains("TryBeginCallbackIntent(\"startup-warmup\", \"startup-warmup\")", warmupBlock, StringComparison.Ordinal);
+        Assert.Contains("RunStartupWarmupAsync(callbackIntent)", warmupBlock, StringComparison.Ordinal);
+        Assert.Contains("TryBeginCallbackIntent(\"startup-maintenance\", \"deferred-startup-maintenance\")", maintenanceBlock, StringComparison.Ordinal);
+        Assert.Contains("RunDeferredStartupMaintenanceAsync(callbackIntent)", maintenanceBlock, StringComparison.Ordinal);
+        Assert.Contains("TryBeginCallbackIntent(\"startup-recovery\", \"published-repair-resume\")", resumeBlock, StringComparison.Ordinal);
+        Assert.Contains("CompleteCallbackIntent(callbackIntent);", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Live_Config_Changes_Request_Meeting_Refresh_Only_When_Meeting_Data_Actually_Changed()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

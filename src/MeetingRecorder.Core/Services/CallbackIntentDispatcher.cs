@@ -100,8 +100,15 @@ public sealed class CallbackIntentTraceStore
         if (!File.Exists(_path)) return Array.Empty<CallbackIntentTraceEntry>();
         try
         {
-            return JsonSerializer.Deserialize<List<CallbackIntentTraceEntry>>(await File.ReadAllTextAsync(_path, cancellationToken)) is { Count: <= 128 } trace
-                ? trace : Array.Empty<CallbackIntentTraceEntry>();
+            return JsonSerializer.Deserialize<List<CallbackIntentTraceEntry>>(await File.ReadAllTextAsync(_path, cancellationToken)) is { Count: <= 128 } trace &&
+                   trace.All(entry =>
+                       entry.Sequence >= 0 &&
+                       IsSafeToken(entry.Key) &&
+                       IsSafeToken(entry.CorrelationId) &&
+                       IsSafeToken(entry.Edge) &&
+                       entry.Revision >= 0)
+                ? trace
+                : Array.Empty<CallbackIntentTraceEntry>();
         }
         catch (JsonException) { return Array.Empty<CallbackIntentTraceEntry>(); }
     }

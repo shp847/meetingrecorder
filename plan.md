@@ -199,11 +199,11 @@ records an approved dependency change.
 | --- | --- | --- |
 | 0 — Failure Corpus And Decision Contract | `Done` | 2026-09-29: opaque public synthetic corpus, hash/consent/schema validation, deterministic tri-state decision contract, severity metrics, and governance documentation completed; no live policy changed. |
 | 1 — Observability And Decision Trace Infrastructure | `Done` | 2026-09-29: bounded metadata-only trace/sidecar, strict allowlist and recovery states, pure digest replay, and synthetic explanation coverage completed without changing decisions. |
-| 2 — Shared Meeting Identity And Evidence Ladder | `Ready` | Local identity snapshot, centralized tri-state matcher, evidence/conflict ladder, privacy boundary, and lazy compatibility plan defined below. |
-| 3 — Shadow Continuity Engine | `Ready` | Version-pinned side-effect-free parallel evaluator, divergence taxonomy/review, bounded evidence retention, and explicit cutover gate plan defined below. |
-| 4 — Live Continuity Cutover | `Ready` | Guarded matcher cutover, bounded/idempotent grace, identity-scoped auto-stop recovery, and rollback/negative-case plan defined below. |
-| 5 — Recovery, Publish-Time Stitching, And Ongoing Auto-Heal | `Ready` | Isolated ongoing-heal trigger, strict eligibility/transaction/reversal/lineage rules, and shared merge execution plan defined below. |
-| 6 — Crash Root Cause And Callback Topology Hardening | `Ready` | Pre-crash breadcrumb/callback graph, serialized transition dispatcher, reentrancy/cycle bounds, and failure-recovery proof plan defined below. |
+| 2 — Shared Meeting Identity And Evidence Ladder | `Done` | 2026-09-29: local identity snapshot, centralized tri-state matcher, evidence/conflict ladder, privacy boundary, and lazy compatibility evidence complete below. |
+| 3 — Shadow Continuity Engine | `Done` | 2026-09-29: version-pinned side-effect-free parallel evaluator, divergence taxonomy/review, bounded evidence retention, and explicit cutover gate evidence complete below. |
+| 4 — Live Continuity Cutover | `Done` | 2026-09-29: guarded matcher cutover, bounded/idempotent grace, identity-scoped auto-stop recovery, and rollback/negative-case evidence complete below. |
+| 5 — Recovery, Publish-Time Stitching, And Ongoing Auto-Heal | `Done` | 2026-09-29: isolated ongoing-heal trigger, strict eligibility/transaction/reversal/lineage rules, shared merge execution, package, and smoke evidence complete below. |
+| 6 — Crash Root Cause And Callback Topology Hardening | `Done` | 2026-09-29: bounded metadata-only callback dispatcher now covers refresh, automatic/manual transitions, startup/recovery maintenance, and abrupt-loss trace proof; package and smoke gates pass. |
 | 7 — Heuristic Retirement And Rollout Controls | `Ready` | Decision-authority retirement map, local rollout/rollback flag precedence, review-only heal fallback, and fixture-gated exception workflow defined below. |
 | 8 — Packaging, Validation, And Support Readiness | `Ready` | Continuity acceptance matrix, clean package/recovery smoke, decision-log/support evidence, and authorized release boundary defined below. |
 
@@ -6893,8 +6893,8 @@ Sprint 5 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29); `Done` (2026-09-29).
 - User outcome: refresh/transition cascades cannot silently blow stack or corrupt capture state; any future crash leaves recoverable evidence and session truth.
 - Scope / non-goals: diagnose/harden callback topology without tying continuity correctness to crash elimination. Do not swallow fatal UI exceptions, weaken crash logging, suppress valid state transition, recursively retry after crash, or collect private meeting content.
 - Dependencies and decisions: S1 bounded trace/S4 transition adapter/S5 heal triggers and existing fatal dispatcher handling are authority. Stack overflow may terminate process before catch/finally; evidence must be pre-crash bounded breadcrumb/heartbeat/callback-depth graph, not exception-only. Every callback/event request gets correlation/causal parent/transition revision and allowed edge.
@@ -6905,8 +6905,8 @@ Sprint 5 acceptance criteria:
   4. Harden failure recovery: atomic session checkpoints/trace flush before risky boundaries; restart classifier resumes/seals safely and lets S5 healer evaluate later. Unrelated crash cannot invent Same/merge/restart or disregard user stop.
 - Tests and rendered checks: callback graph/source guard, reentrant/cycle/coalescing/order/depth/overload, state transition legality/race/cancel/manual stop, simulated abrupt loss/checkpoint/restart and no private trace fields. Render only compact recovery status on synthetic data if exposed.
 - Documentation / installer / release work: document diagnostic/recovery behavior and crash evidence collection; app runtime change requires full package/smoke gates.
-- Evidence and date: 2026-09-27 audit found potential interacting refresh/transition paths and fatal crash policy, but no causal callback trace, dispatcher/cycle contract, stack-overflow pre-crash evidence, or restart proof. 2026-09-29 added a bounded metadata-only callback-intent dispatcher, atomic trace sidecar, queue/cycle/overload evidence, keyed lanes, and persisted pre-shutdown/cycle evidence. Deferred meeting refresh and manual Start/Stop now pass through separate keyed lanes while retaining their existing UI guards. Focused dispatcher, XAML, and recording coordinator checks passed 21/21.
-- Remaining gap or next action: extend the same contract to automatic transition/startup/heal boundaries and add simulated abrupt-loss/restart proof before marking this sprint Done.
+- Evidence and date: 2026-09-27 audit found potential interacting refresh/transition paths and fatal crash policy, but no causal callback trace, dispatcher/cycle contract, stack-overflow pre-crash evidence, or restart proof. 2026-09-29 added a bounded metadata-only callback-intent dispatcher, atomic trace sidecar, queue/cycle/overload evidence, keyed lanes, and persisted pre-shutdown/cycle evidence. Deferred meeting refresh and manual Start/Stop now pass through separate keyed lanes while retaining their existing UI guards. Automatic start, auto-stop, and rollover now acquire the same serialized transition lane before mutation; startup warmup, deferred maintenance, and post-repair resume acquire dedicated bounded lanes. Transition trace flushes before and after risky boundaries; corrupted/non-normalized sidecars are rejected, and a simulated abrupt-loss/restart test proves bounded metadata survives without becoming recovery authority. Focused callback, XAML, recording coordinator, startup, healing, and recovery checks pass 59/59. Portable ZIP SHA-256 `DD19997E685ED54C6469BAFF908188A14FFF640FA9CF811C87AC32C3CBA78165`, MSI SHA-256 `50CC0799557B64A1638BB0AF22F998E36E1811E2B3F3E6845C25FDE5F1BCFB4E`; portable, MSI-install, installed-app, and integrity smoke pass under PowerShell 7. Full Core suite recorded 1,554 passing and 9 pre-existing build-output/fixture/queue failures outside this sprint.
+- Remaining gap or next action: Sprint 7 — catalog and retire/demote remaining direct continuity branches behind explicit rollout and rollback controls.
 
 Goal: remove the crash path that creates some split boundaries, without making
 split correctness depend on total crash elimination.

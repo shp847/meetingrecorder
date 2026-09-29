@@ -533,13 +533,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        var callbackIntent = TryBeginCallbackIntent("startup-warmup", "startup-warmup");
+        if (callbackIntent is null)
+        {
+            return;
+        }
+
         _isStartupWarmupQueued = true;
         _ = Dispatcher.BeginInvoke(
-            new Action(() => _ = RunStartupWarmupAsync()),
+            new Action(() => _ = RunStartupWarmupAsync(callbackIntent)),
             DispatcherPriority.Background);
     }
 
-    private async Task RunStartupWarmupAsync()
+    private async Task RunStartupWarmupAsync(CallbackIntent callbackIntent)
     {
         try
         {
@@ -573,6 +579,7 @@ public partial class MainWindow : Window
             }
 
             _isStartupWarmupQueued = false;
+            CompleteCallbackIntent(callbackIntent);
         }
     }
 
@@ -645,13 +652,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        var callbackIntent = TryBeginCallbackIntent("startup-maintenance", "deferred-startup-maintenance");
+        if (callbackIntent is null)
+        {
+            return;
+        }
+
         _isDeferredStartupMaintenanceQueued = true;
         _ = Dispatcher.BeginInvoke(
-            new Action(() => _ = RunDeferredStartupMaintenanceAsync()),
+            new Action(() => _ = RunDeferredStartupMaintenanceAsync(callbackIntent)),
             DispatcherPriority.Background);
     }
 
-    private async Task RunDeferredStartupMaintenanceAsync()
+    private async Task RunDeferredStartupMaintenanceAsync(CallbackIntent callbackIntent)
     {
         try
         {
@@ -681,14 +694,28 @@ public partial class MainWindow : Window
         finally
         {
             _isDeferredStartupMaintenanceQueued = false;
+            CompleteCallbackIntent(callbackIntent);
         }
     }
 
     internal async Task ResumePendingProcessingAfterMaintenanceAsync(CancellationToken cancellationToken)
     {
-        await _processingQueue.ResumePendingSessionsAsync(
-            _meetingCleanupWorkLedgerService.GetQueuedManifestPaths(),
-            cancellationToken);
+        var callbackIntent = TryBeginCallbackIntent("startup-recovery", "published-repair-resume");
+        if (callbackIntent is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _processingQueue.ResumePendingSessionsAsync(
+                _meetingCleanupWorkLedgerService.GetQueuedManifestPaths(),
+                cancellationToken);
+        }
+        finally
+        {
+            CompleteCallbackIntent(callbackIntent);
+        }
     }
 
     private void ScheduleDeferredMeetingsRefresh()
@@ -776,23 +803,40 @@ public partial class MainWindow : Window
         }
     }
 
-    private CallbackIntent? TryBeginRecordingTransitionCallback()
+    private CallbackIntent? TryBeginRecordingTransitionCallback(string edge = "manual-recording-transition")
+    {
+        return TryBeginCallbackIntent("recording-transition", edge);
+    }
+
+    private CallbackIntent? TryBeginCallbackIntent(string key, string edge)
     {
         var intent = new CallbackIntent(
-            "recording-transition",
+            key,
             "main-window",
-            "recording-transition",
+            edge,
             ++_callbackIntentRevision);
         var outcome = _callbackIntentDispatcher.Enqueue(intent);
         if (outcome == CallbackIntentOutcome.Accepted &&
-            _callbackIntentDispatcher.TryBegin("recording-transition", out var activeIntent))
+            _callbackIntentDispatcher.TryBegin(key, out var activeIntent))
         {
+            PersistCallbackTraceForRecovery();
             return activeIntent;
         }
 
         PersistCallbackTraceForRecovery();
-        _logger.Log($"Recording transition callback was not scheduled. outcome='{outcome}'.");
+        _logger.Log($"Callback was not scheduled. key='{key}', edge='{edge}', outcome='{outcome}'.");
         return null;
+    }
+
+    private void CompleteRecordingTransitionCallback(CallbackIntent callbackIntent)
+    {
+        CompleteCallbackIntent(callbackIntent);
+    }
+
+    private void CompleteCallbackIntent(CallbackIntent callbackIntent)
+    {
+        _callbackIntentDispatcher.Complete(callbackIntent);
+        PersistCallbackTraceForRecovery();
     }
 
     private void ProcessingQueue_OnStatusChanged(ProcessingQueueStatusSnapshot snapshot)
@@ -1084,7 +1128,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _callbackIntentDispatcher.Complete(callbackIntent);
+            CompleteRecordingTransitionCallback(callbackIntent);
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
@@ -1127,7 +1171,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _callbackIntentDispatcher.Complete(callbackIntent);
+            CompleteRecordingTransitionCallback(callbackIntent);
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             ResumeDetectionAfterStopTransitionIfNeeded();
@@ -1906,33 +1950,51 @@ public partial class MainWindow : Window
                     !isRecordingStorageBackoffActive &&
                     (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))
                 {
-                    ClearAutoStopVisualState();
-                    await _recordingCoordinator.StartAsync(
-                        decision.Platform,
-                        decision.SessionTitle,
-                        decision.Signals,
-                        autoStarted: true,
-                        decision.DetectedAudioSource,
-                        teamsRecordingPlayback: TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc));
-                    _lastPositiveDetectionUtc = nowUtc;
-                    _recentAutoStopContext = null;
-                    _manualStopSuppressionContext = null;
-                    _recordingStorageBackoffUntilUtc = null;
-                    _lastAutoStopFingerprint = null;
-                    UpdateCurrentMeetingEditor();
-                    UpdateUi("Recording in progress.", DetectionTextBlock.Text);
-                    if (shouldRecoverFromRecentAutoStop)
+                    var callbackIntent = TryBeginRecordingTransitionCallback("automatic-start");
+                    if (callbackIntent is null)
                     {
-                        RecordRecentAutoStopShadow(decision, nowUtc);
+                        _logger.Log("Automatic recording start was deferred by the callback dispatcher.");
                     }
-                    AppendActivity(
-                        shouldRecoverFromRecentAutoStop && !decision.ShouldStart
-                            ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
-                            : shouldAutoStartQuietTeamsMeeting
-                                ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
-                                : shouldAutoStartQuietGoogleMeet
-                                    ? $"Auto-started recording for quiet Google Meet '{decision.SessionTitle}' after sustained Meet detection."
-                                    : $"Auto-started recording for '{decision.SessionTitle}'.");
+                    else
+                    {
+                        _isRecordingTransitionInProgress = true;
+                        try
+                        {
+                            ClearAutoStopVisualState();
+                            await _recordingCoordinator.StartAsync(
+                                decision.Platform,
+                                decision.SessionTitle,
+                                decision.Signals,
+                                autoStarted: true,
+                                decision.DetectedAudioSource,
+                                teamsRecordingPlayback: TryCreateTeamsRecordingPlaybackProvenance(decision, nowUtc));
+                            _lastPositiveDetectionUtc = nowUtc;
+                            _recentAutoStopContext = null;
+                            _manualStopSuppressionContext = null;
+                            _recordingStorageBackoffUntilUtc = null;
+                            _lastAutoStopFingerprint = null;
+                            UpdateCurrentMeetingEditor();
+                            UpdateUi("Recording in progress.", DetectionTextBlock.Text);
+                            if (shouldRecoverFromRecentAutoStop)
+                            {
+                                RecordRecentAutoStopShadow(decision, nowUtc);
+                            }
+                            AppendActivity(
+                                shouldRecoverFromRecentAutoStop && !decision.ShouldStart
+                                    ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
+                                    : shouldAutoStartQuietTeamsMeeting
+                                        ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
+                                        : shouldAutoStartQuietGoogleMeet
+                                            ? $"Auto-started recording for quiet Google Meet '{decision.SessionTitle}' after sustained Meet detection."
+                                            : $"Auto-started recording for '{decision.SessionTitle}'.");
+                        }
+                        finally
+                        {
+                            CompleteRecordingTransitionCallback(callbackIntent);
+                            _isRecordingTransitionInProgress = false;
+                            UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+                        }
+                    }
                 }
             }
             else
@@ -2064,33 +2126,43 @@ public partial class MainWindow : Window
                     var remaining = stopTimeout - elapsedSincePositive.Value;
                     if (remaining <= TimeSpan.Zero)
                     {
-                        _recentAutoStopContext = new RecentAutoStopContext(
-                            activePlatform,
-                            nowUtc,
-                            _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
-                            (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue));
-                        _continuityGraceReceipt = null;
-                        AppendAutoStopStatus($"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal.");
-                        _isRecordingTransitionInProgress = true;
-                        _isAutoStopTransitionInProgress = true;
-                        ClearAutoStopVisualState();
-                        PauseDetectionDuringStopTransition();
-                        UpdateUi("Auto-stopping recording.", "Meeting ended. Finalizing session...");
-                        UpdateCurrentMeetingEditor();
-                        UpdateAudioCaptureGraph();
-                        try
+                        var callbackIntent = TryBeginRecordingTransitionCallback("automatic-stop");
+                        if (callbackIntent is null)
                         {
-                            await StopCurrentRecordingAsync("Meeting signals expired after the configured timeout.");
+                            SetAutoStopCountdown(TimeSpan.FromSeconds(1));
+                            AppendAutoStopStatus("Auto-stop deferred while a recording transition is active.");
                         }
-                        finally
+                        else
                         {
-                            _isRecordingTransitionInProgress = false;
-                            _isAutoStopTransitionInProgress = false;
-                            ResumeDetectionAfterStopTransitionIfNeeded();
-                            UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+                            _recentAutoStopContext = new RecentAutoStopContext(
+                                activePlatform,
+                                nowUtc,
+                                _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
+                                (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue));
+                            _continuityGraceReceipt = null;
+                            AppendAutoStopStatus($"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal.");
+                            _isRecordingTransitionInProgress = true;
+                            _isAutoStopTransitionInProgress = true;
+                            ClearAutoStopVisualState();
+                            PauseDetectionDuringStopTransition();
+                            UpdateUi("Auto-stopping recording.", "Meeting ended. Finalizing session...");
+                            UpdateCurrentMeetingEditor();
+                            UpdateAudioCaptureGraph();
+                            try
+                            {
+                                await StopCurrentRecordingAsync("Meeting signals expired after the configured timeout.");
+                            }
+                            finally
+                            {
+                                CompleteRecordingTransitionCallback(callbackIntent);
+                                _isRecordingTransitionInProgress = false;
+                                _isAutoStopTransitionInProgress = false;
+                                ResumeDetectionAfterStopTransitionIfNeeded();
+                                UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
+                            }
+                            _lastPositiveDetectionUtc = null;
+                            _lastAutoStopFingerprint = null;
                         }
-                        _lastPositiveDetectionUtc = null;
-                        _lastAutoStopFingerprint = null;
                     }
                     else
                     {
@@ -2252,6 +2324,13 @@ public partial class MainWindow : Window
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken)
     {
+        var callbackIntent = TryBeginRecordingTransitionCallback("automatic-rollover");
+        if (callbackIntent is null)
+        {
+            _logger.Log("Automatic meeting rollover was deferred by the callback dispatcher.");
+            return false;
+        }
+
         var previousPlatform = activeSession.Manifest.Platform;
         var previousTitle = activeSession.Manifest.DetectedTitle;
         _isRecordingTransitionInProgress = true;
@@ -2300,6 +2379,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            CompleteRecordingTransitionCallback(callbackIntent);
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             ResumeDetectionAfterStopTransitionIfNeeded();

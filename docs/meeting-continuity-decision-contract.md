@@ -113,3 +113,26 @@ published artifacts move to the local `ongoing-heal` archive; raw source audio
 is not deleted. The receipt records the reason, time, and archive location and
 suppresses repeat passes. Historical repair is deliberately outside this
 automation boundary.
+
+## Sprint 6 — callback and crash-evidence boundary
+
+`CallbackIntentDispatcher` is a local, bounded metadata-only handoff for
+callback work. Entries contain only normalized key, correlation, allowed edge,
+revision, sequence, and outcome; title, transcript, audio, window, path,
+exception payload, and credentials are rejected. At most 64 requests and 128
+trace entries are retained. Reentrant matching correlation/edge requests are
+declined, queued duplicate keys coalesce, and overload is recorded without
+recursion.
+
+Meeting refresh, manual and automatic start/stop/rollover, startup warmup,
+deferred startup maintenance, and post-repair resume each acquire an intent
+before mutating transition state. Recording transitions flush the trace sidecar
+both before and after their risky boundary. The sidecar is atomically replaced
+under the app root; missing, corrupt, oversized, or non-normalized input is
+treated as absent diagnostic data, never as recovery authority.
+
+A restart may inspect this metadata-only diagnostic sidecar, but it must still
+use manifest checkpoints and normal interrupted-session recovery. A trace never
+starts capture, overrides manual stop, assigns `SameMeeting`, merges meetings,
+or retries a failed callback recursively. The ongoing healer remains a later,
+explicit post-publish pass governed by its own receipt and eligibility checks.

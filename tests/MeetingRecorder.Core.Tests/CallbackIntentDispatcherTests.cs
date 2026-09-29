@@ -18,6 +18,8 @@ public sealed class CallbackIntentDispatcherTests
             Assert.False(File.Exists(path + ".tmp"));
             await File.WriteAllTextAsync(path, "not-json");
             Assert.Empty(await store.TryLoadAsync());
+            await File.WriteAllTextAsync(path, "[{\"sequence\":1,\"key\":\"private meeting\",\"correlationId\":\"c\",\"edge\":\"edge\",\"revision\":1,\"outcome\":0}]");
+            Assert.Empty(await store.TryLoadAsync());
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
@@ -33,6 +35,29 @@ public sealed class CallbackIntentDispatcherTests
         Assert.Equal(CallbackIntentOutcome.DeclinedCycle, dispatcher.Enqueue(intent));
         dispatcher.Complete(active!);
         Assert.Equal(CallbackIntentOutcome.Accepted, dispatcher.Enqueue(intent));
+    }
+
+    [Fact]
+    public async Task PreBoundary_Trace_Survives_Abrupt_Loss_And_Restart()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var dispatcher = new CallbackIntentDispatcher();
+            var intent = new CallbackIntent("recording-transition", "main-window", "automatic-stop", 4);
+            Assert.Equal(CallbackIntentOutcome.Accepted, dispatcher.Enqueue(intent));
+            Assert.True(dispatcher.TryBegin("recording-transition", out _));
+
+            var path = Path.Combine(root, "callback-trace.json");
+            await new CallbackIntentTraceStore(path).SaveAsync(dispatcher.Snapshot());
+
+            var recoveredTrace = await new CallbackIntentTraceStore(path).TryLoadAsync();
+            var entry = Assert.Single(recoveredTrace);
+            Assert.Equal("recording-transition", entry.Key);
+            Assert.Equal("automatic-stop", entry.Edge);
+            Assert.Equal(CallbackIntentOutcome.Accepted, entry.Outcome);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     [Fact]

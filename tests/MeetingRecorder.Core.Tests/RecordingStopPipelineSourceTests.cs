@@ -10,16 +10,38 @@ public sealed class RecordingStopPipelineSourceTests
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var branchStart = source.IndexOf("if (remaining <= TimeSpan.Zero)", StringComparison.Ordinal);
-        var branchEnd = source.IndexOf("else", branchStart, StringComparison.Ordinal);
+        var branchEnd = source.IndexOf("            if (activeMeetingManagedSession is not null)", branchStart, StringComparison.Ordinal);
         var branchBlock = source[branchStart..branchEnd];
 
         var transitionIndex = branchBlock.IndexOf("_isRecordingTransitionInProgress = true;", StringComparison.Ordinal);
+        var dispatcherIndex = branchBlock.IndexOf("TryBeginRecordingTransitionCallback(\"automatic-stop\")", StringComparison.Ordinal);
         var uiIndex = branchBlock.IndexOf("UpdateUi(\"Auto-stopping recording.\"", StringComparison.Ordinal);
         var stopIndex = branchBlock.IndexOf("await StopCurrentRecordingAsync(\"Meeting signals expired after the configured timeout.\");", StringComparison.Ordinal);
 
+        Assert.True(dispatcherIndex >= 0, "Expected auto-stop timeout branch to acquire the serialized transition callback.");
         Assert.True(transitionIndex >= 0, "Expected auto-stop timeout branch to enter a recording transition state.");
+        Assert.True(transitionIndex > dispatcherIndex, "Expected auto-stop state mutation after dispatcher acceptance.");
         Assert.True(uiIndex > transitionIndex, "Expected auto-stop timeout branch to update the UI after entering the transition state.");
         Assert.True(stopIndex > uiIndex, "Expected auto-stop timeout branch to await the stop path only after the visible UI transition.");
+        Assert.Contains("CompleteRecordingTransitionCallback(callbackIntent);", branchBlock, StringComparison.Ordinal);
+        Assert.Contains("PersistCallbackTraceForRecovery();", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Automatic_Start_And_Rollover_Use_The_Serialized_Transition_Callback()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var detectionStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var detectionEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", detectionStart, StringComparison.Ordinal);
+        var detectionBlock = source[detectionStart..detectionEnd];
+        var rolloverStart = source.IndexOf("private async Task<bool> TryRollOverManagedSessionAsync", StringComparison.Ordinal);
+        var rolloverEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", rolloverStart, StringComparison.Ordinal);
+        var rolloverBlock = source[rolloverStart..rolloverEnd];
+
+        Assert.Contains("TryBeginRecordingTransitionCallback(\"automatic-start\")", detectionBlock, StringComparison.Ordinal);
+        Assert.Contains("TryBeginRecordingTransitionCallback(\"automatic-rollover\")", rolloverBlock, StringComparison.Ordinal);
+        Assert.Contains("CompleteRecordingTransitionCallback(callbackIntent);", rolloverBlock, StringComparison.Ordinal);
     }
 
     [Fact]
