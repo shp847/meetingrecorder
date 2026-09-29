@@ -37,6 +37,15 @@ Unknown/Grace, and Manual Review. All future continuity exceptions require an
 opaque fixture plus an adversarial negative case before they can affect live
 policy.
 
+## Continuity change gate
+
+Every new continuity exception must be proposed with one opaque public
+synthetic regression fixture and one adversarial public synthetic negative
+fixture. The change record must name its evidence tier, expected shadow
+divergence/metric, privacy classification, and removal condition. A title-only
+exception is rejected: title is never enough for automatic merge. Fixtures stay
+small; supersede a covered case rather than adding an unbounded variant family.
+
 ## Trace and replay boundary
 
 `ContinuityDecisionTrace` is a bounded, metadata-only breadcrumb stream. Each
