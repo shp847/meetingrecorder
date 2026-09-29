@@ -54,6 +54,11 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
         Assert.Contains("first", await File.ReadAllTextAsync(request.PredecessorOutput.MarkdownPath!));
         var receipt = await new OngoingMeetingHealReceiptStore(request.ReceiptPath).TryLoadAsync();
         Assert.NotNull(receipt?.ReversedAtUtc);
+        Assert.Equal(
+            OngoingMeetingHealReversalStatus.AlreadyReversed,
+            await new OngoingMeetingHealReversalService().ReverseAsync(
+                new(request.ReceiptPath, request.AudioOutputDirectory, request.TranscriptOutputDirectory),
+                Now.AddMinutes(2)));
     }
 
     [Fact]
@@ -67,6 +72,23 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
         Assert.Equal(OngoingMeetingHealTransactionStatus.Rejected, result.Status);
         Assert.True(File.Exists(request.PredecessorOutput.AudioPath!));
         Assert.True(File.Exists(request.PredecessorOutput.ReadyMarkerPath!));
+        Assert.False(File.Exists(request.ReceiptPath));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Cancelled_Before_Admission_Leaves_Both_Publishes_Current()
+    {
+        var request = await CreateRequestAsync();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CreateTransaction().ExecuteAsync(request, Now, cancellation.Token));
+
+        Assert.True(File.Exists(request.PredecessorOutput.AudioPath!));
+        Assert.True(File.Exists(request.SuccessorOutput.AudioPath!));
+        Assert.True(File.Exists(request.PredecessorOutput.ReadyMarkerPath!));
+        Assert.True(File.Exists(request.SuccessorOutput.ReadyMarkerPath!));
         Assert.False(File.Exists(request.ReceiptPath));
     }
 
