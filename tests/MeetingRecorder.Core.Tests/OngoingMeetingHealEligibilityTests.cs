@@ -32,6 +32,27 @@ public sealed class OngoingMeetingHealEligibilityTests
         Assert.Equal(OngoingMeetingHealEligibility.DifferentMeeting, resolver.Evaluate(Candidate(Identity("a"), Identity("b")), Now));
     }
 
+    [Theory]
+    [InlineData(false, true, false, OngoingMeetingHealEligibility.MissingArtifacts)]
+    [InlineData(true, false, false, OngoingMeetingHealEligibility.NonMonotonicArtifacts)]
+    [InlineData(true, true, true, OngoingMeetingHealEligibility.LineageCycle)]
+    public void Incomplete_Or_Unsafe_Artifact_Lineage_Never_AutoHeals(
+        bool completeArtifacts,
+        bool monotonic,
+        bool cycle,
+        OngoingMeetingHealEligibility expected)
+    {
+        var identity = Identity("a");
+        var candidate = Candidate(identity, identity) with
+        {
+            HasCompletePublishedArtifacts = completeArtifacts,
+            ArtifactOrderIsMonotonic = monotonic,
+            HasLineageCycle = cycle,
+        };
+
+        Assert.Equal(expected, new OngoingMeetingHealEligibilityResolver().Evaluate(candidate, Now));
+    }
+
     [Fact]
     public void Admitted_Pair_Is_Not_Admitted_Twice()
     {

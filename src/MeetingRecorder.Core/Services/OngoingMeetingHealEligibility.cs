@@ -11,6 +11,8 @@ public enum OngoingMeetingHealEligibility
     ActiveOrIncomplete = 4,
     UserMetadataConflict = 5,
     MissingArtifacts = 6,
+    NonMonotonicArtifacts = 7,
+    LineageCycle = 8,
 }
 
 public sealed record OngoingMeetingHealCandidate(
@@ -19,7 +21,10 @@ public sealed record OngoingMeetingHealCandidate(
     MeetingIdentitySnapshot? PredecessorIdentity,
     MeetingIdentitySnapshot? SuccessorIdentity,
     bool HasActiveLease,
-    bool HasUserMetadataConflict);
+    bool HasUserMetadataConflict,
+    bool HasCompletePublishedArtifacts = true,
+    bool ArtifactOrderIsMonotonic = true,
+    bool HasLineageCycle = false);
 
 public sealed class OngoingMeetingHealEligibilityResolver
 {
@@ -51,10 +56,21 @@ public sealed class OngoingMeetingHealEligibilityResolver
             return OngoingMeetingHealEligibility.TooFarApart;
         }
 
-        if (string.IsNullOrWhiteSpace(candidate.Predecessor.MergedAudioPath) ||
+        if (!candidate.HasCompletePublishedArtifacts ||
+            string.IsNullOrWhiteSpace(candidate.Predecessor.MergedAudioPath) ||
             string.IsNullOrWhiteSpace(candidate.Successor.MergedAudioPath))
         {
             return OngoingMeetingHealEligibility.MissingArtifacts;
+        }
+
+        if (!candidate.ArtifactOrderIsMonotonic)
+        {
+            return OngoingMeetingHealEligibility.NonMonotonicArtifacts;
+        }
+
+        if (candidate.HasLineageCycle)
+        {
+            return OngoingMeetingHealEligibility.LineageCycle;
         }
 
         return _matcher.Compare(candidate.PredecessorIdentity, candidate.SuccessorIdentity, MeetingIdentityComparisonMode.ManifestToManifest, nowUtc).Verdict switch

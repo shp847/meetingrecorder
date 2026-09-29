@@ -162,6 +162,10 @@ internal sealed partial class MeetingCleanupExecutionService
 
         var first = orderedMeetings[0];
         var mergedStem = _pathBuilder.BuildFileStem(first.Platform, first.StartedAtUtc, preferredTitle);
+        var finalAudioPath = Path.Combine(audioOutputDir, $"{mergedStem}{Path.GetExtension(first.AudioPath!)}");
+        var finalMarkdownPath = Path.Combine(transcriptOutputDir, $"{mergedStem}.md");
+        EnsureTargetIsSelectedOrAbsent(finalAudioPath, orderedMeetings.Select(meeting => meeting.AudioPath));
+        EnsureTargetIsSelectedOrAbsent(finalMarkdownPath, orderedMeetings.Select(meeting => meeting.MarkdownPath));
         var tempDirectory = Path.Combine(archiveDirectory, "_temp");
         Directory.CreateDirectory(tempDirectory);
         var temporaryAudioPath = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.wav");
@@ -180,8 +184,6 @@ internal sealed partial class MeetingCleanupExecutionService
             await ArchiveMeetingAsync(meeting, archiveDirectory, "merge-split-pairs", cancellationToken);
         }
 
-        var finalAudioPath = Path.Combine(audioOutputDir, $"{mergedStem}{Path.GetExtension(first.AudioPath!)}");
-        var finalMarkdownPath = Path.Combine(transcriptOutputDir, $"{mergedStem}.md");
         Directory.CreateDirectory(Path.GetDirectoryName(finalAudioPath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(finalMarkdownPath)!);
 
@@ -270,6 +272,23 @@ internal sealed partial class MeetingCleanupExecutionService
         }
 
         return builder.ToString().TrimEnd() + Environment.NewLine;
+    }
+
+    private static void EnsureTargetIsSelectedOrAbsent(string targetPath, IEnumerable<string?> selectedPaths)
+    {
+        if (!File.Exists(targetPath))
+        {
+            return;
+        }
+
+        if (selectedPaths.Any(path =>
+                !string.IsNullOrWhiteSpace(path) &&
+                string.Equals(Path.GetFullPath(path), targetPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        throw new IOException("A published meeting already occupies the requested merge target.");
     }
 
     private static async Task<string> ReadTranscriptBodyAsync(string markdownPath, TimeSpan offset, CancellationToken cancellationToken)
