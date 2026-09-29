@@ -6714,8 +6714,8 @@ Sprint 2 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: new continuity logic earns control through visible, privacy-safe comparisons—not a risky switch.
 - Scope / non-goals: evaluate S2 matcher beside current policy only. Do not change capture/rollover/auto-stop/recovery/merge behavior, write production artifacts, submit recommendations, or make shadow output user-visible as a decision.
 - Dependencies and decisions: S0 corpus/S1 trace/S2 matcher and legacy policy version are pinned input. Shadow invocation is pure, receives same normalized snapshot/clock/config and returns verdict/reason/evidence tier/confidence/engine version; exceptions/timeouts/overload are recorded as shadow-unavailable and never affect legacy path. “Parallel” means decision-boundary side evaluation, no duplicate I/O/worker/capture action.
@@ -6728,7 +6728,7 @@ Sprint 2 acceptance criteria:
 - Documentation / installer / release work: record shadow protocol/cutover evidence/retention; no package change until cutover.
 - Evidence and date: 2026-09-27 audit found no shadow evaluator/divergence receipt/review gate. Existing policy tests do not prove field agreement; private incident-date terminology replaced with opaque corpus reference.
 - Evidence and date: 2026-09-29 added the pure, bounded `ContinuityShadowEngine`/meter/report/gate with protected-label and divergence tests; rollover/reclassify now records the legacy result only after it commits. The in-memory receipt cannot affect lifecycle behavior.
-- Remaining gap or next action: observe continuation, recent auto-stop, startup recovery, and publish-heal boundaries with the same receipt before evaluating cutover evidence.
+- Remaining gap or next action: Sprint 4 may consume the shadow report only after its gate. Current source has no standalone startup-recovery or post-publish-heal continuity candidate (startup seals open manifests; publish repair has no identity decision), so no synthetic hook was added; add one only if such a decision boundary is introduced.
 
 Goal: prove the new engine before giving it control.
 

@@ -87,3 +87,10 @@ labeled coverage, every protected incident matching expected truth, no
 unreviewed potential false merge on protected negatives, and bounded latency
 and unavailability. A failure extends shadow observation; it cannot relax the
 gate or turn on capture behavior.
+
+The active app records the committed legacy result for continuation,
+reclassification/rollover, and successful recent-auto-stop recovery into an
+in-memory bounded meter. Startup currently seals manifests and publish repair
+currently has no continuity candidate, so neither is given a synthetic shadow
+hook. Adding one requires a real decision boundary and the same receipt
+contract.
