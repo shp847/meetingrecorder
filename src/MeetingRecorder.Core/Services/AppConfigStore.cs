@@ -11,6 +11,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     private const int CurrentSummaryModelProxyContractMigrationVersion = 1;
     private const int CurrentMeetingsViewPresetMigrationVersion = 1;
     private const int CurrentBacklogAccelerationProfileMigrationVersion = 1;
+    private const int CurrentContinuityRolloutMigrationVersion = 1;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -183,6 +184,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             LaunchOnLoginEnabled = true,
             AutoDetectEnabled = true,
             AutoDetectSecurityPromptMigrationApplied = true,
+            ContinuityEngineRolloutMode = ContinuityEngineRolloutMode.Legacy,
+            OngoingMeetingHealRolloutMode = OngoingMeetingHealRolloutMode.Off,
+            ContinuityRolloutMigrationVersion = CurrentContinuityRolloutMigrationVersion,
             CalendarTitleFallbackEnabled = false,
             MeetingAttendeeEnrichmentEnabled = true,
             UpdateCheckEnabled = true,
@@ -325,6 +329,24 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             autoDetectEnabled = false;
             autoDetectSecurityPromptMigrationApplied = true;
         }
+
+        var continuityRolloutMigrationVersion = Math.Max(0, config.ContinuityRolloutMigrationVersion);
+        var continuityEngineRolloutMode = NormalizeEnum(
+            config.ContinuityEngineRolloutMode,
+            ContinuityEngineRolloutMode.Legacy);
+        var ongoingMeetingHealRolloutMode = NormalizeEnum(
+            config.OngoingMeetingHealRolloutMode,
+            OngoingMeetingHealRolloutMode.Off);
+        if (continuityRolloutMigrationVersion < CurrentContinuityRolloutMigrationVersion)
+        {
+            continuityEngineRolloutMode = config.MeetingIdentityContinuityEnabled
+                ? ContinuityEngineRolloutMode.Matcher
+                : ContinuityEngineRolloutMode.Legacy;
+            ongoingMeetingHealRolloutMode = config.OngoingMeetingAutoHealEnabled
+                ? OngoingMeetingHealRolloutMode.Live
+                : OngoingMeetingHealRolloutMode.Off;
+            continuityRolloutMigrationVersion = CurrentContinuityRolloutMigrationVersion;
+        }
         var diarizationAccelerationSecurityPromptMigrationApplied =
             config.DiarizationAccelerationSecurityPromptMigrationApplied;
         var diarizationAccelerationPreference = NormalizeEnum(
@@ -462,8 +484,11 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             DiarizationAccelerationSecurityPromptMigrationApplied = diarizationAccelerationSecurityPromptMigrationApplied,
             AutoDetectEnabled = autoDetectEnabled,
             AutoDetectSecurityPromptMigrationApplied = autoDetectSecurityPromptMigrationApplied,
-            MeetingIdentityContinuityEnabled = config.MeetingIdentityContinuityEnabled,
-            OngoingMeetingAutoHealEnabled = config.OngoingMeetingAutoHealEnabled,
+            MeetingIdentityContinuityEnabled = continuityEngineRolloutMode == ContinuityEngineRolloutMode.Matcher,
+            OngoingMeetingAutoHealEnabled = ongoingMeetingHealRolloutMode == OngoingMeetingHealRolloutMode.Live,
+            ContinuityEngineRolloutMode = continuityEngineRolloutMode,
+            OngoingMeetingHealRolloutMode = ongoingMeetingHealRolloutMode,
+            ContinuityRolloutMigrationVersion = continuityRolloutMigrationVersion,
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,

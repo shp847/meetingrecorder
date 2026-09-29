@@ -70,6 +70,21 @@ public enum BacklogAccelerationProfile
     OvernightAndIdleCapacityAcceleration = 4,
 }
 
+/// <summary>Local continuity authority selection. Invalid values fail closed to Legacy.</summary>
+public enum ContinuityEngineRolloutMode
+{
+    Legacy = 0,
+    Matcher = 1,
+}
+
+/// <summary>Local ongoing-heal authority. ReviewOnly must never mutate artifacts.</summary>
+public enum OngoingMeetingHealRolloutMode
+{
+    Off = 0,
+    ReviewOnly = 1,
+    Live = 2,
+}
+
 public enum InitialProcessingStrategy
 {
     ConfiguredStages = 0,
@@ -368,6 +383,14 @@ public sealed record AppConfig
     /// Opt-in current-work stitcher. Historical meeting repair remains manual.
     /// </summary>
     public bool OngoingMeetingAutoHealEnabled { get; init; }
+
+    public ContinuityEngineRolloutMode ContinuityEngineRolloutMode { get; init; } =
+        ContinuityEngineRolloutMode.Legacy;
+
+    public OngoingMeetingHealRolloutMode OngoingMeetingHealRolloutMode { get; init; } =
+        OngoingMeetingHealRolloutMode.Off;
+
+    public int ContinuityRolloutMigrationVersion { get; init; }
 
     public bool CalendarTitleFallbackEnabled { get; init; }
 

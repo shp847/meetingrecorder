@@ -204,7 +204,7 @@ records an approved dependency change.
 | 4 — Live Continuity Cutover | `Done` | 2026-09-29: guarded matcher cutover, bounded/idempotent grace, identity-scoped auto-stop recovery, and rollback/negative-case evidence complete below. |
 | 5 — Recovery, Publish-Time Stitching, And Ongoing Auto-Heal | `Done` | 2026-09-29: isolated ongoing-heal trigger, strict eligibility/transaction/reversal/lineage rules, shared merge execution, package, and smoke evidence complete below. |
 | 6 — Crash Root Cause And Callback Topology Hardening | `Done` | 2026-09-29: bounded metadata-only callback dispatcher now covers refresh, automatic/manual transitions, startup/recovery maintenance, and abrupt-loss trace proof; package and smoke gates pass. |
-| 7 — Heuristic Retirement And Rollout Controls | `Ready` | Decision-authority retirement map, local rollout/rollback flag precedence, review-only heal fallback, and fixture-gated exception workflow defined below. |
+| 7 — Heuristic Retirement And Rollout Controls | `Partial` | 2026-09-29: versioned local matcher/heal rollout settings preserve legacy opt-ins and fail invalid values closed; direct-authority retirement, review-only healer, and contribution gate remain. |
 | 8 — Packaging, Validation, And Support Readiness | `Ready` | Continuity acceptance matrix, clean package/recovery smoke, decision-log/support evidence, and authorized release boundary defined below. |
 
 ### Production Capture, Transcription, And Cleanup Remediation
@@ -6944,8 +6944,8 @@ Sprint 6 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29).
 - User outcome: future urgent continuity fixes strengthen one cautious engine instead of recreating conflicting title heuristics.
 - Scope / non-goals: retire/demote branches only after S3–S6 evidence, add local rollout controls and contribution gate. Do not delete useful platform evidence extraction, remotely toggle users, silently re-enable unsafe merge, or remove legacy reference before migration/rollback proof.
 - Dependencies and decisions: matcher is sole verdict authority after cutover; platform-specific code may emit normalized evidence only. Maintain retirement inventory: old branch, owner, extracted evidence/replacement matcher rule, shadow/cutover test, deletion criteria. Unknown/unmapped legacy behavior blocks deletion rather than hidden rewrite.
@@ -6956,8 +6956,8 @@ Sprint 6 acceptance criteria:
   4. Add repo continuity-change template/check: new exception must state contract/evidence tier, add synthetic replay plus adversarial negative fixture, expected shadow divergence/metric, privacy classification and removal condition. Corpus budget/version avoids unbounded fixture sprawl; reviewers reject title-only special case.
 - Tests and rendered checks: retirement inventory/static authority violations, extractor parity, flag migration/precedence/corrupt/rollback/race, review-only/no-write/circuit breaker, fixture-template validation. Render Advanced/local support flag state only if exposed, accessible and nontechnical default path unchanged.
 - Documentation / installer / release work: update architecture/contribution/continuity guide and support rollback instruction; runtime flags require package gate later.
-- Evidence and date: audit found direct policy helpers and no retirement inventory/flag precedence/review-only transaction/fixture contribution gate.
-- Remaining gap or next action: catalog every direct decision branch and map it to evidence/matcher before deleting any code.
+- Evidence and date: audit found direct policy helpers and no retirement inventory/flag precedence/review-only transaction/fixture contribution gate. 2026-09-29 added versioned local `ContinuityEngineRolloutMode` and `OngoingMeetingHealRolloutMode` settings. Existing boolean opt-ins migrate once to Matcher/Live; new defaults and invalid values resolve to Legacy/Off, so malformed local configuration cannot enable matching or mutation. Focused `AppConfigStoreTests` pass 25/25.
+- Remaining gap or next action: catalog every direct decision branch and map it to evidence/matcher, then add a review-only healer that produces no mutation before deleting any code.
 
 Goal: prevent the old pendulum from reappearing through future hotfixes.
 

@@ -61,6 +61,9 @@ public sealed class AppConfigStoreTests
         Assert.True(config.LaunchOnLoginEnabled);
         Assert.True(config.AutoDetectEnabled);
         Assert.True(config.AutoDetectSecurityPromptMigrationApplied);
+        Assert.Equal(ContinuityEngineRolloutMode.Legacy, config.ContinuityEngineRolloutMode);
+        Assert.Equal(OngoingMeetingHealRolloutMode.Off, config.OngoingMeetingHealRolloutMode);
+        Assert.Equal(1, config.ContinuityRolloutMigrationVersion);
         Assert.False(config.CalendarTitleFallbackEnabled);
         Assert.True(config.MeetingAttendeeEnrichmentEnabled);
         Assert.True(config.UpdateCheckEnabled);
@@ -139,6 +142,37 @@ public sealed class AppConfigStoreTests
         Assert.Equal(IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup, migrated.IncrementalWorkPlan);
         Assert.Equal("21:30", migrated.OvernightDrainStartLocal);
         Assert.Equal("05:15", migrated.OvernightDrainEndLocal);
+    }
+
+    [Fact]
+    public async Task SaveAsync_Migrates_Legacy_Continuity_OptIns_And_Fails_Closed_For_Invalid_Rollout_Values()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var store = new AppConfigStore(
+            Path.Combine(root, "config", "appsettings.json"),
+            Path.Combine(root, "documents"));
+        var defaults = await store.LoadOrCreateAsync();
+
+        var migrated = await store.SaveAsync(defaults with
+        {
+            ContinuityRolloutMigrationVersion = 0,
+            MeetingIdentityContinuityEnabled = true,
+            OngoingMeetingAutoHealEnabled = true,
+        });
+        var safe = await store.SaveAsync(migrated with
+        {
+            ContinuityEngineRolloutMode = (ContinuityEngineRolloutMode)99,
+            OngoingMeetingHealRolloutMode = (OngoingMeetingHealRolloutMode)99,
+        });
+
+        Assert.Equal(ContinuityEngineRolloutMode.Matcher, migrated.ContinuityEngineRolloutMode);
+        Assert.Equal(OngoingMeetingHealRolloutMode.Live, migrated.OngoingMeetingHealRolloutMode);
+        Assert.True(migrated.MeetingIdentityContinuityEnabled);
+        Assert.True(migrated.OngoingMeetingAutoHealEnabled);
+        Assert.Equal(ContinuityEngineRolloutMode.Legacy, safe.ContinuityEngineRolloutMode);
+        Assert.Equal(OngoingMeetingHealRolloutMode.Off, safe.OngoingMeetingHealRolloutMode);
+        Assert.False(safe.MeetingIdentityContinuityEnabled);
+        Assert.False(safe.OngoingMeetingAutoHealEnabled);
     }
 
     [Fact]
