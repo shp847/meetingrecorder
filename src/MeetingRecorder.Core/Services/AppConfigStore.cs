@@ -463,6 +463,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             AutoDetectEnabled = autoDetectEnabled,
             AutoDetectSecurityPromptMigrationApplied = autoDetectSecurityPromptMigrationApplied,
             MeetingIdentityContinuityEnabled = config.MeetingIdentityContinuityEnabled,
+            OngoingMeetingAutoHealEnabled = config.OngoingMeetingAutoHealEnabled,
             UpdateFeedUrl = string.IsNullOrWhiteSpace(config.UpdateFeedUrl) ? defaults.UpdateFeedUrl : config.UpdateFeedUrl,
             BackgroundProcessingMode = NormalizeEnum(config.BackgroundProcessingMode, defaults.BackgroundProcessingMode),
             BackgroundSpeakerLabelingMode = backgroundSpeakerLabelingMode,

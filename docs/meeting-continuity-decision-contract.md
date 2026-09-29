@@ -94,3 +94,22 @@ in-memory bounded meter. Startup currently seals manifests and publish repair
 currently has no continuity candidate, so neither is given a synthetic shadow
 hook. Adding one requires a real decision boundary and the same receipt
 contract.
+
+## Sprint 5 — current-work healing boundary
+
+`OngoingMeetingAutoHealEnabled` is disabled by default. When explicitly
+enabled, a successful publish runs one bounded pass over only the preceding
+24 hours of published work. It considers one chronologically adjacent pair at
+a time and requires complete WAV, Markdown, JSON, and ready-marker artifacts,
+compatible strong manifest identities, a five-minute-or-less measured gap,
+monotonic output order, matching project/attendee metadata, and no existing
+summary or speaker-label result to reconcile. Missing,
+different, or weak identity, incomplete artifacts, active work, unsafe order,
+or metadata conflict leaves both meetings unchanged.
+
+The pass uses the same cleanup merger as deliberate cleanup, an exclusive
+local lease, and an atomic receipt keyed by source session IDs. Original
+published artifacts move to the local `ongoing-heal` archive; raw source audio
+is not deleted. The receipt records the reason, time, and archive location and
+suppresses repeat passes. Historical repair is deliberately outside this
+automation boundary.

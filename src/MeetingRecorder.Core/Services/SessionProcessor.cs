@@ -436,6 +436,25 @@ public sealed class SessionProcessor
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
             await TryMarkImportedJobPublishedAsync(input, activeImportJob, cancellationToken);
+            if (config.OngoingMeetingAutoHealEnabled)
+            {
+                try
+                {
+                    await OngoingMeetingHealPass.RunOnceAsync(
+                        ManifestStore,
+                        PathBuilder,
+                        config.WorkDir,
+                        config.AudioOutputDir,
+                        config.TranscriptOutputDir,
+                        DateTimeOffset.UtcNow,
+                        cancellationToken);
+                }
+                catch (IOException)
+                {
+                    // Publishing has already succeeded; a transient healer issue
+                    // must leave both published meetings available for review.
+                }
+            }
             await PublishedSessionWorkCleanupService.PrunePublishedSessionAsync(
                 ManifestStore,
                 manifestPath,

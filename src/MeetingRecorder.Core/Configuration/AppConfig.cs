@@ -364,6 +364,11 @@ public sealed record AppConfig
     /// </summary>
     public bool MeetingIdentityContinuityEnabled { get; init; }
 
+    /// <summary>
+    /// Opt-in current-work stitcher. Historical meeting repair remains manual.
+    /// </summary>
+    public bool OngoingMeetingAutoHealEnabled { get; init; }
+
     public bool CalendarTitleFallbackEnabled { get; init; }
 
     public bool MeetingAttendeeEnrichmentEnabled { get; init; } = true;
