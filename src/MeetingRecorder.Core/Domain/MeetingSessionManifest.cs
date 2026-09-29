@@ -8,6 +8,8 @@ public sealed record MeetingSessionManifest
 
     public string DetectedTitle { get; init; } = string.Empty;
 
+    public MeetingIdentitySnapshot? IdentitySnapshot { get; init; }
+
     public DateTimeOffset StartedAtUtc { get; init; }
 
     public DateTimeOffset? EndedAtUtc { get; init; }

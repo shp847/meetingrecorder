@@ -6641,8 +6641,8 @@ Sprint 1 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: continuity uses one cautious identity judgment across runtime, recovery, and historical repair rather than scattered title heuristics.
 - Scope / non-goals: introduce snapshot/matcher/evidence rules after S0/S1. Do not auto-merge based on title/fingerprint, rewrite all manifests, export identity data, use raw audio/transcript/attendee as identity evidence, or weaken explicit user stop.
 - Dependencies and decisions: S0 severity/tri-state contract is authority. Snapshot is local sensitive metadata: version, normalized evidence tokens/classification, captured time/expiry, provenance/quality, stable local keyed fingerprint, and reason codes—not raw private titles/window tree/path/audio. Fingerprint is an optimization/correlation check only; collision/missing/key rotation yields `Unknown`, never Same.
@@ -6654,7 +6654,8 @@ Sprint 1 acceptance criteria:
 - Tests and rendered checks: normalization/version/key rotation/fingerprint collision, tier/conflict/generic/specific/platform/expiry/time modes, runtime-manifest parity, legacy/corrupt/future lazy backfill/no rewrite, redaction allowlist. Render reason disclosure only synthetic/explicit local support action.
 - Documentation / installer / release work: document local identity metadata/evidence limits/Unknown safety and migration; schema/runtime change needs release gates later.
 - Evidence and date: 2026-09-27 audit found scattered policy matching and generic-title protections, but no shared snapshot/matcher, collision/privacy contract, comparison parity or lazy compatibility proof.
-- Remaining gap or next action: create pure snapshot/matcher fixtures from S0 corpus before replacing policy helpers.
+- Evidence and date: 2026-09-29 added a local keyed `MeetingIdentitySnapshot` to manifests, a pure parity matcher, generic-title rejection, bounded expiry/proximity checks, atomic normal-save backfill, key-rotation/fingerprint safety, and legacy no-rewrite tests. Raw title/window/audio/path/attendee values are never retained in the snapshot.
+- Remaining gap or next action: use the pure matcher beside the legacy policy in Sprint 3; it does not yet control capture or merging.
 
 Goal: create the single identity model all continuity code must use.
 

@@ -73,6 +73,11 @@ public static class AppDataPaths
         return Path.Combine(GetAppRoot(applicationBaseDirectory), "speaker-profiles", "voice-profiles.json");
     }
 
+    public static string GetMeetingIdentityKeyPath(string? applicationBaseDirectory = null)
+    {
+        return Path.Combine(GetAppRoot(applicationBaseDirectory), "secrets", "meeting-identity-v1.key");
+    }
+
     public static string GetSummaryProviderSecretStorePath(string? applicationBaseDirectory = null)
     {
         return Path.Combine(GetAppRoot(applicationBaseDirectory), "secrets", "summary-provider-secrets.json");

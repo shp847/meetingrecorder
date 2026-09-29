@@ -52,3 +52,23 @@ honest status and never alter a session. `ContinuityReplayRunner` is pure: it
 uses the S0 contract and trace snapshot only, emits a deterministic SHA-256
 digest, and has no UI, audio, window, worker, process, or network dependency.
 The explanation formatter maps normalized reason codes to safe support copy.
+
+# Sprint 2 — local identity snapshot contract
+
+Continuity stores only versioned, local keyed tokens for a durable meeting code
+or specific title. It does not store a raw title, window tree, app path, audio,
+transcript, or attendee identity. Generic shells (for example Teams or sharing
+controls) create no merge-capable identity. The local key is private to the
+current app data root; key rotation, missing tokens, corrupt data, future
+timestamps, expiry, or fingerprint collisions return `Unknown`, never `Same`.
+
+`MeetingContinuityMatcher` is pure and treats runtime/runtime,
+runtime/manifest, and manifest/manifest inputs identically. It can return
+`SameMeeting` only for compatible, proximate strong evidence. Contradictory
+strong evidence returns `DifferentMeeting`; medium and weak evidence remain
+`Unknown` for a separate, bounded grace owner.
+
+Older manifests are read without mutation. Their snapshot is derived only from
+safe saved metadata and is persisted on the next normal atomic manifest save.
+Unsupported or malformed stored snapshots remain readable as legacy data and
+are not overwritten by that compatibility path.
