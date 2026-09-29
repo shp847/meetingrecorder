@@ -776,6 +776,25 @@ public partial class MainWindow : Window
         }
     }
 
+    private CallbackIntent? TryBeginRecordingTransitionCallback()
+    {
+        var intent = new CallbackIntent(
+            "recording-transition",
+            "main-window",
+            "recording-transition",
+            ++_callbackIntentRevision);
+        var outcome = _callbackIntentDispatcher.Enqueue(intent);
+        if (outcome == CallbackIntentOutcome.Accepted &&
+            _callbackIntentDispatcher.TryBegin("recording-transition", out var activeIntent))
+        {
+            return activeIntent;
+        }
+
+        PersistCallbackTraceForRecovery();
+        _logger.Log($"Recording transition callback was not scheduled. outcome='{outcome}'.");
+        return null;
+    }
+
     private void ProcessingQueue_OnStatusChanged(ProcessingQueueStatusSnapshot snapshot)
     {
         if (Dispatcher.CheckAccess())
@@ -1020,6 +1039,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        var callbackIntent = TryBeginRecordingTransitionCallback();
+        if (callbackIntent is null)
+        {
+            return;
+        }
+
         var stopwatch = Stopwatch.StartNew();
         _isRecordingTransitionInProgress = true;
         UpdateUi("Starting recording...", DetectionTextBlock.Text);
@@ -1059,6 +1084,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _callbackIntentDispatcher.Complete(callbackIntent);
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             UpdateUi(StatusTextBlock.Text, DetectionTextBlock.Text);
@@ -1069,6 +1095,12 @@ public partial class MainWindow : Window
     private async void StopButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (_isRecordingTransitionInProgress)
+        {
+            return;
+        }
+
+        var callbackIntent = TryBeginRecordingTransitionCallback();
+        if (callbackIntent is null)
         {
             return;
         }
@@ -1095,6 +1127,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _callbackIntentDispatcher.Complete(callbackIntent);
             _isRecordingTransitionInProgress = false;
             _isAutoStopTransitionInProgress = false;
             ResumeDetectionAfterStopTransitionIfNeeded();
