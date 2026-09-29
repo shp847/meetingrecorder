@@ -49,6 +49,14 @@ public sealed class CallbackIntentDispatcherTests
     }
 
     [Fact]
+    public void Rejects_Private_Or_Unnormalized_Callback_Trace_Values()
+    {
+        var dispatcher = new CallbackIntentDispatcher();
+        Assert.Throws<ArgumentException>(() => dispatcher.Enqueue(new("refresh", "meeting title", "edge", 1)));
+        Assert.Throws<ArgumentException>(() => dispatcher.Enqueue(new("C:\\private", "c", "edge", 1)));
+    }
+
+    [Fact]
     public void Bounds_Queue_And_Trace()
     {
         var dispatcher = new CallbackIntentDispatcher();

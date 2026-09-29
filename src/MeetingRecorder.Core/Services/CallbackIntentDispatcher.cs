@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace MeetingRecorder.Core.Services;
 
@@ -23,7 +24,7 @@ public sealed class CallbackIntentDispatcher
     public CallbackIntentOutcome Enqueue(CallbackIntent intent)
     {
         ArgumentNullException.ThrowIfNull(intent);
-        if (string.IsNullOrWhiteSpace(intent.Key) || string.IsNullOrWhiteSpace(intent.CorrelationId) || string.IsNullOrWhiteSpace(intent.Edge) || intent.Revision < 0)
+        if (!IsSafeToken(intent.Key) || !IsSafeToken(intent.CorrelationId) || !IsSafeToken(intent.Edge) || intent.Revision < 0)
             throw new ArgumentException("Callback intents require normalized metadata.", nameof(intent));
         var edgeKey = $"{intent.CorrelationId}|{intent.Edge}";
         var outcome = _activeEdges.Contains(edgeKey) ? CallbackIntentOutcome.DeclinedCycle :
@@ -73,6 +74,9 @@ public sealed class CallbackIntentDispatcher
         _trace.Add(new(++_sequence, intent.Key, intent.CorrelationId, intent.Edge, intent.Revision, outcome));
         if (_trace.Count > MaximumTraceLength) _trace.RemoveAt(0);
     }
+
+    private static bool IsSafeToken(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= 64 && Regex.IsMatch(value, "^[a-z0-9-]+$", RegexOptions.CultureInvariant);
 }
 
 public sealed class CallbackIntentTraceStore
@@ -83,7 +87,7 @@ public sealed class CallbackIntentTraceStore
     public async Task SaveAsync(IReadOnlyList<CallbackIntentTraceEntry> trace, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(trace);
-        if (trace.Count > 128 || trace.Any(entry => string.IsNullOrWhiteSpace(entry.Key) || string.IsNullOrWhiteSpace(entry.CorrelationId) || string.IsNullOrWhiteSpace(entry.Edge) || entry.Revision < 0))
+        if (trace.Count > 128 || trace.Any(entry => !IsSafeToken(entry.Key) || !IsSafeToken(entry.CorrelationId) || !IsSafeToken(entry.Edge) || entry.Revision < 0))
             throw new ArgumentException("Callback trace is invalid or exceeds its bounded capacity.", nameof(trace));
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var temporary = _path + ".tmp";
@@ -101,4 +105,7 @@ public sealed class CallbackIntentTraceStore
         }
         catch (JsonException) { return Array.Empty<CallbackIntentTraceEntry>(); }
     }
+
+    private static bool IsSafeToken(string value) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= 64 && Regex.IsMatch(value, "^[a-z0-9-]+$", RegexOptions.CultureInvariant);
 }
