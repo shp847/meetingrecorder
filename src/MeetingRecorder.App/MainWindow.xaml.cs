@@ -121,6 +121,7 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _teamsAttendeeCaptureGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly Queue<string> _activityLogLines = new();
+    private readonly CallbackIntentDispatcher _callbackIntentDispatcher = new();
     private readonly double[] _audioGraphLoopbackLevels = new double[AudioGraphPointCount];
     private readonly double[] _audioGraphMicrophoneLevels = new double[AudioGraphPointCount];
     private readonly double[] _audioGraphCombinedLevels = new double[AudioGraphPointCount];
@@ -206,6 +207,7 @@ public partial class MainWindow : Window
     private bool _isMicCaptureEnablePromptInProgress;
     private bool _isUiReady;
     private int _meetingRefreshVersion;
+    private long _callbackIntentRevision;
     private int _detectionCycleActive;
     private int _detectionCycleGeneration;
     private CancellationTokenSource? _meetingBackgroundWorkCts;
@@ -699,7 +701,7 @@ public partial class MainWindow : Window
         RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "meetings tab selected");
     }
 
-    private async Task RunDeferredMeetingsRefreshAsync()
+    private async Task RunDeferredMeetingsRefreshAsync(CallbackIntent callbackIntent)
     {
         try
         {
@@ -727,6 +729,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _callbackIntentDispatcher.Complete(callbackIntent);
             _isDeferredMeetingsRefreshQueued = false;
             UpdateMeetingsRefreshStateText();
             SchedulePendingMeetingsRefreshIfReady();
@@ -1222,9 +1225,23 @@ public partial class MainWindow : Window
         }
 
         _isDeferredMeetingsRefreshQueued = true;
+        var callbackIntent = new CallbackIntent(
+            "meetings-refresh",
+            "main-window",
+            "deferred-meetings-refresh",
+            ++_callbackIntentRevision);
+        var callbackOutcome = _callbackIntentDispatcher.Enqueue(callbackIntent);
+        if (callbackOutcome is CallbackIntentOutcome.DeclinedCycle or CallbackIntentOutcome.DeclinedOverload ||
+            !_callbackIntentDispatcher.TryBegin(out var scheduledIntent))
+        {
+            _isDeferredMeetingsRefreshQueued = false;
+            _logger.Log($"Deferred meeting refresh callback was not scheduled. outcome='{callbackOutcome}'.");
+            UpdateMeetingsRefreshStateText();
+            return;
+        }
         UpdateMeetingsRefreshStateText();
         _ = Dispatcher.BeginInvoke(
-            new Action(() => _ = RunDeferredMeetingsRefreshAsync()),
+            new Action(() => _ = RunDeferredMeetingsRefreshAsync(scheduledIntent!)),
             DispatcherPriority.Background);
     }
 
