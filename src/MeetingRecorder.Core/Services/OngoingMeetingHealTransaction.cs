@@ -98,7 +98,10 @@ internal sealed class OngoingMeetingHealTransaction
                 request.Candidate.Successor.SessionId,
                 nowUtc,
                 request.ReasonCode,
-                merge.ArchiveDirectory);
+                merge.ArchiveDirectory,
+                merge.SurvivingStem,
+                request.PredecessorOutput.Stem,
+                request.SuccessorOutput.Stem);
             await receiptStore.SaveAsync(receipt, CancellationToken.None);
             return new(OngoingMeetingHealTransactionStatus.Healed, merge.SurvivingStem, merge.ArchiveDirectory);
         }

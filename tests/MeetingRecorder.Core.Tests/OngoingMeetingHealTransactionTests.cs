@@ -33,6 +33,27 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
     }
 
     [Fact]
+    public async Task Reversal_Restores_Archived_Artifacts_And_Marks_Receipt()
+    {
+        var request = await CreateRequestAsync();
+        var healed = await CreateTransaction().ExecuteAsync(request, Now);
+        Assert.Equal(OngoingMeetingHealTransactionStatus.Healed, healed.Status);
+
+        var reversal = await new OngoingMeetingHealReversalService().ReverseAsync(
+            new(request.ReceiptPath, request.AudioOutputDirectory, request.TranscriptOutputDirectory),
+            Now.AddMinutes(1));
+
+        Assert.Equal(OngoingMeetingHealReversalStatus.Reversed, reversal);
+        Assert.True(File.Exists(request.PredecessorOutput.AudioPath!));
+        Assert.True(File.Exists(request.SuccessorOutput.AudioPath!));
+        Assert.True(File.Exists(request.PredecessorOutput.ReadyMarkerPath!));
+        Assert.True(File.Exists(request.SuccessorOutput.ReadyMarkerPath!));
+        Assert.Contains("first", await File.ReadAllTextAsync(request.PredecessorOutput.MarkdownPath!));
+        var receipt = await new OngoingMeetingHealReceiptStore(request.ReceiptPath).TryLoadAsync();
+        Assert.NotNull(receipt?.ReversedAtUtc);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Rejects_Ineligible_Pair_Without_Moving_Artifacts()
     {
         var request = await CreateRequestAsync();

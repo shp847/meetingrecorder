@@ -33,6 +33,7 @@ public sealed class OngoingMeetingHealService
     public static bool IsCoveredBy(OngoingMeetingHealReceipt? receipt, OngoingMeetingHealCandidate candidate) =>
         receipt is not null &&
         receipt.SchemaVersion == OngoingMeetingHealReceipt.CurrentSchemaVersion &&
+        receipt.ReversedAtUtc is null &&
         string.Equals(receipt.PredecessorSessionId, candidate.Predecessor.SessionId, StringComparison.Ordinal) &&
         string.Equals(receipt.SuccessorSessionId, candidate.Successor.SessionId, StringComparison.Ordinal);
 }
