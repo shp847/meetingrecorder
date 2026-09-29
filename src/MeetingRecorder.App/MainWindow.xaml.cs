@@ -1916,8 +1916,7 @@ public partial class MainWindow : Window
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
-                if (shouldRecoverFromRecentAutoStop &&
-                    _liveConfig.Current.MeetingIdentityContinuityEnabled &&
+                if (_liveConfig.Current.MeetingIdentityContinuityEnabled &&
                     _recentAutoStopContext is { } recentAutoStop)
                 {
                     var recoveryDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
@@ -1929,7 +1928,7 @@ public partial class MainWindow : Window
                             decision.SessionTitle,
                             decision.DetectedAudioSource,
                             nowUtc),
-                        MeetingIdentityVerdict.SameMeeting,
+                        MeetingIdentityVerdict.Unknown,
                         recentAutoStop.WasManuallyStopped,
                         ExistingGrace: null,
                         NowUtc: nowUtc));

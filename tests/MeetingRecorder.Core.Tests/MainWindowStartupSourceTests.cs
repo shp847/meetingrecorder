@@ -346,6 +346,23 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Matcher_Mode_Uses_Identity_Recovery_Without_Legacy_SameMeeting_Presumption()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var detectionStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var detectionEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", detectionStart, StringComparison.Ordinal);
+        var detectionBlock = source[detectionStart..detectionEnd];
+
+        var recoveryStart = detectionBlock.IndexOf("if (_liveConfig.Current.MeetingIdentityContinuityEnabled", StringComparison.Ordinal);
+        var recoveryEnd = detectionBlock.IndexOf("var manualStopSuppressionDisposition", recoveryStart, StringComparison.Ordinal);
+        var recoveryBlock = detectionBlock[recoveryStart..recoveryEnd];
+        Assert.Contains("ContinuityCutoverMode.Matcher", recoveryBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingIdentityVerdict.Unknown", recoveryBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (shouldRecoverFromRecentAutoStop &&", recoveryBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Main_Tab_Selection_Changes_Are_Ignored_Until_The_Window_Is_Fully_Initialized()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
