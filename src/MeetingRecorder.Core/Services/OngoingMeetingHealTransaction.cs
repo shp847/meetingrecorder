@@ -47,6 +47,7 @@ internal sealed class OngoingMeetingHealTransaction
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateRequest(request);
 
         var receiptStore = new OngoingMeetingHealReceiptStore(request.ReceiptPath);
