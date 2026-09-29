@@ -851,6 +851,20 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Open Work
 
+### 2026-09-29: Identity-gated continuity cutover (source work in progress)
+- Trigger / observed symptom: the legacy continuity policy still derives continuation and recent auto-stop recovery from platform/title heuristics, despite the completed privacy-safe identity and shadow contracts.
+- Exact runtime or CyberArk evidence: source audit found `AutoRecordingContinuityPolicy.ShouldRecoverFromRecentAutoStop` accepts a matching platform inside two minutes, and `ShouldRefreshLastPositiveSignal` owns title/shell-based continuation. No CyberArk or executable-path evidence is implicated.
+- Hypothesis: a disabled-by-default matcher gate can make only verified `SameMeeting` continue/recover while retaining bounded `Unknown` grace and explicit manual-stop authority.
+- APIs or signals added/removed: source work will add no external signal, audio probe, executable naming, signing, or install-location change. Any lifecycle route must retain the legacy fallback and decision trace.
+- Positive behavior expected: compatible strong identity can prevent a false split; generic/missing/key-rotated evidence remains `Unknown` and cannot start, merge, or resurrect an explicitly stopped recording.
+- False-positive/security boundary retained: manual stop, consent, capture readiness, storage safeguards, and bounded stop deadlines remain authoritative; no endpoint execution-control policy changes are authorized.
+- Tests added and results: pending.
+- Package status: not built for this change.
+- Installed hash/version/signature status: unchanged.
+- Live-machine result: not run.
+- Outcome: in progress.
+- Follow-up / removal condition: retain the disabled gate until protected-negative, recovery, and grace/rollback tests pass and package/install/startup validation completes.
+
 ### 2026-09-28: Generated apphost disappears during local package verification
 - Trigger / observed symptom: Sprint 3 installer rebuild stopped because the portable publish output did not contain `MeetingRecorder.App.exe`.
 - Exact runtime or CyberArk evidence: `dotnet publish` resolved the 193,024-byte intermediate apphost at `%TEMP%\MeetingRecorderBuild\obj\MeetingRecorder.App\Release\net8.0-windows\win-x64\apphost.exe` as `ResolvedFileToPublish` with relative path `MeetingRecorder.App.exe`, but neither the publish directory nor a direct `Copy-Item` destination retained the file. The copy command returned without an error and the destination was immediately absent. Defender, Code Integrity, AppLocker, and Application logs from the preceding three hours contained no matching event.
