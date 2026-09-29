@@ -241,6 +241,20 @@ public sealed class MeetingIdentitySnapshotService
         return CreateFromManifest(manifest);
     }
 
+    public MeetingIdentitySnapshot? CreateForRuntime(
+        MeetingPlatform platform,
+        string? meetingTitle,
+        DetectedAudioSource? audioSource,
+        DateTimeOffset capturedAtUtc) =>
+        _builder.Create(new MeetingIdentityEvidence(
+            platform,
+            DurableMeetingCode: null,
+            meetingTitle,
+            audioSource?.WindowTitle ?? audioSource?.BrowserTabTitle,
+            HasAttributedCapture: audioSource is not null,
+            HasHostContext: audioSource is not null && !string.IsNullOrWhiteSpace(audioSource.AppName),
+            capturedAtUtc));
+
     public MeetingSessionManifest EnsureForNormalSave(MeetingSessionManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
@@ -255,15 +269,11 @@ public sealed class MeetingIdentitySnapshotService
 
     private MeetingIdentitySnapshot? CreateFromManifest(MeetingSessionManifest manifest)
     {
-        var audio = manifest.DetectedAudioSource;
-        return _builder.Create(new MeetingIdentityEvidence(
+        return CreateForRuntime(
             manifest.Platform,
-            DurableMeetingCode: null,
             manifest.DetectedTitle,
-            audio?.WindowTitle ?? audio?.BrowserTabTitle,
-            HasAttributedCapture: audio is not null,
-            HasHostContext: audio is not null && !string.IsNullOrWhiteSpace(audio.AppName),
-            manifest.StartedAtUtc));
+            manifest.DetectedAudioSource,
+            manifest.StartedAtUtc);
     }
 }
 

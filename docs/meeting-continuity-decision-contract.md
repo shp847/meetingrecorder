@@ -72,3 +72,18 @@ Older manifests are read without mutation. Their snapshot is derived only from
 safe saved metadata and is persisted on the next normal atomic manifest save.
 Unsupported or malformed stored snapshots remain readable as legacy data and
 are not overwritten by that compatibility path.
+
+## Sprint 3 — shadow comparison contract
+
+Before cutover, `ContinuityShadowEngine` receives the same metadata-only
+snapshots and clock as the legacy decision. It emits a bounded receipt with
+opaque correlation/revision, boundary, tier, version, verdict/reason, latency,
+and divergence taxonomy. It has no I/O, capture, worker, UI, or policy side
+effects; overload or invalid input records `Unavailable` and leaves legacy
+behavior unchanged.
+
+Local reports group only by boundary/platform/tier/version. Cutover requires
+labeled coverage, every protected incident matching expected truth, no
+unreviewed potential false merge on protected negatives, and bounded latency
+and unavailability. A failure extends shadow observation; it cannot relax the
+gate or turn on capture behavior.

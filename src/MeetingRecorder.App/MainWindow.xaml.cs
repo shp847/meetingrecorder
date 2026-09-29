@@ -10,6 +10,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation;
@@ -90,6 +92,8 @@ public partial class MainWindow : Window
     private readonly ImportInboxIntakeService _importInboxIntakeService;
     private readonly Guid _importInboxLeaseOwnerId = Guid.NewGuid();
     private readonly AutoRecordingContinuityPolicy _autoRecordingContinuityPolicy;
+    private readonly ContinuityShadowEngine _continuityShadowEngine = new();
+    private readonly ContinuityShadowMeter _continuityShadowMeter = new();
     private readonly TeamsIntegrationProbeService _teamsIntegrationProbeService;
     private readonly TeamsDetectionArbitrator _teamsDetectionArbitrator;
     private readonly ISummarySecretStore _summarySecretStore;
@@ -2183,12 +2187,20 @@ public partial class MainWindow : Window
             _autoRecordingContinuityPolicy);
         if (transition == ActiveSessionTransitionKind.None)
         {
+            RecordReclassificationShadow(activeSession, decision, MeetingIdentityVerdict.Unknown, "legacy-no-transition", nowUtc);
             return false;
         }
 
         if (transition == ActiveSessionTransitionKind.RollOver)
         {
-            return await TryRollOverManagedSessionAsync(activeSession, decision, nowUtc, cancellationToken);
+            var rolledOver = await TryRollOverManagedSessionAsync(activeSession, decision, nowUtc, cancellationToken);
+            RecordReclassificationShadow(
+                activeSession,
+                decision,
+                rolledOver ? MeetingIdentityVerdict.DifferentMeeting : MeetingIdentityVerdict.Unknown,
+                rolledOver ? "legacy-rollover" : "legacy-rollover-unavailable",
+                nowUtc);
+            return rolledOver;
         }
 
         if (!_autoRecordingContinuityPolicy.ShouldReclassifyActiveSession(
@@ -2196,6 +2208,7 @@ public partial class MainWindow : Window
                 activeSession.Manifest.Platform,
                 activeSession.Manifest.DetectedTitle))
         {
+            RecordReclassificationShadow(activeSession, decision, MeetingIdentityVerdict.Unknown, "legacy-reclassify-rejected", nowUtc);
             return false;
         }
 
@@ -2208,8 +2221,11 @@ public partial class MainWindow : Window
             cancellationToken);
         if (!reclassified)
         {
+            RecordReclassificationShadow(activeSession, decision, MeetingIdentityVerdict.Unknown, "legacy-reclassify-unavailable", nowUtc);
             return false;
         }
+
+        RecordReclassificationShadow(activeSession, decision, MeetingIdentityVerdict.DifferentMeeting, "legacy-reclassified", nowUtc);
 
         _lastPositiveDetectionUtc = nowUtc;
         _recentAutoStopContext = null;
@@ -2225,6 +2241,44 @@ public partial class MainWindow : Window
                 ? $"Switched the active recording from {previousPlatform} to {decision.Platform} using the current detected meeting window '{decision.SessionTitle}'."
                 : $"Reclassified active recording from {previousPlatform} to {decision.Platform}, switched to '{decision.SessionTitle}', and enabled automatic meeting-end stop handling.");
         return true;
+    }
+
+    private void RecordReclassificationShadow(
+        ActiveRecordingSession activeSession,
+        DetectionDecision decision,
+        MeetingIdentityVerdict legacyVerdict,
+        string legacyReasonCode,
+        DateTimeOffset nowUtc)
+    {
+        try
+        {
+            var receipt = _continuityShadowEngine.Evaluate(
+                new ContinuityShadowInput(
+                    CreateOpaqueContinuityCorrelationId(activeSession.Manifest.SessionId),
+                    (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                    ContinuityDecisionBoundary.RolloverOrReclassify,
+                    _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                    _manifestStore.CreateIdentitySnapshotForComparison(
+                        decision.Platform,
+                        decision.SessionTitle,
+                        decision.DetectedAudioSource,
+                        nowUtc),
+                    legacyVerdict,
+                    legacyReasonCode,
+                    ContinuityShadowScenarioLabel.Unlabeled),
+                nowUtc);
+            _continuityShadowMeter.TryRecord(receipt, TimeSpan.FromMilliseconds(25));
+        }
+        catch
+        {
+            // Shadow evaluation is best-effort and must not change a committed legacy action.
+        }
+    }
+
+    private static string CreateOpaqueContinuityCorrelationId(string sessionId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sessionId));
+        return Convert.ToHexString(hash)[..24].ToLowerInvariant();
     }
 
     private void UpdateCaptureStatusSurface()

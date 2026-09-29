@@ -6727,7 +6727,8 @@ Sprint 2 acceptance criteria:
 - Tests and rendered checks: legacy isolation/no side effect, identical input/version/clock, timeout/exception/drop, taxonomy/meter/redaction, protected/negative/unknown/reviewer fixtures, report determinism. Render local review only with synthetic tokens/accessibility after action UX sprint.
 - Documentation / installer / release work: record shadow protocol/cutover evidence/retention; no package change until cutover.
 - Evidence and date: 2026-09-27 audit found no shadow evaluator/divergence receipt/review gate. Existing policy tests do not prove field agreement; private incident-date terminology replaced with opaque corpus reference.
-- Remaining gap or next action: add side-effect-free matcher adapter and divergence fixtures before hooking decision boundaries.
+- Evidence and date: 2026-09-29 added the pure, bounded `ContinuityShadowEngine`/meter/report/gate with protected-label and divergence tests; rollover/reclassify now records the legacy result only after it commits. The in-memory receipt cannot affect lifecycle behavior.
+- Remaining gap or next action: observe continuation, recent auto-stop, startup recovery, and publish-heal boundaries with the same receipt before evaluating cutover evidence.
 
 Goal: prove the new engine before giving it control.
 

@@ -111,6 +111,13 @@ public sealed class SessionManifestStore
     public MeetingIdentitySnapshot? GetIdentitySnapshotForComparison(MeetingSessionManifest manifest) =>
         _identitySnapshotService.GetForComparison(manifest);
 
+    public MeetingIdentitySnapshot? CreateIdentitySnapshotForComparison(
+        MeetingPlatform platform,
+        string? meetingTitle,
+        DetectedAudioSource? audioSource,
+        DateTimeOffset capturedAtUtc) =>
+        _identitySnapshotService.CreateForRuntime(platform, meetingTitle, audioSource, capturedAtUtc);
+
     public async Task<IReadOnlyList<string>> FindPendingManifestPathsAsync(string workDir, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
