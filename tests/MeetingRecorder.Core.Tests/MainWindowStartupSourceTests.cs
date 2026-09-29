@@ -330,6 +330,22 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Matcher_Mode_Gates_Reclassification_And_Rollover_Before_Legacy_Action_Selection()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void RecordReclassificationShadow", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        var matcherIndex = methodBlock.IndexOf("ContinuityCutoverMode.Matcher", StringComparison.Ordinal);
+        var transitionIndex = methodBlock.IndexOf("MainWindowInteractionLogic.GetEligibleActiveSessionTransition(", StringComparison.Ordinal);
+        Assert.True(matcherIndex >= 0, "Expected matcher authority before an active-session split action.");
+        Assert.True(transitionIndex > matcherIndex, "Legacy mechanics may select action only after matcher verdict permits DifferentMeeting.");
+        Assert.Contains("matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Main_Tab_Selection_Changes_Are_Ignored_Until_The_Window_Is_Fully_Initialized()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

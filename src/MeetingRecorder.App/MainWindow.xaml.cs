@@ -2398,6 +2398,34 @@ public partial class MainWindow : Window
             return false;
         }
 
+        if (_liveConfig.Current.MeetingIdentityContinuityEnabled)
+        {
+            var matcherDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
+                ContinuityCutoverMode.Matcher,
+                (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                _manifestStore.CreateIdentitySnapshotForComparison(
+                    decision.Platform,
+                    decision.SessionTitle,
+                    decision.DetectedAudioSource,
+                    nowUtc),
+                MeetingIdentityVerdict.Unknown,
+                IsManualStop: _manualStopSuppressionContext is not null,
+                _continuityGraceReceipt,
+                nowUtc));
+            _continuityGraceReceipt = matcherDecision.GraceReceipt;
+            if (matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting)
+            {
+                RecordReclassificationShadow(
+                    activeSession,
+                    decision,
+                    matcherDecision.Verdict,
+                    matcherDecision.ReasonCode,
+                    nowUtc);
+                return false;
+            }
+        }
+
         var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
             decision,
             activeSession.Manifest.Platform,
