@@ -38,13 +38,26 @@ public sealed class CallbackIntentDispatcher
         return outcome;
     }
 
-    public bool TryBegin(out CallbackIntent? intent)
+    public bool TryBegin(string key, out CallbackIntent? intent)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
         if (_pending.Count == 0) { intent = null; return false; }
-        intent = _pending.Dequeue();
+        var queued = _pending.ToArray();
+        var index = Array.FindIndex(queued, candidate => string.Equals(candidate.Key, key, StringComparison.Ordinal));
+        if (index < 0) { intent = null; return false; }
+        _pending.Clear();
+        for (var queuedIndex = 0; queuedIndex < queued.Length; queuedIndex++)
+            if (queuedIndex != index) _pending.Enqueue(queued[queuedIndex]);
+        intent = queued[index];
         _pendingKeys.Remove(intent.Key);
         _activeEdges.Add($"{intent.CorrelationId}|{intent.Edge}");
         return true;
+    }
+
+    public bool TryBegin(out CallbackIntent? intent)
+    {
+        if (_pending.Count == 0) { intent = null; return false; }
+        return TryBegin(_pending.Peek().Key, out intent);
     }
 
     public void Complete(CallbackIntent intent)

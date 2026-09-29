@@ -36,6 +36,19 @@ public sealed class CallbackIntentDispatcherTests
     }
 
     [Fact]
+    public void Begins_Requested_Key_Without_Reordering_Other_Callback_Lanes()
+    {
+        var dispatcher = new CallbackIntentDispatcher();
+        dispatcher.Enqueue(new("refresh", "c", "refresh", 1));
+        dispatcher.Enqueue(new("recording", "c", "recording", 2));
+        Assert.True(dispatcher.TryBegin("recording", out var recording));
+        Assert.Equal("recording", recording!.Key);
+        dispatcher.Complete(recording);
+        Assert.True(dispatcher.TryBegin("refresh", out var refresh));
+        Assert.Equal("refresh", refresh!.Key);
+    }
+
+    [Fact]
     public void Bounds_Queue_And_Trace()
     {
         var dispatcher = new CallbackIntentDispatcher();

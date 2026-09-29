@@ -1249,7 +1249,7 @@ public partial class MainWindow : Window
             ++_callbackIntentRevision);
         var callbackOutcome = _callbackIntentDispatcher.Enqueue(callbackIntent);
         if (callbackOutcome is CallbackIntentOutcome.DeclinedCycle or CallbackIntentOutcome.DeclinedOverload ||
-            !_callbackIntentDispatcher.TryBegin(out var scheduledIntent))
+            !_callbackIntentDispatcher.TryBegin("meetings-refresh", out var scheduledIntent))
         {
             _isDeferredMeetingsRefreshQueued = false;
             PersistCallbackTraceForRecovery();
