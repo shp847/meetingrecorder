@@ -738,6 +738,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        PersistCallbackTraceForRecovery();
         _detectionTimer.Stop();
         _audioGraphTimer.Stop();
         _updateTimer.Stop();
@@ -756,6 +757,22 @@ public partial class MainWindow : Window
         if (Application.Current is { Dispatcher.HasShutdownStarted: false } application)
         {
             application.Shutdown();
+        }
+    }
+
+    private void PersistCallbackTraceForRecovery()
+    {
+        try
+        {
+            var path = Path.Combine(AppDataPaths.GetAppRoot(), "callback-intent-trace.json");
+            new CallbackIntentTraceStore(path)
+                .SaveAsync(_callbackIntentDispatcher.Snapshot(), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Could not persist bounded callback trace during shutdown: {exception.GetType().Name}.");
         }
     }
 
