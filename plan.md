@@ -3623,8 +3623,8 @@ Sprint 6 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 callback-boundary implementation).
 - User outcome: a reviewer can collapse a normal duplicate-cluster split into one person without rerunning processing, losing source attribution, or accidentally teaching duplicate voice samples.
 - Scope / non-goals: add user-confirmed merge of two or more current-revision speaker clusters in Speaker Review. Do not alter worker clustering thresholds, mutate embeddings, merge meetings, silently merge suggested names, or use manual merge for severe diarization fragmentation.
 - Dependencies and decisions: consume S1 identity precedence, S2 review, S3 evidence, S6 effective attribution, S8 history/undo, S11 repair guidance, and S12 derived consistency. Existing `SpeakerClusterMergeService` is worker-side similarity recovery and is not the user action. User merge writes an additive current-revision canonical-cluster mapping: source cluster ids remain immutable/auditable; all effective rows/segments resolve to a selected canonical speaker id.
@@ -6905,8 +6905,8 @@ Sprint 5 acceptance criteria:
   4. Harden failure recovery: atomic session checkpoints/trace flush before risky boundaries; restart classifier resumes/seals safely and lets S5 healer evaluate later. Unrelated crash cannot invent Same/merge/restart or disregard user stop.
 - Tests and rendered checks: callback graph/source guard, reentrant/cycle/coalescing/order/depth/overload, state transition legality/race/cancel/manual stop, simulated abrupt loss/checkpoint/restart and no private trace fields. Render only compact recovery status on synthetic data if exposed.
 - Documentation / installer / release work: document diagnostic/recovery behavior and crash evidence collection; app runtime change requires full package/smoke gates.
-- Evidence and date: 2026-09-27 audit found potential interacting refresh/transition paths and fatal crash policy, but no causal callback trace, dispatcher/cycle contract, stack-overflow pre-crash evidence, or restart proof.
-- Remaining gap or next action: write callback graph and deterministic reentrancy fixtures before changing handlers.
+- Evidence and date: 2026-09-27 audit found potential interacting refresh/transition paths and fatal crash policy, but no causal callback trace, dispatcher/cycle contract, stack-overflow pre-crash evidence, or restart proof. 2026-09-29 added a bounded metadata-only callback-intent dispatcher, atomic trace sidecar, queue/cycle/overload evidence, keyed lanes, and persisted pre-shutdown/cycle evidence. Deferred meeting refresh and manual Start/Stop now pass through separate keyed lanes while retaining their existing UI guards. Focused dispatcher, XAML, and recording coordinator checks passed 21/21.
+- Remaining gap or next action: extend the same contract to automatic transition/startup/heal boundaries and add simulated abrupt-loss/restart proof before marking this sprint Done.
 
 Goal: remove the crash path that creates some split boundaries, without making
 split correctness depend on total crash elimination.
