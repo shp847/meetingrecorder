@@ -1,6 +1,7 @@
 using MeetingRecorder.Core.Services;
 using System.Windows;
 using System.Windows.Input;
+using MeetingRecorder.Core.Domain;
 
 namespace MeetingRecorder.App;
 
@@ -20,7 +21,9 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     string? suggestedDisplayName = null,
     string? speakerId = null,
     string? profileId = null,
-    bool hasProfileAttribution = false)
+    bool hasProfileAttribution = false,
+    string artifactRevision = "",
+    SpeakerNameSource expectedNameSource = SpeakerNameSource.None)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -35,6 +38,10 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public string? ProfileId { get; } = profileId;
 
     public bool HasProfileAttribution { get; } = hasProfileAttribution;
+
+    public string ArtifactRevision { get; } = artifactRevision;
+
+    public SpeakerNameSource ExpectedNameSource { get; } = expectedNameSource;
 
     public bool HasSuggestion => !string.IsNullOrWhiteSpace(SuggestedDisplayName);
 
@@ -83,6 +90,9 @@ public partial class MeetingDetailWindow : Window
     private bool _canUndoSpeakerNameRecognition;
     private bool _canArchive;
     private bool _canDelete;
+    private MeetingDetailSnapshotRevision? _appliedTaskCenterRevision;
+    private string _appliedTitleDraft = string.Empty;
+    private string _appliedProjectDraft = string.Empty;
 
     public MeetingDetailWindow()
     {
@@ -169,6 +179,8 @@ public partial class MeetingDetailWindow : Window
         TitleDraftTextBox.Text = state.Title;
         ProjectComboBox.ItemsSource = projectOptions;
         ProjectComboBox.Text = state.ProjectName == "None" ? string.Empty : state.ProjectName;
+        _appliedTitleDraft = TitleDraftTextBox.Text;
+        _appliedProjectDraft = ProjectComboBox.Text;
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
         _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
@@ -182,8 +194,47 @@ public partial class MeetingDetailWindow : Window
         ApplyTranscriptFilter();
     }
 
+    internal MeetingDetailRefreshDisposition GetRefreshDisposition(MeetingDetailTaskCenterState incoming)
+    {
+        if (_appliedTaskCenterRevision is null)
+        {
+            return MeetingDetailRefreshDisposition.ApplyReadOnlyRefresh;
+        }
+
+        var speakerDraft = SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
+            rows.Any(row => !string.Equals(row.OriginalLabel, row.EditedLabel, StringComparison.Ordinal));
+        return MeetingDetailTaskCenterResolver.ResolveRefresh(
+            _appliedTaskCenterRevision,
+            incoming.Revision,
+            new MeetingDetailDraftState(
+                !string.Equals(_appliedTitleDraft, TitleDraftTextBox.Text, StringComparison.Ordinal),
+                !string.Equals(_appliedProjectDraft, ProjectComboBox.Text, StringComparison.Ordinal),
+                speakerDraft,
+                HasSplitDraft()),
+            isArchivedOrDeleted: false);
+    }
+
+    internal void ApplyTaskCenterState(MeetingDetailTaskCenterState state, bool markAsApplied = true)
+    {
+        DetailTaskCenterHeadlineTextBlock.Text = state.Headline;
+        DetailTaskCenterReasonTextBlock.Text = state.PrimaryReason;
+        DetailTaskCenterFreshnessTextBlock.Text = state.FreshnessText;
+        DetailTaskCenterBorder.Visibility = Visibility.Visible;
+        if (markAsApplied)
+        {
+            _appliedTaskCenterRevision = state.Revision;
+        }
+    }
+
+    private bool HasSplitDraft() =>
+        !string.IsNullOrWhiteSpace(SplitPointTextBox.Text) &&
+        !string.Equals(SplitPointTextBox.Text, "00:00", StringComparison.Ordinal);
+
     private void ApplySummaryState(MeetingDetailSummaryState summary)
     {
+        ConfigureSummariesButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.ConfigureSummary).Label;
+        GenerateSummaryButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary).Label;
+        RetrySummaryButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.RetrySummary).Label;
         AiSummaryStatusTextBlock.Text = summary.StatusText;
         AiSummaryGeneratedContentPanel.Visibility = summary.ShowGeneratedContent ? Visibility.Visible : Visibility.Collapsed;
         AiSummaryOverviewTextBlock.Text = summary.Overview ?? string.Empty;

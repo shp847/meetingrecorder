@@ -199,6 +199,39 @@ function Install-MsiForSmokeTest {
     Write-Host "MSI install smoke step passed. Log: $logPath"
 }
 
+function Assert-InstalledBundleMatchesPublishedIntegrity {
+    param(
+        [string]$BundleRoot,
+        [string]$InstallRoot
+    )
+
+    $integrityPath = Join-Path $BundleRoot "bundle-integrity.json"
+    if (-not (Test-Path -LiteralPath $integrityPath)) {
+        throw "Portable bundle is missing '$integrityPath'."
+    }
+
+    $integrity = Get-Content -LiteralPath $integrityPath -Raw | ConvertFrom-Json
+    $mismatches = @(
+        $integrity.requiredFiles | ForEach-Object {
+            $installedFilePath = Join-Path $InstallRoot $_.relativePath
+            if (-not (Test-Path -LiteralPath $installedFilePath)) {
+                $_.relativePath
+                return
+            }
+
+            $installedFile = Get-Item -LiteralPath $installedFilePath
+            $installedHash = (Get-FileHash -LiteralPath $installedFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($installedFile.Length -ne [int64]$_.lengthBytes -or $installedHash -ne $_.sha256) {
+                $_.relativePath
+            }
+        }
+    )
+
+    if ($mismatches.Count -gt 0) {
+        throw "MSI install smoke left a bundle different from the published integrity manifest: $($mismatches -join '; ')."
+    }
+}
+
 Assert-NoRunningMeetingRecorderInstances
 
 $manifestPath = Join-Path $resolvedBundleRoot "MeetingRecorder.product.json"
@@ -213,6 +246,7 @@ if (-not $SkipBundleTest.IsPresent) {
 
 if (-not $SkipMsiTest.IsPresent) {
     Install-MsiForSmokeTest -MsiPath $msiPath -InstallRoot $managedInstallRoot
+    Assert-InstalledBundleMatchesPublishedIntegrity -BundleRoot $resolvedBundleRoot -InstallRoot $managedInstallRoot
     Invoke-AppSmokeRun -ExecutablePath $installedExecutablePath -Label "MSI-installed app"
 }
 

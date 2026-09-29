@@ -1,6 +1,5 @@
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
-using NAudio.Wave;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -21,16 +20,21 @@ public sealed class ExternalAudioImportService
     };
 
     private static readonly TimeSpan MinimumFileQuietPeriod = TimeSpan.FromSeconds(15);
+    // Leave room for Meeting Recorder's session and staging paths on Windows systems
+    // that do not have long-path support enabled.
+    private const int MaximumExternalSourcePathLength = 240;
 
     private readonly ArtifactPathBuilder _pathBuilder;
     private readonly SessionManifestStore _manifestStore;
-    private readonly TranscriptionAudioPreparer _audioPreparer;
+    private readonly ExternalAudioMediaProbe _mediaProbe;
 
-    public ExternalAudioImportService(ArtifactPathBuilder pathBuilder)
+    public ExternalAudioImportService(
+        ArtifactPathBuilder pathBuilder,
+        ExternalAudioMediaProbe? mediaProbe = null)
     {
         _pathBuilder = pathBuilder;
         _manifestStore = new SessionManifestStore(pathBuilder);
-        _audioPreparer = new TranscriptionAudioPreparer();
+        _mediaProbe = mediaProbe ?? new ExternalAudioMediaProbe();
     }
 
     public async Task<IReadOnlyList<ImportedExternalAudioResult>> ImportPendingAudioFilesAsync(
@@ -61,7 +65,7 @@ public sealed class ExternalAudioImportService
                 ProjectName: null,
                 candidate.Preflight.Duration,
                 SourceRetained: true);
-            imported.Add(await QueueImportAsync(config.WorkDir, request, nowUtc, cancellationToken));
+            imported.Add(await QueueImportAsync(config, request, nowUtc, cancellationToken));
         }
 
         return imported;
@@ -111,8 +115,18 @@ public sealed class ExternalAudioImportService
             cancellationToken.ThrowIfCancellationRequested();
 
             var sourcePath = NormalizePath(rawSourcePath);
-            var probeMetadata = TryReadFileMetadata(sourcePath);
             var sourceDisplayName = Path.GetFileName(sourcePath);
+            var sourceLocationUnsupported = IsUnsupportedRemoteSourcePath(sourcePath);
+            var sourcePathTooLong = !IsSupportedExternalSourcePathLength(sourcePath);
+            var sourceExistsForPathSafetyCheck = !sourceLocationUnsupported &&
+                !sourcePathTooLong &&
+                File.Exists(sourcePath);
+            var sourcePathHasReparsePoint = sourceExistsForPathSafetyCheck &&
+                HasReparsePointInPath(sourcePath);
+            var sourcePathUnsafe = sourceLocationUnsupported ||
+                sourcePathTooLong ||
+                sourcePathHasReparsePoint;
+            var probeMetadata = sourcePathUnsafe ? null : TryReadFileMetadata(sourcePath);
             var sourceSizeBytes = probeMetadata?.Length ?? 0L;
             var sourceLastWriteUtc = probeMetadata is null
                 ? nowUtc
@@ -121,7 +135,28 @@ public sealed class ExternalAudioImportService
             var duplicateSourceKey = BuildSourceIdentityKey(sourcePath, sourceSizeBytes, sourceLastWriteUtc);
 
             ExternalAudioImportPreflightResult preflight;
-            if (!batchSourceKeys.Add(duplicateSourceKey))
+            if (sourceLocationUnsupported)
+            {
+                preflight = new ExternalAudioImportPreflightResult(
+                    ExternalAudioImportPreflightStatus.UnsupportedLocation,
+                    "Choose a source stored on this PC before importing.",
+                    Duration: null);
+            }
+            else if (sourcePathTooLong)
+            {
+                preflight = new ExternalAudioImportPreflightResult(
+                    ExternalAudioImportPreflightStatus.UnsupportedLocation,
+                    "Choose a shorter source path before importing.",
+                    Duration: null);
+            }
+            else if (sourcePathHasReparsePoint)
+            {
+                preflight = new ExternalAudioImportPreflightResult(
+                    ExternalAudioImportPreflightStatus.UnsupportedLocation,
+                    "Choose a source outside linked or redirected folders before importing.",
+                    Duration: null);
+            }
+            else if (!batchSourceKeys.Add(duplicateSourceKey))
             {
                 preflight = new ExternalAudioImportPreflightResult(
                     ExternalAudioImportPreflightStatus.Duplicate,
@@ -138,6 +173,20 @@ public sealed class ExternalAudioImportService
                     knownImports,
                     knownAppOwnedMeetings,
                     cancellationToken);
+                if (preflight.IsSuccess)
+                {
+                    var storageHealth = ImportInboxPathPolicy.CheckImportStorageHealth(
+                        config,
+                        sourceSizeBytes,
+                        preflight.Duration);
+                    if (!storageHealth.IsReady)
+                    {
+                        preflight = new ExternalAudioImportPreflightResult(
+                            ExternalAudioImportPreflightStatus.BlockedStorage,
+                            storageHealth.Message,
+                            preflight.Duration);
+                    }
+                }
             }
 
             importCandidates.Add(new ExternalAudioImportCandidate(
@@ -155,9 +204,48 @@ public sealed class ExternalAudioImportService
     }
 
     public async Task<ImportedExternalAudioResult> QueueImportAsync(
+        AppConfig config,
+        ExternalAudioImportRequest request,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        return await QueueImportAsync(config, request, nowUtc, readinessSnapshot: null, cancellationToken);
+    }
+
+    public async Task<ImportedExternalAudioResult> QueueImportAsync(
+        AppConfig config,
+        ExternalAudioImportRequest request,
+        DateTimeOffset nowUtc,
+        ExternalAudioImportReadinessSnapshot? readinessSnapshot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var storageHealth = ImportInboxPathPolicy.CheckImportStorageHealth(
+            config,
+            request.SourceSizeBytes,
+            request.ProbedDuration);
+        if (!storageHealth.IsReady)
+        {
+            throw new InvalidOperationException(storageHealth.Message);
+        }
+
+        return await QueueImportAsync(config.WorkDir, request, nowUtc, readinessSnapshot, cancellationToken);
+    }
+
+    public async Task<ImportedExternalAudioResult> QueueImportAsync(
         string workDir,
         ExternalAudioImportRequest request,
         DateTimeOffset nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        return await QueueImportAsync(workDir, request, nowUtc, readinessSnapshot: null, cancellationToken);
+    }
+
+    public async Task<ImportedExternalAudioResult> QueueImportAsync(
+        string workDir,
+        ExternalAudioImportRequest request,
+        DateTimeOffset nowUtc,
+        ExternalAudioImportReadinessSnapshot? readinessSnapshot,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -172,10 +260,36 @@ public sealed class ExternalAudioImportService
             throw new ArgumentException("A source audio path is required.", nameof(request));
         }
 
+        var normalizedWorkDir = NormalizePath(workDir);
         var sourcePath = NormalizePath(request.SourcePath);
+        if (IsUnsupportedRemoteSourcePath(sourcePath))
+        {
+            throw new InvalidOperationException("Choose a source stored on this PC before queueing.");
+        }
+
+        EnsureSupportedExternalSourcePathLength(sourcePath);
+
         if (!File.Exists(sourcePath))
         {
             throw new FileNotFoundException("The selected source audio file no longer exists.", sourcePath);
+        }
+
+        EnsureSourcePathHasNoReparsePoints(sourcePath);
+        EnsureSourceIsOutsideAppOwnedWorkRoot(sourcePath, normalizedWorkDir);
+        EnsureSourceIsUnchangedSincePreflight(sourcePath, request);
+        var sourceObservation = new ImportedSourceAudioInfo(
+            sourcePath,
+            request.SourceSizeBytes,
+            request.SourceLastWriteUtc,
+            request.SourceDisplayName,
+            request.ImportMethod,
+            request.ProbedDuration,
+            sourceRetained: true);
+        var existingImports = await LoadKnownImportsAsync(normalizedWorkDir, cancellationToken);
+        if (existingImports.Any(existing => SourceMatches(existing, sourceObservation)))
+        {
+            throw new InvalidOperationException(
+                "This unchanged source file already has an imported work session. Review the existing import instead.");
         }
 
         var title = string.IsNullOrWhiteSpace(request.Title)
@@ -190,24 +304,49 @@ public sealed class ExternalAudioImportService
                 nowUtc),
         };
 
-        var importedMeetingInfo = ResolveImportedMeetingInfo(sourcePath, request.StartedAtUtc);
-        var manifest = await _manifestStore.CreateAsync(
-            workDir,
-            importedMeetingInfo.Platform,
-            title,
-            detectionEvidence,
-            cancellationToken);
-
-        var sessionRoot = _pathBuilder.BuildSessionRoot(workDir, manifest.SessionId);
-        var manifestPath = Path.Combine(sessionRoot, "manifest.json");
-        var copiedAudioPath = Path.Combine(
-            sessionRoot,
-            "processing",
-            $"imported-source{Path.GetExtension(sourcePath)}");
-
+        var extension = Path.GetExtension(sourcePath);
+        var stagingRoot = Path.Combine(normalizedWorkDir, ".import-staging");
+        var stagingPath = Path.Combine(stagingRoot, $"{Guid.NewGuid():N}{extension}.tmp");
+        string? sessionRoot = null;
         try
         {
-            File.Copy(sourcePath, copiedAudioPath, overwrite: false);
+            Directory.CreateDirectory(stagingRoot);
+            File.Copy(sourcePath, stagingPath, overwrite: false);
+            EnsureStagedCopyMatchesSourceObservation(stagingPath, request);
+            EnsureSourceIsUnchangedSincePreflight(sourcePath, request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var importedMeetingInfo = ResolveImportedMeetingInfo(sourcePath, request.StartedAtUtc);
+            var manifest = await _manifestStore.CreateAsync(
+                normalizedWorkDir,
+                importedMeetingInfo.Platform,
+                title,
+                detectionEvidence,
+                cancellationToken);
+
+            sessionRoot = _pathBuilder.BuildSessionRoot(normalizedWorkDir, manifest.SessionId);
+            var manifestPath = Path.Combine(sessionRoot, "manifest.json");
+            var copiedAudioPath = Path.Combine(
+                sessionRoot,
+                "processing",
+                $"imported-source{extension}");
+            File.Move(stagingPath, copiedAudioPath);
+            var stagedFile = new FileInfo(copiedAudioPath);
+            var stagedObservationKey = ExternalAudioImportIdentity.BuildObservationKey(
+                copiedAudioPath,
+                stagedFile.Length,
+                new DateTimeOffset(stagedFile.LastWriteTimeUtc));
+            var stagedProbe = await _mediaProbe.ProbeAsync(
+                new ExternalAudioMediaProbeRequest(
+                    copiedAudioPath,
+                    stagedObservationKey,
+                    stagedFile.Length,
+                    new DateTimeOffset(stagedFile.LastWriteTimeUtc)),
+                cancellationToken);
+            if (!stagedProbe.IsReady)
+            {
+                throw new InvalidOperationException(BuildStagedProbeFailureMessage(stagedProbe));
+            }
 
             var importedSourceMetadata = new ImportedSourceAudioInfo(
                 sourcePath,
@@ -215,8 +354,10 @@ public sealed class ExternalAudioImportService
                 request.SourceLastWriteUtc,
                 request.SourceDisplayName,
                 request.ImportMethod,
-                request.ProbedDuration,
-                request.SourceRetained);
+                stagedProbe.Duration,
+                // This importer only reads the source and copies it into app-owned work storage.
+                // Retention is an observed invariant, not a caller-selected policy.
+                sourceRetained: true);
 
             var updatedManifest = manifest with
             {
@@ -236,17 +377,53 @@ public sealed class ExternalAudioImportService
             };
 
             await _manifestStore.SaveAsync(updatedManifest, manifestPath, cancellationToken);
+            var jobSourceObservation = ExternalAudioImportSourceObservation.Create(
+                sourcePath,
+                request.SourceDisplayName,
+                request.ImportMethod,
+                request.SourceSizeBytes,
+                request.SourceLastWriteUtc,
+                nowUtc);
+            var probeReceipt = ExternalAudioImportProbeReceipt.CreateReady(
+                jobSourceObservation,
+                stagedObservationKey,
+                stagedProbe.DecoderVersion,
+                stagedProbe.Duration ?? throw new InvalidOperationException("The app-owned import copy did not report a readable duration."),
+                stagedProbe.SampleRate ?? throw new InvalidOperationException("The app-owned import copy did not report a readable sample rate."),
+                stagedProbe.Channels ?? throw new InvalidOperationException("The app-owned import copy did not report readable audio channels."),
+                nowUtc);
+            var importJob = ExternalAudioImportJobFactory.CreateQueued(
+                jobSourceObservation,
+                manifest.SessionId,
+                Path.Combine("processing", $"imported-source{extension}"),
+                nowUtc,
+                probeReceipt,
+                readinessSnapshot);
+            await new ExternalAudioImportJobStore(Path.Combine(sessionRoot, "import-job.json"))
+                .SaveAsync(importJob, cancellationToken);
 
             return new ImportedExternalAudioResult(
                 manifestPath,
                 sourcePath,
-                updatedManifest.DetectedTitle);
+                updatedManifest.DetectedTitle)
+            {
+                ImportJobState = importJob.State,
+                RecoveryText = importJob.ReadinessSnapshot?.RecoveryText,
+            };
         }
         catch
         {
-            TryDeleteFile(copiedAudioPath);
-            TryDeleteDirectory(sessionRoot);
+            TryDeleteFile(stagingPath);
+            if (!string.IsNullOrWhiteSpace(sessionRoot))
+            {
+                TryDeleteDirectory(sessionRoot);
+            }
+
             throw;
+        }
+        finally
+        {
+            TryDeleteEmptyDirectory(stagingRoot);
         }
     }
 
@@ -325,60 +502,54 @@ public sealed class ExternalAudioImportService
                 Duration: null);
         }
 
-        try
-        {
-            var duration = await ProbeDurationAsync(sourcePath, cancellationToken);
-            if (duration <= TimeSpan.Zero)
-            {
-                return new ExternalAudioImportPreflightResult(
-                    ExternalAudioImportPreflightStatus.EmptyAudio,
-                    "This source file does not contain readable audio.",
-                    Duration: duration);
-            }
-
-            return new ExternalAudioImportPreflightResult(
-                ExternalAudioImportPreflightStatus.Ready,
-                "Ready to queue.",
-                duration);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return new ExternalAudioImportPreflightResult(
-                ExternalAudioImportPreflightStatus.DecodeFailed,
-                $"Meeting Recorder could not read this file with the local transcription audio stack. {exception.Message}",
-                Duration: null);
-        }
+        var mediaProbe = await _mediaProbe.ProbeAsync(
+            new ExternalAudioMediaProbeRequest(
+                sourcePath,
+                ExternalAudioImportIdentity.BuildObservationKey(
+                    sourcePath,
+                    sourceMetadata.SourceSizeBytes,
+                    sourceMetadata.SourceLastWriteUtc),
+                sourceMetadata.SourceSizeBytes,
+                sourceMetadata.SourceLastWriteUtc),
+            cancellationToken);
+        return MapMediaProbeResult(mediaProbe);
     }
 
-    private async Task<TimeSpan> ProbeDurationAsync(string sourcePath, CancellationToken cancellationToken)
+    private static ExternalAudioImportPreflightResult MapMediaProbeResult(ExternalAudioMediaProbeResult result)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var preparedAudioPath = BuildPreparedAudioPath(sourcePath);
-        try
+        var status = result.Status switch
         {
-            await _audioPreparer.PrepareAsync(sourcePath, preparedAudioPath, cancellationToken);
-            using var reader = new AudioFileReader(preparedAudioPath);
-            return reader.TotalTime;
-        }
-        finally
-        {
-            TryDeleteFile(preparedAudioPath);
-        }
+            ExternalAudioMediaProbeStatus.Ready => ExternalAudioImportPreflightStatus.Ready,
+            ExternalAudioMediaProbeStatus.WaitingForSettle => ExternalAudioImportPreflightStatus.StillCopying,
+            ExternalAudioMediaProbeStatus.UnsupportedExtension => ExternalAudioImportPreflightStatus.UnsupportedExtension,
+            ExternalAudioMediaProbeStatus.UnsupportedCodec => ExternalAudioImportPreflightStatus.UnsupportedCodec,
+            ExternalAudioMediaProbeStatus.NoAudio or ExternalAudioMediaProbeStatus.Empty => ExternalAudioImportPreflightStatus.EmptyAudio,
+            ExternalAudioMediaProbeStatus.TooShort => ExternalAudioImportPreflightStatus.TooShort,
+            ExternalAudioMediaProbeStatus.Missing => ExternalAudioImportPreflightStatus.MissingFile,
+            ExternalAudioMediaProbeStatus.Offline => ExternalAudioImportPreflightStatus.OfflinePlaceholder,
+            ExternalAudioMediaProbeStatus.Changing => ExternalAudioImportPreflightStatus.Changing,
+            ExternalAudioMediaProbeStatus.ResourceLimit => ExternalAudioImportPreflightStatus.ResourceLimit,
+            ExternalAudioMediaProbeStatus.BlockedStorage => ExternalAudioImportPreflightStatus.BlockedStorage,
+            ExternalAudioMediaProbeStatus.PotentialDuplicate => ExternalAudioImportPreflightStatus.Duplicate,
+            ExternalAudioMediaProbeStatus.UnsafePath => ExternalAudioImportPreflightStatus.UnsupportedLocation,
+            _ => ExternalAudioImportPreflightStatus.DecodeFailed,
+        };
+        var message = status == ExternalAudioImportPreflightStatus.DecodeFailed
+            ? "Meeting Recorder could not read this file with the local transcription audio stack. Choose another supported file or fix the source, then review it again."
+            : result.Message;
+        return new ExternalAudioImportPreflightResult(status, message, result.Duration);
     }
 
-    private static string BuildPreparedAudioPath(string sourcePath)
+    private static string BuildStagedProbeFailureMessage(ExternalAudioMediaProbeResult result) => result.Status switch
     {
-        var tempDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderImportPreflight");
-        Directory.CreateDirectory(tempDirectory);
-        return Path.Combine(
-            tempDirectory,
-            $"{Path.GetFileNameWithoutExtension(sourcePath)}-{Guid.NewGuid():N}.wav");
-    }
+        ExternalAudioMediaProbeStatus.Changing or
+        ExternalAudioMediaProbeStatus.WaitingForSettle or
+        ExternalAudioMediaProbeStatus.Missing =>
+            "The app-owned import copy could not be verified. Review the source and try again.",
+        ExternalAudioMediaProbeStatus.ResourceLimit =>
+            "The app-owned import copy is too large or complex for a safe local preflight.",
+        _ => "The app-owned import copy could not be prepared with the local transcription audio stack. Review the source and try again.",
+    };
 
     private async Task<List<ImportedSourceAudioInfo>> LoadKnownImportsAsync(string workDir, CancellationToken cancellationToken)
     {
@@ -458,6 +629,72 @@ public sealed class ExternalAudioImportService
         catch
         {
             return null;
+        }
+    }
+
+    private static void EnsureSourceIsUnchangedSincePreflight(
+        string sourcePath,
+        ExternalAudioImportRequest request)
+    {
+        var sourceFile = new FileInfo(sourcePath);
+        if (!sourceFile.Exists)
+        {
+            throw new FileNotFoundException("The selected source audio file no longer exists.", sourcePath);
+        }
+
+        var observedLastWriteUtc = CreateUtcTimestamp(sourceFile.LastWriteTimeUtc);
+        if (sourceFile.Length != request.SourceSizeBytes ||
+            observedLastWriteUtc.UtcDateTime != request.SourceLastWriteUtc.UtcDateTime)
+        {
+            throw new InvalidOperationException(
+                "The selected source file changed after review. Review it again before queueing.");
+        }
+    }
+
+    private static void EnsureStagedCopyMatchesSourceObservation(
+        string stagingPath,
+        ExternalAudioImportRequest request)
+    {
+        var stagedFile = new FileInfo(stagingPath);
+        if (!stagedFile.Exists || stagedFile.Length != request.SourceSizeBytes)
+        {
+            throw new InvalidOperationException(
+                "The selected source file changed while it was being copied. Review it again before queueing.");
+        }
+    }
+
+    private static void EnsureSourceIsOutsideAppOwnedWorkRoot(string sourcePath, string workDir)
+    {
+        var canonicalSourcePath = NormalizePath(sourcePath);
+        var canonicalWorkRoot = NormalizePath(workDir);
+        if (string.Equals(canonicalSourcePath, canonicalWorkRoot, StringComparison.OrdinalIgnoreCase) ||
+            canonicalSourcePath.StartsWith(AppendDirectorySeparator(canonicalWorkRoot), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Choose a source outside Meeting Recorder work storage before queueing.");
+        }
+    }
+
+    private static string AppendDirectorySeparator(string path) =>
+        path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
+
+    private static bool IsUnsupportedRemoteSourcePath(string sourcePath) =>
+        sourcePath.StartsWith(@"\\", StringComparison.Ordinal);
+
+    private static void TryDeleteEmptyDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
+            {
+                Directory.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only.
         }
     }
 
@@ -613,6 +850,57 @@ public sealed class ExternalAudioImportService
         return Path.GetFullPath(path);
     }
 
+    private static bool IsSupportedExternalSourcePathLength(string sourcePath) =>
+        sourcePath.Length <= MaximumExternalSourcePathLength;
+
+    private static void EnsureSupportedExternalSourcePathLength(string sourcePath)
+    {
+        if (!IsSupportedExternalSourcePathLength(sourcePath))
+        {
+            throw new InvalidOperationException("Choose a shorter source path before queueing.");
+        }
+    }
+
+    private static void EnsureSourcePathHasNoReparsePoints(string sourcePath)
+    {
+        if (HasReparsePointInPath(sourcePath))
+        {
+            throw new InvalidOperationException(
+                "Choose a source outside linked or redirected folders before queueing.");
+        }
+    }
+
+    private static bool HasReparsePointInPath(string sourcePath)
+    {
+        var currentPath = NormalizePath(sourcePath);
+        while (!string.IsNullOrWhiteSpace(currentPath))
+        {
+            try
+            {
+                if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // An attribute failure must not grant a path admission bypass.
+                return true;
+            }
+
+            var parentPath = Path.GetDirectoryName(currentPath);
+            if (string.IsNullOrWhiteSpace(parentPath) ||
+                string.Equals(parentPath, currentPath, StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            currentPath = parentPath;
+        }
+
+        return false;
+    }
+
     private static string NormalizeMeetingTitle(string title)
     {
         return string.Join(
@@ -636,6 +924,7 @@ public sealed class ExternalAudioImportService
         {
             ExternalAudioImportMethod.FilePicker => "Queued from Add Audio Files.",
             ExternalAudioImportMethod.DragDrop => "Queued from a dropped audio file.",
+            ExternalAudioImportMethod.ImportInbox => "Queued from Import Inbox.",
             _ => "Queued from the watched audio folder.",
         };
     }
@@ -691,6 +980,12 @@ public enum ExternalAudioImportPreflightStatus
     StillCopying = 5,
     DecodeFailed = 6,
     EmptyAudio = 7,
+    UnsupportedLocation = 8,
+    BlockedStorage = 9,
+    UnsupportedCodec = 10,
+    TooShort = 11,
+    Changing = 12,
+    ResourceLimit = 13,
 }
 
 public sealed record ExternalAudioImportPreflightResult(
@@ -729,4 +1024,9 @@ public sealed record ExternalAudioImportRequest(
 public sealed record ImportedExternalAudioResult(
     string ManifestPath,
     string OriginalSourcePath,
-    string Title);
+    string Title)
+{
+    public ExternalAudioImportJobState ImportJobState { get; init; } = ExternalAudioImportJobState.Queued;
+
+    public string? RecoveryText { get; init; }
+}

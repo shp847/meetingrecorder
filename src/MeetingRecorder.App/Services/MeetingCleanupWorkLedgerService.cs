@@ -18,7 +18,10 @@ internal sealed record CleanupWorkLedgerEntry(
     CleanupWorkState State,
     DateTimeOffset UpdatedAtUtc,
     string? ManifestPath = null,
-    string? Detail = null);
+    string? Detail = null,
+    MeetingCleanupAction? Action = null,
+    IReadOnlyList<string>? AffectedStems = null,
+    string? InputRevision = null);
 
 internal sealed record CleanupWorkLedgerDocument(IReadOnlyList<CleanupWorkLedgerEntry> Entries);
 
@@ -76,7 +79,14 @@ internal sealed class MeetingCleanupWorkLedgerService
         }
     }
 
-    public void Record(string fingerprint, CleanupWorkState state, string? manifestPath = null, string? detail = null)
+    public void Record(
+        string fingerprint,
+        CleanupWorkState state,
+        string? manifestPath = null,
+        string? detail = null,
+        MeetingCleanupAction? action = null,
+        IReadOnlyList<string>? affectedStems = null,
+        string? inputRevision = null)
     {
         if (string.IsNullOrWhiteSpace(fingerprint))
         {
@@ -92,7 +102,10 @@ internal sealed class MeetingCleanupWorkLedgerService
                 state,
                 DateTimeOffset.UtcNow,
                 manifestPath ?? previous?.ManifestPath,
-                string.IsNullOrWhiteSpace(detail) ? previous?.Detail : detail.Trim());
+                string.IsNullOrWhiteSpace(detail) ? previous?.Detail : detail.Trim(),
+                action ?? previous?.Action,
+                affectedStems ?? previous?.AffectedStems,
+                string.IsNullOrWhiteSpace(inputRevision) ? previous?.InputRevision : inputRevision.Trim());
             Save();
         }
     }

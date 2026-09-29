@@ -73,21 +73,28 @@ public sealed class ModelProvisioningService
             catalog,
             requestedTranscriptionProfile,
             GetRemoteModelsAsync,
+            request.TranscriptionDownloadProgress,
             cancellationToken);
-        var speakerLabelingStatus = await ProvisionSpeakerLabelingAsync(
-            existingConfigDetected,
-            config,
-            catalog,
-            requestedSpeakerLabelingProfile,
-            GetRemoteDiarizationAssetsAsync,
-            cancellationToken);
+        var speakerLabelingStatus = request.ProvisionSpeakerLabeling
+            ? await ProvisionSpeakerLabelingAsync(
+                existingConfigDetected,
+                config,
+                catalog,
+                requestedSpeakerLabelingProfile,
+                GetRemoteDiarizationAssetsAsync,
+                cancellationToken)
+            : InspectExistingSpeakerLabeling(config);
 
         var updatedConfig = await _configStore.SaveAsync(config with
         {
             TranscriptionModelPath = transcriptionStatus.ActiveModelPath,
             TranscriptionModelProfilePreference = transcriptionStatus.RequestedProfile,
-            DiarizationAssetPath = speakerLabelingStatus.ActiveAssetPath,
-            SpeakerLabelingModelProfilePreference = speakerLabelingStatus.RequestedProfile,
+            DiarizationAssetPath = request.ProvisionSpeakerLabeling
+                ? speakerLabelingStatus.ActiveAssetPath
+                : config.DiarizationAssetPath,
+            SpeakerLabelingModelProfilePreference = request.ProvisionSpeakerLabeling
+                ? speakerLabelingStatus.RequestedProfile
+                : config.SpeakerLabelingModelProfilePreference,
         }, cancellationToken);
 
         var result = new ModelProvisioningResult(
@@ -126,6 +133,7 @@ public sealed class ModelProvisioningService
         MeetingRecorderModelCatalog catalog,
         TranscriptionModelProfilePreference requestedProfile,
         Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        IProgress<FileDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
         var configuredStatus = _whisperModelService.Inspect(config.TranscriptionModelPath);
@@ -191,6 +199,7 @@ public sealed class ModelProvisioningService
                 config,
                 catalog,
                 getRemoteModelsAsync,
+                progress,
                 cancellationToken);
             if (highAccuracyDownload.IsReady)
             {
@@ -208,6 +217,7 @@ public sealed class ModelProvisioningService
                 config,
                 catalog,
                 getRemoteModelsAsync,
+                progress,
                 cancellationToken);
             if (standardDownload.IsReady)
             {
@@ -219,6 +229,18 @@ public sealed class ModelProvisioningService
                     "Transcription is ready with the Standard model.",
                     $"The Higher Accuracy transcription download did not finish during setup. Retry it from Settings > Setup. Details: {highAccuracyDownload.FailureMessage}",
                     standardDownload.ModelPath);
+            }
+
+            if (configuredStatus.Kind == WhisperModelStatusKind.Valid)
+            {
+                return BuildTranscriptionStatus(
+                    config.TranscriptionModelProfilePreference,
+                    config.TranscriptionModelProfilePreference,
+                    retryRecommended: true,
+                    isReady: true,
+                    "The requested transcription download did not finish.",
+                    "The requested Higher Accuracy and Standard transcription downloads did not finish. Your existing valid transcription model remains active. Retry the requested download from Settings > Setup, or import an approved file.",
+                    config.TranscriptionModelPath);
             }
 
             return BuildTranscriptionStatus(
@@ -235,6 +257,7 @@ public sealed class ModelProvisioningService
             config,
             catalog,
             getRemoteModelsAsync,
+            progress,
             cancellationToken);
         if (standardDownload.IsReady)
         {
@@ -258,6 +281,18 @@ public sealed class ModelProvisioningService
                 "Transcription still needs setup.",
                 $"Your imported custom transcription model is unavailable, and Meeting Recorder could not finish the Standard transcription download. Recording stays blocked until you resume setup at first launch or import an approved model. Details: {standardDownload.FailureMessage}",
                 standardTargetPath);
+        }
+
+        if (configuredStatus.Kind == WhisperModelStatusKind.Valid)
+        {
+            return BuildTranscriptionStatus(
+                config.TranscriptionModelProfilePreference,
+                config.TranscriptionModelProfilePreference,
+                retryRecommended: true,
+                isReady: true,
+                "The requested transcription download did not finish.",
+                "The Standard transcription download did not finish. Your existing valid transcription model remains active. Retry Standard from Settings > Setup, or import an approved file.",
+                config.TranscriptionModelPath);
         }
 
         return BuildTranscriptionStatus(
@@ -434,10 +469,38 @@ public sealed class ModelProvisioningService
             standardTargetPath);
     }
 
+    private SpeakerLabelingModelProvisioningStatus InspectExistingSpeakerLabeling(AppConfig config)
+    {
+        if (config.SpeakerLabelingModelProfilePreference == SpeakerLabelingModelProfilePreference.Disabled)
+        {
+            return BuildSpeakerLabelingStatus(
+                SpeakerLabelingModelProfilePreference.Disabled,
+                SpeakerLabelingModelProfilePreference.Disabled,
+                retryRecommended: false,
+                isReady: false,
+                "Optional",
+                "Speaker labeling remains off. The recommended transcription setup does not change optional speaker labeling.",
+                config.DiarizationAssetPath);
+        }
+
+        var configuredStatus = _diarizationAssetCatalogService.InspectInstalledAssets(config.DiarizationAssetPath);
+        return BuildSpeakerLabelingStatus(
+            config.SpeakerLabelingModelProfilePreference,
+            config.SpeakerLabelingModelProfilePreference,
+            retryRecommended: false,
+            configuredStatus.IsReady,
+            configuredStatus.IsReady
+                ? "Speaker labeling keeps its current optional setup."
+                : "Speaker labeling remains optional.",
+            "The recommended transcription setup does not download, enable, or reconfigure speaker labeling.",
+            config.DiarizationAssetPath);
+    }
+
     private async Task<DownloadedWhisperModel> TryDownloadStandardTranscriptionAsync(
         AppConfig config,
         MeetingRecorderModelCatalog catalog,
         Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        IProgress<FileDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
         var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.Standard);
@@ -447,6 +510,7 @@ public sealed class ModelProvisioningService
             getRemoteModelsAsync,
             remoteModels => _catalogService.FindTranscriptionStandardAsset(catalog, remoteModels),
             config.ModelCacheDir,
+            progress,
             cancellationToken);
     }
 
@@ -454,6 +518,7 @@ public sealed class ModelProvisioningService
         AppConfig config,
         MeetingRecorderModelCatalog catalog,
         Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
+        IProgress<FileDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
         var targetPath = _catalogService.ResolveManagedPath(config.ModelCacheDir, catalog.Transcription.HighAccuracy);
@@ -463,6 +528,7 @@ public sealed class ModelProvisioningService
             getRemoteModelsAsync,
             remoteModels => _catalogService.FindTranscriptionHighAccuracyAsset(catalog, remoteModels),
             config.ModelCacheDir,
+            progress,
             cancellationToken);
     }
 
@@ -472,6 +538,7 @@ public sealed class ModelProvisioningService
         Func<Task<IReadOnlyList<WhisperRemoteModelAsset>>> getRemoteModelsAsync,
         Func<IReadOnlyList<WhisperRemoteModelAsset>, WhisperRemoteModelAsset?> selectAsset,
         string modelCacheDir,
+        IProgress<FileDownloadProgress>? progress,
         CancellationToken cancellationToken)
     {
         try
@@ -480,17 +547,44 @@ public sealed class ModelProvisioningService
             var asset = selectAsset(remoteModels)
                 ?? throw new InvalidOperationException(
                     $"The transcription asset '{expectedFileName}' is not available in the current release.");
+            EnsureModelDownloadCapacity(modelCacheDir, asset.FileSizeBytes);
+            progress?.Report(new FileDownloadProgress(0, asset.FileSizeBytes));
             var installed = await _whisperModelReleaseCatalogService.DownloadRemoteModelIntoManagedDirectoryAsync(
                 asset,
                 modelCacheDir,
-                progress: null,
+                progress,
                 cancellationToken);
 
             return new DownloadedWhisperModel(true, installed.ModelPath, string.Empty);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
             return new DownloadedWhisperModel(false, targetPath, exception.Message);
+        }
+    }
+
+    private static void EnsureModelDownloadCapacity(string modelCacheDir, long? requiredBytes)
+    {
+        if (requiredBytes is not > 0 || string.IsNullOrWhiteSpace(modelCacheDir))
+        {
+            return;
+        }
+
+        var rootPath = Path.GetPathRoot(Path.GetFullPath(modelCacheDir));
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            return;
+        }
+
+        var availableBytes = new DriveInfo(rootPath).AvailableFreeSpace;
+        if (availableBytes < requiredBytes.Value)
+        {
+            throw new IOException(
+                "There is not enough free disk space for the approved transcription download. Free space, choose another output location, or import an approved model file.");
         }
     }
 
@@ -604,7 +698,9 @@ public sealed record ModelProvisioningRequest(
     string UpdateFeedUrl,
     TranscriptionModelProfilePreference TranscriptionProfile,
     SpeakerLabelingModelProfilePreference SpeakerLabelingProfile,
-    bool RespectExistingConfigPreferences = true);
+    bool RespectExistingConfigPreferences = true,
+    bool ProvisionSpeakerLabeling = true,
+    IProgress<FileDownloadProgress>? TranscriptionDownloadProgress = null);
 
 public sealed record ModelProvisioningExecutionResult(
     AppConfig Config,

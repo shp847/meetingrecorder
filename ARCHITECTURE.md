@@ -38,8 +38,8 @@ The app is now split between reusable platform projects and Meeting Recorder-spe
 - `MeetingRecorder.Product`
   - product adapter that owns the manifest, shell registrations, about/support content, and default install/data layout
 
-For the shipped MSI flow, the managed install root in `MeetingRecorder.Product` and the bundled `MeetingRecorder.product.json` are expected to stay aligned with `%LOCALAPPDATA%\Programs\Meeting Recorder`. Writable runtime data remains outside the install root under `%LOCALAPPDATA%\MeetingRecorder`.
-Managed-install update repair is also responsible for cleaning up stale launch surfaces around that canonical root: it now quarantines both legacy `%USERPROFILE%\Documents\MeetingRecorder` variants when those exist, rewrites existing Desktop or Start Menu shortcuts back to the canonical launcher after an update, and repairs an already-pinned taskbar shortcut to the installed app executable plus installed `MeetingRecorder.ico` without creating a new taskbar pin.
+For the shipped MSI flow, the managed install root in `MeetingRecorder.Product` and the bundled `MeetingRecorder.product.json` are expected to stay aligned with `%USERPROFILE%\MeetingRecorder`. Writable runtime data remains outside the install root under `%LOCALAPPDATA%\MeetingRecorder`.
+Managed-install update repair transactionally migrates legacy LocalAppData and Documents roots after bundle validation, rewrites existing Desktop or Start Menu shortcuts back to the canonical launcher after an update, and repairs an already-pinned taskbar shortcut to the installed app executable plus installed `MeetingRecorder.ico` without creating a new taskbar pin.
 The MSI finish-launch path is intentionally not a raw second launch of `MeetingRecorder.App.exe`; it uses an installed relaunch wrapper plus a short-lived marker under `%LOCALAPPDATA%\MeetingRecorder` so the app can distinguish installer relaunches from normal user activations and coordinate a clean close-and-reopen of an idle existing instance.
 
 ### Meeting Recorder-specific runtime projects
@@ -97,9 +97,9 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - transcript and ready-marker publishing
 
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
-The default transcription provider remains Whisper.NET and the default diarization provider remains the local Sherpa sidecar. Experimental GPU transcription and alternate diarization backends are represented as Advanced-settings local CLI providers: worker probes persist success/failure for the configured executable, startup uses an external provider only when the saved probe still matches the executable path, prepared audio flows through `{audioPath}`, transcript segments flow through `{transcriptPath}` where needed, and provider output keeps the existing `TranscriptionResult` or `DiarizationResult` shape.
+The default transcription provider remains Whisper.NET and the default diarization provider remains the local Sherpa sidecar. Experimental GPU transcription and alternate diarization backends are represented as Advanced-settings local CLI providers: worker probes persist success/failure for the configured executable, startup uses an external provider only when the saved probe still matches the executable path, prepared audio flows through `{audioPath}`, transcript segments flow through `{transcriptPath}` where needed, and provider output keeps the existing `TranscriptionResult` or `DiarizationResult` shape. That existing extension point is not an approved GPU-transcription backend. Before any GPU candidate can use it or add another execution path, `GpuTranscriptionPolicy` requires a validated CPU baseline, approved runtime/asset contract, confirmed capability, no active recording, and no circuit-breaker/no-go result; Sprint 0 permits only a CPU-safe probe decision, not GPU execution. See `docs\gpu-transcription-acceptance.md`.
 For self-contained release bundles, `MeetingRecorder.App` is now published as a loose apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json`, while `AppPlatform.Deployment.Cli`, the full `MeetingRecorder.ProcessingWorker` publish output, scripts, and `MeetingRecorder.product.json` stay external so bootstrap, install, and update flows can keep invoking those sidecars directly. That worker payload is expected to include `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, and managed-install repair now restores those sidecars when they are missing from an existing install.
-Runtime paths that persist launch targets resolve them from `Environment.ProcessPath` so launch-on-login, worker startup, and updater handoff stay rooted at the canonical managed install under `%LOCALAPPDATA%\Programs\Meeting Recorder`.
+Runtime paths that persist launch targets resolve them from `Environment.ProcessPath` so launch-on-login, worker startup, and updater handoff stay rooted at the canonical managed install under `%USERPROFILE%\MeetingRecorder`.
 
 ## 3. Windows Deployment Constraints
 
@@ -221,8 +221,9 @@ Responsibilities:
 - keep automatic speaker labeling as an explicit opt-in: legacy `Throttled` or `Inline` configs are migrated back to `Deferred` once, setup no longer auto-promotes `Deferred`, DirectML worker crashes retry labels on CPU while preserving the run mode, and repeated or CPU-only diarization crashes push future processing back to `Deferred`
 - keep speaker-label repair transcript-first: suspicious already-published speaker explosions become `Repair Speaker Labels` recommendations, and repair queues seed `transcription.snapshot.json` from the existing JSON or Markdown transcript with old speaker IDs removed before the worker re-runs diarization
 - keep over-segmented diarization recoverable: before the worker rejects an unsupported too-many-speakers result, it extracts local speaker embeddings for the candidate turns and lets the cluster-merge service collapse acoustically similar over-split clusters; labels are still skipped if the rescued catalog remains outside the supported automatic range
-- keep speaker-name refresh and undo metadata-only: `Refresh Suggestions` re-matches existing speaker voice samples against the local profile store without transcription, diarization, audio writes, or worker queueing, while `Undo Name Recognition` clears profile-sourced attribution from the meeting artifacts and stores only scoped negative feedback for `meetingId + speakerId + profileId`
+- keep speaker-name refresh and undo metadata-only: `Refresh Local Suggestions` re-matches existing speaker voice samples against the local profile store without transcription, diarization, audio writes, learning, or worker queueing, while `Undo Profile Names` clears only profile-sourced attribution from current-meeting artifacts and stores only scoped negative feedback for `meetingId + speakerId + profileId`; user-confirmed name edits validate Diarization Label IDs, prior identity values, and an opaque artifact revision before a recoverable manifest/JSON/Markdown transaction
 - keep AI summary generation explicit and configurable under Settings, with local-first ModelProxy behavior and hosted OpenAI fallback only when the user has provided an API key; transcript-only drain profiles skip automatic summaries while leaving manual per-meeting summary generation available later
+- resolve summary action labels, eligibility, progress, success, and blocked states from one typed UI-copy taxonomy shared by Settings and meeting details; blocked copy must state its condition, safety boundary, and remedy without exposing raw provider, exception, path, key, transcript, or embedding data
 - store summary API keys and local bearer keys outside plaintext app config, and never write key material into logs, transcript artifacts, or status text
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
@@ -260,7 +261,7 @@ The durable session lifecycle uses these states:
 13. If microphone merging fails while loopback chunks are still readable, source-audio preparation falls back to a loopback-only WAV so transcript publishing can continue. If no usable source audio can be prepared, the processor and queue mark the manifest `Failed` instead of leaving it `Queued` for repeated startup retries.
 14. On startup, the queue first seals stale live-recording manifests that still have preserved raw chunks, stamps the end time from the newest usable audio chunk, requeues them for normal processing, then scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
 15. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
-16. Worker launches always run at reduced OS priority so background jobs yield to foreground work. In `Responsive` mode, new background queue work also pauses while a live recording is active, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`. In `Transcript only` speed profile, the queue can run up to two transcript-only workers, skips speaker labels and automatic summaries, and publishes transcripts first. Explicit add/repair-speaker-label jobs carry a one-shot manifest override that bypasses both skip policies for one diarization attempt and is cleared afterward, including when the attempt fails safely.
+16. Worker launches always run at reduced OS priority so background jobs yield to foreground work. In `Responsive` mode, new background queue work also pauses while a live recording is active, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`. A versioned backlog profile controls only future staged admission: new configs begin `Normal`, while `Transcript-only drain`, `Overnight acceleration`, `Idle-capacity acceleration`, and `Overnight + idle capacity` activate their named bounded policies. Legacy configs migrate once to their existing combined behavior. In `Transcript-only drain`, the queue can run up to two transcript-only workers, skips speaker labels and automatic summaries, and publishes transcripts first. Explicit add/repair-speaker-label jobs carry a one-shot manifest override that bypasses both skip policies for one diarization attempt and is cleared afterward, including when the attempt fails safely.
 17. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound. Published-session maintenance also normalizes manifests onto the retained published audio and deletes redundant bulky local work-cache files once a matching published recording exists.
 18. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
 19. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
@@ -308,6 +309,7 @@ After a session publishes successfully, the retained audio path is the published
 
 The Meetings tab uses the shared filename stem to reconnect published output files back to their work manifests when those manifests still exist.
 Catalog refresh, cleanup analysis, and external audio import skip offline or reparse-point audio files, so OneDrive Files On-Demand placeholders are not hydrated just because the Meetings tab lists or analyzes older recordings.
+External audio intake keeps the user-owned source read-only: `ExternalAudioMediaProbe` snapshots the source before/after the same local transcription preparation path, then queue admission copies through a unique work-root staging file, revalidates the source observation and storage, promotes the copy into the session `processing` directory, and repeats preparation on that exact staged observation. The local versioned import-job companion records only opaque source/staged observation keys, preparation code/version, normalized audio metadata, and timestamp; it carries no locator, decoder exception, or audio content into published artifacts. The opt-in Import Inbox adds a local relative-path/opaque-observation journal, cross-process lease, terminal suppression, and bounded retry backoff; it scans only top-level supported files. Its optional Archive policy runs only after queue commit for that receipt-backed Inbox source; its separate Error policy applies only to terminally unreadable receipt-backed Inbox sources. Each leaves a pending receipt plus the original file on a move failure.
 If a stale imported-source reprocessing manifest survives for a published stem, the catalog prefers the artifact-backed published row over that queued manifest state so the meeting remains openable and truthful in the UI.
 If the original work manifest is missing but the published audio file still exists, the app can synthesize a new queued manifest in the work folder to support transcript regeneration.
 
@@ -539,7 +541,7 @@ That bootstrap path:
 - extracts it to a temporary folder
 - runs `AppPlatform.Deployment.Cli` from the downloaded bundle
 - expects the WPF shell itself to be present as a loose apphost layout with `MeetingRecorder.App.exe`, `MeetingRecorder.App.dll`, `.deps.json`, `.runtimeconfig.json`, and `bundle-layout.json`
-- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, so helpers stay anchored in `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- resolves in-app update handoff back to the installed app root by preferring `Environment.ProcessPath` over `AppContext.BaseDirectory`, then relocates a legacy root to `%USERPROFILE%\MeetingRecorder`
 - preserves installed stable apphosts during v2 in-app updates and replaces only mutable DLLs, scripts, assets, and manifests
 - requires a one-time MSI or bootstrapper reset for legacy single-file installs that do not have the v2 layout marker
 - only clears a same-version pending update when the pending package metadata matches the installed release identity, so a rebuilt release with the same display version still goes through a real install attempt when explicitly launched
@@ -547,7 +549,7 @@ That bootstrap path:
 - validates `bundle-integrity.json` before the managed install root is changed
 - persists install provenance under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`, including the last installed-at timestamp plus any trusted installed package published-at and asset-size identity used by in-app update comparison, and both MSI post-install provisioning plus app startup now repair a missing provenance file with local install facts so older or partially migrated installs can recover gracefully; if package metadata is still unavailable after that repair, the first successful `UpToDate` GitHub check backfills the installed package publish timestamp and asset size into the same provenance file
 - preserves the existing install `data` folder on update installs instead of reimplementing install logic in PowerShell
-- promotes staged app files into the managed install root in place during updates instead of renaming the entire `%LOCALAPPDATA%\Programs\Meeting Recorder` tree first
+- promotes staged app files into `%USERPROFILE%\MeetingRecorder` in place during updates, with transactional migration from legacy roots
 - writes a diagnostic log under `%TEMP%\MeetingRecorderInstaller`
 - suppresses raw PowerShell transfer progress noise in the user-facing bootstrap scripts
 - pauses on error for user-facing console helpers so users can review the failure before the window closes
@@ -565,7 +567,7 @@ Deprecated thin-launcher responsibilities were intentionally limited to:
 That deprecated path no longer:
 
 - extracts ZIPs
-- copies app files into `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- copies app files into `%USERPROFILE%\MeetingRecorder`
 - mutates the managed install tree directly
 - launches the app after install
 - creates shortcuts itself
@@ -576,14 +578,14 @@ The WiX package is now authored as a per-user MSI.
 
 That MSI path:
 
-- installs the binaries under `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- installs the binaries under `%USERPROFILE%\MeetingRecorder`
 - avoids `Program Files` and per-machine scope
-- adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- adds user-scope `.lnk` Start Menu and Desktop shortcuts that target the managed launcher in `%USERPROFILE%\MeetingRecorder`
 - keeps writable runtime data outside the installed binaries
 - downloads the selected Standard or Higher Accuracy transcription and speaker-labeling assets into `%LOCALAPPDATA%\MeetingRecorder\models`
 - shows a first-install-only model-options dialog so the user can keep `Standard` or also request optional `Higher Accuracy` downloads for transcription and speaker labeling
 - invokes the installed `AppPlatform.Deployment.Cli provision-models` step after `InstallFinalize` so provisioning and later update repair share one model-management path without depending on pre-commit file visibility
-- keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- keeps already-extracted in-place update bundles as immutable repair sources, copies them into a separate staging workspace, validates staging, and only then promotes files into `%USERPROFILE%\MeetingRecorder`
 - treats `MeetingRecorder-v<version>-win-x64.zip` as the only valid in-app update package shape; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs are rejected before update apply asks the app process to exit
 - preserves user-selected speaker-labeling run mode across in-app updates by stamping the one-time legacy safety migration whenever Settings or Setup saves that preference
 - keeps the MSI custom-action handoff on compact CLI aliases and makes the deployment CLI parse those advertised aliases correctly, including `highAccuracy` for Higher Accuracy setup options, so install-time provisioning does not fail on an option-name mismatch or a custom-action target overflow

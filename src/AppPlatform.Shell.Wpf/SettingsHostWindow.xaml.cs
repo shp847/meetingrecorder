@@ -20,9 +20,10 @@ public partial class SettingsHostWindow : Window
         _sectionButtons =
         [
             SettingsSetupSectionButton,
-            SettingsGeneralSectionButton,
-            SettingsFilesSectionButton,
-            SettingsUpdatesSectionButton,
+            SettingsRecordingSectionButton,
+            SettingsProcessingSectionButton,
+            SettingsSummariesSectionButton,
+            SettingsFilesAndUpdatesSectionButton,
             SettingsAdvancedSectionButton,
         ];
 

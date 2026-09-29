@@ -26,7 +26,8 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="Meeting Recorder installed successfully. Setup tried the selected model downloads. If transcription still needs setup, open Settings > Setup at first launch to finish the download or import an approved model." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Meeting Recorder" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <SetProperty Id="INSTALLFOLDER" Value="[LocalAppDataFolder]Programs\Meeting Recorder" After="AppSearch" Sequence="both" />
+    <SetProperty Id="INSTALLFOLDER" Value="[UserProfileFolder]MeetingRecorder" After="AppSearch" Sequence="both" Condition="NOT INSTALLFOLDER AND NOT UPGRADINGPRODUCTCODE" />
+    <SetProperty Id="REINSTALLMODE" Value="amus" Before="CostInitialize" Sequence="both" />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="execute" />
     <SetProperty Id="WixShellExecTarget" Value="[INSTALLFOLDER]Launch-MeetingRecorder-AfterInstall.vbs" After="CostFinalize" Sequence="ui" />
     <SetProperty

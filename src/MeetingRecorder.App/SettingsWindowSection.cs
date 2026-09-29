@@ -3,8 +3,9 @@ namespace MeetingRecorder.App;
 internal enum SettingsWindowSection
 {
     Setup = 0,
-    General = 1,
-    Files = 2,
-    Updates = 3,
-    Advanced = 4,
+    Recording = 1,
+    Processing = 2,
+    Summaries = 3,
+    FilesAndUpdates = 4,
+    Advanced = 5,
 }

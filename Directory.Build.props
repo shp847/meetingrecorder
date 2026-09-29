@@ -1,6 +1,8 @@
 <Project>
   <PropertyGroup>
-    <MeetingRecorderBuildRoot>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'MeetingRecorderBuild'))</MeetingRecorderBuildRoot>
+    <!-- Keep the short temp default, but let constrained Windows hosts redirect
+         intermediate apphost files without changing normal developer builds. -->
+    <MeetingRecorderBuildRoot Condition="'$(MeetingRecorderBuildRoot)' == ''">$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'MeetingRecorderBuild'))</MeetingRecorderBuildRoot>
     <BaseIntermediateOutputPath>$(MeetingRecorderBuildRoot)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)\obj\**;$(MSBuildProjectDirectory)\bin\**</DefaultItemExcludes>

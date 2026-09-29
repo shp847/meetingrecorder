@@ -77,6 +77,23 @@ public sealed class VoiceProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task EnableProfileAsync_Reenables_Selected_Profile_ForFutureMatching()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        await store.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            now,
+            [Profile("voice_1", "Pranav Sharma", now) with { Status = VoiceProfileStatus.Disabled }]));
+
+        await store.EnableProfileAsync("voice_1");
+
+        var profile = Assert.Single((await store.LoadOrCreateAsync()).Profiles);
+        Assert.Equal(VoiceProfileStatus.Active, profile.Status);
+    }
+
+    [Fact]
     public async Task DeleteProfileAsync_Removes_Selected_Profile()
     {
         var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");

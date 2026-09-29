@@ -43,6 +43,28 @@
                            FontFamily="{StaticResource AppMonoFontFamily}"
                            Foreground="{StaticResource AppMutedTextBrush}"
                            TextWrapping="Wrap" />
+                <Border x:Name="DetailTaskCenterBorder"
+                        Margin="0,12,0,0"
+                        Padding="10"
+                        Background="{StaticResource AppMutedCardBrush}"
+                        BorderBrush="{StaticResource AppOutlineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4">
+                    <StackPanel>
+                        <TextBlock x:Name="DetailTaskCenterHeadlineTextBlock"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="DetailTaskCenterReasonTextBlock"
+                                   Margin="0,4,0,0"
+                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="DetailTaskCenterFreshnessTextBlock"
+                                   Margin="0,4,0,0"
+                                   FontFamily="{StaticResource AppMonoFontFamily}"
+                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
             <WrapPanel Grid.Column="1"
                        Margin="16,0,0,0"
@@ -81,6 +103,7 @@
                                        Text="AI Summary" />
                             <TextBlock x:Name="AiSummaryStatusTextBlock"
                                        Margin="0,10,0,0"
+                                       AutomationProperties.LiveSetting="Polite"
                                        Style="{StaticResource DialogBodyTextStyle}" />
                             <StackPanel x:Name="AiSummaryGeneratedContentPanel"
                                         Margin="0,12,0,0">
@@ -300,10 +323,14 @@
 
                     <Expander x:Name="MaintenanceExpander"
                               Margin="0,14,0,0"
-                              Header="Maintenance">
+                              Header="Organize &amp; Fix">
                         <Border Style="{StaticResource DialogCardStyle}">
                             <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="Title" />
+                                <TextBlock FontWeight="SemiBold" Text="Organize" />
+                                <TextBlock Margin="0,4,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}"
+                                           Text="Edit the meeting title or project without changing transcript content." />
+                                <TextBlock Margin="0,12,0,0" FontWeight="SemiBold" Text="Title" />
                                 <TextBox x:Name="TitleDraftTextBox"
                                          Margin="0,6,0,0"
                                          Height="32"
@@ -340,6 +367,12 @@
                                             Content="Clear Project" />
                                 </WrapPanel>
 
+                                <TextBlock Margin="0,16,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Fix" />
+                                <TextBlock Margin="0,4,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}"
+                                           Text="Review or explicitly start transcript, labeling, priority, or split work." />
                                 <TextBlock Margin="0,10,0,0"
                                            FontWeight="SemiBold"
                                            Text="Transcript Processing" />
@@ -380,9 +413,9 @@
                                         Click="SplitButton_OnClick"
                                         Content="Split Into Two" />
 
-                                <TextBlock Margin="0,12,0,0"
+                                <TextBlock Margin="0,16,0,0"
                                            FontWeight="SemiBold"
-                                           Text="Speaker Names" />
+                                           Text="Speaker Name Review" />
                                 <DataGrid x:Name="SpeakerLabelsDataGrid"
                                           Margin="0,8,0,0"
                                           AutoGenerateColumns="False"
@@ -391,37 +424,37 @@
                                           RowHeaderWidth="0"
                                           Height="130">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Current"
+                                        <DataGridTextColumn Header="Diarization Label"
                                                             Binding="{Binding OriginalLabel, Mode=OneWay}"
                                                             IsReadOnly="True"
                                                             Width="*" />
-                                        <DataGridTextColumn Header="Display Name"
+                                        <DataGridTextColumn Header="Meeting Display Name"
                                                             Binding="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                             Width="1.2*" />
-                                        <DataGridTextColumn Header="Voice Profile"
+                                        <DataGridTextColumn Header="Name Provenance"
                                                             Binding="{Binding Provenance, Mode=OneWay}"
                                                             IsReadOnly="True"
                                                             Width="1.2*" />
-                                        <DataGridTextColumn Header="Suggestion"
+                                        <DataGridTextColumn Header="Local Name Suggestion"
                                                             Binding="{Binding SuggestionText, Mode=OneWay}"
                                                             IsReadOnly="True"
                                                             Width="1.1*" />
                                         <DataGridTemplateColumn Header="Review"
-                                                                Width="150">
+                                                                Width="205">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <StackPanel Orientation="Horizontal">
-                                                        <Button MinWidth="48"
+                                                        <Button MinWidth="94"
                                                                 Height="26"
                                                                 Margin="0,0,6,0"
                                                                 Click="UseSpeakerSuggestionButton_OnClick"
                                                                 IsEnabled="{Binding HasSuggestion}"
-                                                                Content="Use" />
-                                                        <Button MinWidth="58"
+                                                                Content="Use suggestion" />
+                                                        <Button MinWidth="102"
                                                                 Height="26"
                                                                 Click="RejectSpeakerSuggestionButton_OnClick"
                                                                 IsEnabled="{Binding HasSuggestion}"
-                                                                Content="Reject" />
+                                                                Content="Reject suggestion" />
                                                     </StackPanel>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
@@ -433,19 +466,19 @@
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="ApplySpeakerNamesButton_OnClick"
-                                            Content="Apply Speaker Names" />
+                                            Content="Apply Name Changes" />
                                     <Button x:Name="RefreshSpeakerNamesButton"
                                             Margin="10,0,0,0"
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="RefreshSpeakerNamesButton_OnClick"
-                                            Content="Refresh Suggestions" />
+                                            Content="Refresh Local Suggestions" />
                                     <Button x:Name="UndoSpeakerNameRecognitionButton"
                                             Margin="10,0,0,0"
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="UndoSpeakerNameRecognitionButton_OnClick"
-                                            Content="Undo Name Recognition" />
+                                            Content="Undo Profile Names" />
                                 </WrapPanel>
                                 <TextBlock Margin="0,8,0,0"
                                            Style="{StaticResource DialogBodyTextStyle}"
@@ -455,17 +488,38 @@
                                            Margin="0,12,0,0"
                                            Style="{StaticResource DialogBodyTextStyle}" />
 
-                                <WrapPanel Margin="0,14,0,0">
+                                <TextBlock Margin="0,16,0,0"
+                                           FontWeight="SemiBold"
+                                           Text="Archive" />
+                                <TextBlock Margin="0,4,0,0"
+                                           Style="{StaticResource DialogBodyTextStyle}"
+                                           Text="Archive is recoverable and stays separate from permanent deletion." />
+                                <WrapPanel Margin="0,10,0,0">
                                     <Button x:Name="ArchiveButton"
-                                            Margin="0,0,10,10"
+                                            Margin="0,0,0,10"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="ArchiveButton_OnClick"
                                             Content="Archive" />
+                                </WrapPanel>
+                                <Border Margin="0,12,0,0"
+                                        Padding="10"
+                                        Background="#FFF2F2"
+                                        BorderBrush="#B42318"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" Text="Danger Zone" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Style="{StaticResource DialogBodyTextStyle}"
+                                                   Text="Permanent delete requires typing DELETE and cannot be recommended automatically." />
                                     <Button x:Name="DeleteButton"
+                                            Margin="0,10,0,0"
+                                            HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="DeleteButton_OnClick"
                                             Content="Delete Permanently" />
-                                </WrapPanel>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </Border>
                     </Expander>
@@ -535,9 +589,11 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="FooterStatusTextBlock"
+                       AutomationProperties.LiveSetting="Polite"
                        VerticalAlignment="Center"
                        Style="{StaticResource DialogBodyTextStyle}" />
             <Button Grid.Column="1"
+                    AutomationProperties.Name="Close meeting details"
                     Style="{StaticResource SecondaryActionButtonStyle}"
                     Click="CloseButton_OnClick"
                     Content="Close" />

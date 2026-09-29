@@ -5,6 +5,16 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class AppDataPathsTests
 {
     [Fact]
+    public void GetManagedInstallRoot_Uses_UserProfile_Root()
+    {
+        var userProfileRoot = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+
+        var installRoot = AppDataPaths.GetManagedInstallRoot(userProfileRoot);
+
+        Assert.Equal(Path.Combine(userProfileRoot, "MeetingRecorder"), installRoot);
+    }
+
+    [Fact]
     public void GetAppRoot_Uses_Portable_Data_Folder_When_PortableMarker_Is_Present()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

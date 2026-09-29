@@ -107,6 +107,12 @@ public sealed class SessionManifestStore
                 continue;
             }
 
+            if (manifest.ImportedSourceAudio is not null &&
+                await IsImportedWorkBlockedBySetupAsync(manifestPath, cancellationToken))
+            {
+                continue;
+            }
+
             if (manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing)
             {
                 pending.Add((manifestPath, manifest));
@@ -118,6 +124,43 @@ public sealed class SessionManifestStore
             .ThenBy(candidate => candidate.Manifest.StartedAtUtc)
             .Select(candidate => candidate.Path)
             .ToArray();
+    }
+
+    private static async Task<bool> IsImportedWorkBlockedBySetupAsync(
+        string manifestPath,
+        CancellationToken cancellationToken)
+    {
+        var sessionRoot = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(sessionRoot))
+        {
+            return true;
+        }
+
+        var jobPath = Path.Combine(sessionRoot, "import-job.json");
+        if (!File.Exists(jobPath))
+        {
+            // Legacy imported manifests did not have a companion job. Preserve
+            // their pre-S5 resume behavior rather than silently reclassifying them.
+            return false;
+        }
+
+        try
+        {
+            var loaded = await new ExternalAudioImportJobStore(jobPath).LoadAsync(cancellationToken);
+            return loaded.Job is null ||
+                   !loaded.Schema.CanRead ||
+                   loaded.Job.State == ExternalAudioImportJobState.BlockedBySetup;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // An unreadable companion job is unknown safety state. Keep staged
+            // work intact for repair; never start a worker from incomplete truth.
+            return true;
+        }
     }
 
     internal static int GetPendingResumePriority(MeetingSessionManifest manifest)

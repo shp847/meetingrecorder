@@ -54,6 +54,8 @@ internal static class MeetingCleanupRecommendationEngine
     private static readonly TimeSpan MaximumStrongContinuityMergeGap = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan MaximumExtendedContinuityMergeGap = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumExtendedContinuitySegmentDuration = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan MaximumGoogleMeetFragmentMergeGap = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumGoogleMeetFragmentShortDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaximumShortGenericTeamsDuration = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan TeamsPlaybackAbsentBeforeMerge = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan MaximumShortSplitSegmentDuration = TimeSpan.FromMinutes(2);
@@ -287,6 +289,7 @@ internal static class MeetingCleanupRecommendationEngine
         var reservedPlaybackStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         recommendations.AddRange(BuildTeamsPlaybackMergeRecommendations(inspections, blockedStems, reservedPlaybackStems));
         recommendations.AddRange(BuildHistoricalTeamsTitleMergeRecommendations(inspections, blockedStems, reservedPlaybackStems));
+        recommendations.AddRange(BuildHistoricalGoogleMeetFragmentMergeRecommendations(inspections, blockedStems, reservedPlaybackStems));
         var ordered = inspections
             .Where(inspection =>
                 !blockedStems.Contains(inspection.Meeting.Stem) &&
@@ -425,6 +428,93 @@ internal static class MeetingCleanupRecommendationEngine
         }
 
         return recommendations;
+    }
+
+    private static IReadOnlyList<MeetingCleanupRecommendation> BuildHistoricalGoogleMeetFragmentMergeRecommendations(
+        IReadOnlyList<MeetingInspectionRecord> inspections,
+        IReadOnlySet<string> blockedStems,
+        ISet<string> reservedStems)
+    {
+        var recommendations = new List<MeetingCleanupRecommendation>();
+        foreach (var group in inspections
+                     .Where(inspection =>
+                         !blockedStems.Contains(inspection.Meeting.Stem) &&
+                         !reservedStems.Contains(inspection.Meeting.Stem) &&
+                         inspection.Meeting.Platform == MeetingPlatform.GoogleMeet &&
+                         !IsGenericTitle(MeetingPlatform.GoogleMeet, inspection.Meeting.Title))
+                     .GroupBy(inspection => new
+                     {
+                         LocalDate = inspection.Meeting.StartedAtUtc.LocalDateTime.Date,
+                         Title = MeetingTitleNormalizer.NormalizeForComparison(inspection.Meeting.Title),
+                     }))
+        {
+            if (string.IsNullOrWhiteSpace(group.Key.Title))
+            {
+                continue;
+            }
+
+            var chain = new List<MeetingInspectionRecord>();
+            foreach (var member in group
+                         .OrderBy(inspection => inspection.Meeting.StartedAtUtc)
+                         .ThenBy(inspection => inspection.Meeting.Stem, StringComparer.OrdinalIgnoreCase))
+            {
+                if (chain.Count > 0 && !AreGoogleMeetFragmentsContinuous(chain[^1], member))
+                {
+                    AddGoogleMeetFragmentMergeRecommendation(chain, recommendations, reservedStems);
+                    chain.Clear();
+                }
+
+                chain.Add(member);
+            }
+
+            AddGoogleMeetFragmentMergeRecommendation(chain, recommendations, reservedStems);
+        }
+
+        return recommendations;
+    }
+
+    private static void AddGoogleMeetFragmentMergeRecommendation(
+        IReadOnlyList<MeetingInspectionRecord> members,
+        ICollection<MeetingCleanupRecommendation> recommendations,
+        ISet<string> reservedStems)
+    {
+        if (members.Count < 2 ||
+            !members.Any(member => member.Meeting.Duration is { } duration && duration <= MaximumGoogleMeetFragmentShortDuration) ||
+            !CanMergePlaybackGroup(members))
+        {
+            return;
+        }
+
+        foreach (var member in members)
+        {
+            reservedStems.Add(member.Meeting.Stem);
+        }
+
+        var preferredTitle = ChoosePreferredTitle(members.Select(member => member.Meeting.Title));
+        recommendations.Add(BuildRecommendation(
+            members[0].Meeting.Stem,
+            MeetingCleanupAction.Merge,
+            MeetingCleanupConfidence.High,
+            "Merge Google Meet continuity fragments",
+            $"{members.Count} same-day fragments share a named Google Meet title and are separated by no more than five minutes. Merge them without adding pause padding.",
+            members.Select(member => member.Meeting.Stem).ToArray(),
+            canApplyAutomatically: true,
+            preferredTitle,
+            suggestedSplitPoint: null,
+            reasonCode: "merge-historical-google-meet-continuity-fragments"));
+    }
+
+    private static bool AreGoogleMeetFragmentsContinuous(
+        MeetingInspectionRecord previous,
+        MeetingInspectionRecord current)
+    {
+        if (previous.Meeting.Duration is not { } previousDuration)
+        {
+            return false;
+        }
+
+        var gap = current.Meeting.StartedAtUtc - (previous.Meeting.StartedAtUtc + previousDuration);
+        return gap >= -MaximumMergeOverlap && gap <= MaximumGoogleMeetFragmentMergeGap;
     }
 
     private static bool CanMergePlaybackGroup(IReadOnlyList<MeetingInspectionRecord> members)

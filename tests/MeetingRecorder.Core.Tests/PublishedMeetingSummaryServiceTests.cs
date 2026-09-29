@@ -149,6 +149,7 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
             SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
             SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
             SummaryOpenAiModel = "gpt-5-mini",
+            SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
         };
     }
 

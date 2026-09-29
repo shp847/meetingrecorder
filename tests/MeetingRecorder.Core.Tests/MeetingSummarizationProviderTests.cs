@@ -50,6 +50,7 @@ public sealed class MeetingSummarizationProviderTests
             {
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                 SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+                SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
             }),
             CancellationToken.None);
 
@@ -74,12 +75,59 @@ public sealed class MeetingSummarizationProviderTests
             {
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                 SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+                SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
             }),
             CancellationToken.None);
 
         Assert.Equal(StageExecutionState.Skipped, result.Status.State);
         Assert.Contains("No summary provider configured", result.Status.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(chatClient.Calls);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Does_Not_Send_Transcript_To_Hosted_Provider_Without_Current_Consent()
+    {
+        var secrets = new TrackingSummarySecretStore { OpenAiSecret = "sk-openai-test" };
+        var chatClient = new FakeSummaryChatClient();
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        var result = await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+            }),
+            CancellationToken.None);
+
+        Assert.Equal(StageExecutionState.Skipped, result.Status.State);
+        Assert.Contains("consent", result.Status.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(chatClient.Calls);
+    }
+
+    [Fact]
+    public async Task SummarizeAsync_Does_Not_Fall_Back_To_Hosted_Provider_When_Consent_Is_Revoked()
+    {
+        var secrets = new TrackingSummarySecretStore
+        {
+            ModelProxySecret = "sk-modelproxy-test",
+            OpenAiSecret = "sk-openai-test",
+        };
+        var chatClient = new FakeSummaryChatClient
+        {
+            OnComplete = call => throw new HttpRequestException("ModelProxy unavailable."),
+        };
+        var provider = new MeetingSummarizationProvider(secrets, chatClient);
+
+        var result = await provider.SummarizeAsync(
+            CreateRequest(new AppConfig
+            {
+                SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
+                SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+            }),
+            CancellationToken.None);
+
+        Assert.Equal(StageExecutionState.Failed, result.Status.State);
+        Assert.Equal([SummaryChatProviderKind.ModelProxy], chatClient.Calls.Select(call => call.ProviderOptions.ProviderKind));
     }
 
     [Fact]
@@ -103,6 +151,7 @@ public sealed class MeetingSummarizationProviderTests
             {
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                 SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+                SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
             }),
             CancellationToken.None);
 
@@ -136,6 +185,7 @@ public sealed class MeetingSummarizationProviderTests
                 {
                     SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                     SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+                    SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
                     SummaryTranscriptChunkTokenTarget = 20,
                     SummaryTranscriptChunkOverlapTokens = 2,
                 }),
@@ -257,6 +307,7 @@ public sealed class MeetingSummarizationProviderTests
             {
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                 SummaryProviderPreference = MeetingSummaryProviderPreference.LocalThenOpenAi,
+                SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
             }),
             CancellationToken.None);
 
@@ -309,6 +360,7 @@ public sealed class MeetingSummarizationProviderTests
             {
                 SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
                 SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
+                SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
                 SummaryRequestTimeoutSeconds = 90,
             }),
             CancellationToken.None);

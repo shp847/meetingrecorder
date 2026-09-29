@@ -21,6 +21,8 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.DoesNotContain("Dispatcher.InvokeAsync", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts", methodBlock, StringComparison.Ordinal);
         Assert.Contains("RequestPendingMeetingCleanupWorkDispatch(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("AutomationCatalogSnapshot.Create(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ToAutomationCatalogRefreshMode(refreshMode)", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -83,7 +85,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("ProcessingQueue_OnWorkCompleted", mainWindow, StringComparison.Ordinal);
         Assert.Contains("ProcessingWorkPriority.Cleanup", mainWindow, StringComparison.Ordinal);
         Assert.Contains("SelectFairQueueIndexLocked", queue, StringComparison.Ordinal);
-        Assert.Contains("IsOvernightDrainWindowActive", queue, StringComparison.Ordinal);
+        Assert.Contains("OvernightAccelerationPolicyResolver.Resolve", queue, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -100,6 +102,10 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.DoesNotContain("_meetingOutputCatalogService.ListMeetings(", methodBlock, StringComparison.Ordinal);
         Assert.Contains("outstandingCleanupCount >= maximumOutstanding", methodBlock, StringComparison.Ordinal);
         Assert.Contains("worker allowance", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("AutomationSchedulerCoordinator.Resolve", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("IsAutomationCatalogSnapshotCurrent", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("CanExecuteAutomaticCleanupRecommendation", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationDispatchSkippedException", source, StringComparison.Ordinal);
     }
 
     [Fact]

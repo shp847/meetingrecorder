@@ -356,6 +356,32 @@ public sealed class InstallerScriptTests
     }
 
     [Fact]
+    public void PackagingScripts_Allow_Dedicated_Absolute_Artifact_Roots()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var publishScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1"));
+        var installerScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Build-Installer.ps1"));
+
+        Assert.Contains("[System.IO.Path]::IsPathRooted($CandidatePath)", publishScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableDeploymentCliAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableWorkerAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Restore-VerifiedStableAppHostIfNeeded", publishScript, StringComparison.Ordinal);
+        Assert.Contains("-ProjectName \"AppPlatform.Deployment.Cli\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("-ProjectName \"MeetingRecorder.ProcessingWorker\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Configured stable apphost hash does not match the current build apphost.", publishScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$PublishOutputRoot = \"\"", installerScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableDeploymentCliAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$StableWorkerAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
+        Assert.Contains("-StableDeploymentCliAppHostPath $StableDeploymentCliAppHostPath", installerScript, StringComparison.Ordinal);
+        Assert.Contains("-OutputRoot $publishOutputPath", installerScript, StringComparison.Ordinal);
+        Assert.Contains("$publishedAppPath = Join-Path $publishOutputPath \"MeetingRecorder\"", installerScript, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PublishPortableScript_Emits_A_Bundle_Integrity_Manifest_And_Copies_The_Product_Manifest()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
@@ -979,5 +1005,8 @@ public sealed class InstallerScriptTests
         Assert.Contains("Wait-Process", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorderInstaller.msi", scriptContents, StringComparison.Ordinal);
         Assert.Contains("msiexec.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Assert-InstalledBundleMatchesPublishedIntegrity", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("MSI install smoke left a bundle different from the published integrity manifest", scriptContents, StringComparison.Ordinal);
     }
 }

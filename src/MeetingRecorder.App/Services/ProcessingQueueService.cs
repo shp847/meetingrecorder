@@ -4,12 +4,13 @@ using MeetingRecorder.Core.Services;
 using NAudio.Wave;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace MeetingRecorder.App.Services;
 
-internal sealed class ProcessingQueueService
+internal sealed class ProcessingQueueService : IDisposable
 {
     private static readonly TimeSpan RecoverablePendingSessionStalenessThreshold = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultPublishTailEstimate = TimeSpan.FromSeconds(45);
@@ -23,7 +24,15 @@ internal sealed class ProcessingQueueService
     private readonly Func<WorkerLaunch> _workerLaunchResolver;
     private readonly IWorkerProcessFactory _workerProcessFactory;
     private readonly Func<bool> _isRecordingProvider;
+    private readonly Func<bool> _isSpeakerLabelingAvailableProvider;
+    private readonly Func<DateTimeOffset> _localNowProvider;
     private readonly ProcessingTempCleanupService _tempCleanupService;
+    private readonly AsapLifecycleResolver _asapLifecycleResolver = new();
+    private readonly StagedBacklogWorkStore _stagedBacklogWorkStore;
+    private readonly ResourceCapacityMonitor _resourceCapacityMonitor;
+    private readonly GpuCapacityMonitor _gpuCapacityMonitor;
+    private readonly Func<bool> _isGpuDiarizationReadyProvider;
+    private readonly SemaphoreSlim _stagedBacklogWorkGate = new(1, 1);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly SemaphoreSlim _pendingManifestSignal = new(0);
     private readonly object _processSyncRoot = new();
@@ -35,8 +44,14 @@ internal sealed class ProcessingQueueService
     private readonly HashSet<string> _reservedManifestPaths = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IWorkerProcess> _activeWorkersByManifestPath = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveQueueItemState> _activeItemStatesByManifestPath = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StagedBacklogWorkItem> _activeStagedWorkByManifestPath = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _gpuDiarizationManifestPaths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StagedBacklogWorkItem> _reservedStagedWorkByManifestPath = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ManifestMonitorState> _manifestMonitorsByPath = new(StringComparer.Ordinal);
     private readonly Dictionary<string, StageTimingAverage> _stageTimingAverages = new(StringComparer.OrdinalIgnoreCase);
+    private List<StagedBacklogWorkItem> _stagedBacklogWorkItems = [];
+    private bool _stagedBacklogWorkLoaded;
+    private bool _stagedBacklogWorkUnavailable;
     private ActiveQueueItemState? _currentItemState;
     private ProcessingQueueStatusSnapshot _statusSnapshot;
     private string? _preemptedManifestPath;
@@ -54,7 +69,12 @@ internal sealed class ProcessingQueueService
         Func<WorkerLaunch>? workerLaunchResolver = null,
         IWorkerProcessFactory? workerProcessFactory = null,
         Func<bool>? isRecordingProvider = null,
-        ProcessingTempCleanupService? tempCleanupService = null)
+        ProcessingTempCleanupService? tempCleanupService = null,
+        Func<bool>? isSpeakerLabelingAvailableProvider = null,
+        Func<DateTimeOffset>? localNowProvider = null,
+        ResourceCapacityMonitor? resourceCapacityMonitor = null,
+        GpuCapacityMonitor? gpuCapacityMonitor = null,
+        Func<bool>? isGpuDiarizationReadyProvider = null)
     {
         _config = config;
         _manifestStore = manifestStore;
@@ -63,11 +83,22 @@ internal sealed class ProcessingQueueService
         _workerLaunchResolver = workerLaunchResolver ?? WorkerLocator.Resolve;
         _workerProcessFactory = workerProcessFactory ?? new SystemWorkerProcessFactory();
         _isRecordingProvider = isRecordingProvider ?? (() => false);
+        _isSpeakerLabelingAvailableProvider = isSpeakerLabelingAvailableProvider ?? (() =>
+            new DiarizationAssetCatalogService().InspectInstalledAssets(_config.Current.DiarizationAssetPath).IsReady);
+        _localNowProvider = localNowProvider ?? (() => DateTimeOffset.Now);
         _tempCleanupService = tempCleanupService ?? new ProcessingTempCleanupService(
             AppDataPaths.GetAppRoot(),
             Path.Combine(Path.GetTempPath(), "MeetingRecorderDiarization"),
             Path.Combine(Path.GetTempPath(), "MeetingRecorderTranscription"),
             logger);
+        var configDirectory = Path.GetDirectoryName(_config.ConfigPath)
+            ?? throw new InvalidOperationException("Configuration path must include a parent directory.");
+        _stagedBacklogWorkStore = new StagedBacklogWorkStore(Path.Combine(configDirectory, "staged-backlog.json"));
+        _resourceCapacityMonitor = resourceCapacityMonitor ?? new ResourceCapacityMonitor(
+            _isRecordingProvider,
+            HasEligibleStagedBacklogForCapacity);
+        _gpuCapacityMonitor = gpuCapacityMonitor ?? new GpuCapacityMonitor(HasEligibleStagedBacklogForCapacity);
+        _isGpuDiarizationReadyProvider = isGpuDiarizationReadyProvider ?? InspectDirectMlDiarizationReadiness;
         _statusSnapshot = new ProcessingQueueStatusSnapshot(
             ProcessingQueueRunState.Idle,
             ProcessingQueuePauseReason.None,
@@ -101,6 +132,7 @@ internal sealed class ProcessingQueueService
         IReadOnlySet<string>? cleanupManifestPaths = null,
         CancellationToken cancellationToken = default)
     {
+        await EnsureStagedBacklogWorkLoadedAsync(cancellationToken);
         await NormalizeRushProcessingRequestAsync(cancellationToken);
         await _tempCleanupService.RunStartupCleanupAsync(cancellationToken);
         var publishedWorkCleanupResult = await PublishedSessionWorkCleanupService.PrunePublishedSessionsAsync(
@@ -138,7 +170,20 @@ internal sealed class ProcessingQueueService
             _logger.Log($"Archived {archivedSupersededImportedCount} superseded imported-source reprocessing session(s) because published transcript artifacts already exist.");
         }
 
-        var pending = (await _manifestStore.FindPendingManifestPathsAsync(_config.Current.WorkDir, cancellationToken)).ToList();
+        var recoveredImportJobCount = await new ExternalAudioImportJobRecoveryService(_manifestStore)
+            .RecoverMissingCompanionJobsAsync(_config.Current.WorkDir, DateTimeOffset.UtcNow, cancellationToken);
+        if (recoveredImportJobCount > 0)
+        {
+            _logger.Log($"Recovered {recoveredImportJobCount} imported-audio job record(s) from existing staged work.");
+        }
+
+        var importReconciliation = await new ExternalAudioImportStartupReconciliationService(_manifestStore)
+            .ReconcileAsync(
+                _config.Current.WorkDir,
+                _config.Current.AudioOutputDir,
+                _config.Current.TranscriptOutputDir,
+                cancellationToken);
+        var pending = importReconciliation.PendingManifestPaths.ToList();
         if (!_config.Current.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.QueuedRecordings))
         {
             _logger.Log("Left existing queued recordings pending because queued-recording background work is disabled.");
@@ -184,7 +229,7 @@ internal sealed class ProcessingQueueService
     {
         lock (_processSyncRoot)
         {
-            return _statusSnapshot;
+            return UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow) ?? _statusSnapshot;
         }
     }
 
@@ -206,7 +251,7 @@ internal sealed class ProcessingQueueService
             return;
         }
 
-        var queueEntry = await LoadQueueEntryAsync(manifestPath, priority, cancellationToken);
+        var queueEntry = await LoadBackgroundQueueEntryAsync(manifestPath, priority, cancellationToken);
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
         var shouldSignal = false;
         lock (_processSyncRoot)
@@ -231,9 +276,24 @@ internal sealed class ProcessingQueueService
         cancellationToken.ThrowIfCancellationRequested();
 
         var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
-        if (!IsRushEligible(manifest))
+        if (!CanRetainRushRequest(manifest))
         {
             throw new InvalidOperationException("Only queued or in-progress meetings can be marked for ASAP processing.");
+        }
+
+        // ASAP is a one-meeting lifecycle priority. It wins over a prior
+        // transcript-first backlog override only for this manifest; clearing
+        // ASAP releases that priority without changing the backlog policy.
+        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true)
+        {
+            manifest = manifest with
+            {
+                ProcessingOverrides = manifest.ProcessingOverrides with
+                {
+                    SkipSpeakerLabeling = false,
+                },
+            };
+            await _manifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
         }
 
         var queueEntry = CreateQueueEntry(manifest, manifestPath);
@@ -246,8 +306,12 @@ internal sealed class ProcessingQueueService
         lock (_processSyncRoot)
         {
             shouldSignal = UpsertQueuedEntryLocked(queueEntry, preferFront: true, markPreempted: false);
-            if (_currentWorker is { HasExited: false } currentWorker &&
-                !string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
+            if (!_isRecordingProvider() &&
+                _currentWorker is { HasExited: false } currentWorker &&
+                _currentItemState is { } currentItem &&
+                !string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal) &&
+                currentItem.Summary.TranscriptionStatus.State == StageExecutionState.Succeeded &&
+                currentItem.Summary.DiarizationStatus.State == StageExecutionState.Running)
             {
                 _preemptedManifestPath = _currentManifestPath;
                 workerToKill = currentWorker;
@@ -281,7 +345,29 @@ internal sealed class ProcessingQueueService
         }
 
         await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
-        PublishStatusSnapshot(UpdateStatusSnapshot());
+        ProcessingQueueStatusSnapshot? snapshotToPublish;
+        lock (_processSyncRoot)
+        {
+            // A reserved item is already being admitted to the current pass.
+            // Clearing ASAP must never cancel or reshuffle that work. A queued
+            // item, however, returns to ordinary fairness after its priority is
+            // released.
+            if (!_reservedManifestPaths.Contains(manifestPath))
+            {
+                var queuedIndex = _queuedManifestEntries.FindIndex(entry =>
+                    string.Equals(entry.ManifestPath, manifestPath, StringComparison.Ordinal));
+                if (queuedIndex >= 0)
+                {
+                    var queuedEntry = _queuedManifestEntries[queuedIndex];
+                    _queuedManifestEntries.RemoveAt(queuedIndex);
+                    _queuedManifestEntries.Add(queuedEntry);
+                }
+            }
+
+            snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+        }
+
+        PublishStatusSnapshot(snapshotToPublish);
     }
 
     public async Task<BacklogRushResult> RushBacklogAsync(
@@ -311,7 +397,8 @@ internal sealed class ProcessingQueueService
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
-            if (_currentWorker is { HasExited: false } currentWorker &&
+            if (!_isRecordingProvider() &&
+                _currentWorker is { HasExited: false } currentWorker &&
                 _currentItemState is { } currentItem &&
                 currentItem.Summary.TranscriptionStatus.State == StageExecutionState.Succeeded &&
                 currentItem.Summary.DiarizationStatus.State == StageExecutionState.Running)
@@ -366,6 +453,8 @@ internal sealed class ProcessingQueueService
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        _resourceCapacityMonitor.Dispose();
+        _gpuCapacityMonitor.Dispose();
         _shutdownCts.Cancel();
         _pendingManifestSignal.Release();
 
@@ -415,7 +504,7 @@ internal sealed class ProcessingQueueService
             var activeTasks = new List<Task>();
             while (!cancellationToken.IsCancellationRequested)
             {
-                while (activeTasks.Count < BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current) &&
+                while (activeTasks.Count < GetMaximumConcurrentWorkerCount() &&
                        TryDequeueNextManifestPath(out var manifestPath))
                 {
                     activeTasks.Add(ProcessManifestSafelyAsync(manifestPath, cancellationToken));
@@ -473,18 +562,66 @@ internal sealed class ProcessingQueueService
 
         manifestPath = selectedManifestPath;
         var workPriority = GetWorkPriority(manifestPath);
+        var stagedWork = GetReservedStagedWork(manifestPath);
+        if (stagedWork is not null)
+        {
+            stagedWork = await TryLeaseStagedWorkAsync(stagedWork, cancellationToken);
+            if (stagedWork is null)
+            {
+                _logger.Log($"Skipped staged queue work for '{manifestPath}' because its durable lease is no longer current.");
+                return;
+            }
+        }
+
         await ApplyDeferredSpeakerLabelingIfConfiguredAsync(manifestPath, cancellationToken);
         await TryEnrichManifestAsync(manifestPath, cancellationToken);
-        var workerResult = await RunWorkerAsync(manifestPath, AppDataPaths.GetConfigPath(), cancellationToken);
+        WorkerRecoveryConfig? gpuCapacityCpuConfig = null;
+        WorkerRunResult workerResult;
+        try
+        {
+            if (ShouldForceCpuDiarizationForGpuCapacity(manifestPath, stagedWork))
+            {
+                gpuCapacityCpuConfig = await CreateCpuOnlyDiarizationConfigAsync(manifestPath, _config.Current, cancellationToken);
+            }
+
+            workerResult = await RunWorkerAsync(
+                manifestPath,
+                gpuCapacityCpuConfig?.ConfigPath ?? AppDataPaths.GetConfigPath(),
+                cancellationToken,
+                stagedWork,
+                gpuCapacityCpuConfig?.Config);
+        }
+        finally
+        {
+            TryDeleteRecoveryConfig(gpuCapacityCpuConfig?.ConfigPath);
+        }
         if (await TryHandlePreemptedManifestAsync(manifestPath, cancellationToken))
         {
+            await CompleteStagedWorkAsync(
+                stagedWork,
+                StagedBacklogWorkState.Retryable,
+                "The worker was preempted before its staged receipt could be recorded.",
+                cancellationToken);
             return;
         }
 
         if (workerResult.ExitCode == 0)
         {
+            if (stagedWork is not null && !HasMatchingStagedWorkReceipt(workerResult.Receipt, stagedWork))
+            {
+                await CompleteStagedWorkAsync(
+                    stagedWork,
+                    StagedBacklogWorkState.Retryable,
+                    "The worker exited without a matching staged-work receipt.",
+                    cancellationToken);
+                PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: "Staged worker receipt needs retry.");
+                return;
+            }
+
+            await CompleteStagedWorkAsync(stagedWork, StagedBacklogWorkState.Succeeded, null, cancellationToken);
             await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
             PublishWorkCompletion(manifestPath, workPriority, succeeded: true, detail: null);
+            await EnqueueNextStagedPassAfterSuccessAsync(manifestPath, stagedWork, cancellationToken);
             return;
         }
 
@@ -496,6 +633,11 @@ internal sealed class ProcessingQueueService
         }
 
         LogWorkerFailure(manifestPath, workerResult);
+        await CompleteStagedWorkAsync(
+            stagedWork,
+            StagedBacklogWorkState.Retryable,
+            "The worker failed before a successful staged receipt was recorded.",
+            cancellationToken);
         await MarkManifestFailedAfterWorkerFailureAsync(manifestPath, workerResult, cancellationToken);
         await ClearRushProcessingRequestIfCompletedAsync(manifestPath, cancellationToken);
         PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: workerResult.StandardError);
@@ -527,11 +669,19 @@ internal sealed class ProcessingQueueService
         string manifestPath,
         string configPath,
         CancellationToken cancellationToken,
+        StagedBacklogWorkItem? stagedWork = null,
         AppConfig? launchConfigOverride = null)
     {
         await _tempCleanupService.RunRecurringCleanupAsync(cancellationToken);
         var launch = _workerLaunchResolver();
-        var arguments = $"{launch.ArgumentPrefix} --manifest \"{manifestPath}\" --config \"{configPath}\"";
+        var stage = stagedWork is null ? SessionProcessingStage.FullPass : ToSessionProcessingStage(stagedWork.Stage);
+        var workLease = stagedWork is null
+            ? null
+            : new SessionProcessingWorkLease(
+                stagedWork.WorkId,
+                stagedWork.InputRevision,
+                stagedWork.LeaseToken ?? throw new InvalidOperationException("Staged work must have a durable lease before launch."));
+        var arguments = BuildWorkerArguments(launch.ArgumentPrefix, manifestPath, configPath, stage, workLease);
         var startInfo = new ProcessStartInfo
         {
             FileName = launch.FileName,
@@ -551,7 +701,7 @@ internal sealed class ProcessingQueueService
         var transcriptionThreads = BackgroundProcessingPolicy.GetTranscriptionThreadCount(currentConfig, Environment.ProcessorCount);
         var diarizationThreads = BackgroundProcessingPolicy.GetDiarizationThreadCount(currentConfig, Environment.ProcessorCount);
         _logger.Log(
-            $"Launching worker for '{manifestPath}'. FileName='{startInfo.FileName}'. Arguments='{startInfo.Arguments}'. " +
+            $"Launching worker for '{manifestPath}'. FileName='{startInfo.FileName}'. Arguments='{BuildWorkerLogArguments(launch.ArgumentPrefix, manifestPath, configPath, stage, workLease)}'. " +
             $"Mode={currentConfig.BackgroundProcessingMode}. SpeakerLabelingMode={currentConfig.BackgroundSpeakerLabelingMode}. " +
             $"DiarizationAcceleration={currentConfig.DiarizationAccelerationPreference}. " +
             $"Priority={priority}. TranscriptionThreads={transcriptionThreads}. DiarizationThreads={diarizationThreads}.");
@@ -561,6 +711,7 @@ internal sealed class ProcessingQueueService
         try
         {
             TryApplyWorkerPriority(process, priority, manifestPath);
+            await MarkStagedWorkRunningAsync(stagedWork, cancellationToken);
             await MarkManifestProcessingStartedAsync(manifestPath, cancellationToken);
 
             var standardOutputTask = process.ReadStandardOutputToEndAsync(cancellationToken);
@@ -572,7 +723,8 @@ internal sealed class ProcessingQueueService
                 process.ExitCode,
                 standardOutputTask.Result,
                 standardErrorTask.Result,
-                launchSnapshot);
+                launchSnapshot,
+                TryParseStagedWorkReceipt(standardOutputTask.Result));
             if (result.ExitCode == 0)
             {
                 _logger.Log($"Worker completed for '{manifestPath}': {result.StandardOutput.Trim()}");
@@ -637,7 +789,7 @@ internal sealed class ProcessingQueueService
                 manifestPath,
                 recoveryConfig.ConfigPath,
                 cancellationToken,
-                recoveryConfig.Config);
+                launchConfigOverride: recoveryConfig.Config);
             if (retryResult.ExitCode == 0)
             {
                 _logger.Log($"Recovered '{manifestPath}' by retrying speaker labeling on CPU after the DirectML worker crash.");
@@ -703,7 +855,7 @@ internal sealed class ProcessingQueueService
                 manifestPath,
                 recoveryConfig.ConfigPath,
                 cancellationToken,
-                recoveryConfig.Config);
+                launchConfigOverride: recoveryConfig.Config);
             if (retryResult.ExitCode == 0)
             {
                 _logger.Log($"Recovered '{manifestPath}' by retrying without speaker labeling after the initial worker crash.");
@@ -868,6 +1020,11 @@ internal sealed class ProcessingQueueService
         foreach (var (manifestPath, manifest) in await LoadReadableManifestsAsync(workDir, cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsActiveRushRequestFor(manifestPath))
+            {
+                continue;
+            }
+
             if (!ShouldApplyDeferredSpeakerLabelingOverride(manifest))
             {
                 continue;
@@ -1350,6 +1507,11 @@ internal sealed class ProcessingQueueService
             return false;
         }
 
+        if (IsActiveRushRequestFor(manifestPath))
+        {
+            return false;
+        }
+
         if (!ShouldApplyDeferredSpeakerLabelingOverride(manifest))
         {
             return false;
@@ -1366,6 +1528,11 @@ internal sealed class ProcessingQueueService
     private async Task ApplyDeferredSpeakerLabelingIfConfiguredAsync(string manifestPath, CancellationToken cancellationToken)
     {
         if (!BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(_config.Current))
+        {
+            return;
+        }
+
+        if (IsActiveRushRequestFor(manifestPath))
         {
             return;
         }
@@ -1676,7 +1843,7 @@ internal sealed class ProcessingQueueService
         try
         {
             var manifest = await _manifestStore.LoadAsync(rushRequest.ManifestPath, cancellationToken);
-            if (!IsRushEligible(manifest))
+            if (!CanRetainRushRequest(manifest))
             {
                 await _config.SaveAsync(_config.Current with { RushProcessingRequest = null }, cancellationToken);
             }
@@ -1709,7 +1876,7 @@ internal sealed class ProcessingQueueService
 
         var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
         _preemptedManifestPath = null;
-        if (!IsRushEligible(manifest))
+        if (!CanRetainRushRequest(manifest))
         {
             return false;
         }
@@ -1800,6 +1967,44 @@ internal sealed class ProcessingQueueService
         return manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing;
     }
 
+    private bool CanRetainRushRequest(MeetingSessionManifest manifest)
+    {
+        if (IsRushEligible(manifest))
+        {
+            return true;
+        }
+
+        return _asapLifecycleResolver.Resolve(
+            manifest,
+            IsSpeakerLabelingAvailableForAsap(),
+            IsRecoverableAsapFailure(manifest)).RetainRequest;
+    }
+
+    private bool IsActiveRushRequestFor(string manifestPath) =>
+        _config.Current.RushProcessingRequest is { } request &&
+        string.Equals(request.ManifestPath, manifestPath, StringComparison.Ordinal);
+
+    private bool IsSpeakerLabelingAvailableForAsap()
+    {
+        try
+        {
+            return _isSpeakerLabelingAvailableProvider();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsRecoverableAsapFailure(MeetingSessionManifest manifest) =>
+        manifest.State == SessionState.Failed &&
+        manifest.TranscriptionStatus.State == StageExecutionState.Failed &&
+        (!string.IsNullOrWhiteSpace(manifest.MergedAudioPath) ||
+         manifest.RawChunkPaths.Count > 0 ||
+         manifest.LoopbackCaptureSegments.Any(segment => segment.ChunkPaths.Count > 0) ||
+         manifest.MicrophoneCaptureSegments.Any(segment => segment.ChunkPaths.Count > 0) ||
+         !string.IsNullOrWhiteSpace(manifest.ImportedSourceAudio?.OriginalPath));
+
     private string GetMaintenanceArchiveRoot()
     {
         var configDirectory = Path.GetDirectoryName(_config.ConfigPath)
@@ -1834,6 +2039,410 @@ internal sealed class ProcessingQueueService
                 Priority: priority);
         }
     }
+
+    private async Task<QueuedManifestStatusEntry> LoadBackgroundQueueEntryAsync(
+        string manifestPath,
+        ProcessingWorkPriority priority,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+            var stagedWork = await GetOrCreateBackgroundStagedWorkAsync(manifest, manifestPath, cancellationToken);
+            return CreateQueueEntry(manifest, manifestPath, priority) with { StagedWork = stagedWork };
+        }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidOperationException)
+        {
+            // The legacy full-pass queue remains the safe recovery route when a
+            // manifest cannot be read or the staged ledger is preserved for
+            // repair. Never reinterpret unreadable user work as an empty queue.
+            return await LoadQueueEntryAsync(manifestPath, priority, cancellationToken);
+        }
+    }
+
+    private async Task<bool> EnsureStagedBacklogWorkLoadedAsync(CancellationToken cancellationToken)
+    {
+        if (_stagedBacklogWorkLoaded)
+        {
+            return !_stagedBacklogWorkUnavailable;
+        }
+
+        await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_stagedBacklogWorkLoaded)
+            {
+                return !_stagedBacklogWorkUnavailable;
+            }
+
+            try
+            {
+                _stagedBacklogWorkItems = (await _stagedBacklogWorkStore.LoadAsync(cancellationToken)).ToList();
+                var recovered = StagedBacklogWorkLeaseCoordinator.RecoverInterruptedLeases(
+                    _stagedBacklogWorkItems,
+                    DateTimeOffset.UtcNow);
+                if (!recovered.SequenceEqual(_stagedBacklogWorkItems))
+                {
+                    _stagedBacklogWorkItems = recovered.ToList();
+                    await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
+                    _logger.Log("Recovered interrupted staged backlog lease(s) as retryable local work.");
+                }
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException)
+            {
+                // The untouched store is the recovery source of truth. Fall
+                // back to the existing full-pass queue instead of overwriting
+                // it, silently dropping records, or fabricating staged state.
+                _stagedBacklogWorkUnavailable = true;
+                _logger.Log($"Staged backlog ledger is unavailable and was left unchanged for repair: {exception.Message}");
+            }
+            finally
+            {
+                _stagedBacklogWorkLoaded = true;
+            }
+
+            return !_stagedBacklogWorkUnavailable;
+        }
+        finally
+        {
+            _stagedBacklogWorkGate.Release();
+        }
+    }
+
+    private async Task<StagedBacklogWorkItem?> GetOrCreateBackgroundStagedWorkAsync(
+        MeetingSessionManifest manifest,
+        string manifestPath,
+        CancellationToken cancellationToken)
+    {
+        if (!await EnsureStagedBacklogWorkLoadedAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var stage = ResolveNextBackgroundStage(manifest);
+        if (stage is null)
+        {
+            return null;
+        }
+
+        var stagedStage = ToStagedBacklogWorkStage(stage.Value);
+        var inputRevision = BuildStagedWorkInputRevision(manifest, stagedStage);
+        await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = _stagedBacklogWorkItems.FirstOrDefault(work =>
+                string.Equals(work.SessionId, manifest.SessionId, StringComparison.Ordinal) &&
+                work.Stage == stagedStage &&
+                string.Equals(work.InputRevision, inputRevision, StringComparison.Ordinal) &&
+                work.State is StagedBacklogWorkState.Pending or StagedBacklogWorkState.Retryable or StagedBacklogWorkState.Leased or StagedBacklogWorkState.Running);
+            if (existing is not null)
+            {
+                return existing;
+            }
+
+            var work = new StagedBacklogWorkItem(
+                StagedBacklogWorkItem.CurrentSchemaVersion,
+                Guid.NewGuid(),
+                manifest.SessionId,
+                BuildManifestToken(manifestPath),
+                inputRevision,
+                OutputRevision: string.Empty,
+                stagedStage,
+                StagedBacklogWorkIntent.Background,
+                StagedBacklogWorkState.Pending,
+                Attempt: 0,
+                LeaseToken: null,
+                CreatedAtUtc: DateTimeOffset.UtcNow,
+                RetryAfterUtc: null,
+                Reason: null);
+            _stagedBacklogWorkItems.Add(work);
+            try
+            {
+                await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
+                return work;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _stagedBacklogWorkItems.Remove(work);
+                _stagedBacklogWorkUnavailable = true;
+                _logger.Log($"Staged backlog ledger could not be updated and was left unchanged for repair: {exception.Message}");
+                return null;
+            }
+        }
+        finally
+        {
+            _stagedBacklogWorkGate.Release();
+        }
+    }
+
+    private SessionProcessingStage? ResolveNextBackgroundStage(MeetingSessionManifest manifest)
+    {
+        if (manifest.TranscriptionStatus.State != StageExecutionState.Succeeded ||
+            manifest.PublishStatus.State != StageExecutionState.Succeeded)
+        {
+            return SessionProcessingStage.Transcript;
+        }
+
+        if (!BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(_config.Current) &&
+            manifest.DiarizationStatus.State is StageExecutionState.NotStarted or StageExecutionState.Queued or StageExecutionState.Failed &&
+            _isSpeakerLabelingAvailableProvider())
+        {
+            return SessionProcessingStage.Diarization;
+        }
+
+        if (_config.Current.SummaryGenerationMode == MeetingSummaryGenerationMode.Enabled &&
+            manifest.SummarizationStatus.State is StageExecutionState.NotStarted or StageExecutionState.Queued or StageExecutionState.Failed)
+        {
+            return SessionProcessingStage.Summary;
+        }
+
+        return null;
+    }
+
+    private static StagedBacklogWorkStage ToStagedBacklogWorkStage(SessionProcessingStage stage) => stage switch
+    {
+        SessionProcessingStage.Transcript => StagedBacklogWorkStage.Transcript,
+        SessionProcessingStage.Diarization => StagedBacklogWorkStage.Diarization,
+        SessionProcessingStage.Summary => StagedBacklogWorkStage.Summary,
+        _ => StagedBacklogWorkStage.FullPass,
+    };
+
+    private static SessionProcessingStage ToSessionProcessingStage(StagedBacklogWorkStage stage) => stage switch
+    {
+        StagedBacklogWorkStage.Transcript => SessionProcessingStage.Transcript,
+        StagedBacklogWorkStage.Diarization => SessionProcessingStage.Diarization,
+        StagedBacklogWorkStage.Summary => SessionProcessingStage.Summary,
+        _ => SessionProcessingStage.FullPass,
+    };
+
+    private static string BuildStagedWorkInputRevision(
+        MeetingSessionManifest manifest,
+        StagedBacklogWorkStage stage) =>
+        string.Join(
+            ":",
+            manifest.SessionId,
+            stage.ToString(),
+            manifest.TranscriptionStatus.UpdatedAtUtc.UtcTicks,
+            manifest.DiarizationStatus.UpdatedAtUtc.UtcTicks,
+            manifest.SummarizationStatus.UpdatedAtUtc.UtcTicks,
+            manifest.PublishStatus.UpdatedAtUtc.UtcTicks);
+
+    private static string BuildManifestToken(string manifestPath) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(manifestPath))));
+
+    private StagedBacklogWorkItem? GetReservedStagedWork(string manifestPath)
+    {
+        lock (_processSyncRoot)
+        {
+            return _reservedStagedWorkByManifestPath.TryGetValue(manifestPath, out var stagedWork)
+                ? stagedWork
+                : null;
+        }
+    }
+
+    private async Task<StagedBacklogWorkItem?> TryLeaseStagedWorkAsync(
+        StagedBacklogWorkItem stagedWork,
+        CancellationToken cancellationToken)
+    {
+        if (!await EnsureStagedBacklogWorkLoadedAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            var transition = StagedBacklogWorkLeaseCoordinator.TryLease(
+                _stagedBacklogWorkItems,
+                stagedWork.WorkId,
+                Guid.NewGuid().ToString("N"),
+                DateTimeOffset.UtcNow);
+            if (!transition.Applied || transition.Work is null)
+            {
+                _logger.Log($"Staged queue lease rejected for work '{stagedWork.WorkId:D}': {transition.RejectionReason}");
+                return null;
+            }
+
+            _stagedBacklogWorkItems = transition.WorkItems.ToList();
+            await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
+            return transition.Work;
+        }
+        finally
+        {
+            _stagedBacklogWorkGate.Release();
+        }
+    }
+
+    private async Task MarkStagedWorkRunningAsync(
+        StagedBacklogWorkItem? stagedWork,
+        CancellationToken cancellationToken)
+    {
+        if (stagedWork is null)
+        {
+            return;
+        }
+
+        await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            var transition = StagedBacklogWorkLeaseCoordinator.TryMarkRunning(
+                _stagedBacklogWorkItems,
+                stagedWork.WorkId,
+                stagedWork.LeaseToken ?? string.Empty);
+            if (!transition.Applied)
+            {
+                throw new InvalidOperationException($"Staged queue work '{stagedWork.WorkId:D}' lost its lease before the worker started.");
+            }
+
+            _stagedBacklogWorkItems = transition.WorkItems.ToList();
+            await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
+        }
+        finally
+        {
+            _stagedBacklogWorkGate.Release();
+        }
+    }
+
+    private async Task CompleteStagedWorkAsync(
+        StagedBacklogWorkItem? stagedWork,
+        StagedBacklogWorkState outcome,
+        string? reason,
+        CancellationToken cancellationToken)
+    {
+        if (stagedWork is null)
+        {
+            return;
+        }
+
+        await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
+        try
+        {
+            var transition = StagedBacklogWorkLeaseCoordinator.TryComplete(
+                _stagedBacklogWorkItems,
+                stagedWork.WorkId,
+                stagedWork.LeaseToken ?? string.Empty,
+                outcome,
+                outcome == StagedBacklogWorkState.Succeeded
+                    ? $"receipt-{DateTimeOffset.UtcNow.UtcTicks}"
+                    : string.Empty,
+                reason,
+                retryAfterUtc: outcome == StagedBacklogWorkState.Retryable
+                    ? DateTimeOffset.UtcNow
+                    : null);
+            if (!transition.Applied)
+            {
+                _logger.Log($"Ignored stale staged completion for work '{stagedWork.WorkId:D}': {transition.RejectionReason}");
+                return;
+            }
+
+            _stagedBacklogWorkItems = transition.WorkItems.ToList();
+            await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
+        }
+        finally
+        {
+            _stagedBacklogWorkGate.Release();
+        }
+    }
+
+    private async Task EnqueueNextStagedPassAfterSuccessAsync(
+        string manifestPath,
+        StagedBacklogWorkItem? completedWork,
+        CancellationToken cancellationToken)
+    {
+        if (completedWork is null)
+        {
+            return;
+        }
+
+        var queueEntry = await LoadBackgroundQueueEntryAsync(
+            manifestPath,
+            GetWorkPriority(manifestPath),
+            cancellationToken);
+        if (queueEntry.StagedWork is null || queueEntry.StagedWork.Stage == completedWork.Stage)
+        {
+            return;
+        }
+
+        ProcessingQueueStatusSnapshot? snapshotToPublish;
+        lock (_processSyncRoot)
+        {
+            var shouldSignal = UpsertQueuedEntryLocked(queueEntry, preferFront: false, markPreempted: false);
+            snapshotToPublish = UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow);
+            if (shouldSignal)
+            {
+                _pendingManifestSignal.Release();
+            }
+        }
+
+        PublishStatusSnapshot(snapshotToPublish);
+    }
+
+    private static bool HasMatchingStagedWorkReceipt(
+        SessionProcessingWorkReceipt? receipt,
+        StagedBacklogWorkItem stagedWork) =>
+        receipt is not null &&
+        receipt.SchemaVersion == SessionProcessingWorkReceipt.CurrentSchemaVersion &&
+        receipt.WorkId == stagedWork.WorkId &&
+        string.Equals(receipt.WorkRevision, stagedWork.InputRevision, StringComparison.Ordinal) &&
+        string.Equals(receipt.LeaseToken, stagedWork.LeaseToken, StringComparison.Ordinal) &&
+        receipt.Stage == ToSessionProcessingStage(stagedWork.Stage);
+
+    private static SessionProcessingWorkReceipt? TryParseStagedWorkReceipt(string standardOutput)
+    {
+        foreach (var line in standardOutput.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries).Reverse())
+        {
+            try
+            {
+                var receipt = JsonSerializer.Deserialize<SessionProcessingWorkReceipt>(line);
+                if (receipt is not null)
+                {
+                    return receipt;
+                }
+            }
+            catch (JsonException)
+            {
+                // Legacy workers print a ready-marker path instead of a JSON
+                // receipt. That output is never accepted for staged work.
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildWorkerArguments(
+        string argumentPrefix,
+        string manifestPath,
+        string configPath,
+        SessionProcessingStage stage,
+        SessionProcessingWorkLease? workLease)
+    {
+        var arguments = $"{argumentPrefix} --manifest {QuoteWorkerArgument(manifestPath)} --config {QuoteWorkerArgument(configPath)}";
+        if (workLease is null)
+        {
+            return arguments;
+        }
+
+        return arguments +
+            $" --stage {stage.ToString().ToLowerInvariant()}" +
+            $" --work-id {workLease.WorkId:D}" +
+            $" --work-revision {QuoteWorkerArgument(workLease.WorkRevision)}" +
+            $" --lease-token {QuoteWorkerArgument(workLease.LeaseToken)}";
+    }
+
+    private static string BuildWorkerLogArguments(
+        string argumentPrefix,
+        string manifestPath,
+        string configPath,
+        SessionProcessingStage stage,
+        SessionProcessingWorkLease? workLease) =>
+        workLease is null
+            ? BuildWorkerArguments(argumentPrefix, manifestPath, configPath, stage, null)
+            : $"{argumentPrefix} --manifest {QuoteWorkerArgument(manifestPath)} --config {QuoteWorkerArgument(configPath)} " +
+              $"--stage {stage.ToString().ToLowerInvariant()} --work-id {workLease.WorkId:D} " +
+              "--work-revision [redacted] --lease-token [redacted]";
+
+    private static string QuoteWorkerArgument(string value) =>
+        $"\"{value.Replace("\"", "\\\"")}\"";
 
     private static QueuedManifestStatusEntry CreateQueueEntry(
         MeetingSessionManifest manifest,
@@ -1885,6 +2494,11 @@ internal sealed class ProcessingQueueService
         lock (_processSyncRoot)
         {
             RemoveQueuedEntryLocked(manifestPath);
+            if (_reservedStagedWorkByManifestPath.TryGetValue(manifestPath, out var stagedWork))
+            {
+                _activeStagedWorkByManifestPath[manifestPath] = stagedWork;
+            }
+
             var activeItem = new ActiveQueueItemState(queueEntry, DateTimeOffset.UtcNow);
             _activeItemStatesByManifestPath[manifestPath] = activeItem;
             if (_currentItemState is null || string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
@@ -1979,7 +2593,155 @@ internal sealed class ProcessingQueueService
         {
             WasPreempted = _queuedManifestEntries[existingIndex].WasPreempted,
             Priority = _queuedManifestEntries[existingIndex].Priority,
+            StagedWork = _queuedManifestEntries[existingIndex].StagedWork,
         };
+    }
+
+    private int GetMaximumConcurrentWorkerCount()
+    {
+        lock (_processSyncRoot)
+        {
+            var stage = GetActiveStagedBarrierStageLocked();
+            var overnightDecision = OvernightAccelerationPolicyResolver.Resolve(_config.Current, _localNowProvider());
+            if (stage is null)
+            {
+                return BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current);
+            }
+
+            if (overnightDecision.IsWindowActive)
+            {
+                return overnightDecision.IsAccelerating
+                    ? overnightDecision.GetMaximumWorkerCount(stage)
+                    : BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current);
+            }
+
+            if (BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(_config.Current))
+            {
+                return BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current);
+            }
+
+            if (!BacklogAccelerationProfileResolver.IsIdleCapacityEnabled(_config.Current))
+            {
+                return BackgroundProcessingPolicy.GetMaxWorkerCount(_config.Current);
+            }
+
+            var cpuCapacitySnapshot = _resourceCapacityMonitor.Snapshot;
+            var cpuCapacityCap = IdleCpuCapacityPolicy.GetNextLaunchCap(cpuCapacitySnapshot, stage);
+            if (stage == StagedBacklogWorkStage.Diarization &&
+                cpuCapacitySnapshot.IsAvailable &&
+                GpuCapacityPolicy.CanLaunchOneGpuWorker(
+                    _gpuCapacityMonitor.Snapshot,
+                    isGpuCapableProvider: true,
+                    isProviderReady: IsGpuDiarizationReady()))
+            {
+                // The second worker is forced to CPU below. This preserves one GPU job
+                // even when both queued workers share the Auto DirectML preference.
+                return Math.Max(cpuCapacityCap, 2);
+            }
+
+            return cpuCapacityCap;
+        }
+    }
+
+    private bool ShouldForceCpuDiarizationForGpuCapacity(string manifestPath, StagedBacklogWorkItem? stagedWork)
+    {
+        if (stagedWork?.Stage != StagedBacklogWorkStage.Diarization ||
+            !_resourceCapacityMonitor.Snapshot.IsAvailable ||
+            !GpuCapacityPolicy.CanLaunchOneGpuWorker(
+                _gpuCapacityMonitor.Snapshot,
+                isGpuCapableProvider: true,
+                isProviderReady: IsGpuDiarizationReady()))
+        {
+            return false;
+        }
+
+        lock (_processSyncRoot)
+        {
+            if (_gpuDiarizationManifestPaths.Count == 0)
+            {
+                _gpuDiarizationManifestPaths.Add(manifestPath);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private bool IsGpuDiarizationReady()
+    {
+        try
+        {
+            return _isGpuDiarizationReadyProvider();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool InspectDirectMlDiarizationReadiness()
+    {
+        try
+        {
+            var config = _config.Current;
+            if (config.DiarizationProviderPreference != DiarizationProviderPreference.LocalSherpa ||
+                config.DiarizationAccelerationPreference != InferenceAccelerationPreference.Auto)
+            {
+                return false;
+            }
+
+            var status = new DiarizationAssetCatalogService().InspectInstalledAssets(config.DiarizationAssetPath);
+            return status.IsReady && status.LastDirectMlProbeSucceeded == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool HasEligibleStagedBacklogForCapacity()
+    {
+        lock (_processSyncRoot)
+        {
+            if (!BacklogAccelerationProfileResolver.IsIdleCapacityEnabled(_config.Current))
+            {
+                return false;
+            }
+
+            if (GetActiveStagedBarrierStageLocked() is null)
+            {
+                return false;
+            }
+
+            var overnightDecision = OvernightAccelerationPolicyResolver.Resolve(_config.Current, _localNowProvider());
+            return !overnightDecision.IsWindowActive &&
+                   !BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(_config.Current);
+        }
+    }
+
+    private bool IsOvernightAccelerationActiveForQueuedStage()
+    {
+        lock (_processSyncRoot)
+        {
+            return GetActiveStagedBarrierStageLocked() is not null &&
+                   OvernightAccelerationPolicyResolver.Resolve(_config.Current, _localNowProvider()).IsAccelerating;
+        }
+    }
+
+    private string BuildBackgroundPauseLogMessage() =>
+        IsOvernightAccelerationActiveForQueuedStage()
+            ? "Pausing new overnight-accelerated work because a live recording is active."
+            : "Pausing new background processing because a live recording is active in responsive mode.";
+
+    private StagedBacklogWorkStage? GetActiveStagedBarrierStageLocked()
+    {
+        var stage = _queuedManifestEntries
+            .Select(entry => entry.StagedWork?.Stage)
+            .Concat(_activeStagedWorkByManifestPath.Values.Select(work => (StagedBacklogWorkStage?)work.Stage))
+            .Where(candidate => candidate is not null)
+            .OrderBy(candidate => GetStagedBarrierOrder(candidate!.Value))
+            .FirstOrDefault();
+        return stage;
     }
 
     private bool TryDequeueNextManifestPath(out string manifestPath)
@@ -2028,16 +2790,35 @@ internal sealed class ProcessingQueueService
 
             manifestPath = selected.ManifestPath;
             _reservedManifestPaths.Add(manifestPath);
+            if (selected.StagedWork is { } stagedWork)
+            {
+                _reservedStagedWorkByManifestPath[manifestPath] = stagedWork;
+            }
+            else
+            {
+                _reservedStagedWorkByManifestPath.Remove(manifestPath);
+            }
             return true;
         }
     }
 
     private int SelectFairQueueIndexLocked()
     {
+        var activeBarrierOrder = _queuedManifestEntries
+            .Where(entry => !_reservedManifestPaths.Contains(entry.ManifestPath) && entry.StagedWork is not null)
+            .Select(entry => GetStagedBarrierOrder(entry.StagedWork!.Stage))
+            .Concat(_activeStagedWorkByManifestPath.Values.Select(work => GetStagedBarrierOrder(work.Stage)))
+            .DefaultIfEmpty(int.MaxValue)
+            .Min();
+        var restrictToBarrier = activeBarrierOrder != int.MaxValue;
         var normalIndex = _queuedManifestEntries.FindIndex(entry =>
-            entry.Priority == ProcessingWorkPriority.Normal && !_reservedManifestPaths.Contains(entry.ManifestPath));
+            entry.Priority == ProcessingWorkPriority.Normal &&
+            !_reservedManifestPaths.Contains(entry.ManifestPath) &&
+            IsAtActiveStagedBarrier(entry, activeBarrierOrder, restrictToBarrier));
         var cleanupIndex = _queuedManifestEntries.FindIndex(entry =>
-            entry.Priority == ProcessingWorkPriority.Cleanup && !_reservedManifestPaths.Contains(entry.ManifestPath));
+            entry.Priority == ProcessingWorkPriority.Cleanup &&
+            !_reservedManifestPaths.Contains(entry.ManifestPath) &&
+            IsAtActiveStagedBarrier(entry, activeBarrierOrder, restrictToBarrier));
 
         if (cleanupIndex < 0)
         {
@@ -2049,7 +2830,7 @@ internal sealed class ProcessingQueueService
             return cleanupIndex;
         }
 
-        return BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_config.Current)
+        return OvernightAccelerationPolicyResolver.Resolve(_config.Current, _localNowProvider()).IsWindowActive
             ? _overnightCleanupBurstCount < MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
                 ? cleanupIndex
                 : normalIndex
@@ -2057,6 +2838,21 @@ internal sealed class ProcessingQueueService
                 ? cleanupIndex
                 : normalIndex;
     }
+
+    private static bool IsAtActiveStagedBarrier(
+        QueuedManifestStatusEntry entry,
+        int activeBarrierOrder,
+        bool restrictToBarrier) =>
+        !restrictToBarrier ||
+        entry.StagedWork is { } stagedWork && GetStagedBarrierOrder(stagedWork.Stage) == activeBarrierOrder;
+
+    private static int GetStagedBarrierOrder(StagedBacklogWorkStage stage) => stage switch
+    {
+        StagedBacklogWorkStage.Transcript => 0,
+        StagedBacklogWorkStage.Diarization => 1,
+        StagedBacklogWorkStage.Summary => 2,
+        _ => 3,
+    };
 
     private ProcessingWorkPriority GetWorkPriority(string manifestPath)
     {
@@ -2241,6 +3037,8 @@ internal sealed class ProcessingQueueService
         var displayItem = _currentItemState ?? activeItems.FirstOrDefault();
         var totalRemainingCount = queuedCount + activeItems.Length;
         var rushRequest = BuildRushedProcessingStateLocked();
+        var stagedBarrier = GetActiveStagedBarrierStageLocked();
+        var overnightDecision = OvernightAccelerationPolicyResolver.Resolve(_config.Current, _localNowProvider());
         var runState = activeItems.Length > 0
             ? ProcessingQueueRunState.Processing
             : _isBackgroundWorkPausedForRecording && queuedCount > 0
@@ -2249,7 +3047,9 @@ internal sealed class ProcessingQueueService
                     ? ProcessingQueueRunState.Queued
                     : ProcessingQueueRunState.Idle;
         var pauseReason = runState == ProcessingQueueRunState.Paused
-            ? ProcessingQueuePauseReason.LiveRecordingResponsiveMode
+            ? stagedBarrier is not null && overnightDecision.IsAccelerating
+                ? ProcessingQueuePauseReason.LiveRecordingOvernightAcceleration
+                : ProcessingQueuePauseReason.LiveRecordingResponsiveMode
             : ProcessingQueuePauseReason.None;
         var currentItemEstimatedRemaining = displayItem is null
             ? null
@@ -2283,7 +3083,27 @@ internal sealed class ProcessingQueueService
             rushRequest,
             IsRushPauseBypassActiveLocked(rushRequest),
             _queuedManifestEntries.Any(entry => entry.WasPreempted),
-            currentStageStatus?.Message);
+            currentStageStatus?.Message,
+            stagedBarrier is null
+                ? null
+                : BuildBackgroundPolicyStatusText(stagedBarrier.Value, overnightDecision, activeItems.Length));
+    }
+
+    private string BuildBackgroundPolicyStatusText(
+        StagedBacklogWorkStage stage,
+        OvernightAccelerationDecision overnightDecision,
+        int activeWorkerCount)
+    {
+        var profile = BacklogAccelerationProfileResolver.GetStatusText(_config.Current);
+        var workerCap = GetMaximumConcurrentWorkerCount();
+        var detail = overnightDecision.IsWindowActive
+            ? overnightDecision.GetStatusText(stage)
+            : BackgroundProcessingPolicy.IsTranscriptOnlyDrainActive(_config.Current)
+                ? "Transcript-only emergency mode is active."
+                : BacklogAccelerationProfileResolver.IsIdleCapacityEnabled(_config.Current)
+                    ? _resourceCapacityMonitor.Snapshot.Reason
+                    : "Idle-capacity acceleration is off for this profile.";
+        return $"{profile}: {detail} Current cap {workerCap}; {activeWorkerCount} running.";
     }
 
     private TimeSpan? EstimateActiveRemainingLocked(IReadOnlyList<ActiveQueueItemState> activeItems, DateTimeOffset nowUtc)
@@ -2472,7 +3292,7 @@ internal sealed class ProcessingQueueService
             if (!_isBackgroundWorkPausedForRecording)
             {
                 _isBackgroundWorkPausedForRecording = true;
-                _logger.Log("Pausing new background processing because a live recording is active in responsive mode.");
+                _logger.Log(BuildBackgroundPauseLogMessage());
                 PublishStatusSnapshot(UpdateStatusSnapshot());
             }
 
@@ -2491,6 +3311,11 @@ internal sealed class ProcessingQueueService
 
     private bool ShouldPauseBackgroundProcessing(string manifestPath)
     {
+        if (_isRecordingProvider() && IsOvernightAccelerationActiveForQueuedStage())
+        {
+            return true;
+        }
+
         var shouldPause = BackgroundProcessingPolicy.ShouldPauseNewBackgroundWork(_config.Current, _isRecordingProvider());
         if (!shouldPause)
         {
@@ -2511,21 +3336,40 @@ internal sealed class ProcessingQueueService
             return null;
         }
 
-        var title = _currentItemState is not null &&
-                    string.Equals(_currentItemState.Summary.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal)
-            ? _currentItemState.Summary.Title
-            : _queuedManifestEntries.FirstOrDefault(entry =>
-                    string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal))?.Title;
+        var activeEntry = _currentItemState is not null &&
+                          string.Equals(_currentItemState.Summary.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal)
+            ? _currentItemState.Summary
+            : null;
+        var queuedEntry = activeEntry is null
+            ? _queuedManifestEntries.FirstOrDefault(entry =>
+                string.Equals(entry.ManifestPath, rushRequest.ManifestPath, StringComparison.Ordinal))
+            : null;
+        var entry = activeEntry ?? queuedEntry;
+        var title = entry?.Title;
         if (string.IsNullOrWhiteSpace(title))
         {
             title = Path.GetFileNameWithoutExtension(Path.GetDirectoryName(rushRequest.ManifestPath) ?? rushRequest.ManifestPath);
         }
 
+        var lifecycle = entry is null
+            ? "ASAP: status needs refresh"
+            : _asapLifecycleResolver.Resolve(new AsapLifecycleInput(
+                activeEntry is null ? SessionState.Queued : SessionState.Processing,
+                entry.TranscriptionStatus.State,
+                entry.DiarizationStatus.State,
+                entry.PublishStatus.State,
+                SkipSpeakerLabeling: !entry.ExpectsSpeakerLabeling,
+                ForceSpeakerLabeling: false,
+                HasRecoverableSource: true,
+                IsSpeakerLabelingAvailable: entry.ExpectsSpeakerLabeling && IsSpeakerLabelingAvailableForAsap(),
+                IsFailureRecoverable: false)).StatusText;
+
         return new RushedProcessingQueueState(
             rushRequest.ManifestPath,
             title ?? "Queued meeting",
             rushRequest.Behavior,
-            rushRequest.RequestedAtUtc);
+            rushRequest.RequestedAtUtc,
+            lifecycle);
     }
 
     private bool IsRushPauseBypassActiveLocked(RushedProcessingQueueState? rushRequest)
@@ -2660,6 +3504,9 @@ internal sealed class ProcessingQueueService
             {
                 _activeWorkersByManifestPath.Remove(manifestPath);
                 _activeItemStatesByManifestPath.Remove(manifestPath);
+                _reservedStagedWorkByManifestPath.Remove(manifestPath);
+                _activeStagedWorkByManifestPath.Remove(manifestPath);
+                _gpuDiarizationManifestPaths.Remove(manifestPath);
             }
 
             if (ReferenceEquals(_currentWorker, process) || string.Equals(_currentManifestPath, manifestPath, StringComparison.Ordinal))
@@ -2682,6 +3529,17 @@ internal sealed class ProcessingQueueService
 
         PublishStatusSnapshot(snapshotToPublish);
     }
+
+    public void Dispose()
+    {
+        _resourceCapacityMonitor.Dispose();
+        _gpuCapacityMonitor.Dispose();
+        if (!_shutdownCts.IsCancellationRequested)
+        {
+            _shutdownCts.Cancel();
+        }
+    }
+
 }
 
 internal sealed record BacklogRushResult(
@@ -2698,7 +3556,8 @@ internal sealed record WorkerRunResult(
     int ExitCode,
     string StandardOutput,
     string StandardError,
-    WorkerLaunchConfigSnapshot LaunchConfig);
+    WorkerLaunchConfigSnapshot LaunchConfig,
+    SessionProcessingWorkReceipt? Receipt);
 
 internal sealed record WorkerRecoveryConfig(string ConfigPath, AppConfig Config);
 
@@ -2724,7 +3583,8 @@ internal sealed record QueuedManifestStatusEntry(
     ProcessingStageStatus DiarizationStatus,
     ProcessingStageStatus PublishStatus,
     bool WasPreempted = false,
-    ProcessingWorkPriority Priority = ProcessingWorkPriority.Normal)
+    ProcessingWorkPriority Priority = ProcessingWorkPriority.Normal,
+    StagedBacklogWorkItem? StagedWork = null)
 {
     public IEnumerable<ProcessingStageStatus> GetStageStatuses()
     {

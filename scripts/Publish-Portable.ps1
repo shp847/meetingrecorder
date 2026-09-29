@@ -2,13 +2,39 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = ".artifacts\publish\win-x64",
+    [string]$StableAppHostPath = "",
+    [string]$StableDeploymentCliAppHostPath = "",
+    [string]$StableWorkerAppHostPath = "",
     [switch]$FrameworkDependent
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$outputPath = Join-Path $repoRoot $OutputRoot
+
+function Resolve-ArtifactRoot {
+    param(
+        [string]$CandidatePath,
+        [string]$RepositoryRoot
+    )
+
+    $resolvedRepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\\')
+    $resolvedPath = if ([System.IO.Path]::IsPathRooted($CandidatePath)) {
+        [System.IO.Path]::GetFullPath($CandidatePath)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $CandidatePath))
+    }
+
+    if ($resolvedPath.TrimEnd('\\') -eq $resolvedRepositoryRoot -or
+        $resolvedPath -eq [System.IO.Path]::GetPathRoot($resolvedPath)) {
+        throw "Portable publish output root must be a dedicated directory, not '$resolvedPath'."
+    }
+
+    return $resolvedPath
+}
+
+$outputPath = Resolve-ArtifactRoot -CandidatePath $OutputRoot -RepositoryRoot $repoRoot
 $appTemp = Join-Path $outputPath "app-temp"
 $cliTemp = Join-Path $outputPath "cli-temp"
 $workerTemp = Join-Path $outputPath "worker-temp"
@@ -185,6 +211,53 @@ function Assert-LooseFileWpfShellPublishLayout {
     }
 }
 
+function Restore-VerifiedStableAppHostIfNeeded {
+    param(
+        [string]$PublishRoot,
+        [string]$AppHostFileName,
+        [string]$ProjectName,
+        [string]$ConfiguredStableAppHostPath
+    )
+
+    $publishedAppHostPath = Join-Path $PublishRoot $AppHostFileName
+    if (Test-Path -LiteralPath $publishedAppHostPath) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ConfiguredStableAppHostPath)) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $ConfiguredStableAppHostPath)) {
+        throw "Configured stable apphost '$ConfiguredStableAppHostPath' does not exist."
+    }
+
+    $buildRoot = if ([string]::IsNullOrWhiteSpace($env:MeetingRecorderBuildRoot)) {
+        Join-Path ([System.IO.Path]::GetTempPath()) "MeetingRecorderBuild"
+    }
+    else {
+        $env:MeetingRecorderBuildRoot
+    }
+    $expectedAppHostPath = Join-Path $buildRoot "obj\$ProjectName\$Configuration\net8.0-windows\$Runtime\apphost.exe"
+    if (-not (Test-Path -LiteralPath $expectedAppHostPath)) {
+        throw "Cannot verify stable apphost because current build apphost '$expectedAppHostPath' does not exist."
+    }
+
+    $expectedHash = (Get-FileHash -LiteralPath $expectedAppHostPath -Algorithm SHA256).Hash
+    $stableHash = (Get-FileHash -LiteralPath $ConfiguredStableAppHostPath -Algorithm SHA256).Hash
+    if ($stableHash -ne $expectedHash) {
+        throw "Configured stable apphost hash does not match the current build apphost."
+    }
+
+    Copy-Item -LiteralPath $ConfiguredStableAppHostPath -Destination $publishedAppHostPath -Force
+    if (-not (Test-Path -LiteralPath $publishedAppHostPath) -or
+        (Get-FileHash -LiteralPath $publishedAppHostPath -Algorithm SHA256).Hash -ne $expectedHash) {
+        throw "Verified stable apphost could not be restored to '$publishedAppHostPath'."
+    }
+
+    Write-Host "Restored a hash-verified stable apphost after publish-output removal."
+}
+
 function Assert-LooseFileWpfShellBundleLayout {
     param(
         [string]$BundleRoot
@@ -283,9 +356,24 @@ Remove-Item -Recurse -Force $workerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $finalPath -ErrorAction SilentlyContinue
 
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.App\MeetingRecorder.App.csproj") -PublishOutput $appTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $appTemp `
+    -AppHostFileName "MeetingRecorder.App.exe" `
+    -ProjectName "MeetingRecorder.App" `
+    -ConfiguredStableAppHostPath $StableAppHostPath
 Assert-LooseFileWpfShellPublishLayout -PublishRoot $appTemp
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\AppPlatform.Deployment.Cli\AppPlatform.Deployment.Cli.csproj") -PublishOutput $cliTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $cliTemp `
+    -AppHostFileName "AppPlatform.Deployment.Cli.exe" `
+    -ProjectName "AppPlatform.Deployment.Cli" `
+    -ConfiguredStableAppHostPath $StableDeploymentCliAppHostPath
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj") -PublishOutput $workerTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $workerTemp `
+    -AppHostFileName "MeetingRecorder.ProcessingWorker.exe" `
+    -ProjectName "MeetingRecorder.ProcessingWorker" `
+    -ConfiguredStableAppHostPath $StableWorkerAppHostPath
 
 New-Item -ItemType Directory -Force -Path $finalPath | Out-Null
 Copy-Item -Path (Join-Path $appTemp "*") -Destination $finalPath -Recurse -Force

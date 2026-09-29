@@ -2,6 +2,10 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$PackageRoot = ".artifacts\installer\win-x64",
+    [string]$PublishOutputRoot = "",
+    [string]$StableAppHostPath = "",
+    [string]$StableDeploymentCliAppHostPath = "",
+    [string]$StableWorkerAppHostPath = "",
     [switch]$FrameworkDependent,
     [switch]$KeepStaging,
     [string]$CodeSigningCertificateThumbprint = "",
@@ -43,7 +47,37 @@ function Get-ReleaseVersionLabel {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$packagePath = Join-Path $repoRoot $PackageRoot
+
+function Resolve-ArtifactRoot {
+    param(
+        [string]$CandidatePath,
+        [string]$RepositoryRoot
+    )
+
+    $resolvedRepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\\')
+    $resolvedPath = if ([System.IO.Path]::IsPathRooted($CandidatePath)) {
+        [System.IO.Path]::GetFullPath($CandidatePath)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $CandidatePath))
+    }
+
+    if ($resolvedPath.TrimEnd('\\') -eq $resolvedRepositoryRoot -or
+        $resolvedPath -eq [System.IO.Path]::GetPathRoot($resolvedPath)) {
+        throw "Installer artifact root must be a dedicated directory, not '$resolvedPath'."
+    }
+
+    return $resolvedPath
+}
+
+$packagePath = Resolve-ArtifactRoot -CandidatePath $PackageRoot -RepositoryRoot $repoRoot
+$publishOutputRoot = if ([string]::IsNullOrWhiteSpace($PublishOutputRoot)) {
+    ".artifacts\publish\$Runtime"
+}
+else {
+    $PublishOutputRoot
+}
+$publishOutputPath = Resolve-ArtifactRoot -CandidatePath $publishOutputRoot -RepositoryRoot $repoRoot
 $stagingPath = Join-Path $packagePath "staging"
 $bundleRoot = Join-Path $stagingPath "MeetingRecorder"
 $versionLabel = Get-ReleaseVersionLabel -RepoRoot $repoRoot
@@ -53,7 +87,7 @@ $bootstrapCommandPath = Join-Path $packagePath "Install-LatestFromGitHub.cmd"
 $bootstrapScriptPath = Join-Path $packagePath "Install-LatestFromGitHub.ps1"
 $releaseSourceMetadataPath = Join-Path $packagePath "release-source.json"
 $publishScript = Join-Path $PSScriptRoot "Publish-Portable.ps1"
-$publishedAppPath = Join-Path $repoRoot ".artifacts\publish\$Runtime\MeetingRecorder"
+$publishedAppPath = Join-Path $publishOutputPath "MeetingRecorder"
 $modelCatalogSourcePath = Join-Path $repoRoot "src\MeetingRecorder.Core\Assets\model-catalog.json"
 $msiProjectPath = Join-Path $repoRoot "src\MeetingRecorder.Setup\MeetingRecorder.Setup.wixproj"
 $msiTemp = Join-Path $packagePath "msi-temp"
@@ -618,7 +652,14 @@ Remove-Item -Recurse -Force $msiTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiBuildOutputPath -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
 
-& $publishScript -Configuration $Configuration -Runtime $Runtime -OutputRoot ".artifacts\publish\$Runtime" -FrameworkDependent:$FrameworkDependent
+& $publishScript `
+    -Configuration $Configuration `
+    -Runtime $Runtime `
+    -OutputRoot $publishOutputPath `
+    -StableAppHostPath $StableAppHostPath `
+    -StableDeploymentCliAppHostPath $StableDeploymentCliAppHostPath `
+    -StableWorkerAppHostPath $StableWorkerAppHostPath `
+    -FrameworkDependent:$FrameworkDependent
 
 if ($LASTEXITCODE -ne 0) {
     throw "Portable publish failed while building the installer bundle."

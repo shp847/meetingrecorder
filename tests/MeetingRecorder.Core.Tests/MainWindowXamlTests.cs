@@ -94,18 +94,20 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Class=\"AppPlatform.Shell.Wpf.SettingsHostWindow\"", settingsWindowXaml);
         Assert.Contains("x:Name=\"SettingsSetupSectionButton\"", settingsWindowXaml);
-        Assert.Contains("x:Name=\"SettingsGeneralSectionButton\"", settingsWindowXaml);
-        Assert.Contains("x:Name=\"SettingsFilesSectionButton\"", settingsWindowXaml);
-        Assert.Contains("x:Name=\"SettingsUpdatesSectionButton\"", settingsWindowXaml);
+        Assert.Contains("x:Name=\"SettingsRecordingSectionButton\"", settingsWindowXaml);
+        Assert.Contains("x:Name=\"SettingsProcessingSectionButton\"", settingsWindowXaml);
+        Assert.Contains("x:Name=\"SettingsSummariesSectionButton\"", settingsWindowXaml);
+        Assert.Contains("x:Name=\"SettingsFilesAndUpdatesSectionButton\"", settingsWindowXaml);
         Assert.Contains("x:Name=\"SettingsAdvancedSectionButton\"", settingsWindowXaml);
         Assert.Contains("Content=\"Setup\"", settingsWindowXaml);
-        Assert.Contains("Content=\"General\"", settingsWindowXaml);
-        Assert.Contains("Content=\"Files\"", settingsWindowXaml);
-        Assert.Contains("Content=\"Updates\"", settingsWindowXaml);
+        Assert.Contains("Content=\"Recording\"", settingsWindowXaml);
+        Assert.Contains("Content=\"Processing\"", settingsWindowXaml);
+        Assert.Contains("Content=\"Summaries\"", settingsWindowXaml);
+        Assert.Contains("Content=\"Files &amp; Updates\"", settingsWindowXaml);
         Assert.Contains("Content=\"Advanced\"", settingsWindowXaml);
         Assert.Contains("Content=\"Save Changes\"", settingsWindowXaml);
         Assert.Contains("Content=\"Close\"", settingsWindowXaml);
-        Assert.Contains("Use Settings to manage setup, recording behavior, file locations, updates, and troubleshooting.", settingsWindowXaml);
+        Assert.Contains("Use Settings to manage readiness, recording, processing, summaries, files, updates, and troubleshooting.", settingsWindowXaml);
         Assert.Contains("new(\"setup\", \"Setup\"", productModule);
 
         Assert.Contains("x:Class=\"AppPlatform.Shell.Wpf.HelpHostWindow\"", helpWindowXaml);
@@ -215,20 +217,58 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Drop=\"MeetingsWorkspaceGrid_OnDrop\"", xaml);
         Assert.Contains("x:Name=\"AddAudioFilesButton\"", xaml);
         Assert.Contains("Content=\"Add Audio Files\"", xaml);
+        Assert.Contains("x:Name=\"ResumeBlockedAudioImportsButton\"", xaml);
+        Assert.Contains("Content=\"Resume Blocked Imports\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportReviewBorder\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportDataGrid\"", xaml);
         Assert.Contains("x:Name=\"QueueExternalAudioImportsButton\"", xaml);
+        Assert.Contains("x:Name=\"RetryExternalAudioImportButton\"", xaml);
+        Assert.Contains("x:Name=\"SkipDuplicateExternalAudioImportButton\"", xaml);
+        Assert.Contains("x:Name=\"OpenExternalAudioImportInboxButton\"", xaml);
         Assert.Contains("x:Name=\"OpenExternalAudioImportSetupButton\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportTitleTextBox\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportStartedAtTextBox\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportProjectTextBox\"", xaml);
+        Assert.Contains("Header=\"Source retention\"", xaml);
+        Assert.Contains("Header=\"Next step\"", xaml);
+        Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", xaml);
+        Assert.Contains("Value=\"{Binding AccessibleName}\"", xaml);
+        Assert.Contains("Meeting title for selected import row", xaml);
 
         Assert.Contains("AddAudioFilesButton_OnClick", code);
         Assert.Contains("MeetingsWorkspaceGrid_OnDrop", code);
         Assert.Contains("QueueExternalAudioImportsButton_OnClick", code);
+        Assert.Contains("RetryExternalAudioImportButton_OnClick", code);
+        Assert.Contains("SkipDuplicateExternalAudioImportButton_OnClick", code);
+        Assert.Contains("OpenExternalAudioImportInboxButton_OnClick", code);
+        Assert.Contains("ResumeBlockedAudioImportsButton_OnClick", code);
+        Assert.Contains("ExternalAudioImportReadinessCoordinator", code);
+        Assert.Contains("ResolveExternalAudioImportReadiness", code);
+        Assert.Contains("CanStageForSetup", code);
+        Assert.Contains("ExternalAudioImportReviewProjection.Summarize", code);
+        Assert.Contains("ExternalAudioImportDataGrid.Focus();", code);
         Assert.Contains("OpenSettingsSurface(SettingsWindowSection.Setup)", code);
+        Assert.Contains("ResolveControl(\"ConfigImportInboxEnabledCheckBox\")", code);
         Assert.Contains("ExternalAudioImportMethod.FilePicker", code);
         Assert.Contains("ExternalAudioImportMethod.DragDrop", code);
+    }
+
+    [Fact]
+    public void ImportInbox_Settings_Expose_Explicit_OptIn_Status_And_Recoverable_Actions()
+    {
+        var xaml = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml"));
+        var code = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"ConfigImportInboxEnabledCheckBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigImportInboxArchiveAfterQueueEnabledCheckBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigImportInboxMoveBlockedToErrorEnabledCheckBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigImportInboxDirTextBox\"", xaml);
+        Assert.Contains("x:Name=\"ConfigImportInboxStatusTextBlock\"", xaml);
+        Assert.Contains("RescanImportInboxButton_OnClick", xaml);
+        Assert.Contains("OpenImportInboxButton_OnClick", xaml);
+        Assert.Contains("Selected files stay where they are.", xaml);
+        Assert.Contains("ShouldReconcileImportInbox", code);
+        Assert.Contains("ImportInboxArchiveAfterQueueEnabled", code);
     }
 
     [Fact]
@@ -334,6 +374,9 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"ConfigBackgroundProcessingModeComboBox\"", xaml);
         Assert.Contains("Text=\"How much of this PC it may use\"", xaml);
+        Assert.Contains("x:Name=\"ConfigBacklogAccelerationProfileComboBox\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Backlog acceleration profile\"", xaml);
+        Assert.Contains("x:Name=\"ConfigBacklogAccelerationProfileHelpTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ConfigInitialProcessingStrategyComboBox\"", xaml);
         Assert.Contains("Text=\"Initial processing strategy\"", xaml);
         Assert.Contains("x:Name=\"ConfigIncrementalAiSummariesCheckBox\"", xaml);
@@ -351,6 +394,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("--probe-diarization-cli", code);
         Assert.Contains("TranscriptionCliProviderProbe", code);
         Assert.Contains("DiarizationCliProviderProbe", code);
+        Assert.Contains("BacklogAccelerationProfileResolver.Apply", code);
         Assert.Contains("x:Name=\"ConfigBackgroundSpeakerLabelingModeComboBox\"", xaml);
         Assert.Contains("Text=\"Speaker labeling mode\"", xaml);
     }
@@ -405,6 +449,7 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("Text=\"AI Summary\"", xaml);
         Assert.Contains("x:Name=\"AiSummaryStatusTextBlock\"", xaml);
+        Assert.Contains("AutomationProperties.LiveSetting=\"Polite\"", xaml);
         Assert.Contains("x:Name=\"AiSummaryGeneratedContentPanel\"", xaml);
         Assert.Contains("x:Name=\"AiSummaryOverviewTextBlock\"", xaml);
         Assert.Contains("x:Name=\"AiSummaryKeyPointsItemsControl\"", xaml);
@@ -434,8 +479,42 @@ public sealed class MainWindowXamlTests
         Assert.Contains("GenerateSummaryButton_OnClick", windowSource);
         Assert.Contains("RetrySummaryButton_OnClick", windowSource);
         Assert.Contains("GenerateOpenMeetingDetailSummaryAsync", mainWindowSource);
-        Assert.Contains("OpenSettingsSurface(SettingsWindowSection.General)", mainWindowSource);
+        Assert.Contains("ResolveSummaryGenerationBlockedReasonAsync", mainWindowSource);
+        Assert.Contains("UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary)", mainWindowSource);
+        Assert.Contains("OpenSettingsSurface(SettingsInformationArchitecture.ResolveControl(\"ConfigSummaryGenerationEnabledCheckBox\"))", mainWindowSource);
         Assert.Contains("RefreshOpenMeetingDetailWindow", mainWindowSource);
+
+        var summaryHandlerStart = mainWindowSource.IndexOf("private async Task GenerateOpenMeetingDetailSummaryAsync", StringComparison.Ordinal);
+        var summaryHandlerEnd = mainWindowSource.IndexOf("private async Task<UserActionBlockedReasonKind> ResolveSummaryGenerationBlockedReasonAsync", StringComparison.Ordinal);
+        var summaryHandler = mainWindowSource[summaryHandlerStart..summaryHandlerEnd];
+        Assert.DoesNotContain("exception.Message", summaryHandler, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Meeting_Cleanup_Actions_Use_Typed_Safe_Copy_For_Normal_Status()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("UserActionIntent.ArchiveMeetings", source);
+        Assert.Contains("UserActionIntent.DeleteMeetings", source);
+        Assert.Contains("UserActionIntent.ApplyCleanupRecommendations", source);
+        Assert.Contains("UserActionIntent.DismissCleanupRecommendations", source);
+        Assert.DoesNotContain("Permanent delete failed: {exception.Message}", source);
+        Assert.DoesNotContain("Failed to apply safe cleanup fixes: {exception.Message}", source);
+        Assert.DoesNotContain("Failed to apply selected recommendations: {exception.Message}", source);
+        Assert.DoesNotContain("Archive failed: {exception.Message}", source);
+    }
+
+    [Fact]
+    public void Normal_Main_Window_Error_Copy_Does_Not_Expose_Exception_Messages()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var rawExceptionMessageCount = CountOccurrences(source, "exception.Message");
+
+        Assert.Equal(4, rawExceptionMessageCount);
+        Assert.Contains("diagnosticsLines.Add($\"Bundled manifest install root: unavailable ({exception.Message})\")", source);
+        Assert.Contains("ConfigTeamsIntegrationAdvancedDetailTextBlock.Text = exception.Message", source);
+        Assert.Contains("IsSafeDirectMlRuntimeUnavailableMessage(exception.Message)", source);
     }
 
     [Fact]
@@ -457,13 +536,33 @@ public sealed class MainWindowXamlTests
         var mainWindowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
 
         Assert.Contains("x:Name=\"RefreshSpeakerNamesButton\"", xaml);
-        Assert.Contains("Content=\"Refresh Suggestions\"", xaml);
+        Assert.Contains("Content=\"Refresh Local Suggestions\"", xaml);
         Assert.Contains("x:Name=\"UndoSpeakerNameRecognitionButton\"", xaml);
-        Assert.Contains("Content=\"Undo Name Recognition\"", xaml);
+        Assert.Contains("Content=\"Undo Profile Names\"", xaml);
+        Assert.Contains("Diarization Label", xaml);
+        Assert.Contains("Meeting Display Name", xaml);
+        Assert.Contains("Local Name Suggestion", xaml);
         Assert.Contains("Repair Speaker Labels above", xaml);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);
+    }
+
+    [Fact]
+    public void Settings_Keep_Voice_Profile_Management_Separate_From_Meeting_Name_Review()
+    {
+        var xaml = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml"));
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"SettingsProcessingVoiceProfilesPanel\"", xaml);
+        Assert.Contains("x:Name=\"EnableVoiceProfileButton\"", xaml);
+        Assert.Contains("x:Name=\"DisableVoiceProfileButton\"", xaml);
+        Assert.Contains("x:Name=\"DeleteAllVoiceProfilesButton\"", xaml);
+        Assert.Contains("EnableVoiceProfileButton_OnClick", source);
+        Assert.Contains("ApplyVoiceProfileActionState", source);
+        Assert.Contains("AutomationProperties.SetHelpText", source);
+        Assert.Contains("UserActionIntent.DeleteAllVoiceProfiles", source);
+        Assert.Contains("SpeakerExperienceSurface.Settings", source);
     }
 
     [Fact]
@@ -481,22 +580,32 @@ public sealed class MainWindowXamlTests
     public void Meetings_Tab_Uses_A_Technical_Processing_Strip_For_Queue_Status_And_Approximate_Etas()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var codePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
 
         var xaml = File.ReadAllText(xamlPath);
+        var code = File.ReadAllText(codePath);
 
         Assert.Contains("x:Name=\"MeetingsProcessingStatusBorder\"", xaml);
         Assert.Contains("x:Name=\"MeetingsProcessingStatusLine1TextBlock\"", xaml);
         Assert.Contains("x:Name=\"MeetingsProcessingStatusLine2TextBlock\"", xaml);
         Assert.Contains("x:Name=\"MeetingsProcessingStatusLine3TextBlock\"", xaml);
         Assert.Contains("x:Name=\"MeetingsRefreshStateTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"BacklogExperienceActionButton\"", xaml);
+        Assert.Contains("Click=\"BacklogExperienceActionButton_OnClick\"", xaml);
         Assert.Contains("x:Name=\"RushBacklogButton\"", xaml);
         Assert.Contains("Click=\"RushBacklogButton_OnClick\"", xaml);
         Assert.Contains("FontFamily=\"{StaticResource AppMonoFontFamily}\"", xaml);
         Assert.Contains("Approximate processing status", xaml);
+        Assert.Contains("BacklogExperienceResolver", code);
+        Assert.Contains("BuildBacklogRecoveryMetadata", code);
+        Assert.Contains("BacklogExperienceActionButton_OnClick", code);
+        Assert.Contains("SetAsapStatus", code);
+        Assert.Contains("UpdateOpenMeetingDetailAsapStatus", code);
+        Assert.Contains("LifecycleText", code);
     }
 
     [Fact]
-    public void Home_Dashboard_Uses_The_Scroll_Viewer_Viewport_Width_And_Places_Quick_Settings_Below_The_Main_Console()
+    public void Home_Dashboard_Uses_The_Scroll_Viewer_Viewport_Width_And_Places_Quick_Settings_Below_Its_Status_And_Recording_Wells()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
 
@@ -515,7 +624,7 @@ public sealed class MainWindowXamlTests
         Assert.DoesNotContain("Width=\"{Binding ElementName=HomeDashboardScrollViewer, Path=ViewportWidth}\"", dashboardGridTag);
         Assert.DoesNotContain("<ColumnDefinition Width=\"320\" />", xaml);
         Assert.DoesNotContain("Grid.Column=\"2\"", quickSettingsGridTag);
-        Assert.Contains("Grid.Row=\"1\"", quickSettingsGridTag);
+        Assert.Contains("Grid.Row=\"2\"", quickSettingsGridTag);
         Assert.Contains("<ColumnDefinition Width=\"*\" />", xaml);
         Assert.Contains("Grid.Column=\"1\"", xaml);
     }
@@ -629,8 +738,10 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"SettingsBodyContentBorder\"", xaml);
         Assert.Contains("x:Name=\"SettingsSetupSectionPanel\"", xaml);
-        Assert.Contains("x:Name=\"SettingsGeneralSectionPanel\"", xaml);
-        Assert.Contains("x:Name=\"SettingsFilesSectionPanel\"", xaml);
+        Assert.Contains("x:Name=\"SettingsRecordingSectionPanel\"", xaml);
+        Assert.Contains("x:Name=\"SettingsProcessingSectionPanel\"", xaml);
+        Assert.Contains("x:Name=\"SettingsSummariesSectionPanel\"", xaml);
+        Assert.Contains("x:Name=\"SettingsFilesAndUpdatesSectionPanel\"", xaml);
         Assert.Contains("x:Name=\"SettingsUpdatesSectionPanel\"", xaml);
         Assert.Contains("x:Name=\"SettingsAdvancedSectionPanel\"", xaml);
         Assert.DoesNotContain("x:Name=\"TranscriptionSetupBodyContentBorder\"", xaml);
@@ -654,6 +765,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"ConfigTeamsIntegrationStatusTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ConfigTeamsIntegrationDetailTextBlock\"", xaml);
         Assert.Contains("x:Name=\"ConfigTeamsIntegrationBaselineTextBlock\"", xaml);
+        Assert.Contains("Header=\"Advanced probe diagnostics\"", xaml);
+        Assert.Contains("x:Name=\"ConfigTeamsIntegrationAdvancedDetailTextBlock\"", xaml);
         Assert.DoesNotContain("x:Name=\"ConfigTeamsGraphTenantIdTextBox\"", xaml);
         Assert.DoesNotContain("x:Name=\"ConfigTeamsGraphClientIdTextBox\"", xaml);
         Assert.DoesNotContain("Graph calendar", source);
@@ -711,7 +824,7 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"SettingsSectionButtonStrip\"", settingsWindowXaml);
         Assert.Contains("<UniformGrid", settingsWindowXaml);
-        Assert.Contains("Columns=\"5\"", settingsWindowXaml);
+        Assert.Contains("Columns=\"6\"", settingsWindowXaml);
         Assert.Contains("Tag=\"Active\"", settingsWindowXaml);
         Assert.DoesNotContain("<StackPanel x:Name=\"SettingsSectionButtonStrip\"", settingsWindowXaml);
         Assert.DoesNotContain("x:Name=\"SettingsTabControl\"", settingsWindowXaml);
@@ -738,7 +851,30 @@ public sealed class MainWindowXamlTests
         Assert.DoesNotContain("VerticalAlignment=\"Top\"", comboBoxStyleBlock);
         Assert.Contains("Style=\"{StaticResource ShellFilterComboBoxStyle}\"", xaml);
         Assert.Contains("x:Name=\"SelectedMeetingProjectComboBox\"", xaml);
-        Assert.Equal(5, CountOccurrences(xaml, "Style=\"{StaticResource ShellFilterComboBoxStyle}\""));
+        Assert.Equal(6, CountOccurrences(xaml, "Style=\"{StaticResource ShellFilterComboBoxStyle}\""));
+    }
+
+    [Fact]
+    public void Meetings_Uses_Presets_With_Search_And_Secondary_Custom_Controls()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"MeetingsPresetComboBox\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Meeting view preset\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Search meetings\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Meetings list\"", xaml);
+        Assert.Contains("x:Name=\"MeetingsCustomViewExpander\"", xaml);
+        Assert.Contains("x:Name=\"MeetingsPresetStatusTextBlock\"", xaml);
+        Assert.Contains("MeetingsPresetComboBox_OnSelectionChanged", source);
+        Assert.Contains("ResolveMeetingsViewPresetState", source);
+        Assert.Contains("EnsureInitialMeetingsViewPreset", source);
+        Assert.Contains("MeetingsViewPreset = GetSelectedMeetingsViewPreset()", source);
+        Assert.Contains("MeetingsDataGrid.SelectedItems.Clear();", source);
+        Assert.Contains("ArchiveCatalogAvailable: false", source);
     }
 
     [Fact]
@@ -766,10 +902,85 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"UseStandardSpeakerLabelingProfileButton\"", xaml);
         Assert.Contains("x:Name=\"UseHighAccuracySpeakerLabelingProfileButton\"", xaml);
         Assert.Contains("x:Name=\"SkipSpeakerLabelingForNowButton\"", xaml);
-        Assert.Contains("Content=\"Use Standard\"", xaml);
+        Assert.Contains("Content=\"Use recommended\"", xaml);
         Assert.Contains("Content=\"Use Higher Accuracy\"", xaml);
         Assert.Contains("Content=\"Skip for now\"", xaml);
         Assert.Contains("Import approved file", xaml);
+    }
+
+    [Fact]
+    public void Recommended_Transcription_Setup_Leaves_Optional_SpeakerLabeling_Untouched()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("Content=\"Use recommended\"", xaml);
+        Assert.Contains("x:Name=\"CancelRecommendedTranscriptionSetupButton\"", xaml);
+        Assert.Contains("provisionSpeakerLabeling: false", source);
+        Assert.Contains("ProvisionSpeakerLabeling: provisionSpeakerLabeling", source);
+        Assert.Contains("TranscriptionDownloadProgress: transcriptionProgress", source);
+        Assert.Contains("optional speaker labeling was left unchanged", source);
+    }
+
+    [Fact]
+    public void Recording_Assistance_Keeps_Custom_Detection_Tuning_Under_Recording()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"SettingsRecordingAssistancePanel\"", xaml);
+        Assert.Contains("Header=\"Recording assistance &gt; Custom\"", xaml);
+        Assert.Contains("MoveSettingsChild(SettingsRecordingContentPanel, SettingsRecordingAssistancePanel)", source);
+        Assert.DoesNotContain("SettingsAdvancedDetectionTuningPanel", source);
+    }
+
+    [Fact]
+    public void Setup_Shows_One_Readiness_Summary_And_Routes_Primary_Fixes()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"SettingsSetupReadinessPrimaryTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"SettingsSetupReadinessNoticesTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"SettingsSetupReadinessActionButton\"", xaml);
+        Assert.Contains("UpdateSetupRecordingReadinessPresentation(readiness);", source);
+        Assert.Contains("SettingsSetupReadinessActionButton_OnClick", source);
+        Assert.Contains("Open output locations", source);
+    }
+
+    [Fact]
+    public void Home_And_Header_Use_One_Navigation_Only_Command_Center_State()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"HomeNextBestActionBorder\"", xaml);
+        Assert.Contains("x:Name=\"HomeNextBestActionHeadlineTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"HomeNextBestActionReasonTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"HomeNextBestActionButton\"", xaml);
+        Assert.Contains("x:Name=\"HomeCaptureTruthTextBlock\"", xaml);
+        Assert.Contains("Click=\"HeaderShellStatusActionButton_OnClick\"", xaml);
+        Assert.Contains("_homeCommandCenterResolver.Resolve(BuildHomeCommandCenterInput", source);
+        Assert.Contains("ApplyHomeCommandCenterState", source);
+        Assert.Contains("HeaderShellStatusLabelTextBlock.Text = state.Headline", source);
+        Assert.Contains("HomeNextBestActionHeadlineTextBlock.Text = state.Headline", source);
+        Assert.Contains("OpenHomeCommandCenterTarget", source);
+        Assert.Contains("GetHomeCaptureTruth", source);
+        Assert.Contains("Static readiness. Capture source is selected when recording starts.", source);
+        Assert.DoesNotContain("ActiveSelection.DeviceId", source);
+        Assert.DoesNotContain("MainWindowInteractionLogic.BuildShellStatus(", source);
     }
 
     [Fact]
@@ -784,6 +995,74 @@ public sealed class MainWindowXamlTests
         Assert.Contains("HasReadyTranscriptionModel() &&", source, StringComparison.Ordinal);
         Assert.Contains("Blocked until transcription is ready. Finish Setup before automatic meeting detection can start.", source, StringComparison.Ordinal);
         Assert.Contains("Finish Setup before auto-detect can turn on.", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Meetings_Expose_One_Visible_Navigation_Only_Recommendation_At_Row_And_Menu_Level()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("Header=\"Next step\"", xaml);
+        Assert.Contains("Text=\"{Binding Recommended, Mode=OneWay}\"", xaml);
+        Assert.Contains("Content=\"{Binding RecommendedActionLabel, Mode=OneWay}\"", xaml);
+        Assert.Contains("_meetingRecommendationResolver.Resolve(", source);
+        Assert.Contains("OpenMeetingRecommendationAsync", source);
+        Assert.Contains("MeetingRecommendationActionTarget.CleanupReview", source);
+        Assert.Contains("MeetingRecommendationActionTarget.SettingsSetup", source);
+        Assert.DoesNotContain("ExecuteMeetingCleanupRecommendationsAsync(new[] { recommendation }, \"inline-row\"", source);
+    }
+
+    [Fact]
+    public void Meetings_Context_Menu_Uses_Catalog_Owned_Action_Families_And_Review_First_Bulk_Recommendations()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(xamlPath);
+        var source = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"OpenMeetingActionsFamilyMenuItem\" Header=\"Open\"", xaml);
+        Assert.Contains("x:Name=\"FixMeetingActionsFamilyMenuItem\" Header=\"Fix\"", xaml);
+        Assert.Contains("x:Name=\"OrganizeMeetingActionsFamilyMenuItem\" Header=\"Organize\"", xaml);
+        Assert.Contains("x:Name=\"ProcessingMeetingActionsFamilyMenuItem\" Header=\"Processing\"", xaml);
+        Assert.Contains("x:Name=\"DangerMeetingActionsFamilyMenuItem\" Header=\"Danger Zone\"", xaml);
+        Assert.Contains("x:Name=\"BulkMeetingActionsFamilyMenuItem\" Header=\"Selected meetings\"", xaml);
+        Assert.Contains("Header=\"Review Recommendations\"", xaml);
+        Assert.Contains("_meetingActionCatalog.Resolve(new MeetingActionCatalogInput(", source);
+        Assert.Contains("BuildMeetingActionSelectionAvailability", source);
+        Assert.Contains("ApplyMeetingActionCatalogPresentation", source);
+        Assert.Contains("Review the selected meetings' cleanup suggestions before applying any action.", source);
+        Assert.DoesNotContain("ApplyMeetingRecommendationsAsync(selectedRecommendations, \"context-bulk\")", source);
+    }
+
+    [Fact]
+    public void Meeting_Detail_Uses_Revisioned_Task_Center_Draft_Safety_And_Intent_Sections()
+    {
+        var detailXamlPath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml");
+        var detailCodePath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml.cs");
+        var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+
+        var xaml = File.ReadAllText(detailXamlPath);
+        var detailCode = File.ReadAllText(detailCodePath);
+        var mainWindowCode = File.ReadAllText(mainWindowCodePath);
+
+        Assert.Contains("x:Name=\"DetailTaskCenterBorder\"", xaml);
+        Assert.Contains("x:Name=\"DetailTaskCenterHeadlineTextBlock\"", xaml);
+        Assert.Contains("Header=\"Organize &amp; Fix\"", xaml);
+        Assert.Contains("Text=\"Organize\"", xaml);
+        Assert.Contains("Text=\"Fix\"", xaml);
+        Assert.Contains("Text=\"Speaker Name Review\"", xaml);
+        Assert.Contains("Text=\"Danger Zone\"", xaml);
+        Assert.Contains("typing DELETE", xaml);
+        Assert.Contains("GetRefreshDisposition", detailCode);
+        Assert.Contains("ApplyTaskCenterState", detailCode);
+        Assert.Contains("MeetingDetailTaskCenterResolver.Resolve", mainWindowCode);
+        Assert.Contains("KeepDraftsAndOfferReload", mainWindowCode);
+        Assert.Contains("Meeting details changed in the background. Your unsaved drafts are preserved", mainWindowCode);
     }
 
     [Fact]

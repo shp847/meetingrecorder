@@ -13,7 +13,9 @@ public sealed class AutoRecordingContinuityPolicy
 {
     private static readonly TimeSpan MinimumWeakSignalTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MinimumTeamsShellContinuationTimeout = TimeSpan.FromSeconds(90);
-    private static readonly TimeSpan GoogleMeetObscuredSilentTimeout = TimeSpan.FromMinutes(3);
+    // A named Meet can be temporarily hidden while the user works through Teams chat.
+    // Keep this bounded so stale browser tabs cannot hold a recording open indefinitely.
+    private static readonly TimeSpan GoogleMeetObscuredByTeamsTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RecentAutoStopRecoveryWindow = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan QuietSpecificMeetingAutoStartDelay = TimeSpan.FromSeconds(20);
 
@@ -50,19 +52,11 @@ public sealed class AutoRecordingContinuityPolicy
                 : MinimumWeakSignalTimeout;
         }
 
-        if (HasActiveGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle))
+        if (HasGoogleMeetObscuredByTeamsNonMeetingSurface(decision, activePlatform, activeSessionTitle))
         {
-            var scaledTimeout = TimeSpan.FromSeconds(configuredTimeout.TotalSeconds * 6d);
-            return scaledTimeout >= MinimumWeakSignalTimeout
-                ? scaledTimeout
-                : MinimumWeakSignalTimeout;
-        }
-
-        if (HasSilentGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle))
-        {
-            return configuredTimeout >= GoogleMeetObscuredSilentTimeout
+            return configuredTimeout >= GoogleMeetObscuredByTeamsTimeout
                 ? configuredTimeout
-                : GoogleMeetObscuredSilentTimeout;
+                : GoogleMeetObscuredByTeamsTimeout;
         }
 
         if (HasTeamsSpecificQuietContinuation(decision, activePlatform, activeSessionTitle) ||
@@ -529,20 +523,6 @@ public sealed class AutoRecordingContinuityPolicy
             HasBrowserSurfaceEvidence(decision);
     }
 
-    private static bool HasActiveGoogleMeetObscuredByTeamsNavigationSignal(
-        DetectionDecision? decision,
-        MeetingPlatform activePlatform,
-        string? activeSessionTitle)
-    {
-        if (!HasGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle) ||
-            !HasActiveAudioSignal(decision!))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
     private static bool HasReliableCrossPlatformTakeoverEvidence(DetectionDecision decision)
     {
         return HasSupportedMeetingAudioAttribution(decision) ||
@@ -565,33 +545,23 @@ public sealed class AutoRecordingContinuityPolicy
             !HasReliableCrossPlatformTakeoverEvidence(decision);
     }
 
-    private static bool HasSilentGoogleMeetObscuredByTeamsNavigationSignal(
+    private static bool HasGoogleMeetObscuredByTeamsNonMeetingSurface(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,
         string? activeSessionTitle)
     {
-        if (!HasGoogleMeetObscuredByTeamsNavigationSignal(decision, activePlatform, activeSessionTitle) ||
-            decision is null)
+        if (activePlatform != MeetingPlatform.GoogleMeet ||
+            decision is null ||
+            decision.Platform != MeetingPlatform.Teams ||
+            decision.ShouldStart ||
+            !HasSpecificGoogleMeetIdentity(activeSessionTitle) ||
+            HasReliableCrossPlatformTakeoverEvidence(decision))
         {
             return false;
         }
 
-        return !HasActiveAudioSignal(decision) &&
-            HasSilentAudioSignal(decision);
-    }
-
-    private static bool HasGoogleMeetObscuredByTeamsNavigationSignal(
-        DetectionDecision? decision,
-        MeetingPlatform activePlatform,
-        string? activeSessionTitle)
-    {
-        return activePlatform == MeetingPlatform.GoogleMeet &&
-            decision is not null &&
-            decision.Platform == MeetingPlatform.Teams &&
-            !decision.ShouldStart &&
-            !decision.ShouldKeepRecording &&
-            HasSuppressedTeamsNavigationSignal(decision) &&
-            HasSpecificGoogleMeetIdentity(activeSessionTitle);
+        return HasSuppressedTeamsNavigationSignal(decision) ||
+            IsGenericTeamsShellTitle(decision.SessionTitle);
     }
 
     private static bool HasWeakSamePlatformSignal(DetectionDecision? decision, MeetingPlatform activePlatform)
@@ -889,6 +859,12 @@ public sealed class AutoRecordingContinuityPolicy
             MeetingPlatform.GoogleMeet => IsGenericGoogleMeetTitle(normalized),
             _ => false,
         };
+    }
+
+    private static bool IsGenericTeamsShellTitle(string? title)
+    {
+        var normalized = NormalizeMeetingTitle(title ?? string.Empty);
+        return normalized is "microsoft teams" or "microsoft teams pinned window";
     }
 
     private static bool IsGenericGoogleMeetTitle(string normalizedTitle)

@@ -21,7 +21,7 @@ public static class BackgroundProcessingPolicy
 
         if (config.ProcessingSpeedProfile == ProcessingSpeedProfile.OvernightDrain)
         {
-            return IsOvernightDrainWindowActiveCore(config, DateTimeOffset.Now.TimeOfDay)
+            return OvernightAccelerationPolicyResolver.Resolve(config, DateTimeOffset.Now).State == OvernightAccelerationState.TranscriptOnly
                 ? ProcessingSpeedProfile.TranscriptOnlyDrain
                 : ProcessingSpeedProfile.Normal;
         }
@@ -50,7 +50,9 @@ public static class BackgroundProcessingPolicy
 
     public static bool IsOvernightDrainWindowActive(AppConfig config, TimeSpan? localTime = null)
     {
-        return IsOvernightDrainWindowActiveCore(config, localTime ?? DateTimeOffset.Now.TimeOfDay);
+        return localTime is { } explicitLocalTime
+            ? OvernightAccelerationPolicyResolver.IsWindowActive(config, explicitLocalTime)
+            : OvernightAccelerationPolicyResolver.Resolve(config, DateTimeOffset.Now).IsWindowActive;
     }
 
     public static int GetMaxWorkerCount(AppConfig config)
@@ -117,19 +119,5 @@ public static class BackgroundProcessingPolicy
         return !config.ProcessingScheduleMigrationApplied && IsTranscriptOnlyDrainActive(config)
             ? BackgroundProcessingMode.MaximumThroughput
             : config.BackgroundProcessingMode;
-    }
-
-    private static bool IsOvernightDrainWindowActiveCore(AppConfig config, TimeSpan localTime)
-    {
-        if (!TimeSpan.TryParse(config.OvernightDrainStartLocal, out var start) ||
-            !TimeSpan.TryParse(config.OvernightDrainEndLocal, out var end))
-        {
-            start = TimeSpan.FromHours(22);
-            end = TimeSpan.FromHours(6);
-        }
-
-        return start <= end
-            ? localTime >= start && localTime < end
-            : localTime >= start || localTime < end;
     }
 }

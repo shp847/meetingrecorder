@@ -82,7 +82,21 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
             return Skipped("Summary generation skipped because no transcript segments were available.");
         }
 
-        var candidates = await ResolveProviderCandidatesAsync(request.Config, cancellationToken);
+        var consentState = SummaryExperienceResolver.Resolve(new SummaryExperienceInput(
+            request.Config.SummaryGenerationMode,
+            request.Config.SummaryProviderPreference,
+            HasOpenAiKey: true,
+            request.Config.SummaryHostedRouteConsentVersion));
+        if (request.Config.SummaryProviderPreference == MeetingSummaryProviderPreference.OpenAiOnly &&
+            !consentState.CanUseHostedRoute)
+        {
+            return Skipped(consentState.StatusText);
+        }
+
+        var candidates = await ResolveProviderCandidatesAsync(
+            request.Config,
+            allowHostedRoute: consentState.CanUseHostedRoute,
+            cancellationToken: cancellationToken);
         if (candidates.Count == 0)
         {
             return Skipped("No summary provider configured for the selected preference.");
@@ -162,6 +176,7 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
 
     private async Task<IReadOnlyList<ProviderCandidate>> ResolveProviderCandidatesAsync(
         AppConfig config,
+        bool allowHostedRoute,
         CancellationToken cancellationToken)
     {
         var candidates = new List<ProviderCandidate>();
@@ -209,15 +224,24 @@ public sealed class MeetingSummarizationProvider : IMeetingSummarizationProvider
                 await AddModelProxyAsync();
                 break;
             case MeetingSummaryProviderPreference.OpenAiOnly:
-                await AddOpenAiAsync(fallbackUsed: false);
+                if (allowHostedRoute)
+                {
+                    await AddOpenAiAsync(fallbackUsed: false);
+                }
                 break;
             case MeetingSummaryProviderPreference.LocalThenOpenAi:
                 await AddModelProxyAsync();
-                await AddOpenAiAsync(fallbackUsed: candidates.Count > 0);
+                if (allowHostedRoute)
+                {
+                    await AddOpenAiAsync(fallbackUsed: candidates.Count > 0);
+                }
                 break;
             default:
                 await AddModelProxyAsync();
-                await AddOpenAiAsync(fallbackUsed: candidates.Count > 0);
+                if (allowHostedRoute)
+                {
+                    await AddOpenAiAsync(fallbackUsed: candidates.Count > 0);
+                }
                 break;
         }
 

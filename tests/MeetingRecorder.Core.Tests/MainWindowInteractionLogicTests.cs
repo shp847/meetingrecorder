@@ -655,7 +655,7 @@ public sealed class MainWindowInteractionLogicTests
 
         Assert.True(headerState.IsVisible);
         Assert.Equal("PAUSED 5", headerState.Label);
-        Assert.Equal("Paused by live recording", headerState.Detail);
+        Assert.Contains("live recording is protected", headerState.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -682,8 +682,8 @@ public sealed class MainWindowInteractionLogicTests
         var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, persistedBacklog, now);
 
         Assert.True(headerState.IsVisible);
-        Assert.Equal("PROCESSING 2", headerState.Label);
-        Assert.Equal("ETA unavailable", headerState.Detail);
+        Assert.Equal("STATUS NEEDS REFRESH 2", headerState.Label);
+        Assert.Contains("Refresh status", headerState.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -753,7 +753,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Contains("PROCESSING", stripState.Line1);
         Assert.Contains("5 remaining", stripState.Line1);
         Assert.Contains("AI Super Users", stripState.Line2);
-        Assert.Contains("transcription running", stripState.Line2);
+        Assert.Contains("Creating transcript", stripState.Line2);
         Assert.Contains("00:03:00 elapsed", stripState.Line2);
         Assert.Contains("ETA ~8m", stripState.Line2);
         Assert.Contains("Overall queue", stripState.Line3);
@@ -782,13 +782,13 @@ public sealed class MainWindowInteractionLogicTests
             snapshotTime,
             CurrentStageMessage: "Speaker labeling: Native inference; DirectML; pass 2/14; input 01:02:42; memory 2400 MB");
 
-        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, snapshotTime.AddMinutes(10));
-        var header = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, snapshotTime.AddMinutes(10));
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, snapshotTime.AddMinutes(1));
+        var header = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, snapshotTime.AddMinutes(1));
 
-        Assert.Contains("ETA learning", stripState.Line2);
-        Assert.Contains("pass 2/14", stripState.Line2);
+        Assert.Contains("Adding speaker labels", stripState.Line2);
+        Assert.DoesNotContain("pass 2/14", stripState.Line2);
         Assert.Contains("ETA unavailable", stripState.Line3);
-        Assert.Equal("ETA learning", header.Detail);
+        Assert.Contains("Adding speaker labels", header.Detail);
     }
 
     [Fact]
@@ -847,9 +847,9 @@ public sealed class MainWindowInteractionLogicTests
             now);
 
         Assert.True(stripState.IsVisible);
-        Assert.Contains("PROCESSING", stripState.Line1);
+        Assert.Contains("STATUS NEEDS REFRESH", stripState.Line1);
         Assert.Contains("3 remaining", stripState.Line1);
-        Assert.Contains("saved meetings still show active work", stripState.Line2, StringComparison.Ordinal);
+        Assert.Contains("Refresh status", stripState.Line2, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ETA unavailable", stripState.Line3);
         Assert.Equal("Loading cleanup suggestions in the background.", stripState.SecondaryText);
     }
@@ -888,6 +888,43 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Contains("Town Hall Follow-up", stripState.Line2);
         Assert.Contains("ASAP queued to run next", stripState.Line3);
         Assert.Contains("interrupted work requeued", stripState.Line3, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMeetingsProcessingStripState_Uses_The_Asap_Lifecycle_Status_Without_Worker_Diagnostics()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new ProcessingQueueStatusSnapshot(
+            ProcessingQueueRunState.Processing,
+            ProcessingQueuePauseReason.None,
+            0,
+            1,
+            @"C:\Meetings\work\asap\manifest.json",
+            "Planning review",
+            MeetingPlatform.Teams,
+            "diarization",
+            StageExecutionState.Running,
+            now,
+            now.AddMinutes(-4),
+            null,
+            null,
+            now,
+            new RushedProcessingQueueState(
+                @"C:\Meetings\work\asap\manifest.json",
+                "Planning review",
+                RushProcessingBehavior.RunNextOnly,
+                now.AddMinutes(-2),
+                "ASAP: speaker labels remain"),
+            CurrentStageMessage: "C:\\private\\worker.log pass 2/14");
+
+        var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(snapshot, null, null, now);
+        var headerState = MainWindowInteractionLogic.BuildProcessingQueueHeaderState(snapshot, null, now);
+
+        Assert.Contains("ASAP: speaker labels remain", stripState.Line2);
+        Assert.Contains("ASAP: speaker labels remain", stripState.Line3);
+        Assert.Contains("ASAP: speaker labels remain", headerState.Detail);
+        Assert.DoesNotContain("private", stripState.Line2, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pass 2/14", stripState.Line2);
     }
 
     [Fact]
@@ -2465,8 +2502,8 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal(MeetingDetailSummaryStatus.Generated, state.Summary.Status);
         Assert.True(state.Summary.ShowGeneratedContent);
         Assert.Equal("The team aligned on launch readiness.", state.Summary.Overview);
-        Assert.Equal("OpenAI | gpt-5-mini", state.Summary.ProviderText);
-        Assert.Contains("Fallback used", state.Summary.WarningText, StringComparison.Ordinal);
+        Assert.Equal("Summary route recorded with this meeting.", state.Summary.ProviderText);
+        Assert.Contains("configured fallback", state.Summary.WarningText, StringComparison.OrdinalIgnoreCase);
         Assert.False(state.Summary.CanGenerate);
         Assert.False(state.Summary.CanRetry);
         Assert.Equal("IonQ", state.ProjectName);
@@ -2538,11 +2575,45 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal(MeetingDetailSummaryStatus.Unconfigured, unconfigured.Summary.Status);
         Assert.True(unconfigured.Summary.CanConfigure);
         Assert.False(unconfigured.Summary.CanGenerate);
-        Assert.Contains("provider key", unconfigured.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("setup is incomplete", unconfigured.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
 
         Assert.Equal(MeetingDetailSummaryStatus.Unavailable, unavailable.Summary.Status);
         Assert.False(unavailable.Summary.CanGenerate);
-        Assert.Contains("JSON", unavailable.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("published transcript", unavailable.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildMeetingDetailWindowState_Summary_State_Requires_Current_Hosted_Consent()
+    {
+        var transcript = new MeetingTranscriptReaderResult(
+            true,
+            "Showing 1 transcript segment(s) from JSON sidecar.",
+            [new MeetingTranscriptSegmentRow("00:00", "Speaker", "Hello team.")],
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(3), "Speaker", "Hello team.")],
+            null,
+            null,
+            true);
+
+        var state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+            CreateSummaryStateMeeting(),
+            Array.Empty<MeetingCleanupRecommendation>(),
+            transcript,
+            canOpenAudio: true,
+            canOpenTranscript: true,
+            canRegenerateTranscript: true,
+            canAddSpeakerLabels: false,
+            canProcessAsap: true,
+            isSelectedMeetingAsap: false,
+            summaryProviderConfiguration: new SummaryProviderConfigurationState(
+                true,
+                MeetingSummaryProviderPreference.OpenAiOnly,
+                HasOpenAiKey: true,
+                HostedConsentVersion: 0));
+
+        Assert.Equal(MeetingDetailSummaryStatus.Unconfigured, state.Summary.Status);
+        Assert.False(state.Summary.CanGenerate);
+        Assert.Contains("saved consent", state.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("OpenAI", state.Summary.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -2563,7 +2634,7 @@ public sealed class MainWindowInteractionLogicTests
                 "summarization",
                 StageExecutionState.Failed,
                 DateTimeOffset.Parse("2026-05-22T14:30:00Z", null, DateTimeStyles.RoundtripKind),
-                "OpenAI HTTP 503 Service Unavailable.")
+                "OpenAI HTTP 503 Service Unavailable. C:\\private\\meeting.json sk-not-a-key")
         };
         var configured = new SummaryProviderConfigurationState(
             true,
@@ -2612,7 +2683,10 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal(MeetingDetailSummaryStatus.Failed, retryReady.Summary.Status);
         Assert.False(retryReady.Summary.CanGenerate);
         Assert.True(retryReady.Summary.CanRetry);
-        Assert.Contains("HTTP 503", retryReady.Summary.StatusText, StringComparison.Ordinal);
+        Assert.Equal("The action did not finish.", retryReady.Summary.StatusText);
+        Assert.DoesNotContain("HTTP 503", retryReady.Summary.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("C:\\private", retryReady.Summary.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-not-a-key", retryReady.Summary.StatusText, StringComparison.Ordinal);
 
         Assert.Equal(MeetingDetailSummaryStatus.InProgress, inProgress.Summary.Status);
         Assert.False(inProgress.Summary.CanGenerate);

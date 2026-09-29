@@ -23,6 +23,14 @@ internal static class MeetingCleanupRecommendationBatchRunner
             {
                 throw;
             }
+            catch (AutomationDispatchSkippedException exception)
+            {
+                results.Add(new MeetingCleanupRecommendationBatchItemResult(
+                    recommendation,
+                    Succeeded: false,
+                    ErrorMessage: exception.Message,
+                    Skipped: true));
+            }
             catch (Exception exception)
             {
                 results.Add(new MeetingCleanupRecommendationBatchItemResult(
@@ -43,12 +51,23 @@ internal static class MeetingCleanupRecommendationBatchRunner
 internal sealed record MeetingCleanupRecommendationBatchItemResult(
     MeetingCleanupRecommendation Recommendation,
     bool Succeeded,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    bool Skipped = false);
 
 internal sealed record MeetingCleanupRecommendationBatchResult(
     IReadOnlyList<MeetingCleanupRecommendationBatchItemResult> Items)
 {
     public int SucceededCount => Items.Count(item => item.Succeeded);
 
-    public int FailedCount => Items.Count - SucceededCount;
+    public int FailedCount => Items.Count(item => !item.Succeeded && !item.Skipped);
+
+    public int SkippedCount => Items.Count(item => item.Skipped);
+}
+
+internal sealed class AutomationDispatchSkippedException : Exception
+{
+    public AutomationDispatchSkippedException(string message)
+        : base(message)
+    {
+    }
 }

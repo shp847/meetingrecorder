@@ -22,7 +22,7 @@ public sealed class InstallerPackagingTests
     }
 
     [Fact]
-    public void WixPackage_Uses_LocalAppData_Programs_Location_And_StartMenu_Shortcut()
+    public void WixPackage_Uses_UserProfile_Location_And_StartMenu_Shortcut()
     {
         var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
@@ -35,9 +35,11 @@ public sealed class InstallerPackagingTests
 
         Assert.Contains("ProgramMenuFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("TARGETDIR", packageContents, StringComparison.Ordinal);
-        Assert.Contains("LocalAppDataFolder", packageContents, StringComparison.Ordinal);
+        Assert.Contains("UserProfileFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("<SetProperty Id=\"INSTALLFOLDER\"", packageContents, StringComparison.Ordinal);
-        Assert.Contains("[LocalAppDataFolder]Programs\\Meeting Recorder", packageContents, StringComparison.Ordinal);
+        Assert.Contains("[UserProfileFolder]MeetingRecorder", packageContents, StringComparison.Ordinal);
+        Assert.Contains("Condition=\"NOT INSTALLFOLDER AND NOT UPGRADINGPRODUCTCODE\"", packageContents, StringComparison.Ordinal);
+        Assert.DoesNotContain("[LocalAppDataFolder]Programs\\Meeting Recorder", packageContents, StringComparison.Ordinal);
         Assert.Contains("Name=\"Meeting Recorder\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("ProgramMenuFolder", packageContents, StringComparison.Ordinal);
         Assert.Contains("<Shortcut", packageContents, StringComparison.Ordinal);
@@ -47,7 +49,6 @@ public sealed class InstallerPackagingTests
         Assert.DoesNotContain("<Property Id=\"ARPINSTALLLOCATION\" Value=\"[INSTALLFOLDER]\"", packageContents, StringComparison.Ordinal);
         Assert.Contains("<SetProperty Id=\"ARPINSTALLLOCATION\"", packageContents, StringComparison.Ordinal);
         Assert.DoesNotContain("PersonalFolder", packageContents, StringComparison.Ordinal);
-        Assert.DoesNotContain("UserProfileFolder", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -141,6 +142,8 @@ public sealed class InstallerPackagingTests
         var packageContents = File.ReadAllText(packagePath);
 
         Assert.Contains("AllowSameVersionUpgrades=\"yes\"", packageContents, StringComparison.Ordinal);
+        Assert.Contains("<SetProperty Id=\"INSTALLFOLDER\" Value=\"[UserProfileFolder]MeetingRecorder\" After=\"AppSearch\" Sequence=\"both\" Condition=\"NOT INSTALLFOLDER AND NOT UPGRADINGPRODUCTCODE\" />", packageContents, StringComparison.Ordinal);
+        Assert.Contains("<SetProperty Id=\"REINSTALLMODE\" Value=\"amus\" Before=\"CostInitialize\" Sequence=\"both\" />", packageContents, StringComparison.Ordinal);
     }
 
     [Fact]

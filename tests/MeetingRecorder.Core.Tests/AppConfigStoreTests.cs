@@ -32,6 +32,13 @@ public sealed class AppConfigStoreTests
         Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Recordings"), config.AudioOutputDir);
         Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Transcripts"), config.TranscriptOutputDir);
         Assert.Equal(Path.Combine(root, "work"), config.WorkDir);
+        Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Import Inbox"), config.ImportInboxDir);
+        Assert.False(config.ImportInboxEnabled);
+        Assert.Equal(60, config.ImportInboxScanIntervalSeconds);
+        Assert.Equal(20, config.ImportInboxMaxBatchSize);
+        Assert.False(config.ImportInboxArchiveAfterQueueEnabled);
+        Assert.False(config.ImportInboxMoveBlockedToErrorEnabled);
+        Assert.False(Directory.Exists(config.ImportInboxDir));
         Assert.Equal(Path.Combine(root, "models"), config.ModelCacheDir);
         Assert.Equal(Path.Combine(root, "models", "asr", "ggml-base.en-q8_0.bin"), config.TranscriptionModelPath);
         Assert.Equal(TranscriptionModelProfilePreference.Standard, config.TranscriptionModelProfilePreference);
@@ -93,6 +100,9 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingsSortKey.Started, config.MeetingsSortKey);
         Assert.True(config.MeetingsSortDescending);
         Assert.Equal(MeetingsGroupKey.Week, config.MeetingsGroupKey);
+        Assert.Equal(MeetingsViewPreset.Recent, config.MeetingsViewPreset);
+        Assert.Equal(1, config.MeetingsViewPresetMigrationVersion);
+        Assert.False(config.MeetingsViewPresetInitialized);
         Assert.Equal(MeetingSummaryGenerationMode.Disabled, config.SummaryGenerationMode);
         Assert.Equal(MeetingSummaryProviderPreference.LocalThenOpenAi, config.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", config.SummaryModelProxyBaseUrl);
@@ -103,6 +113,112 @@ public sealed class AppConfigStoreTests
         Assert.Equal(120, config.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, config.SummaryTranscriptChunkTokenTarget);
         Assert.Equal(250, config.SummaryTranscriptChunkOverlapTokens);
+    }
+
+    [Fact]
+    public async Task SaveAsync_Migrates_Legacy_Overnight_Profile_To_Explicit_Staged_Acceleration_Window()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var store = new AppConfigStore(
+            Path.Combine(root, "config", "appsettings.json"),
+            Path.Combine(root, "documents"));
+        var defaults = await store.LoadOrCreateAsync();
+
+        var migrated = await store.SaveAsync(defaults with
+        {
+            ProcessingScheduleMigrationApplied = false,
+            ProcessingSpeedProfile = ProcessingSpeedProfile.OvernightDrain,
+            OvernightDrainStartLocal = "21:30",
+            OvernightDrainEndLocal = "05:15",
+        });
+
+        Assert.True(migrated.ProcessingScheduleMigrationApplied);
+        Assert.Equal(ProcessingSpeedProfile.Normal, migrated.ProcessingSpeedProfile);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, migrated.InitialProcessingStrategy);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, migrated.OvernightInitialProcessingStrategy);
+        Assert.Equal(IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup, migrated.IncrementalWorkPlan);
+        Assert.Equal("21:30", migrated.OvernightDrainStartLocal);
+        Assert.Equal("05:15", migrated.OvernightDrainEndLocal);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Migrates_A_Missing_Inbox_Configuration_To_A_Disabled_Default_Without_Creating_It()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            $$"""
+            {
+              "audioOutputDir": "{{Path.Combine(documentsRoot, "Meetings", "Recordings").Replace("\\", "\\\\")}}",
+              "transcriptOutputDir": "{{Path.Combine(documentsRoot, "Meetings", "Transcripts").Replace("\\", "\\\\")}}",
+              "workDir": "{{Path.Combine(root, "work").Replace("\\", "\\\\")}}",
+              "modelCacheDir": "{{Path.Combine(root, "models").Replace("\\", "\\\\")}}"
+            }
+            """);
+        var store = new AppConfigStore(configPath, documentsRoot);
+
+        var loaded = await store.LoadOrCreateAsync();
+
+        Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Import Inbox"), loaded.ImportInboxDir);
+        Assert.False(loaded.ImportInboxEnabled);
+        Assert.False(Directory.Exists(loaded.ImportInboxDir));
+    }
+
+    [Fact]
+    public async Task SaveAsync_Preserves_A_Valid_Enabled_Custom_Inbox_Configuration()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var defaults = await store.LoadOrCreateAsync();
+        var customInbox = Path.Combine(root, "incoming-audio");
+
+        var saved = await store.SaveAsync(defaults with
+        {
+            ImportInboxDir = customInbox,
+            ImportInboxEnabled = true,
+            ImportInboxScanIntervalSeconds = 120,
+            ImportInboxMaxBatchSize = 25,
+            ImportInboxArchiveAfterQueueEnabled = true,
+            ImportInboxMoveBlockedToErrorEnabled = true,
+        });
+
+        Assert.Equal(customInbox, saved.ImportInboxDir);
+        Assert.True(saved.ImportInboxEnabled);
+        Assert.Equal(120, saved.ImportInboxScanIntervalSeconds);
+        Assert.Equal(25, saved.ImportInboxMaxBatchSize);
+        Assert.True(saved.ImportInboxArchiveAfterQueueEnabled);
+        Assert.True(saved.ImportInboxMoveBlockedToErrorEnabled);
+        Assert.False(Directory.Exists(customInbox));
+    }
+
+    [Fact]
+    public async Task SaveAsync_Disables_An_Inbox_That_Overlaps_Published_Output_And_Clamps_Scan_Settings()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, documentsRoot);
+        var defaults = await store.LoadOrCreateAsync();
+
+        var saved = await store.SaveAsync(defaults with
+        {
+            ImportInboxDir = defaults.AudioOutputDir,
+            ImportInboxEnabled = true,
+            ImportInboxScanIntervalSeconds = 1,
+            ImportInboxMaxBatchSize = 101,
+        });
+
+        Assert.Equal(Path.Combine(documentsRoot, "Meetings", "Import Inbox"), saved.ImportInboxDir);
+        Assert.False(saved.ImportInboxEnabled);
+        Assert.Equal(60, saved.ImportInboxScanIntervalSeconds);
+        Assert.Equal(20, saved.ImportInboxMaxBatchSize);
+        Assert.False(saved.ImportInboxArchiveAfterQueueEnabled);
+        Assert.False(saved.ImportInboxMoveBlockedToErrorEnabled);
     }
 
     [Fact]
@@ -175,6 +291,59 @@ public sealed class AppConfigStoreTests
 
         Assert.Equal("gpt-5.6-terra", preserved.SummaryModelProxyModel);
         Assert.Equal(1, preserved.SummaryModelProxyContractMigrationVersion);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Migrates_Legacy_Meetings_Browsing_To_Custom_Without_Changing_It()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "meetingsViewMode": 1,
+              "meetingsGroupedViewMigrationApplied": true,
+              "meetingsSortKey": 1,
+              "meetingsSortDescending": false,
+              "meetingsGroupKey": 1
+            }
+            """);
+
+        var migrated = await new AppConfigStore(configPath, documentsRoot).LoadOrCreateAsync();
+
+        Assert.Equal(MeetingsViewPreset.Custom, migrated.MeetingsViewPreset);
+        Assert.Equal(1, migrated.MeetingsViewPresetMigrationVersion);
+        Assert.True(migrated.MeetingsViewPresetInitialized);
+        Assert.Equal(MeetingsViewMode.Grouped, migrated.MeetingsViewMode);
+        Assert.Equal(MeetingsSortKey.Title, migrated.MeetingsSortKey);
+        Assert.False(migrated.MeetingsSortDescending);
+        Assert.Equal(MeetingsGroupKey.Month, migrated.MeetingsGroupKey);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Falls_Back_From_Unknown_Meetings_Preset()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var documentsRoot = Path.Combine(root, "documents");
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        await File.WriteAllTextAsync(
+            configPath,
+            """
+            {
+              "meetingsViewPreset": 999,
+              "meetingsViewPresetMigrationVersion": 1,
+              "meetingsViewPresetInitialized": true
+            }
+            """);
+
+        var normalized = await new AppConfigStore(configPath, documentsRoot).LoadOrCreateAsync();
+
+        Assert.Equal(MeetingsViewPreset.Recent, normalized.MeetingsViewPreset);
+        Assert.True(normalized.MeetingsViewPresetInitialized);
     }
 
     [Fact]
@@ -283,6 +452,9 @@ public sealed class AppConfigStoreTests
             MeetingsSortKey = MeetingsSortKey.Title,
             MeetingsSortDescending = false,
             MeetingsGroupKey = MeetingsGroupKey.Month,
+            MeetingsViewPreset = MeetingsViewPreset.Custom,
+            MeetingsViewPresetMigrationVersion = 1,
+            MeetingsViewPresetInitialized = true,
             SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
             SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
             SummaryModelProxyBaseUrl = " http://127.0.0.1:8645/v1/ ",
@@ -314,7 +486,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(ProcessingSpeedProfile.Normal, reloaded.ProcessingSpeedProfile);
         Assert.True(reloaded.ProcessingScheduleMigrationApplied);
         Assert.Equal(InitialProcessingStrategy.ConfiguredStages, reloaded.InitialProcessingStrategy);
-        Assert.Equal(InitialProcessingStrategy.TranscriptFirst, reloaded.OvernightInitialProcessingStrategy);
+        Assert.Equal(InitialProcessingStrategy.ConfiguredStages, reloaded.OvernightInitialProcessingStrategy);
         Assert.Equal(IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup, reloaded.IncrementalWorkPlan);
         Assert.Equal("21:30", reloaded.OvernightDrainStartLocal);
         Assert.Equal("05:15", reloaded.OvernightDrainEndLocal);
@@ -339,6 +511,9 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingsSortKey.Title, reloaded.MeetingsSortKey);
         Assert.False(reloaded.MeetingsSortDescending);
         Assert.Equal(MeetingsGroupKey.Month, reloaded.MeetingsGroupKey);
+        Assert.Equal(MeetingsViewPreset.Custom, reloaded.MeetingsViewPreset);
+        Assert.Equal(1, reloaded.MeetingsViewPresetMigrationVersion);
+        Assert.True(reloaded.MeetingsViewPresetInitialized);
         Assert.Equal(MeetingSummaryGenerationMode.Enabled, reloaded.SummaryGenerationMode);
         Assert.Equal(MeetingSummaryProviderPreference.OpenAiOnly, reloaded.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", reloaded.SummaryModelProxyBaseUrl);
@@ -366,6 +541,7 @@ public sealed class AppConfigStoreTests
         Assert.True(reloaded.SpeakerLabelingSecurityPromptMigrationApplied);
         Assert.Single(reloaded.DismissedMeetingRecommendations);
         Assert.Equal("archive:meeting-1", reloaded.DismissedMeetingRecommendations[0].Fingerprint);
+        Assert.Equal(1, reloaded.DismissedMeetingRecommendations[0].RecommendationVersion);
     }
 
     [Fact]

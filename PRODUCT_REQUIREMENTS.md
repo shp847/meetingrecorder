@@ -127,6 +127,103 @@ The product family also includes installer and update surfaces:
 
 ## 6. Functional Requirements
 
+## 6.0 Control Ownership And Safety Policy
+
+This policy governs new and changed user controls. The machine-readable control
+map at `docs/ux-audits/whole-app-sprint-1-policy.json` is the source of
+traceability for the current audited controls. It joins every control to one
+primary owner, layer, safety boundary, status location, and later delivery
+sprint. A later roadmap may add a stricter boundary, but may not weaken this
+policy without a dated product decision and regression coverage.
+
+### Three layers
+
+- **Assistant:** shows local, bounded status and recommendations. It may refresh
+  metadata or calculate recommendations automatically only under the automation
+  matrix below; it never silently mutates meeting artifacts or enables capture.
+- **Guided:** owns outcome-level choices such as record, repair, review,
+  configure, and confirm. It explains scope and the next safe action without
+  requiring users to understand providers, manifests, worker stages, or
+  thresholds.
+- **Power:** owns Advanced and diagnostic detail. It preserves expert controls
+  and technical status for a user who explicitly opens Advanced or Help, but
+  does not turn advanced infrastructure into a daily setup requirement.
+
+Every new capability must name its assistant default, guided owner, and any
+power configuration. Normal surfaces use outcome labels; technical terms remain
+available in Advanced and diagnostics when they help an intentional power-user
+task.
+
+### One primary owner and alias equivalence
+
+- Each action has one primary owner control and one primary owner surface.
+- An alias is either a **contextual duplicate** with identical eligibility,
+  consent, confirmation, scope, cancellation, and result semantics, or a
+  **navigate** alias that moves to the owner without executing the action.
+- An alias may never make a risky action broader, easier, more automatic, or
+  less explicit than its primary owner.
+- A disabled or blocked action states its reason, prerequisite, and next safe
+  action in the current viewport. Background work must not rely only on an
+  activity log or transient toast for its user-visible result.
+
+### Automation and consent matrix
+
+| Disposition | Allowed | Never permits |
+| --- | --- | --- |
+| `automatic` | Local, bounded, non-overlapping metadata refresh or recommendation generation with visible current-viewport status. | Hosted transfer, microphone enablement, destructive work, reprocessing, or active-work interruption. |
+| `automatic-after-persisted-opt-in` | Only the named capability after the user saved its scope, data boundary, reversal path, and re-confirmation trigger. | Permission for another provider, microphone path, destructive action, or unrelated capability. |
+| `recommend-only` | Local eligibility or ranking shown without mutating artifacts. | Executing, archiving, deleting, reprocessing, or transferring content. |
+| `explicit-per-action` | User reviews visible scope and confirms the individual action. | Silent execution or broadened alias behavior. |
+
+Microphone enablement, hosted transcript transfer, hosted-provider fallback,
+permanent deletion, archive, cleanup apply, reprocessing, worker interruption,
+and update installation are explicit-per-action unless this policy's matching
+row records a scoped persisted opt-in. Hosted summary consent must distinguish
+local and hosted processing before first use and again whenever provider,
+fallback, or transcript scope changes. Bulk actions show eligible count,
+affected artifacts, irreversible impact, cancellation behavior, and a truthful
+per-target result.
+
+### Approved copy patterns
+
+| State | Required pattern |
+| --- | --- |
+| Recommended | Outcome first, concise local reason, eligible scope, and one explicit next action. |
+| Unavailable | Outcome, blocking prerequisite, and direct safe recovery action in the current viewport. |
+| Local-only | State that processing remains on this device; do not imply hosted fallback. |
+| Hosted boundary | State what transcript content leaves the device, named provider, scope, reversal path, and re-confirmation trigger. |
+| Destructive | State affected artifacts, irreversible impact, archive/recovery availability, and explicit confirmation. |
+| Interruption | State affected active or queued work, cancellation behavior, recovery route, and explicit confirmation. |
+| Background | State current outcome, bounded scope, last change or freshness, and next action; do not hide a mutation behind a toast. |
+
+Use plain outcome language, such as `Publish transcript first`, before
+implementation mechanism. Thresholds, manifests, worker internals, and provider
+details appear only in Advanced or Help unless a power user deliberately opened
+diagnostics.
+
+### Settings preset ownership
+
+Outcome-level presets project existing concrete configuration; they are not
+persisted as a second source of truth. A preset patch changes only the fields in
+this table on the unsaved editor snapshot. It becomes effective only through
+normal **Save Changes**. Startup, inference, and hot reload never rewrite a
+configuration to fit a preset. A non-exact projection is `Custom`, which is
+informational and cannot be selected as a preset.
+
+| Category | Supported modes | Exact owned fields | Boundary and application timing |
+| --- | --- | --- | --- |
+| Recording assistance | Recommended; Manual only | automatic detection, calendar-title fallback, attendee enrichment, automatic-stop timeout, detection sensitivity | Never changes microphone capture. Applies to the next recording after Save Changes. |
+| Processing experience | Responsive; Publish transcript first; Faster backlog | background-processing mode, speaker-labeling mode, initial processing strategy | Faster backlog uses only currently supported safe worker settings; it does not enable GPU or promise additional capacity. Applies to the next job after Save Changes. |
+| Meeting summaries | Off; Local only; Local with hosted fallback; Hosted only | summary enablement, provider preference | Never changes credentials, provider URLs, model names, timeouts, chunking, or reasoning tuning. Hosted modes remain `Needs provider setup` until explicit hosted consent and credentials already exist; before that no transcript is sent and no fallback is selected. Applies to the next job after Save Changes. |
+| Update experience | Automatic when idle; Notify only; Manual only | update checks, install-when-idle preference | Never starts an immediate install or changes a pending-update request. Applies to future update checks after Save Changes. |
+
+Every concrete field has at most one preset owner. Paths, secrets, microphone
+capture, model/provider tuning, future acceleration preferences, pending update
+state, and all other unowned fields survive every preset change. The guided
+surface must provide a concise **What this controls** summary and an explicit
+Advanced route; it must show `Custom` with the differing field reason rather
+than silently normalizing a value.
+
 ## 6.1 Meeting Detection
 
 - The app must detect likely Teams desktop meetings from process names, window titles, audio activity, and meeting-like keywords.

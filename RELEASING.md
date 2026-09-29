@@ -34,6 +34,14 @@ That same command can be reused later for updates.
 2. Make sure the branding version in `src\MeetingRecorder.Core\Branding\AppBranding.cs` matches.
 3. Put any GitHub-downloadable model assets you want to publish under `assets\models\asr`.
 
+For a release that changes external-audio import, use
+`docs\external-audio-import-acceptance-matrix.md` as the evidence ledger.
+Build only from the intended clean commit. Package startup and installed import
+journeys must run in an isolated non-user install with synthetic or legally
+distributable media; do not stop an active user Meeting Recorder process or
+place source paths, audio, transcripts, profiles, or credentials in release
+evidence.
+
 The output names are generated from the current repo version automatically. If the repo is at `0.2`, the main release ZIP becomes `MeetingRecorder-v0.2-win-x64.zip`.
 
 ## One-Command Release Build
@@ -101,13 +109,13 @@ Packaging validation notes:
 - legacy single-file installs without the v2 `bundle-layout.json` marker should require a one-time MSI or bootstrapper reset before in-app updates resume
 - update downloads and staging should use `%LOCALAPPDATA%\MeetingRecorder\updates`, not the user Downloads folder
 - in-app update selection and pending-update retry must only accept the versioned `MeetingRecorder-v<version>-win-x64.zip` app bundle; model binaries, diarization bundles, MSI assets, bootstrap scripts, missing pending files, size mismatches, and corrupt ZIPs must fail before the app is asked to shut down
-- keep non-MSI fallbacks thin; they should hand off into `Install-LatestFromGitHub.cmd/.ps1` and should not extract ZIPs, copy files into `%LOCALAPPDATA%\Programs\Meeting Recorder`, launch the app, or create shortcuts themselves
-- keep install messaging explicit about the split between app files in `%LOCALAPPDATA%\Programs\Meeting Recorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
+- keep non-MSI fallbacks thin; they should hand off into `Install-LatestFromGitHub.cmd/.ps1` and should not extract ZIPs, copy files into `%USERPROFILE%\MeetingRecorder`, launch the app, or create shortcuts themselves
+- keep install messaging explicit about the split between app files in `%USERPROFILE%\MeetingRecorder` and writable runtime data in `%LOCALAPPDATA%\MeetingRecorder`
 - the shared deployment CLI should reject bundles that fail `bundle-integrity.json` validation before it touches the managed install root
 - the shared deployment CLI and managed-install repair path should treat the worker sidecar dependency set as required, not just `MeetingRecorder.ProcessingWorker.exe`
 - the shared deployment CLI should persist install provenance for diagnostics under `%LOCALAPPDATA%\MeetingRecorder\install-provenance.json`
 - the shared deployment CLI bundle must carry the `System.IO.Pipelines` runtime dependency that `System.Text.Json` loads during provenance save, or `install-bundle` can fail after staging with a runtime assembly-load error
-- the shared deployment CLI should update an existing managed install in place instead of renaming the whole `%LOCALAPPDATA%\Programs\Meeting Recorder` root, so locked files under the preserved `data` tree do not block routine updates
+- the shared deployment CLI should update an existing managed install in place and transactionally migrate legacy roots to `%USERPROFILE%\MeetingRecorder`
 - Desktop and Start Menu launchers created by the shared deployment path should be normal `.lnk` shortcuts that target `Run-MeetingRecorder.cmd`, not raw visible `.cmd` files
 - `Run-MeetingRecorder.cmd` should wait briefly for `MeetingRecorder.App.exe` to reappear before it shows the missing-apphost error, so short install/update handoff gaps do not look like a permanent broken install
 - repo-local deploy is a developer-only shortcut for refreshing the managed install root; MSI install testing and in-app upgrade testing stay the canonical publish-validation paths
@@ -285,7 +293,9 @@ The WPF app host no longer requires these loose published files in the shipped s
 
 Important local verification note:
 
-- `scripts\Publish-Portable.ps1`, `scripts\Build-Installer.ps1`, and `scripts\Build-Release.ps1` create fresh artifacts under `.artifacts`, but they do not replace the live app already installed under `%LOCALAPPDATA%\Programs\Meeting Recorder`
+- `scripts\Publish-Portable.ps1`, `scripts\Build-Installer.ps1`, and `scripts\Build-Release.ps1` create fresh artifacts under `.artifacts` by default, but they do not replace the live app already installed under `%USERPROFILE%\MeetingRecorder`
+- `Publish-Portable.ps1` and `Build-Installer.ps1 -PublishOutputRoot <path> -PackageRoot <path>` accept dedicated absolute artifact roots and reject a filesystem root or repository root. Use them only for a non-live directory backed by current endpoint-retention evidence; each build may clear its package/staging contents.
+- When an endpoint removes generated publish apphosts but existing stable apphosts are byte-identical to current intermediate build apphosts, explicit `-StableAppHostPath`, `-StableDeploymentCliAppHostPath`, and `-StableWorkerAppHostPath` values permit hash-verified local restores. They reject missing or mismatched sources and must never be treated as signing, security-policy bypass, or proof of an installed release.
 - if you want to refresh the canonical managed install root for local development after a rebuild, use the repo-local deploy shortcut:
 
 ```powershell
@@ -345,7 +355,7 @@ Important:
    - `https://api.github.com/repos/shp847/meetingrecorder/releases/latest`
 2. Download `MeetingRecorderInstaller.msi`
 3. Run `MeetingRecorderInstaller.msi`
-4. Confirm the app installs into `%LOCALAPPDATA%\Programs\Meeting Recorder`
+4. Confirm the app installs into `%USERPROFILE%\MeetingRecorder`
 5. Confirm the MSI skips the license agreement page, shows the first-install `Choose model options` page, and makes it clear that `Standard` is always installed from the package
 6. Confirm the first-install dialog lets you choose `Standard` or `Standard + Higher Accuracy download` for both transcription and speaker labeling
 7. Confirm the completion screen offers `Launch Meeting Recorder`
@@ -366,7 +376,7 @@ Important:
 22. Confirm a republished same-version build still does not auto-install on its own without an explicit user queue request
 23. Download `Install-LatestFromGitHub.cmd` and confirm the fallback path still works when the MSI is not used
 24. Uninstall `Meeting Recorder` from Windows `Installed apps` / `Apps & features`
-25. Confirm `%LOCALAPPDATA%\Programs\Meeting Recorder` and the user-scope shortcuts are removed
+25. Confirm `%USERPROFILE%\MeetingRecorder` and the user-scope shortcuts are removed
 26. Confirm `%LOCALAPPDATA%\MeetingRecorder` plus `Documents\Meetings\Recordings`, `Documents\Meetings\Transcripts`, and `Documents\Meetings\Archive` are preserved
 27. Run `MeetingRecorderInstaller.msi` again as a fresh install
 28. Confirm the app comes back with the preserved user data still available

@@ -88,6 +88,51 @@ public sealed class FilePublishServiceTests
         Assert.True(File.Exists(published.ReadyMarkerPath));
     }
 
+    [Fact]
+    public async Task PublishEnrichmentAsync_Replaces_Only_Existing_Sidecars_And_Retains_The_Ready_Marker()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var sourceDir = Path.Combine(root, "source");
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(sourceDir);
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(transcriptDir);
+        var stem = "2026-03-19_143250_teams_example";
+        var audioPath = Path.Combine(sourceDir, "source.wav");
+        var initialMarkdownPath = Path.Combine(sourceDir, "initial.md");
+        var initialJsonPath = Path.Combine(sourceDir, "initial.json");
+        var enrichmentMarkdownPath = Path.Combine(sourceDir, "enrichment.md");
+        var enrichmentJsonPath = Path.Combine(sourceDir, "enrichment.json");
+        CreateFloatWave(audioPath, TimeSpan.FromSeconds(1), sampleRate: 48_000, channels: 2);
+        await File.WriteAllTextAsync(initialMarkdownPath, "initial markdown");
+        await File.WriteAllTextAsync(initialJsonPath, "{\"revision\":\"initial\"}");
+        await File.WriteAllTextAsync(enrichmentMarkdownPath, "enriched markdown");
+        await File.WriteAllTextAsync(enrichmentJsonPath, "{\"revision\":\"enriched\"}");
+        var service = new FilePublishService();
+
+        var initial = await service.PublishAsync(
+            audioPath,
+            initialMarkdownPath,
+            initialJsonPath,
+            audioDir,
+            transcriptDir,
+            stem);
+        var readyBefore = await File.ReadAllTextAsync(initial.ReadyMarkerPath);
+        var enriched = await service.PublishEnrichmentAsync(
+            enrichmentMarkdownPath,
+            enrichmentJsonPath,
+            audioDir,
+            transcriptDir,
+            stem);
+
+        Assert.Equal(initial.AudioPath, enriched.AudioPath);
+        Assert.Equal(initial.ReadyMarkerPath, enriched.ReadyMarkerPath);
+        Assert.Equal(readyBefore, await File.ReadAllTextAsync(enriched.ReadyMarkerPath));
+        Assert.Equal("enriched markdown", await File.ReadAllTextAsync(enriched.MarkdownPath));
+        Assert.Equal("{\"revision\":\"enriched\"}", await File.ReadAllTextAsync(enriched.JsonPath));
+    }
+
     private static void CreateFloatWave(string path, TimeSpan duration, int sampleRate, int channels)
     {
         using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));

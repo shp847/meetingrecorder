@@ -32,7 +32,8 @@ public sealed class SessionProcessor
         IDiarizationProvider diarizationProvider,
         TranscriptRenderer transcriptRenderer,
         FilePublishService publishService,
-        IMeetingSummarizationProvider? summarizationProvider = null)
+        IMeetingSummarizationProvider? summarizationProvider = null,
+        SessionProcessingInputResolver? processingInputResolver = null)
     {
         ManifestStore = manifestStore;
         PathBuilder = pathBuilder;
@@ -42,6 +43,7 @@ public sealed class SessionProcessor
         TranscriptRenderer = transcriptRenderer;
         PublishService = publishService;
         SummarizationProvider = summarizationProvider ?? NoOpMeetingSummarizationProvider.Instance;
+        ProcessingInputResolver = processingInputResolver ?? new SessionProcessingInputResolver();
     }
 
     public SessionManifestStore ManifestStore { get; }
@@ -60,12 +62,41 @@ public sealed class SessionProcessor
 
     public IMeetingSummarizationProvider SummarizationProvider { get; }
 
+    public SessionProcessingInputResolver ProcessingInputResolver { get; }
+
     public Task<PublishedArtifactSet> ProcessAsync(
         string manifestPath,
         AppConfig config,
         CancellationToken cancellationToken = default)
     {
-        return ProcessInternalAsync(manifestPath, config, cancellationToken);
+        return ProcessAsync(manifestPath, config, SessionProcessingStage.FullPass, cancellationToken);
+    }
+
+    public Task<PublishedArtifactSet> ProcessAsync(
+        string manifestPath,
+        AppConfig config,
+        SessionProcessingStage stage,
+        CancellationToken cancellationToken = default)
+    {
+        return stage switch
+        {
+            SessionProcessingStage.FullPass => ProcessInternalAsync(manifestPath, config, cancellationToken),
+            // The existing full pass already has the tested preparation,
+            // transcription, publication, cancellation, and recovery path.
+            // Its temporary transcript-only policy ensures this explicit pass
+            // does not invoke optional enrichment providers.
+            SessionProcessingStage.Transcript => ProcessInternalAsync(
+                manifestPath,
+                config with
+                {
+                    ProcessingScheduleMigrationApplied = false,
+                    ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain,
+                },
+                cancellationToken),
+            SessionProcessingStage.Diarization => ProcessDiarizationStageAsync(manifestPath, config, cancellationToken),
+            SessionProcessingStage.Summary => ProcessSummaryStageAsync(manifestPath, config, cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "Unknown processing stage."),
+        };
     }
 
     internal static string GetPersistedTranscriptionSnapshotPath(string processingRoot)
@@ -96,14 +127,33 @@ public sealed class SessionProcessor
         var processingRoot = Path.Combine(sessionRoot, "processing");
         Directory.CreateDirectory(processingRoot);
 
-        var stem = PathBuilder.BuildFileStem(
-            manifest.Platform,
-            manifest.StartedAtUtc,
-            string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle);
+        var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+        var stem = manifest.ImportedSourceAudio is null
+            ? PathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title)
+            : PathBuilder.BuildImportedFileStem(manifest.Platform, manifest.StartedAtUtc, title, manifest.SessionId);
+        SessionProcessingInput input;
         string sourceAudioPath;
+        ExternalAudioImportJob? activeImportJob = null;
         try
         {
-            sourceAudioPath = await ResolveSourceAudioPathAsync(manifest, processingRoot, stem, cancellationToken);
+            input = await ProcessingInputResolver.ResolveAsync(
+                manifest,
+                manifestPath,
+                processingRoot,
+                stem,
+                WaveChunkMerger,
+                cancellationToken);
+            sourceAudioPath = input.AudioPath;
+            activeImportJob = await MarkImportedJobProcessingAsync(input, cancellationToken);
+            if (input.Kind == SessionProcessingInputKind.ImportedAudio &&
+                !string.Equals(manifest.ImportedSourceAudio?.OutputStem, stem, StringComparison.Ordinal))
+            {
+                manifest = manifest with
+                {
+                    ImportedSourceAudio = manifest.ImportedSourceAudio! with { OutputStem = stem },
+                };
+                await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -137,7 +187,26 @@ public sealed class SessionProcessor
                 DateTimeOffset.UtcNow,
                 "Loaded persisted transcript snapshot from a prior attempt.");
 
-        await PublishService.PublishAudioAsync(sourceAudioPath, config.AudioOutputDir, stem, cancellationToken);
+        try
+        {
+            await PublishService.PublishAudioAsync(sourceAudioPath, config.AudioOutputDir, stem, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            var now = DateTimeOffset.UtcNow;
+            manifest = manifest with
+            {
+                State = SessionState.Failed,
+                TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Failed, now, exception.Message),
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Skipped, now, "Skipped because audio publication failed."),
+                SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.Skipped, now, "Skipped because audio publication failed."),
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Failed, now, exception.Message),
+                ErrorSummary = exception.Message,
+            };
+            await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            await TryMarkImportedJobFailedAsync(input, activeImportJob, cancellationToken);
+            throw;
+        }
 
         manifest = manifest with
         {
@@ -185,6 +254,7 @@ public sealed class SessionProcessor
                     ErrorSummary = exception.Message,
                 };
                 await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+                await TryMarkImportedJobFailedAsync(input, activeImportJob, cancellationToken);
                 throw;
             }
 
@@ -339,11 +409,11 @@ public sealed class SessionProcessor
 
         var markdownPath = Path.Combine(processingRoot, $"{stem}.md");
         var jsonPath = Path.Combine(processingRoot, $"{stem}.json");
-        await File.WriteAllTextAsync(markdownPath, TranscriptRenderer.RenderMarkdown(manifest, transcriptSegments), Encoding.UTF8, cancellationToken);
-        await File.WriteAllTextAsync(jsonPath, TranscriptRenderer.RenderJson(manifest, transcriptSegments), Encoding.UTF8, cancellationToken);
-
         try
         {
+            await File.WriteAllTextAsync(markdownPath, TranscriptRenderer.RenderMarkdown(manifest, transcriptSegments), Encoding.UTF8, cancellationToken);
+            await File.WriteAllTextAsync(jsonPath, TranscriptRenderer.RenderJson(manifest, transcriptSegments), Encoding.UTF8, cancellationToken);
+
             manifest = manifest with
             {
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Running, DateTimeOffset.UtcNow, null),
@@ -365,6 +435,7 @@ public sealed class SessionProcessor
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Artifacts published."),
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            await TryMarkImportedJobPublishedAsync(input, activeImportJob, cancellationToken);
             await PublishedSessionWorkCleanupService.PrunePublishedSessionAsync(
                 ManifestStore,
                 manifestPath,
@@ -383,9 +454,359 @@ public sealed class SessionProcessor
                 ErrorSummary = exception.Message,
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            await TryMarkImportedJobFailedAsync(input, activeImportJob, cancellationToken);
             throw;
         }
     }
+
+    private async Task<PublishedArtifactSet> ProcessDiarizationStageAsync(
+        string manifestPath,
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        var context = await LoadEnrichmentStageContextAsync(
+            manifestPath,
+            config,
+            SessionProcessingStage.Diarization,
+            cancellationToken);
+        var manifest = context.Manifest;
+        if (manifest.ProcessingOverrides?.SkipSpeakerLabeling == true &&
+            manifest.ProcessingOverrides.ForceSpeakerLabeling != true)
+        {
+            await ThrowStageBlockedAsync(
+                manifestPath,
+                manifest,
+                SessionProcessingStage.Diarization,
+                "Speaker labeling was intentionally deferred for this meeting.",
+                cancellationToken);
+        }
+
+        manifest = manifest with
+        {
+            State = SessionState.Processing,
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Queued, DateTimeOffset.UtcNow, null),
+        };
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+
+        IReadOnlyList<TranscriptSegment> transcriptSegments = context.TranscriptSegments;
+        IReadOnlyList<SpeakerIdentity> speakers = EmptySpeakers;
+        IReadOnlyList<SpeakerTurn> speakerTurns = EmptySpeakerTurns;
+        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
+        DiarizationMetadata? diarizationMetadata = null;
+        DiarizationProgress? latestDiarizationProgress = null;
+        var progressSource = DiarizationProvider as IDiarizationProgressSource;
+        void OnDiarizationProgress(DiarizationProgress progress) => latestDiarizationProgress = progress;
+        if (progressSource is not null)
+        {
+            progressSource.ProgressChanged += OnDiarizationProgress;
+        }
+
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task? heartbeatTask = null;
+        try
+        {
+            manifest = manifest with
+            {
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Running, DateTimeOffset.UtcNow, null),
+            };
+            await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            heartbeatTask = PersistDiarizationHeartbeatAsync(
+                manifestPath,
+                () => latestDiarizationProgress,
+                heartbeatCts.Token);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(BackgroundProcessingPolicy.DiarizationTimeout);
+            var diarization = await DiarizationProvider.ApplySpeakerLabelsAsync(
+                context.AudioPath,
+                context.TranscriptSegments,
+                timeoutCts.Token);
+            transcriptSegments = diarization.Segments;
+            speakers = diarization.Speakers ?? EmptySpeakers;
+            speakerTurns = diarization.SpeakerTurns ?? EmptySpeakerTurns;
+            speakerVoiceSamples = diarization.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>();
+            diarizationMetadata = diarization.Metadata;
+            manifest = manifest with
+            {
+                DiarizationStatus = new ProcessingStageStatus(
+                    "diarization",
+                    diarization.AppliedSpeakerLabels ? StageExecutionState.Succeeded : StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    diarization.Message),
+            };
+        }
+        catch (WavInputManualReviewException exception)
+        {
+            manifest = manifest with
+            {
+                DiarizationStatus = new ProcessingStageStatus(
+                    "diarization",
+                    StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    $"Speaker labeling needs manual review: {exception.Message}"),
+            };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            manifest = manifest with
+            {
+                DiarizationStatus = new ProcessingStageStatus(
+                    "diarization",
+                    StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    $"Speaker labeling skipped after the {BackgroundProcessingPolicy.DiarizationTimeout.TotalMinutes:0}-minute optional processing limit."),
+            };
+        }
+        catch (Exception exception)
+        {
+            manifest = manifest with
+            {
+                DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Failed, DateTimeOffset.UtcNow, exception.Message),
+            };
+        }
+        finally
+        {
+            heartbeatCts.Cancel();
+            if (heartbeatTask is not null)
+            {
+                try
+                {
+                    await heartbeatTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected after terminal diarization state.
+                }
+            }
+
+            if (progressSource is not null)
+            {
+                progressSource.ProgressChanged -= OnDiarizationProgress;
+            }
+        }
+
+        manifest = manifest with
+        {
+            ProcessingOverrides = ClearForceSpeakerLabelingOverride(manifest.ProcessingOverrides),
+            ProcessingMetadata = new MeetingProcessingMetadata(
+                Path.GetFileName(config.TranscriptionModelPath),
+                transcriptSegments.Any(segment =>
+                    !string.IsNullOrWhiteSpace(segment.SpeakerId) ||
+                    !string.IsNullOrWhiteSpace(segment.SpeakerLabel)),
+                speakers,
+                speakerTurns,
+                diarizationMetadata,
+                speakerVoiceSamples),
+            // A speaker-attribution change makes any prior summary stale. Do
+            // not claim it is current or regenerate it without a distinct,
+            // consent-checked summary request.
+            SummarizationStatus = manifest.Summary is null
+                ? manifest.SummarizationStatus
+                : new ProcessingStageStatus("summarization", StageExecutionState.NotStarted, DateTimeOffset.UtcNow, "Summary needs refresh after speaker-label changes."),
+            Summary = null,
+        };
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+
+        return await PublishEnrichmentArtifactsAsync(
+            manifestPath,
+            manifest,
+            context,
+            transcriptSegments,
+            config,
+            cancellationToken);
+    }
+
+    private async Task<PublishedArtifactSet> ProcessSummaryStageAsync(
+        string manifestPath,
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        var context = await LoadEnrichmentStageContextAsync(
+            manifestPath,
+            config,
+            SessionProcessingStage.Summary,
+            cancellationToken);
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled)
+        {
+            await ThrowStageBlockedAsync(
+                manifestPath,
+                context.Manifest,
+                SessionProcessingStage.Summary,
+                "Summary generation is disabled in the current settings.",
+                cancellationToken);
+        }
+
+        var manifest = context.Manifest with { State = SessionState.Processing };
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+        manifest = await ApplySummarizationAsync(
+            manifest,
+            manifestPath,
+            context.ProcessingRoot,
+            context.TranscriptSegments,
+            config,
+            cancellationToken);
+
+        return await PublishEnrichmentArtifactsAsync(
+            manifestPath,
+            manifest,
+            context,
+            context.TranscriptSegments,
+            config,
+            cancellationToken);
+    }
+
+    private async Task<EnrichmentStageContext> LoadEnrichmentStageContextAsync(
+        string manifestPath,
+        AppConfig config,
+        SessionProcessingStage stage,
+        CancellationToken cancellationToken)
+    {
+        var manifest = await ManifestStore.LoadAsync(manifestPath, cancellationToken);
+        if (manifest.TranscriptionStatus.State != StageExecutionState.Succeeded ||
+            manifest.PublishStatus.State != StageExecutionState.Succeeded)
+        {
+            await ThrowStageBlockedAsync(
+                manifestPath,
+                manifest,
+                stage,
+                "A current published transcript is required before this stage can run.",
+                cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.MergedAudioPath) || !File.Exists(manifest.MergedAudioPath))
+        {
+            await ThrowStageBlockedAsync(
+                manifestPath,
+                manifest,
+                stage,
+                "The retained meeting audio is unavailable for this stage.",
+                cancellationToken);
+        }
+        var audioPath = manifest.MergedAudioPath!;
+
+        var sessionRoot = Path.GetDirectoryName(manifestPath)
+            ?? throw new InvalidOperationException("Manifest path must include a session directory.");
+        var processingRoot = Path.Combine(sessionRoot, "processing");
+        Directory.CreateDirectory(processingRoot);
+        var stem = BuildOutputStem(manifest);
+        var markdownPath = Path.Combine(config.TranscriptOutputDir, $"{stem}.md");
+        var jsonPath = Path.Combine(ArtifactPathBuilder.BuildTranscriptSidecarRoot(config.TranscriptOutputDir), $"{stem}.json");
+        if (!MeetingTranscriptDocumentReader.TryReadStructuredSegments(jsonPath, markdownPath, out var segments) ||
+            segments.Count == 0)
+        {
+            await ThrowStageBlockedAsync(
+                manifestPath,
+                manifest,
+                stage,
+                "The current structured transcript artifact is unavailable for this stage.",
+                cancellationToken);
+        }
+        var inputFingerprint = StageArtifactFingerprint.Capture(audioPath, markdownPath, jsonPath);
+
+        return new EnrichmentStageContext(
+            manifest,
+            processingRoot,
+            stem,
+            audioPath,
+            segments,
+            inputFingerprint);
+    }
+
+    private async Task<PublishedArtifactSet> PublishEnrichmentArtifactsAsync(
+        string manifestPath,
+        MeetingSessionManifest manifest,
+        EnrichmentStageContext context,
+        IReadOnlyList<TranscriptSegment> segments,
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        var markdownPath = Path.Combine(context.ProcessingRoot, $"{context.Stem}.enrichment.md");
+        var jsonPath = Path.Combine(context.ProcessingRoot, $"{context.Stem}.enrichment.json");
+        try
+        {
+            if (!context.InputFingerprint.IsCurrent())
+            {
+                throw new InvalidOperationException(
+                    "The published artifact changed before enrichment could be committed. Refresh the stage request before retrying.");
+            }
+
+            await File.WriteAllTextAsync(markdownPath, TranscriptRenderer.RenderMarkdown(manifest, segments), Encoding.UTF8, cancellationToken);
+            await File.WriteAllTextAsync(jsonPath, TranscriptRenderer.RenderJson(manifest, segments), Encoding.UTF8, cancellationToken);
+            manifest = manifest with
+            {
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Running, DateTimeOffset.UtcNow, "Publishing enrichment artifacts."),
+            };
+            await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            var published = await PublishService.PublishEnrichmentAsync(
+                markdownPath,
+                jsonPath,
+                config.AudioOutputDir,
+                config.TranscriptOutputDir,
+                context.Stem,
+                cancellationToken);
+            manifest = manifest with
+            {
+                State = SessionState.Published,
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Enrichment artifacts published."),
+            };
+            await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            await PublishedSessionWorkCleanupService.PrunePublishedSessionAsync(
+                ManifestStore,
+                manifestPath,
+                manifest,
+                config.AudioOutputDir,
+                cancellationToken);
+            return published;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The already-published transcript remains the readable prior
+            // revision. Keep its publication state rather than reclassifying
+            // the entire meeting as failed because enrichment could not commit.
+            var failed = manifest with
+            {
+                State = SessionState.Published,
+                PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Failed, DateTimeOffset.UtcNow, "Enrichment publication failed; the prior transcript remains available."),
+            };
+            await ManifestStore.SaveAsync(failed, manifestPath, cancellationToken);
+            throw;
+        }
+    }
+
+    private async Task ThrowStageBlockedAsync(
+        string manifestPath,
+        MeetingSessionManifest manifest,
+        SessionProcessingStage stage,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var status = new ProcessingStageStatus(
+            stage == SessionProcessingStage.Diarization ? "diarization" : "summarization",
+            StageExecutionState.Skipped,
+            DateTimeOffset.UtcNow,
+            $"Stage request blocked: {reason}");
+        manifest = stage == SessionProcessingStage.Diarization
+            ? manifest with { DiarizationStatus = status }
+            : manifest with { SummarizationStatus = status, Summary = null };
+        await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+        throw new InvalidOperationException($"The {stage.ToString().ToLowerInvariant()} stage is blocked. {reason}");
+    }
+
+    private string BuildOutputStem(MeetingSessionManifest manifest)
+    {
+        var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+        return manifest.ImportedSourceAudio is null
+            ? PathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title)
+            : PathBuilder.BuildImportedFileStem(manifest.Platform, manifest.StartedAtUtc, title, manifest.SessionId);
+    }
+
+    private sealed record EnrichmentStageContext(
+        MeetingSessionManifest Manifest,
+        string ProcessingRoot,
+        string Stem,
+        string AudioPath,
+        IReadOnlyList<TranscriptSegment> TranscriptSegments,
+        StageArtifactFingerprint InputFingerprint);
 
     private static string BuildTranscriptionSnapshotPath(string processingRoot, string stem)
     {
@@ -730,43 +1151,142 @@ public sealed class SessionProcessor
         return string.Join("; ", parts);
     }
 
-    private async Task<string> ResolveSourceAudioPathAsync(
-        MeetingSessionManifest manifest,
-        string processingRoot,
-        string stem,
+    private static async Task<ExternalAudioImportJob?> MarkImportedJobProcessingAsync(
+        SessionProcessingInput input,
         CancellationToken cancellationToken)
     {
-        if (manifest.RawChunkPaths.Count > 0 || manifest.MicrophoneCaptureSegments.Count > 0)
+        if (input.Kind != SessionProcessingInputKind.ImportedAudio ||
+            input.ImportJob is null ||
+            string.IsNullOrWhiteSpace(input.ImportJobPath))
         {
-            var mergedAudioPath = Path.Combine(processingRoot, $"{stem}.wav");
-            if (manifest.MicrophoneCaptureSegments.Count > 0)
-            {
-                await WaveChunkMerger.MergeAsync(
-                    manifest.RawChunkPaths,
-                    manifest.MicrophoneCaptureSegments,
-                    manifest.StartedAtUtc,
-                    manifest.EndedAtUtc,
-                    mergedAudioPath,
-                    cancellationToken);
-            }
-            else
-            {
-                await WaveChunkMerger.MergeAsync(
-                    manifest.RawChunkPaths,
-                    manifest.MicrophoneChunkPaths,
-                    mergedAudioPath,
-                    cancellationToken);
-            }
-            return mergedAudioPath;
+            return null;
         }
 
-        if (!string.IsNullOrWhiteSpace(manifest.MergedAudioPath) && File.Exists(manifest.MergedAudioPath))
+        var store = new ExternalAudioImportJobStore(input.ImportJobPath);
+        var loaded = await store.LoadAsync(cancellationToken);
+        var current = loaded.Job;
+        if (current is null ||
+            !loaded.Schema.CanWrite ||
+            current.IsReadOnly ||
+            current.JobId != input.ImportJob.JobId)
         {
-            return manifest.MergedAudioPath;
+            throw new InvalidOperationException(
+                "This imported recording needs recovery before processing can begin. Its import record changed.");
         }
 
-        throw new InvalidOperationException(
-            "No raw audio chunks were available, and no existing merged audio file could be found for this session.");
+        if (current.State == ExternalAudioImportJobState.Processing)
+        {
+            return current;
+        }
+
+        var transitioned = ExternalAudioImportJobTransitions.TryTransition(
+            current,
+            current.Revision,
+            ExternalAudioImportJobState.Processing,
+            ExternalAudioImportJobReason.None,
+            DateTimeOffset.UtcNow);
+        if (!transitioned.Applied || transitioned.Job is null)
+        {
+            throw new InvalidOperationException(
+                "This imported recording needs recovery before processing can begin. Its queue state changed.");
+        }
+
+        await store.SaveAsync(transitioned.Job, cancellationToken);
+        return transitioned.Job;
+    }
+
+    private static async Task TryMarkImportedJobPublishedAsync(
+        SessionProcessingInput input,
+        ExternalAudioImportJob? activeJob,
+        CancellationToken cancellationToken)
+    {
+        if (activeJob is null || string.IsNullOrWhiteSpace(input.ImportJobPath))
+        {
+            return;
+        }
+
+        try
+        {
+            await TransitionImportedJobAsync(
+                input.ImportJobPath,
+                activeJob.JobId,
+                ExternalAudioImportJobState.Published,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Publication remains authoritative. Sprint 7 reconciliation can
+            // repair a durable job checkpoint that could not be updated here.
+        }
+    }
+
+    private static async Task TryMarkImportedJobFailedAsync(
+        SessionProcessingInput input,
+        ExternalAudioImportJob? activeJob,
+        CancellationToken cancellationToken)
+    {
+        if (activeJob is null || string.IsNullOrWhiteSpace(input.ImportJobPath))
+        {
+            return;
+        }
+
+        try
+        {
+            await TransitionImportedJobAsync(
+                input.ImportJobPath,
+                activeJob.JobId,
+                ExternalAudioImportJobState.Failed,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Preserve the processor failure as the primary, user-visible
+            // result; the stale checkpoint remains recoverable.
+        }
+    }
+
+    private static async Task TransitionImportedJobAsync(
+        string jobPath,
+        Guid expectedJobId,
+        ExternalAudioImportJobState targetState,
+        CancellationToken cancellationToken)
+    {
+        var store = new ExternalAudioImportJobStore(jobPath);
+        var loaded = await store.LoadAsync(cancellationToken);
+        var current = loaded.Job;
+        if (current is null ||
+            !loaded.Schema.CanWrite ||
+            current.IsReadOnly ||
+            current.JobId != expectedJobId)
+        {
+            return;
+        }
+
+        if (current.State == targetState)
+        {
+            return;
+        }
+
+        var transitioned = ExternalAudioImportJobTransitions.TryTransition(
+            current,
+            current.Revision,
+            targetState,
+            targetState == ExternalAudioImportJobState.Failed
+                ? ExternalAudioImportJobReason.ProcessingFailed
+                : ExternalAudioImportJobReason.None,
+            DateTimeOffset.UtcNow);
+        if (transitioned.Applied && transitioned.Job is not null)
+        {
+            await store.SaveAsync(transitioned.Job, cancellationToken);
+        }
     }
 }
 

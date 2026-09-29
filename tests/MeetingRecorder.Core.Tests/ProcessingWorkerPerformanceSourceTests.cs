@@ -33,6 +33,17 @@ public sealed class ProcessingWorkerPerformanceSourceTests
         Assert.Contains("new MeetingSummarizationProvider", program, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Processing_Worker_Validates_An_Optional_Explicit_Stage_Before_Invoking_The_Processor()
+    {
+        var programPath = GetPath("src", "MeetingRecorder.ProcessingWorker", "Program.cs");
+        var program = File.ReadAllText(programPath);
+
+        Assert.Contains("--stage", program, StringComparison.Ordinal);
+        Assert.Contains("SessionProcessingStageParser.TryParse", program, StringComparison.Ordinal);
+        Assert.Contains("processor.ProcessAsync(manifestPath, config, stage)", program, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

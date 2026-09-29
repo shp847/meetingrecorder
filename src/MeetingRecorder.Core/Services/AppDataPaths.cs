@@ -2,13 +2,13 @@ namespace MeetingRecorder.Core.Services;
 
 public static class AppDataPaths
 {
-    public static string GetManagedInstallRoot(string? localApplicationDataRootOverride = null)
+    public static string GetManagedInstallRoot(string? userProfileRootOverride = null)
     {
-        var localApplicationDataRoot = string.IsNullOrWhiteSpace(localApplicationDataRootOverride)
-            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-            : localApplicationDataRootOverride;
+        var userProfileRoot = string.IsNullOrWhiteSpace(userProfileRootOverride)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : userProfileRootOverride;
 
-        return Path.Combine(localApplicationDataRoot, "Programs", "Meeting Recorder");
+        return Path.Combine(userProfileRoot, "MeetingRecorder");
     }
 
     public static string GetManagedMeetingsRoot(string? documentsDirectoryOverride = null)

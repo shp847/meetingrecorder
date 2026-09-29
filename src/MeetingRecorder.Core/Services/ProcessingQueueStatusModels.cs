@@ -15,13 +15,15 @@ internal enum ProcessingQueuePauseReason
 {
     None = 0,
     LiveRecordingResponsiveMode = 1,
+    LiveRecordingOvernightAcceleration = 2,
 }
 
 internal sealed record RushedProcessingQueueState(
     string ManifestPath,
     string Title,
     RushProcessingBehavior Behavior,
-    DateTimeOffset RequestedAtUtc);
+    DateTimeOffset RequestedAtUtc,
+    string? LifecycleText = null);
 
 internal sealed record ProcessingQueueStatusSnapshot(
     ProcessingQueueRunState RunState,
@@ -41,4 +43,5 @@ internal sealed record ProcessingQueueStatusSnapshot(
     RushedProcessingQueueState? RushRequest = null,
     bool IsRushPauseBypassActive = false,
     bool HasPreemptedItem = false,
-    string? CurrentStageMessage = null);
+    string? CurrentStageMessage = null,
+    string? BackgroundPolicyStatusText = null);

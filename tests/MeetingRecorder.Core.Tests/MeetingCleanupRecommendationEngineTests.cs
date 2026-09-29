@@ -382,6 +382,84 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Analyze_Merges_Named_GoogleMeet_Fragment_Chain_Within_FiveMinute_Gaps()
+    {
+        var stems = new[]
+        {
+            "2026-09-02_140833_gmeet_diginerv-1",
+            "2026-09-02_143237_gmeet_diginerv-2",
+            "2026-09-02_143848_gmeet_diginerv-3",
+            "2026-09-02_145759_gmeet_diginerv-4",
+        };
+        var starts = new[]
+        {
+            DateTimeOffset.Parse("2026-09-02T14:08:33Z"),
+            DateTimeOffset.Parse("2026-09-02T14:32:37Z"),
+            DateTimeOffset.Parse("2026-09-02T14:38:48Z"),
+            DateTimeOffset.Parse("2026-09-02T14:57:59Z"),
+        };
+        var durations = new[]
+        {
+            TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(45),
+            TimeSpan.FromMinutes(4) + TimeSpan.FromSeconds(13),
+            TimeSpan.FromMinutes(18) + TimeSpan.FromSeconds(49),
+            TimeSpan.FromMinutes(2) + TimeSpan.FromSeconds(22),
+        };
+        var inspections = new List<MeetingInspectionRecord>();
+        for (var index = 0; index < stems.Length; index++)
+        {
+            var audioPath = Path.Combine(_root, $"{stems[index]}.wav");
+            var markdownPath = Path.Combine(_root, $"{stems[index]}.md");
+            await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromSeconds(2));
+            await File.WriteAllTextAsync(markdownPath, "# DigiNerv" + Environment.NewLine + Environment.NewLine + "## Transcript");
+            inspections.Add(CreateInspection(
+                stems[index],
+                index == 0
+                    ? "Meet - VIP DigiNerv Logic Walkthrough and 45 more pages - Work - Microsoft Edge"
+                    : index == 3
+                        ? "Meet - VIP DigiNerv Logic Walkthrough and 31 more pages - Work - Microsoft Edge"
+                        : "Meet - VIP DigiNerv Logic Walkthrough and 34 more pages - Work - Microsoft Edge",
+                starts[index],
+                MeetingPlatform.GoogleMeet,
+                durations[index],
+                audioPath,
+                markdownPath));
+        }
+
+        var recommendation = Assert.Single(
+            MeetingCleanupRecommendationEngine.Analyze(inspections),
+            item => item.ReasonCode == "merge-historical-google-meet-continuity-fragments");
+
+        Assert.True(recommendation.CanApplyAutomatically);
+        Assert.Equal(stems, recommendation.RelatedStems);
+    }
+
+    [Fact]
+    public async Task Analyze_Does_Not_Merge_Named_GoogleMeet_Fragments_Across_Gap_Over_FiveMinutes()
+    {
+        var firstStem = "2026-09-02_140000_gmeet_diginerv-1";
+        var secondStem = "2026-09-02_143000_gmeet_diginerv-2";
+        var firstAudioPath = Path.Combine(_root, $"{firstStem}.wav");
+        var secondAudioPath = Path.Combine(_root, $"{secondStem}.wav");
+        var firstMarkdownPath = Path.Combine(_root, $"{firstStem}.md");
+        var secondMarkdownPath = Path.Combine(_root, $"{secondStem}.md");
+        await WriteSilentWaveFileAsync(firstAudioPath, TimeSpan.FromSeconds(2));
+        await WriteSilentWaveFileAsync(secondAudioPath, TimeSpan.FromSeconds(2));
+        await File.WriteAllTextAsync(firstMarkdownPath, "# DigiNerv" + Environment.NewLine + Environment.NewLine + "## Transcript");
+        await File.WriteAllTextAsync(secondMarkdownPath, "# DigiNerv" + Environment.NewLine + Environment.NewLine + "## Transcript");
+
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
+        [
+            CreateInspection(firstStem, "Meet - VIP DigiNerv Logic Walkthrough and 34 more pages - Work - Microsoft Edge", DateTimeOffset.Parse("2026-09-02T14:00:00Z"), MeetingPlatform.GoogleMeet, TimeSpan.FromMinutes(5), firstAudioPath, firstMarkdownPath),
+            CreateInspection(secondStem, "Meet - VIP DigiNerv Logic Walkthrough and 31 more pages - Work - Microsoft Edge", DateTimeOffset.Parse("2026-09-02T14:30:01Z"), MeetingPlatform.GoogleMeet, TimeSpan.FromMinutes(2), secondAudioPath, secondMarkdownPath),
+        ]);
+
+        Assert.DoesNotContain(
+            recommendations,
+            item => item.ReasonCode == "merge-historical-google-meet-continuity-fragments");
+    }
+
+    [Fact]
     public async Task Analyze_Returns_HighConfidence_Merge_For_Short_Teams_Fragment_After_Extended_Exact_Continuity_Gap()
     {
         var firstStem = "2026-07-28_194443_teams_graszl-kate-villar-juan-pablo";

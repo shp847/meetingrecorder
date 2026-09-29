@@ -43,7 +43,12 @@ internal sealed record ConfigEditorSnapshot(
     string SummaryTranscriptChunkTokenTargetText,
     string SummaryTranscriptChunkOverlapTokensText,
     bool HasPendingSummaryOpenAiSecret,
-    SummaryReasoningEffort SummaryReasoningEffort = SummaryReasoningEffort.Medium);
+    SummaryReasoningEffort SummaryReasoningEffort = SummaryReasoningEffort.Medium,
+    bool ImportInboxEnabled = false,
+    string ImportInboxDir = "",
+    bool ImportInboxArchiveAfterQueueEnabled = false,
+    bool ImportInboxMoveBlockedToErrorEnabled = false,
+    BacklogAccelerationProfile BacklogAccelerationProfile = BacklogAccelerationProfile.Normal);
 
 internal sealed record SpeakerLabelDraft(string OriginalLabel, string EditedLabel);
 
@@ -209,7 +214,8 @@ internal enum MeetingDetailSummaryStatus
 internal sealed record SummaryProviderConfigurationState(
     bool IsEnabled,
     MeetingSummaryProviderPreference Preference,
-    bool HasOpenAiKey);
+    bool HasOpenAiKey,
+    int HostedConsentVersion = 0);
 
 internal sealed record MeetingDetailSummaryState(
     MeetingDetailSummaryStatus Status,
@@ -516,87 +522,68 @@ internal static class MainWindowInteractionLogic
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
         ProcessingQueueStatusSnapshot snapshot,
         PersistedProcessingBacklogState? persistedBacklog,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        BacklogRecoveryMetadata? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-
-        if (ShouldShowProcessingQueueStatus(snapshot))
-        {
-            var label = $"{snapshot.RunState.ToString().ToUpperInvariant()} {snapshot.TotalRemainingCount}";
-            var detail = snapshot.RunState switch
-            {
-                ProcessingQueueRunState.Paused when snapshot.PauseReason == ProcessingQueuePauseReason.LiveRecordingResponsiveMode
-                    => "Paused by live recording",
-                ProcessingQueueRunState.Processing when FormatApproximateEta(snapshot.CurrentItemEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) is { } eta
-                    => eta,
-                ProcessingQueueRunState.Processing when string.Equals(snapshot.CurrentStageName, "diarization", StringComparison.OrdinalIgnoreCase)
-                    => "ETA learning",
-                ProcessingQueueRunState.Queued => $"{snapshot.TotalRemainingCount} waiting",
-                _ => $"{snapshot.TotalRemainingCount} remaining",
-            };
-            detail = AppendRushQueueDetail(detail, snapshot, includeAsapPrefix: true);
-
-            return new ProcessingQueueHeaderState(true, label, detail);
-        }
-
-        if (persistedBacklog is not { HasBacklog: true })
+        var experience = new BacklogExperienceResolver().Resolve(
+            new BacklogExperienceInput(snapshot, persistedBacklog, recovery, nowUtc));
+        if (!experience.IsVisible)
         {
             return new ProcessingQueueHeaderState(false, string.Empty, string.Empty);
         }
 
+        var label = experience.RemainingCount > 0
+            ? $"{experience.Headline} {experience.RemainingCount}"
+            : experience.Headline;
         return new ProcessingQueueHeaderState(
             true,
-            $"{persistedBacklog.RunState.ToString().ToUpperInvariant()} {persistedBacklog.TotalRemainingCount}",
-            "ETA unavailable");
+            label,
+            AppendRushQueueDetail(experience.Detail, snapshot, includeAsapPrefix: true));
     }
 
     public static MeetingsProcessingStripState BuildMeetingsProcessingStripState(
         ProcessingQueueStatusSnapshot snapshot,
         string? refreshStateText,
         PersistedProcessingBacklogState? persistedBacklog,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        BacklogRecoveryMetadata? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-
-        var hasQueueStatus = ShouldShowProcessingQueueStatus(snapshot);
-        var hasPersistedBacklog = persistedBacklog is { HasBacklog: true };
         var hasRefreshState = !string.IsNullOrWhiteSpace(refreshStateText);
-        if (!hasQueueStatus && !hasPersistedBacklog && !hasRefreshState)
+        var experience = new BacklogExperienceResolver().Resolve(
+            new BacklogExperienceInput(snapshot, persistedBacklog, recovery, nowUtc));
+        if (!experience.IsVisible && !hasRefreshState)
         {
             return new MeetingsProcessingStripState(false, string.Empty, string.Empty, string.Empty, null);
         }
 
-        if (!hasQueueStatus)
+        if (!experience.IsVisible)
         {
-            if (!hasPersistedBacklog)
-            {
-                return new MeetingsProcessingStripState(true, string.Empty, string.Empty, string.Empty, refreshStateText);
-            }
-
-            var fallbackLine1 = $"{persistedBacklog!.RunState.ToString().ToUpperInvariant()} · {persistedBacklog.TotalRemainingCount} remaining";
-            var fallbackLine2 = persistedBacklog.ProcessingCount > 0
-                ? "Current: saved meetings still show active work while live status reconnects."
-                : "Current: saved meetings still show queued work while live status reconnects.";
-            var fallbackLine3 = $"Overall queue: {persistedBacklog.TotalRemainingCount} remaining · ETA unavailable";
-            return new MeetingsProcessingStripState(true, fallbackLine1, fallbackLine2, fallbackLine3, refreshStateText);
+            return new MeetingsProcessingStripState(true, string.Empty, string.Empty, string.Empty, refreshStateText);
         }
 
-        var pauseReasonText = snapshot.PauseReason switch
+        var line1 = experience.RemainingCount > 0
+            ? $"{experience.Headline} · {experience.RemainingCount} remaining"
+            : experience.Headline;
+        if (experience.Kind == BacklogExperienceKind.Paused &&
+            snapshot.PauseReason is ProcessingQueuePauseReason.LiveRecordingResponsiveMode or ProcessingQueuePauseReason.LiveRecordingOvernightAcceleration)
         {
-            ProcessingQueuePauseReason.LiveRecordingResponsiveMode => "Paused by live recording",
-            _ => string.Empty,
-        };
-        var line1 = string.IsNullOrWhiteSpace(pauseReasonText)
-            ? $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining"
-            : $"{snapshot.RunState.ToString().ToUpperInvariant()} · {snapshot.TotalRemainingCount} remaining · {pauseReasonText}";
-        var line2 = BuildCurrentStageSummary(snapshot, nowUtc);
+            line1 += " · Paused by live recording";
+        }
+
+        var line2 = experience.Detail;
         if (snapshot.RushRequest is { } rushRequest)
         {
             line1 += " · ASAP active";
-            line2 = $"{line2} · ASAP: {rushRequest.Title}";
+            var lifecycleText = string.IsNullOrWhiteSpace(rushRequest.LifecycleText)
+                ? "ASAP"
+                : rushRequest.LifecycleText;
+            line2 = $"{line2} · {lifecycleText}: {rushRequest.Title}";
         }
-        var overallEta = FormatApproximateEta(snapshot.OverallEstimatedRemaining, snapshot.LastUpdatedAtUtc, nowUtc) ?? "ETA unavailable";
-        var line3 = $"Overall queue: {snapshot.TotalRemainingCount} remaining · {overallEta}";
+        var line3 = experience.RemainingCount > 0
+            ? $"Overall queue: {experience.RemainingCount} remaining · {experience.OverallEtaText}"
+            : experience.OverallEtaText;
 
         line3 = AppendRushQueueDetail(line3, snapshot, includeAsapPrefix: false);
         return new MeetingsProcessingStripState(true, line1, line2, line3, refreshStateText);
@@ -1484,7 +1471,8 @@ internal static class MainWindowInteractionLogic
         MeetingOutputRecord meeting,
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
         CultureInfo? culture = null,
-        TimeZoneInfo? localTimeZone = null)
+        TimeZoneInfo? localTimeZone = null,
+        MeetingPrimaryRecommendation? primaryRecommendation = null)
     {
         var attendeeNames = meeting.Attendees
             .Select(attendee => attendee.Name.Trim())
@@ -1498,10 +1486,12 @@ internal static class MainWindowInteractionLogic
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray()
             : attendeeNames;
-        var recommendationBadges = recommendations
-            .Select(recommendation => BuildMeetingCleanupActionLabel(recommendation.Action))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var recommendationBadges = primaryRecommendation is not null
+            ? new[] { primaryRecommendation.IsDismissed ? "Recommendation dismissed" : primaryRecommendation.Label }
+            : recommendations
+                .Select(recommendation => BuildMeetingCleanupActionLabel(recommendation.Action))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
 
         return new MeetingInspectorState(
             meeting.Title,
@@ -1539,9 +1529,15 @@ internal static class MainWindowInteractionLogic
         CultureInfo? culture = null,
         TimeZoneInfo? localTimeZone = null,
         SummaryProviderConfigurationState? summaryProviderConfiguration = null,
-        bool isGeneratingSummary = false)
+        bool isGeneratingSummary = false,
+        MeetingPrimaryRecommendation? primaryRecommendation = null)
     {
-        var inspectorState = BuildMeetingInspectorState(meeting, recommendations, culture, localTimeZone);
+        var inspectorState = BuildMeetingInspectorState(
+            meeting,
+            recommendations,
+            culture,
+            localTimeZone,
+            primaryRecommendation);
         var subtitleParts = new[]
         {
             inspectorState.Platform,
@@ -1597,17 +1593,18 @@ internal static class MainWindowInteractionLogic
         if (transcript.SummarizationStatus?.State == StageExecutionState.Succeeded &&
             transcript.Summary is { } summary)
         {
+            var copy = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary);
             return new MeetingDetailSummaryState(
                 MeetingDetailSummaryStatus.Generated,
-                "Summary generated from this transcript.",
+                copy.SuccessText,
                 summary.Overview,
                 summary.KeyPoints,
                 summary.Decisions,
                 summary.ActionItems,
                 summary.RisksAndOpenQuestions,
-                $"{summary.Provider.ProviderName} | {summary.Provider.Model}",
+                "Summary route recorded with this meeting.",
                 FormatSummaryGeneratedAt(summary.GeneratedAtUtc, culture, localTimeZone),
-                summary.Provider.FallbackUsed ? "Fallback used for this summary." : string.Empty,
+                summary.Provider.FallbackUsed ? "A configured fallback route produced this summary." : string.Empty,
                 ShowGeneratedContent: true,
                 CanConfigure: true,
                 CanGenerate: false,
@@ -1616,72 +1613,81 @@ internal static class MainWindowInteractionLogic
 
         if (isGeneratingSummary)
         {
+            var copy = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary);
             return EmptySummaryState(
                 MeetingDetailSummaryStatus.InProgress,
-                "Generating summary from the published transcript...",
+                copy.ProgressText,
                 canConfigure: false,
                 canGenerate: false,
                 canRetry: false);
         }
 
+        var summaryExperience = SummaryExperienceResolver.Resolve(new SummaryExperienceInput(
+            providerConfiguration.IsEnabled
+                ? MeetingSummaryGenerationMode.Enabled
+                : MeetingSummaryGenerationMode.Disabled,
+            providerConfiguration.Preference,
+            providerConfiguration.HasOpenAiKey,
+            providerConfiguration.HostedConsentVersion));
+
         if (!providerConfiguration.IsEnabled)
         {
-            return EmptySummaryState(
+            return CreateBlockedSummaryState(
                 MeetingDetailSummaryStatus.Disabled,
-                "AI summaries are off. Turn them on in Settings to summarize published transcripts.",
-                canConfigure: true,
-                canGenerate: false,
+                UserActionBlockedReasonKind.SummaryDisabled,
                 canRetry: false);
         }
 
-        if (!HasUsableSummaryProvider(providerConfiguration))
+        if (!summaryExperience.CanGenerate)
         {
-            return EmptySummaryState(
+            var reason = summaryExperience.RequiresHostedConsent
+                ? UserActionBlockedReasonKind.HostedSummaryConsentRequired
+                : UserActionBlockedReasonKind.SummaryProviderNotConfigured;
+            return CreateBlockedSummaryState(
                 MeetingDetailSummaryStatus.Unconfigured,
-                "No summary provider key is saved for the selected provider preference.",
-                canConfigure: true,
-                canGenerate: false,
+                reason,
                 canRetry: false);
         }
 
         if (!transcript.HasStructuredJson || transcript.StructuredSegments.Count == 0)
         {
-            return EmptySummaryState(
+            return CreateBlockedSummaryState(
                 MeetingDetailSummaryStatus.Unavailable,
-                "Summary generation needs a readable transcript JSON sidecar for this meeting.",
-                canConfigure: true,
-                canGenerate: false,
+                UserActionBlockedReasonKind.TranscriptUnavailable,
                 canRetry: false);
         }
 
         if (transcript.SummarizationStatus?.State == StageExecutionState.Failed)
         {
-            return EmptySummaryState(
+            return CreateBlockedSummaryState(
                 MeetingDetailSummaryStatus.Failed,
-                string.IsNullOrWhiteSpace(transcript.SummarizationStatus.Message)
-                    ? "Summary generation failed. You can retry from the current transcript JSON."
-                    : $"Summary generation failed: {transcript.SummarizationStatus.Message}",
-                canConfigure: true,
-                canGenerate: false,
+                UserActionBlockedReasonKind.OperationFailed,
                 canRetry: true);
         }
 
+        var generateCopy = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary);
         return EmptySummaryState(
             MeetingDetailSummaryStatus.Unavailable,
-            "No summary has been generated for this meeting yet.",
+            generateCopy.HelperText,
             canConfigure: true,
             canGenerate: true,
             canRetry: false);
     }
 
-    private static bool HasUsableSummaryProvider(SummaryProviderConfigurationState providerConfiguration)
+    private static MeetingDetailSummaryState CreateBlockedSummaryState(
+        MeetingDetailSummaryStatus status,
+        UserActionBlockedReasonKind reason,
+        bool canRetry)
     {
-        return providerConfiguration.Preference switch
-        {
-            MeetingSummaryProviderPreference.LocalOnly => true,
-            MeetingSummaryProviderPreference.OpenAiOnly => providerConfiguration.HasOpenAiKey,
-            _ => true,
-        };
+        var copy = UserActionCopyResolver.Resolve(
+            canRetry ? UserActionIntent.RetrySummary : UserActionIntent.GenerateSummary,
+            reason);
+        return EmptySummaryState(
+            status,
+            copy.BlockedText,
+            canConfigure: true,
+            canGenerate: false,
+            canRetry: canRetry);
     }
 
     private static MeetingDetailSummaryState EmptySummaryState(
@@ -1816,18 +1822,30 @@ internal static class MainWindowInteractionLogic
         ProcessingQueueStatusSnapshot snapshot,
         bool includeAsapPrefix)
     {
-        if (snapshot.RushRequest is not { } rushRequest)
-        {
-            return baseText;
-        }
-
         var parts = new List<string>();
         if (!string.IsNullOrWhiteSpace(baseText))
         {
             parts.Add(baseText);
         }
 
-        parts.Add(includeAsapPrefix ? $"ASAP: {rushRequest.Title}" : "ASAP queued to run next");
+        if (!string.IsNullOrWhiteSpace(snapshot.BackgroundPolicyStatusText))
+        {
+            parts.Add(snapshot.BackgroundPolicyStatusText);
+        }
+
+        if (snapshot.RushRequest is not { } rushRequest)
+        {
+            return string.Join(" · ", parts);
+        }
+
+        var lifecycleText = string.IsNullOrWhiteSpace(rushRequest.LifecycleText)
+            ? "ASAP queued to run next"
+            : rushRequest.LifecycleText;
+        parts.Add(includeAsapPrefix
+            ? string.IsNullOrWhiteSpace(rushRequest.LifecycleText)
+                ? $"ASAP: {rushRequest.Title}"
+                : $"{lifecycleText} · {rushRequest.Title}"
+            : lifecycleText);
         if (snapshot.IsRushPauseBypassActive)
         {
             parts.Add("ignoring recording pause");
@@ -2267,6 +2285,10 @@ internal static class MainWindowInteractionLogic
             !string.Equals(currentConfig.AudioOutputDir, NormalizeText(editor.AudioOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.TranscriptOutputDir, NormalizeText(editor.TranscriptOutputDir), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(currentConfig.WorkDir, NormalizeText(editor.WorkDir), StringComparison.OrdinalIgnoreCase) ||
+            currentConfig.ImportInboxEnabled != editor.ImportInboxEnabled ||
+            !string.Equals(currentConfig.ImportInboxDir, NormalizeText(editor.ImportInboxDir), StringComparison.OrdinalIgnoreCase) ||
+            currentConfig.ImportInboxArchiveAfterQueueEnabled != editor.ImportInboxArchiveAfterQueueEnabled ||
+            currentConfig.ImportInboxMoveBlockedToErrorEnabled != editor.ImportInboxMoveBlockedToErrorEnabled ||
             (currentConfig.DiarizationAccelerationPreference == InferenceAccelerationPreference.Auto) != editor.UseGpuAcceleration ||
             !string.Equals(FormatThreshold(currentConfig.AutoDetectAudioPeakThreshold), NormalizeText(editor.AutoDetectThresholdText), StringComparison.Ordinal) ||
             !string.Equals(currentConfig.MeetingStopTimeoutSeconds.ToString(CultureInfo.InvariantCulture), NormalizeText(editor.MeetingStopTimeoutText), StringComparison.Ordinal) ||
@@ -2282,6 +2304,7 @@ internal static class MainWindowInteractionLogic
             currentConfig.PreferredTeamsIntegrationMode != editor.PreferredTeamsIntegrationMode ||
             currentConfig.BackgroundProcessingMode != editor.BackgroundProcessingMode ||
             currentConfig.BackgroundSpeakerLabelingMode != editor.BackgroundSpeakerLabelingMode ||
+            currentConfig.BacklogAccelerationProfile != editor.BacklogAccelerationProfile ||
             currentConfig.InitialProcessingStrategy != editor.InitialProcessingStrategy ||
             currentConfig.OvernightInitialProcessingStrategy != editor.OvernightInitialProcessingStrategy ||
             currentConfig.IncrementalWorkPlan != editor.IncrementalWorkPlan ||

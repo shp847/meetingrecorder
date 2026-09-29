@@ -466,12 +466,15 @@ public sealed class MainWindowStartupSourceTests
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
-        var updateStart = source.IndexOf("var shellStatus = _shellStatusOverride ?? MainWindowInteractionLogic.BuildShellStatus(", StringComparison.Ordinal);
-        var updateEnd = source.IndexOf("private static string BuildMicCaptureReadinessText(", updateStart, StringComparison.Ordinal);
+        var updateStart = source.IndexOf("private void ApplyHomeCommandCenterState(HomeCommandCenterState state)", StringComparison.Ordinal);
+        var updateEnd = source.IndexOf("private static bool HasConfiguredOutputDirectories(", updateStart, StringComparison.Ordinal);
         var updateBlock = source[updateStart..updateEnd];
+        var headerActionStart = updateBlock.IndexOf("HeaderShellStatusActionButton.Visibility", StringComparison.Ordinal);
+        var headerActionEnd = updateBlock.IndexOf("HomeNextBestActionHeadlineTextBlock.Text", headerActionStart, StringComparison.Ordinal);
+        var headerActionBlock = updateBlock[headerActionStart..headerActionEnd];
 
-        Assert.Contains("Visibility.Hidden", updateBlock);
-        Assert.DoesNotContain("Visibility.Collapsed", updateBlock);
+        Assert.Contains("Visibility.Hidden", headerActionBlock);
+        Assert.DoesNotContain("Visibility.Collapsed", headerActionBlock);
     }
 
     [Fact]

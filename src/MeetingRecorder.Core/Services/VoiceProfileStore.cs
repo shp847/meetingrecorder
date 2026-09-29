@@ -140,6 +140,23 @@ public sealed class VoiceProfileStore
             cancellationToken);
     }
 
+    public async Task<VoiceProfileStoreDocument> EnableProfileAsync(
+        string profileId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedProfileId = NormalizeProfileId(profileId);
+        return await UpdateAsync(
+            document => document with
+            {
+                Profiles = document.Profiles
+                    .Select(profile => string.Equals(profile.ProfileId, normalizedProfileId, StringComparison.Ordinal)
+                        ? profile with { Status = VoiceProfileStatus.Active }
+                        : profile)
+                    .ToArray(),
+            },
+            cancellationToken);
+    }
+
     public async Task<VoiceProfileStoreDocument> DeleteProfileAsync(
         string profileId,
         CancellationToken cancellationToken = default)

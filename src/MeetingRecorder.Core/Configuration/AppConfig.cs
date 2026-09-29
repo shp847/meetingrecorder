@@ -24,6 +24,15 @@ public enum MeetingsGroupKey
     Attendee = 5,
 }
 
+public enum MeetingsViewPreset
+{
+    Recent = 0,
+    NeedsAttention = 1,
+    Processing = 2,
+    Archived = 3,
+    Custom = 4,
+}
+
 public enum InferenceAccelerationPreference
 {
     Auto = 0,
@@ -50,6 +59,15 @@ public enum ProcessingSpeedProfile
     Normal = 0,
     TranscriptOnlyDrain = 1,
     OvernightDrain = 2,
+}
+
+public enum BacklogAccelerationProfile
+{
+    Normal = 0,
+    TranscriptOnlyDrain = 1,
+    OvernightAcceleration = 2,
+    IdleCapacityAcceleration = 3,
+    OvernightAndIdleCapacityAcceleration = 4,
 }
 
 public enum InitialProcessingStrategy
@@ -272,6 +290,32 @@ public sealed record AppConfig
 
     public string WorkDir { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Optional managed source location for batch audio intake. It remains
+    /// disabled until the user explicitly enables Inbox intake.
+    /// </summary>
+    public string ImportInboxDir { get; init; } = string.Empty;
+
+    public bool ImportInboxEnabled { get; init; }
+
+    public int ImportInboxScanIntervalSeconds { get; init; } = 60;
+
+    public int ImportInboxMaxBatchSize { get; init; } = 20;
+
+    /// <summary>
+    /// When enabled, only successfully queued Inbox-owned files may be moved
+    /// into the Inbox's managed Archive child. Picker and drop sources remain
+    /// source-retained regardless of this setting.
+    /// </summary>
+    public bool ImportInboxArchiveAfterQueueEnabled { get; init; }
+
+    /// <summary>
+    /// Allows a terminally blocked, receipt-backed Inbox source to move into
+    /// the Inbox's managed Error child. Transient/storage/duplicate blocks
+    /// always leave the source in place.
+    /// </summary>
+    public bool ImportInboxMoveBlockedToErrorEnabled { get; init; }
+
     public string ModelCacheDir { get; init; } = string.Empty;
 
     public string TranscriptionModelPath { get; init; } = string.Empty;
@@ -341,6 +385,17 @@ public sealed record AppConfig
     public ProcessingSpeedProfile PreviousProcessingSpeedProfile { get; init; } =
         ProcessingSpeedProfile.Normal;
 
+    /// <summary>
+    /// Explicit, user-selected backlog behavior. It changes only future queue admission.
+    /// </summary>
+    public BacklogAccelerationProfile BacklogAccelerationProfile { get; init; } =
+        BacklogAccelerationProfile.Normal;
+
+    /// <summary>
+    /// Preserves pre-profile installed behavior once instead of silently slowing an existing queue.
+    /// </summary>
+    public int BacklogAccelerationProfileMigrationVersion { get; init; }
+
     // Legacy profiles are translated once so subsequent saves use explicit processing settings.
     public bool ProcessingScheduleMigrationApplied { get; init; }
 
@@ -380,6 +435,14 @@ public sealed record AppConfig
     public int SummaryModelProxyContractMigrationVersion { get; init; }
 
     public string SummaryOpenAiModel { get; init; } = MeetingSummaryDefaults.OpenAiModel;
+
+    /// <summary>
+    /// Versioned approval for sending published transcript text to the hosted
+    /// summary route. Zero means no hosted route is authorized.
+    /// </summary>
+    public int SummaryHostedRouteConsentVersion { get; init; }
+
+    public DateTimeOffset? SummaryHostedRouteConsentGrantedAtUtc { get; init; }
 
     public SummaryReasoningEffort SummaryReasoningEffort { get; init; } = MeetingSummaryDefaults.ReasoningEffort;
 
@@ -442,6 +505,12 @@ public sealed record AppConfig
 
     public MeetingsGroupKey MeetingsGroupKey { get; init; } = MeetingsGroupKey.Week;
 
+    public MeetingsViewPreset MeetingsViewPreset { get; init; } = MeetingsViewPreset.Recent;
+
+    public int MeetingsViewPresetMigrationVersion { get; init; }
+
+    public bool MeetingsViewPresetInitialized { get; init; }
+
     public IReadOnlyList<DismissedMeetingRecommendation> DismissedMeetingRecommendations { get; init; } =
         Array.Empty<DismissedMeetingRecommendation>();
 }
@@ -451,4 +520,7 @@ public sealed record RushProcessingRequest(
     RushProcessingBehavior Behavior,
     DateTimeOffset RequestedAtUtc);
 
-public sealed record DismissedMeetingRecommendation(string Fingerprint, DateTimeOffset DismissedAtUtc);
+public sealed record DismissedMeetingRecommendation(
+    string Fingerprint,
+    DateTimeOffset DismissedAtUtc,
+    int RecommendationVersion = 1);

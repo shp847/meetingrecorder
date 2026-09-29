@@ -55,7 +55,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public async Task PlatformInstallPathManager_Retries_Until_The_Primary_Instance_Releases()
     {
-        var targetRoot = @"C:\Users\Test\AppData\Local\Programs\Meeting Recorder";
+        var targetRoot = @"C:\Users\Test\MeetingRecorder";
         var processController = new FakeInstallPathProcessController(
             signalResult: true,
             waitResults: [false, false, true]);
@@ -926,7 +926,7 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
-    public async Task PlatformPortableBundleInstaller_Quarantines_Legacy_Install_Roots_When_Deploying_To_Canonical_Root()
+    public async Task PlatformPortableBundleInstaller_Relocates_Legacy_AutoUpdate_To_Canonical_Root()
     {
         var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
         var bundleRoot = Path.Combine(root, "bundle");
@@ -962,7 +962,11 @@ public sealed class AppPlatformDeploymentTests
               ]
             }
             """);
-        File.WriteAllText(Path.Combine(legacyInstallRoot, "legacy.txt"), "legacy-install");
+        var legacyModelPath = Path.Combine(legacyInstallRoot, "data", "models", "legacy.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyModelPath)!);
+        File.WriteAllText(legacyModelPath, "legacy-model");
+        File.WriteAllText(Path.Combine(legacyInstallRoot, "MeetingRecorder.App.exe"), "legacy-apphost");
+        File.Delete(Path.Combine(bundleRoot, "MeetingRecorder.App.exe"));
 
         try
         {
@@ -1001,27 +1005,28 @@ public sealed class AppPlatformDeploymentTests
                 manifest,
                 new InstallRequest(
                     BundleRoot: bundleRoot,
-                    InstallRoot: canonicalInstallRoot,
+                    InstallRoot: legacyInstallRoot,
                     CreateDesktopShortcut: false,
                     CreateStartMenuShortcut: false,
                     LaunchAfterInstall: false,
-                    Channel: InstallChannel.CommandBootstrap,
+                    Channel: InstallChannel.AutoUpdate,
+                    PreservedPayloadFiles: ["MeetingRecorder.App.exe"],
                     ReleaseVersion: null,
                     ReleasePublishedAtUtc: null,
                     ReleaseAssetSizeBytes: null),
                 CancellationToken.None);
 
             Assert.True(File.Exists(Path.Combine(canonicalInstallRoot, "MeetingRecorder.App.exe")));
-            Assert.Equal("app-exe", File.ReadAllText(Path.Combine(canonicalInstallRoot, "MeetingRecorder.App.exe")));
+            Assert.Equal("legacy-apphost", File.ReadAllText(Path.Combine(canonicalInstallRoot, "MeetingRecorder.App.exe")));
             Assert.False(Directory.Exists(legacyInstallRoot));
 
-            var quarantinedLegacyRoots = Directory.GetDirectories(
+            Assert.Equal("legacy-model", File.ReadAllText(Path.Combine(canonicalInstallRoot, "data", "models", "legacy.bin")));
+            var legacyBackups = Directory.GetDirectories(
                 Path.GetDirectoryName(legacyInstallRoot)!,
                 "Meeting Recorder.legacy-*",
                 SearchOption.TopDirectoryOnly);
 
-            Assert.Single(quarantinedLegacyRoots);
-            Assert.True(File.Exists(Path.Combine(quarantinedLegacyRoots[0], "legacy.txt")));
+            Assert.Empty(legacyBackups);
         }
         finally
         {
@@ -1037,7 +1042,7 @@ public sealed class AppPlatformDeploymentTests
     }
 
     [Fact]
-    public async Task PlatformPortableBundleInstaller_Quarantines_The_Legacy_Documents_Spaced_Install_Root()
+    public async Task PlatformPortableBundleInstaller_Migrates_The_Legacy_Documents_Spaced_Install_Root()
     {
         var root = Path.Combine(Path.GetTempPath(), "AppPlatformDeploymentTests", Guid.NewGuid().ToString("N"));
         var bundleRoot = Path.Combine(root, "bundle");
@@ -1046,6 +1051,9 @@ public sealed class AppPlatformDeploymentTests
         var dataRoot = Path.Combine(root, "LocalAppData", "MeetingRecorder");
         Directory.CreateDirectory(bundleRoot);
         Directory.CreateDirectory(spacedLegacyInstallRoot);
+        var currentModelPath = Path.Combine(canonicalInstallRoot, "data", "models", "shared.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(currentModelPath)!);
+        File.WriteAllText(currentModelPath, "current-model");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.App.exe"), "app-exe");
         File.WriteAllText(Path.Combine(bundleRoot, "Run-MeetingRecorder.cmd"), "@echo off");
         File.WriteAllText(Path.Combine(bundleRoot, "MeetingRecorder.product.json"), "{ }");
@@ -1074,6 +1082,9 @@ public sealed class AppPlatformDeploymentTests
             }
             """);
         File.WriteAllText(Path.Combine(spacedLegacyInstallRoot, "legacy.txt"), "legacy-install");
+        var legacyModelPath = Path.Combine(spacedLegacyInstallRoot, "data", "models", "shared.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyModelPath)!);
+        File.WriteAllText(legacyModelPath, "legacy-model");
 
         try
         {
@@ -1123,14 +1134,14 @@ public sealed class AppPlatformDeploymentTests
                 CancellationToken.None);
 
             Assert.False(Directory.Exists(spacedLegacyInstallRoot));
+            Assert.Equal("current-model", File.ReadAllText(currentModelPath));
 
-            var quarantinedLegacyRoots = Directory.GetDirectories(
+            var legacyBackups = Directory.GetDirectories(
                 Path.GetDirectoryName(spacedLegacyInstallRoot)!,
                 "Meeting Recorder.legacy-*",
                 SearchOption.TopDirectoryOnly);
 
-            Assert.Single(quarantinedLegacyRoots);
-            Assert.True(File.Exists(Path.Combine(quarantinedLegacyRoots[0], "legacy.txt")));
+            Assert.Empty(legacyBackups);
         }
         finally
         {

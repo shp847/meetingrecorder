@@ -2,6 +2,8 @@ using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Processing;
 using NAudio.Wave;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -15,6 +17,10 @@ public sealed record SpeakerLabelInfo(
     string? SpeakerId = null,
     string? ProfileId = null,
     SpeakerNameDecisionReason? DecisionReason = null);
+
+public sealed record SpeakerIdentityTransactionResult(
+    bool IsApplied,
+    string? ConflictReason = null);
 
 public sealed class MeetingOutputCatalogService
 {
@@ -352,6 +358,127 @@ public sealed class MeetingOutputCatalogService
             File.Exists(record.MarkdownPath))
         {
             await UpdateMarkdownSpeakerLabelsAsync(record.MarkdownPath, labelMap, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Builds an opaque revision from only the speaker-facing artifacts. It contains no transcript
+    /// content and is suitable for optimistic concurrency checks in the UI.
+    /// </summary>
+    public static string GetSpeakerArtifactRevision(MeetingOutputRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var path in new[] { record.ManifestPath, record.JsonPath, record.MarkdownPath })
+        {
+            var normalizedPath = string.IsNullOrWhiteSpace(path) ? string.Empty : Path.GetFullPath(path);
+            var descriptor = string.IsNullOrWhiteSpace(normalizedPath)
+                ? "missing-path"
+                : File.Exists(normalizedPath)
+                    ? $"{normalizedPath}\n{new FileInfo(normalizedPath).Length}\n{File.GetLastWriteTimeUtc(normalizedPath).Ticks}"
+                    : $"{normalizedPath}\nmissing";
+            hash.AppendData(Encoding.UTF8.GetBytes(descriptor));
+            hash.AppendData([0]);
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    /// <summary>
+    /// Applies speaker identity changes to manifest, JSON, and Markdown as one recoverable local
+    /// transaction. The expected revision prevents a stale editor from writing over reprocessing.
+    /// </summary>
+    public async Task<SpeakerIdentityTransactionResult> UpdateSpeakerIdentitiesIfCurrentAsync(
+        MeetingOutputRecord record,
+        string expectedRevision,
+        IReadOnlyList<SpeakerIdentity> updatedSpeakers,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(expectedRevision))
+        {
+            return new SpeakerIdentityTransactionResult(false, "Meeting speaker data needs reload before changes can be applied.");
+        }
+
+        if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+        {
+            return new SpeakerIdentityTransactionResult(false, "Meeting speaker data changed. Reload before applying name changes.");
+        }
+
+        if (string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath))
+        {
+            return new SpeakerIdentityTransactionResult(false, "Meeting manifest is unavailable. Reload or reprocess this meeting before changing names.");
+        }
+
+        var artifacts = new[]
+            {
+                record.ManifestPath,
+                record.JsonPath,
+                record.MarkdownPath,
+            }
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Select(path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new SpeakerArtifactTransactionFile(
+                path,
+                path + ".speaker-name-" + Guid.NewGuid().ToString("N") + ".tmp",
+                path + ".speaker-name-" + Guid.NewGuid().ToString("N") + ".bak"))
+            .ToArray();
+        var tempByPath = artifacts.ToDictionary(item => item.SourcePath, item => item.TempPath, StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var artifact in artifacts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Copy(artifact.SourcePath, artifact.TempPath, overwrite: false);
+            }
+
+            var temporaryRecord = record with
+            {
+                ManifestPath = GetTemporaryPath(record.ManifestPath, tempByPath),
+                JsonPath = GetTemporaryPath(record.JsonPath, tempByPath),
+                MarkdownPath = GetTemporaryPath(record.MarkdownPath, tempByPath),
+            };
+            await UpdateSpeakerIdentitiesAsync(temporaryRecord, updatedSpeakers, cancellationToken);
+
+            if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+            {
+                return new SpeakerIdentityTransactionResult(false, "Meeting speaker data changed. Reload before applying name changes.");
+            }
+
+            var committed = new List<SpeakerArtifactTransactionFile>(artifacts.Length);
+            try
+            {
+                foreach (var artifact in artifacts)
+                {
+                    File.Replace(artifact.TempPath, artifact.SourcePath, artifact.BackupPath, ignoreMetadataErrors: true);
+                    committed.Add(artifact);
+                }
+            }
+            catch
+            {
+                foreach (var artifact in committed.AsEnumerable().Reverse())
+                {
+                    if (File.Exists(artifact.BackupPath))
+                    {
+                        File.Copy(artifact.BackupPath, artifact.SourcePath, overwrite: true);
+                    }
+                }
+
+                throw;
+            }
+
+            return new SpeakerIdentityTransactionResult(true);
+        }
+        finally
+        {
+            foreach (var artifact in artifacts)
+            {
+                TryDeleteArtifactTransactionFile(artifact.TempPath);
+                TryDeleteArtifactTransactionFile(artifact.BackupPath);
+            }
         }
     }
 
@@ -814,7 +941,8 @@ public sealed class MeetingOutputCatalogService
                 keyAttendees,
                 manifestInfo?.CaptureTimeline,
                 manifestInfo?.LoopbackCaptureSegments,
-                hasSuspiciousSpeakerLabels);
+                hasSuspiciousSpeakerLabels,
+                manifestInfo?.Origin);
         }
 
         var fallbackTimestamp = record.AudioPath is not null
@@ -840,7 +968,8 @@ public sealed class MeetingOutputCatalogService
             manifestInfo?.KeyAttendees ?? jsonMetadata?.KeyAttendees ?? TryReadMarkdownKeyAttendees(record.MarkdownPath),
             manifestInfo?.CaptureTimeline,
             manifestInfo?.LoopbackCaptureSegments,
-            hasSuspiciousSpeakerLabels);
+            hasSuspiciousSpeakerLabels,
+            manifestInfo?.Origin);
     }
 
     private static SessionState? ResolveManifestState(MeetingOutputMutableRecord record, ManifestInfo? manifestInfo)
@@ -905,7 +1034,8 @@ public sealed class MeetingOutputCatalogService
                     NormalizeDetectedAudioSource(manifest.DetectedAudioSource),
                     manifest.CaptureTimeline,
                     manifest.LoopbackCaptureSegments,
-                    manifest.ImportedSourceAudio is not null);
+                    manifest.ImportedSourceAudio is not null,
+                    MeetingOriginResolver.Resolve(manifest));
                 if (!infoByStem.TryGetValue(stem, out var existing) || ShouldReplaceManifestInfo(existing, candidate))
                 {
                     infoByStem[stem] = candidate;
@@ -922,6 +1052,11 @@ public sealed class MeetingOutputCatalogService
 
     private string ResolveManifestStem(MeetingSessionManifest manifest, string title)
     {
+        if (manifest.ImportedSourceAudio is { OutputStem: { Length: > 0 } outputStem })
+        {
+            return outputStem;
+        }
+
         if (manifest.ImportedSourceAudio is { OriginalPath: { Length: > 0 } originalPath })
         {
             var sourceStem = Path.GetFileNameWithoutExtension(originalPath);
@@ -2352,7 +2487,7 @@ public sealed class MeetingOutputCatalogService
             }
 
             var currentTitle = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
-            var manifestStem = _pathBuilder.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, currentTitle);
+            var manifestStem = ResolveManifestStem(manifest, currentTitle);
             if (!string.Equals(manifestStem, existingStem, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -2519,7 +2654,8 @@ public sealed class MeetingOutputCatalogService
         DetectedAudioSource? DetectedAudioSource,
         IReadOnlyList<CaptureTimelineEntry> CaptureTimeline,
         IReadOnlyList<LoopbackCaptureSegment> LoopbackCaptureSegments,
-        bool IsImportedSource);
+        bool IsImportedSource,
+        MeetingOrigin Origin);
 
     private sealed record JsonTranscriptMetadata(
         string? Title,
@@ -2572,6 +2708,35 @@ public sealed class MeetingOutputCatalogService
             ? distinctProjectNames[0]
             : null;
     }
+
+    private static string? GetTemporaryPath(
+        string? sourcePath,
+        IReadOnlyDictionary<string, string> temporaryPaths)
+    {
+        return !string.IsNullOrWhiteSpace(sourcePath) && temporaryPaths.TryGetValue(sourcePath, out var temporaryPath)
+            ? temporaryPath
+            : sourcePath;
+    }
+
+    private static void TryDeleteArtifactTransactionFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // A failed cleanup leaves a uniquely named local recovery artifact, never a partial target write.
+        }
+    }
+
+    private sealed record SpeakerArtifactTransactionFile(
+        string SourcePath,
+        string TempPath,
+        string BackupPath);
 }
 
 public sealed record MeetingOutputRecord(
@@ -2594,7 +2759,8 @@ public sealed record MeetingOutputRecord(
     IReadOnlyList<string>? KeyAttendees = null,
     IReadOnlyList<CaptureTimelineEntry>? CaptureTimeline = null,
     IReadOnlyList<LoopbackCaptureSegment>? LoopbackCaptureSegments = null,
-    bool HasSuspiciousSpeakerLabels = false);
+    bool HasSuspiciousSpeakerLabels = false,
+    MeetingOrigin? Origin = null);
 
 public sealed record MergedMeetingResult(
     string ManifestPath,

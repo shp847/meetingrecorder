@@ -9,6 +9,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
 {
     private const int CurrentIncrementalWorkPlanMigrationVersion = 1;
     private const int CurrentSummaryModelProxyContractMigrationVersion = 1;
+    private const int CurrentMeetingsViewPresetMigrationVersion = 1;
+    private const int CurrentBacklogAccelerationProfileMigrationVersion = 1;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -156,6 +158,12 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             AudioOutputDir = AppDataPaths.GetManagedRecordingsRoot(documentsDirectory),
             TranscriptOutputDir = AppDataPaths.GetManagedTranscriptsRoot(documentsDirectory),
             WorkDir = Path.Combine(rootDirectory, "work"),
+            ImportInboxDir = ImportInboxPathPolicy.GetDefaultInboxPath(documentsDirectory),
+            ImportInboxEnabled = false,
+            ImportInboxScanIntervalSeconds = 60,
+            ImportInboxMaxBatchSize = 20,
+            ImportInboxArchiveAfterQueueEnabled = false,
+            ImportInboxMoveBlockedToErrorEnabled = false,
             ModelCacheDir = modelCache,
             TranscriptionModelPath = defaultTranscriptionModelPath,
             TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Standard,
@@ -186,6 +194,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             OvernightDrainStartLocal = "22:00",
             OvernightDrainEndLocal = "06:00",
             PreviousProcessingSpeedProfile = ProcessingSpeedProfile.Normal,
+            BacklogAccelerationProfile = BacklogAccelerationProfile.Normal,
+            BacklogAccelerationProfileMigrationVersion = CurrentBacklogAccelerationProfileMigrationVersion,
             ProcessingScheduleMigrationApplied = true,
             InitialProcessingStrategy = InitialProcessingStrategy.ConfiguredStages,
             OvernightInitialProcessingStrategy = InitialProcessingStrategy.ConfiguredStages,
@@ -232,6 +242,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             MeetingsSortKey = MeetingsSortKey.Started,
             MeetingsSortDescending = true,
             MeetingsGroupKey = MeetingsGroupKey.Week,
+            MeetingsViewPreset = MeetingsViewPreset.Recent,
+            MeetingsViewPresetMigrationVersion = CurrentMeetingsViewPresetMigrationVersion,
+            MeetingsViewPresetInitialized = false,
             DismissedMeetingRecommendations = Array.Empty<DismissedMeetingRecommendation>(),
         };
     }
@@ -252,6 +265,35 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             : config.DiarizationAssetPath;
         var normalizedPendingUpdateZipPath = NormalizePendingUpdateZipPath(config.PendingUpdateZipPath);
         var hasValidPendingUpdate = !string.IsNullOrWhiteSpace(normalizedPendingUpdateZipPath);
+        var normalizedAudioOutputDir = NormalizePublishedOutputPath(
+            config.AudioOutputDir,
+            defaults.AudioOutputDir,
+            GetLegacyAudioOutputDirectories(rootDirectory, documentsDirectory));
+        var normalizedTranscriptOutputDir = NormalizePublishedOutputPath(
+            config.TranscriptOutputDir,
+            defaults.TranscriptOutputDir,
+            GetLegacyTranscriptOutputDirectories(rootDirectory, documentsDirectory));
+        var normalizedWorkDir = string.IsNullOrWhiteSpace(config.WorkDir) ? defaults.WorkDir : config.WorkDir;
+        var configuredImportInboxDir = string.IsNullOrWhiteSpace(config.ImportInboxDir)
+            ? defaults.ImportInboxDir
+            : config.ImportInboxDir;
+        var importInboxValidation = ImportInboxPathPolicy.Validate(
+            configuredImportInboxDir,
+            [normalizedAudioOutputDir, normalizedTranscriptOutputDir, normalizedWorkDir]);
+        var normalizedImportInboxDir = importInboxValidation.IsValid
+            ? configuredImportInboxDir
+            : defaults.ImportInboxDir;
+        var importInboxEnabled = config.ImportInboxEnabled && importInboxValidation.IsValid;
+        var importInboxScanIntervalSeconds = config.ImportInboxScanIntervalSeconds is >= 15 and <= 3600
+            ? config.ImportInboxScanIntervalSeconds
+            : defaults.ImportInboxScanIntervalSeconds;
+        var importInboxMaxBatchSize = config.ImportInboxMaxBatchSize is >= 1 and <= 100
+            ? config.ImportInboxMaxBatchSize
+            : defaults.ImportInboxMaxBatchSize;
+        var importInboxArchiveAfterQueueEnabled =
+            importInboxEnabled && config.ImportInboxArchiveAfterQueueEnabled;
+        var importInboxMoveBlockedToErrorEnabled =
+            importInboxEnabled && config.ImportInboxMoveBlockedToErrorEnabled;
         var normalizedPendingUpdateVersion = !hasValidPendingUpdate || string.IsNullOrWhiteSpace(config.PendingUpdateVersion)
             ? string.Empty
             : config.PendingUpdateVersion;
@@ -266,6 +308,16 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var meetingAttendeeEnrichmentEnabled = isLegacyMeetingsWorkspaceConfig
             ? defaults.MeetingAttendeeEnrichmentEnabled
             : config.MeetingAttendeeEnrichmentEnabled;
+        var meetingsViewPresetMigrationVersion = Math.Max(0, config.MeetingsViewPresetMigrationVersion);
+        var meetingsViewPreset = NormalizeEnum(config.MeetingsViewPreset, defaults.MeetingsViewPreset);
+        var meetingsViewPresetInitialized = config.MeetingsViewPresetInitialized;
+        if (meetingsViewPresetMigrationVersion < CurrentMeetingsViewPresetMigrationVersion)
+        {
+            // Preserve every legacy table/group/sort choice as the Custom view.
+            meetingsViewPreset = MeetingsViewPreset.Custom;
+            meetingsViewPresetInitialized = true;
+            meetingsViewPresetMigrationVersion = CurrentMeetingsViewPresetMigrationVersion;
+        }
         var autoDetectSecurityPromptMigrationApplied = config.AutoDetectSecurityPromptMigrationApplied;
         var autoDetectEnabled = config.AutoDetectEnabled;
         if (!autoDetectSecurityPromptMigrationApplied)
@@ -340,16 +392,26 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         var incrementalWorkPlan = NormalizeIncrementalWorkPlan(config.IncrementalWorkPlan);
         var incrementalWorkPlanMigrationVersion = Math.Max(0, config.IncrementalWorkPlanMigrationVersion);
         var processingScheduleMigrationApplied = config.ProcessingScheduleMigrationApplied;
+        var backlogAccelerationProfileMigrationVersion = Math.Max(0, config.BacklogAccelerationProfileMigrationVersion);
+        var backlogAccelerationProfile = NormalizeEnum(config.BacklogAccelerationProfile, defaults.BacklogAccelerationProfile);
         if (!processingScheduleMigrationApplied)
         {
             initialProcessingStrategy = legacyProfile == ProcessingSpeedProfile.TranscriptOnlyDrain
                 ? InitialProcessingStrategy.TranscriptFirst
                 : InitialProcessingStrategy.ConfiguredStages;
             overnightInitialProcessingStrategy = legacyProfile == ProcessingSpeedProfile.OvernightDrain
-                ? InitialProcessingStrategy.TranscriptFirst
+                ? InitialProcessingStrategy.ConfiguredStages
                 : initialProcessingStrategy;
             incrementalWorkPlan = IncrementalWorkPlan.QueuedRecordings | IncrementalWorkPlan.SafeCleanup;
             processingScheduleMigrationApplied = true;
+        }
+
+        if (backlogAccelerationProfileMigrationVersion < CurrentBacklogAccelerationProfileMigrationVersion)
+        {
+            // Before this profile existed, staged overnight and idle-capacity policy was already active.
+            // Retain that installed behavior; new installs start Normal from the defaults above.
+            backlogAccelerationProfile = BacklogAccelerationProfile.OvernightAndIdleCapacityAcceleration;
+            backlogAccelerationProfileMigrationVersion = CurrentBacklogAccelerationProfileMigrationVersion;
         }
 
         if (incrementalWorkPlanMigrationVersion < CurrentIncrementalWorkPlanMigrationVersion)
@@ -366,9 +428,15 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
 
         return config with
         {
-            AudioOutputDir = NormalizePublishedOutputPath(config.AudioOutputDir, defaults.AudioOutputDir, GetLegacyAudioOutputDirectories(rootDirectory, documentsDirectory)),
-            TranscriptOutputDir = NormalizePublishedOutputPath(config.TranscriptOutputDir, defaults.TranscriptOutputDir, GetLegacyTranscriptOutputDirectories(rootDirectory, documentsDirectory)),
-            WorkDir = string.IsNullOrWhiteSpace(config.WorkDir) ? defaults.WorkDir : config.WorkDir,
+            AudioOutputDir = normalizedAudioOutputDir,
+            TranscriptOutputDir = normalizedTranscriptOutputDir,
+            WorkDir = normalizedWorkDir,
+            ImportInboxDir = normalizedImportInboxDir,
+            ImportInboxEnabled = importInboxEnabled,
+            ImportInboxScanIntervalSeconds = importInboxScanIntervalSeconds,
+            ImportInboxMaxBatchSize = importInboxMaxBatchSize,
+            ImportInboxArchiveAfterQueueEnabled = importInboxArchiveAfterQueueEnabled,
+            ImportInboxMoveBlockedToErrorEnabled = importInboxMoveBlockedToErrorEnabled,
             ModelCacheDir = normalizedModelCacheDir,
             TranscriptionModelPath = normalizedTranscriptionModelPath,
             TranscriptionModelProfilePreference = InferTranscriptionModelProfilePreference(
@@ -402,6 +470,8 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             OvernightDrainStartLocal = NormalizeLocalTimeText(config.OvernightDrainStartLocal, defaults.OvernightDrainStartLocal),
             OvernightDrainEndLocal = NormalizeLocalTimeText(config.OvernightDrainEndLocal, defaults.OvernightDrainEndLocal),
             PreviousProcessingSpeedProfile = NormalizeEnum(config.PreviousProcessingSpeedProfile, defaults.PreviousProcessingSpeedProfile),
+            BacklogAccelerationProfile = backlogAccelerationProfile,
+            BacklogAccelerationProfileMigrationVersion = backlogAccelerationProfileMigrationVersion,
             ProcessingScheduleMigrationApplied = processingScheduleMigrationApplied,
             InitialProcessingStrategy = initialProcessingStrategy,
             OvernightInitialProcessingStrategy = overnightInitialProcessingStrategy,
@@ -414,6 +484,10 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             SummaryModelProxyModel = summaryModelProxyModel,
             SummaryModelProxyContractMigrationVersion = summaryModelProxyContractMigrationVersion,
             SummaryOpenAiModel = NormalizeOptionalSummaryText(config.SummaryOpenAiModel, defaults.SummaryOpenAiModel),
+            SummaryHostedRouteConsentVersion = Math.Max(0, config.SummaryHostedRouteConsentVersion),
+            SummaryHostedRouteConsentGrantedAtUtc = config.SummaryHostedRouteConsentVersion > 0
+                ? config.SummaryHostedRouteConsentGrantedAtUtc
+                : null,
             SummaryReasoningEffort = NormalizeEnum(config.SummaryReasoningEffort, defaults.SummaryReasoningEffort),
             SummaryRequestTimeoutSeconds = config.SummaryRequestTimeoutSeconds <= 0
                 ? defaults.SummaryRequestTimeoutSeconds
@@ -444,6 +518,9 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             MeetingsSortKey = NormalizeEnum(config.MeetingsSortKey, defaults.MeetingsSortKey),
             MeetingsSortDescending = config.MeetingsSortDescending,
             MeetingsGroupKey = NormalizeEnum(config.MeetingsGroupKey, defaults.MeetingsGroupKey),
+            MeetingsViewPreset = meetingsViewPreset,
+            MeetingsViewPresetMigrationVersion = meetingsViewPresetMigrationVersion,
+            MeetingsViewPresetInitialized = meetingsViewPresetInitialized,
             RushProcessingRequest = NormalizeRushProcessingRequest(config.RushProcessingRequest),
             DismissedMeetingRecommendations = NormalizeDismissedMeetingRecommendations(config.DismissedMeetingRecommendations),
         };
@@ -548,12 +625,17 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
         return dismissedRecommendations
             .Where(item => !string.IsNullOrWhiteSpace(item.Fingerprint))
             .GroupBy(item => item.Fingerprint.Trim(), StringComparer.Ordinal)
-            .Select(group => group
-                .OrderByDescending(item => item.DismissedAtUtc)
-                .First() with
+            .Select(group =>
+            {
+                var mostRecent = group
+                    .OrderByDescending(item => item.DismissedAtUtc)
+                    .First();
+                return mostRecent with
                 {
                     Fingerprint = group.Key,
-                })
+                    RecommendationVersion = Math.Max(1, mostRecent.RecommendationVersion),
+                };
+            })
             .OrderBy(item => item.DismissedAtUtc)
             .TakeLast(256)
             .ToArray();

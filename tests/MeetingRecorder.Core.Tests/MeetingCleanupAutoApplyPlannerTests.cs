@@ -324,6 +324,32 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
         Assert.Equal("Simulated failure", Assert.Single(result.Items.Where(item => !item.Succeeded)).ErrorMessage);
     }
 
+    [Fact]
+    public async Task BatchRunner_Skips_A_Revoked_Item_Without_Reporting_A_False_Completion()
+    {
+        var first = CreateRecommendation("archive-1", MeetingCleanupAction.Archive, MeetingCleanupConfidence.High, true);
+        var revoked = CreateRecommendation("archive-2", MeetingCleanupAction.Archive, MeetingCleanupConfidence.High, true);
+
+        var result = await MeetingCleanupRecommendationBatchRunner.ExecuteAsync(
+            [first, revoked],
+            (recommendation, _) =>
+            {
+                if (string.Equals(recommendation.Fingerprint, revoked.Fingerprint, StringComparison.Ordinal))
+                {
+                    throw new AutomationDispatchSkippedException("The catalog changed before this item could run.");
+                }
+
+                return Task.CompletedTask;
+            },
+            continueOnError: true,
+            CancellationToken.None);
+
+        Assert.Equal(1, result.SucceededCount);
+        Assert.Equal(0, result.FailedCount);
+        Assert.Equal(1, result.SkippedCount);
+        Assert.True(Assert.Single(result.Items.Where(item => item.Skipped)).Skipped);
+    }
+
     public void Dispose()
     {
         try

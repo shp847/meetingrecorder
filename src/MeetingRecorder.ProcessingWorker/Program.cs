@@ -27,7 +27,7 @@ internal static class Program
             return await RunExternalProviderProbeAsync(args, ProviderProbeKind.Diarization);
         }
 
-        if (!TryParseArguments(args, out var manifestPath, out var configPath, out var parseError))
+        if (!TryParseArguments(args, out var manifestPath, out var configPath, out var stage, out var workLease, out var parseError))
         {
             Console.Error.WriteLine(parseError);
             return 1;
@@ -40,7 +40,9 @@ internal static class Program
             ?? throw new InvalidOperationException("Manifest path must include a session directory.");
         var logger = new FileLogWriter(Path.Combine(sessionRoot, "logs", "processing.log"));
 
-        logger.Log($"Worker starting for manifest '{manifestPath}'.");
+        logger.Log(workLease is null
+            ? $"Worker starting for manifest '{manifestPath}'."
+            : $"Worker starting staged {stage} work '{workLease.WorkId:D}' for manifest '{manifestPath}'.");
 
         try
         {
@@ -66,9 +68,16 @@ internal static class Program
                 new FilePublishService(),
                 summarizationProvider);
 
-            var published = await processor.ProcessAsync(manifestPath, config);
+            var published = await processor.ProcessAsync(manifestPath, config, stage);
             logger.Log($"Processing completed successfully. Ready marker: '{published.ReadyMarkerPath}'.");
-            Console.WriteLine(published.ReadyMarkerPath);
+            Console.WriteLine(workLease is null
+                ? published.ReadyMarkerPath
+                : JsonSerializer.Serialize(new SessionProcessingWorkReceipt(
+                    SessionProcessingWorkReceipt.CurrentSchemaVersion,
+                    workLease.WorkId,
+                    workLease.WorkRevision,
+                    workLease.LeaseToken,
+                    stage)));
             return 0;
         }
         catch (Exception exception)
@@ -272,15 +281,23 @@ internal static class Program
         }
     }
 
-    private static bool TryParseArguments(
+    internal static bool TryParseArguments(
         IReadOnlyList<string> args,
         out string manifestPath,
         out string? configPath,
+        out SessionProcessingStage stage,
+        out SessionProcessingWorkLease? workLease,
         out string? error)
     {
         manifestPath = string.Empty;
         configPath = null;
+        stage = SessionProcessingStage.FullPass;
+        workLease = null;
         error = null;
+        Guid? workId = null;
+        string? workRevision = null;
+        string? leaseToken = null;
+        var hasWorkLeaseArgument = false;
 
         for (var index = 0; index < args.Count; index++)
         {
@@ -294,6 +311,56 @@ internal static class Program
             if (string.Equals(current, "--config", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
             {
                 configPath = args[++index];
+                continue;
+            }
+
+            if (string.Equals(current, "--stage", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= args.Count || !SessionProcessingStageParser.TryParse(args[++index], out stage))
+                {
+                    error = "Invalid --stage value. Expected transcript, diarization, summary, or full-pass.";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(current, "--work-id", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || !Guid.TryParse(args[++index], out var parsedWorkId) || parsedWorkId == Guid.Empty)
+                {
+                    error = "Invalid --work-id value. Expected a non-empty GUID.";
+                    return false;
+                }
+
+                workId = parsedWorkId;
+                continue;
+            }
+
+            if (string.Equals(current, "--work-revision", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[++index]))
+                {
+                    error = "Invalid --work-revision value. Expected a non-empty opaque revision.";
+                    return false;
+                }
+
+                workRevision = args[index];
+                continue;
+            }
+
+            if (string.Equals(current, "--lease-token", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[++index]))
+                {
+                    error = "Invalid --lease-token value. Expected a non-empty opaque token.";
+                    return false;
+                }
+
+                leaseToken = args[index];
             }
         }
 
@@ -301,6 +368,17 @@ internal static class Program
         {
             error = "Missing required argument: --manifest <path>";
             return false;
+        }
+
+        if (hasWorkLeaseArgument)
+        {
+            if (workId is null || string.IsNullOrWhiteSpace(workRevision) || string.IsNullOrWhiteSpace(leaseToken))
+            {
+                error = "Staged work requires --work-id, --work-revision, and --lease-token together.";
+                return false;
+            }
+
+            workLease = new SessionProcessingWorkLease(workId.Value, workRevision, leaseToken);
         }
 
         return true;

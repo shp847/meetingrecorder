@@ -438,11 +438,13 @@
                     </Border>
 
                     <Button x:Name="HeaderSettingsButton"
+                            AutomationProperties.Name="Open Settings"
                             Style="{StaticResource HeaderActionButtonStyle}"
                             Margin="0"
                             Click="HeaderSettingsButton_OnClick"
                             Content="Settings" />
                     <Button x:Name="HeaderHelpButton"
+                            AutomationProperties.Name="Open Help"
                             Style="{StaticResource HeaderActionButtonStyle}"
                             Click="HeaderHelpButton_OnClick"
                             Content="Help" />
@@ -468,6 +470,7 @@
                               HorizontalAlignment="Stretch"
                               VerticalAlignment="Top">
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
@@ -555,6 +558,11 @@
                                             <StackPanel>
                                                 <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
                                                            Text="CAPTURE STATUS" />
+                                                <TextBlock x:Name="HomeCaptureTruthTextBlock"
+                                                           Margin="0,6,0,0"
+                                                           Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                           Text="Static readiness. Capture source is selected when recording starts."
+                                                           TextWrapping="Wrap" />
                                                 <TextBlock x:Name="LoopbackCaptureStatusTextBlock"
                                                            Margin="0,8,0,0"
                                                            Style="{StaticResource TechnicalMetaLabelStyle}"
@@ -610,12 +618,14 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                             <Button x:Name="HomePrimaryActionButton"
+                                                    AutomationProperties.Name="Start recording"
                                                     Style="{StaticResource DashboardStartButtonStyle}"
                                                     Grid.Column="0"
                                                     Height="48"
                                                     Click="StartButton_OnClick"
                                                     Content="START" />
                                             <Button x:Name="StopButton"
+                                                    AutomationProperties.Name="Stop recording"
                                                     Style="{StaticResource DashboardStopButtonStyle}"
                                                     Grid.Column="2"
                                                     Height="48"
@@ -625,8 +635,42 @@
                                 </Grid>
                             </Border>
 
+                            <Border x:Name="HomeNextBestActionBorder"
+                                    Grid.Row="1"
+                                    Margin="0,10,0,0"
+                                    Padding="14,12"
+                                    Style="{StaticResource ShellSurfaceCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                   Text="NEXT BEST ACTION" />
+                                        <TextBlock x:Name="HomeNextBestActionHeadlineTextBlock"
+                                                   Margin="0,6,0,0"
+                                                   FontSize="16"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="HomeNextBestActionReasonTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   Style="{StaticResource MutedHelperTextStyle}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+
+                                    <Button x:Name="HomeNextBestActionButton"
+                                            Grid.Column="2"
+                                            MinWidth="132"
+                                            VerticalAlignment="Center"
+                                            Click="HeaderShellStatusActionButton_OnClick" />
+                                </Grid>
+                            </Border>
+
                             <Grid x:Name="HomeQuickSettingsGrid"
-                                  Grid.Row="1"
+                                  Grid.Row="2"
                                   Margin="0,10,0,0"
                                   HorizontalAlignment="Stretch"
                                   VerticalAlignment="Top">
@@ -767,6 +811,7 @@
 
                         <StackPanel>
                             <TextBlock x:Name="MeetingWorkspaceStatusTextBlock"
+                                       AutomationProperties.LiveSetting="Polite"
                                        VerticalAlignment="Center"
                                        Foreground="#45504D"
                                        Text="Recent and published meetings from the current audio, transcript, and work-session folders." />
@@ -801,6 +846,12 @@
                                                Style="{StaticResource TechnicalMetaLabelStyle}" />
                                     <WrapPanel x:Name="MeetingsProcessingActionsPanel"
                                                Margin="0,8,0,0">
+                                        <Button x:Name="BacklogExperienceActionButton"
+                                                Width="190"
+                                                Height="30"
+                                                Margin="0,0,8,0"
+                                                Click="BacklogExperienceActionButton_OnClick"
+                                                Visibility="Collapsed" />
                                         <Button x:Name="RushBacklogButton"
                                                 Width="140"
                                                 Height="30"
@@ -826,8 +877,8 @@
                         <Border Grid.Row="1"
                                 Margin="0,16,0,0"
                                 Padding="14"
-                                CornerRadius="12"
-                                Background="White">
+                                Style="{StaticResource ShellSurfaceCardStyle}">
+                            <StackPanel>
                             <WrapPanel>
                                 <StackPanel Margin="0,0,14,10">
                                     <TextBlock FontWeight="SemiBold"
@@ -836,13 +887,32 @@
                                              Width="220"
                                              Height="32"
                                              Margin="0,6,0,0"
+                                             AutomationProperties.Name="Search meetings"
                                              VerticalContentAlignment="Center"
                                              TextChanged="MeetingsSearchTextBox_OnTextChanged" />
                                 </StackPanel>
 
                                 <StackPanel Margin="0,0,14,10">
-                                    <TextBlock FontWeight="SemiBold"
-                                               Text="View" />
+                                    <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               Text="VIEW PRESET" />
+                                    <ComboBox x:Name="MeetingsPresetComboBox"
+                                              Style="{StaticResource ShellFilterComboBoxStyle}"
+                                              Width="160"
+                                              Height="32"
+                                              Margin="0,6,0,0"
+                                              AutomationProperties.Name="Meeting view preset"
+                                              SelectionChanged="MeetingsPresetComboBox_OnSelectionChanged" />
+                                </StackPanel>
+
+                                <Expander x:Name="MeetingsCustomViewExpander"
+                                          Margin="0,0,14,10"
+                                          VerticalAlignment="Bottom"
+                                          Header="Custom View"
+                                          Visibility="Collapsed">
+                                    <WrapPanel Margin="0,6,0,0">
+                                <StackPanel Margin="0,0,14,10">
+                                    <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                               Text="VIEW" />
                                     <ComboBox x:Name="MeetingsViewModeComboBox"
                                               Style="{StaticResource ShellFilterComboBoxStyle}"
                                               Width="120"
@@ -909,6 +979,8 @@
                                             Content="Collapse All"
                                             Visibility="Collapsed" />
                                 </StackPanel>
+                                    </WrapPanel>
+                                </Expander>
 
                                 <StackPanel Margin="0,0,0,10"
                                             VerticalAlignment="Bottom">
@@ -919,7 +991,22 @@
                                             Height="34"
                                             Margin="0,6,14,0"
                                             Click="AddAudioFilesButton_OnClick"
-                                            Content="Add Audio Files" />
+                                            Content="Add Audio Files"
+                                            AutomationProperties.Name="Add audio files to import review"
+                                            AutomationProperties.HelpText="Adds files to review only. Original files stay in place." />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,14,10"
+                                            VerticalAlignment="Bottom">
+                                    <TextBlock Visibility="Hidden"
+                                               Text="Resume imports" />
+                                    <Button x:Name="ResumeBlockedAudioImportsButton"
+                                            Width="156"
+                                            Height="34"
+                                            Margin="0,6,0,0"
+                                            Click="ResumeBlockedAudioImportsButton_OnClick"
+                                            Content="Resume Blocked Imports"
+                                            AutomationProperties.Name="Resume staged imports blocked by transcription setup" />
                                 </StackPanel>
 
                                 <StackPanel Margin="0,0,0,10"
@@ -934,6 +1021,12 @@
                                             Content="Refresh List" />
                                 </StackPanel>
                             </WrapPanel>
+                            <TextBlock x:Name="MeetingsPresetStatusTextBlock"
+                                       Margin="0,4,0,0"
+                                       Style="{StaticResource TechnicalMetaLabelStyle}"
+                                       Text="Loading meetings..."
+                                       TextWrapping="Wrap" />
+                            </StackPanel>
                         </Border>
 
                         <Grid x:Name="MeetingsContentGrid"
@@ -1056,6 +1149,7 @@
                                     Background="{StaticResource AppCardBrush}"
                                     BorderBrush="{StaticResource AppOutlineBrush}"
                                     BorderThickness="1"
+                                    KeyboardNavigation.TabNavigation="Local"
                                     Visibility="Collapsed">
                                 <StackPanel>
                                     <DockPanel LastChildFill="True">
@@ -1066,38 +1160,71 @@
                                                     Height="32"
                                                     Margin="0,0,10,0"
                                                     Click="AddAudioFilesButton_OnClick"
-                                                    Content="Add More Files" />
+                                                    Content="Add More Files"
+                                                    AutomationProperties.Name="Add more audio files to import review" />
                                             <Button x:Name="QueueExternalAudioImportsButton"
                                                     Width="110"
                                                     Height="32"
                                                     Margin="0,0,10,0"
                                                     Click="QueueExternalAudioImportsButton_OnClick"
-                                                    Content="Queue Valid" />
+                                                    Content="Queue Valid"
+                                                    AutomationProperties.Name="Queue valid imported audio" />
+                                            <Button x:Name="RetryExternalAudioImportButton"
+                                                    Width="104"
+                                                    Height="32"
+                                                    Margin="0,0,10,0"
+                                                    Click="RetryExternalAudioImportButton_OnClick"
+                                                    Content="Retry Selected"
+                                                    AutomationProperties.Name="Retry selected import review row" />
+                                            <Button x:Name="SkipDuplicateExternalAudioImportButton"
+                                                    Width="108"
+                                                    Height="32"
+                                                    Margin="0,0,10,0"
+                                                    Click="SkipDuplicateExternalAudioImportButton_OnClick"
+                                                    Content="Skip Duplicate"
+                                                    AutomationProperties.Name="Remove only a duplicate from import review" />
                                             <Button x:Name="RemoveExternalAudioImportButton"
                                                     Width="130"
                                                     Height="32"
                                                     Margin="0,0,10,0"
                                                     Click="RemoveExternalAudioImportButton_OnClick"
-                                                    Content="Remove Selected" />
+                                                    Content="Remove Selected"
+                                                    AutomationProperties.Name="Remove only the selected row from import review" />
                                             <Button x:Name="OpenExternalAudioImportSetupButton"
                                                     Width="150"
                                                     Height="32"
                                                     Click="OpenExternalAudioImportSetupButton_OnClick"
-                                                    Content="Open Settings &gt; Setup" />
+                                                    Content="Open Settings &gt; Setup"
+                                                    AutomationProperties.Name="Open setup for a blocked import" />
+                                            <Button x:Name="OpenExternalAudioImportInboxButton"
+                                                    Width="114"
+                                                    Height="32"
+                                                    Margin="10,0,0,0"
+                                                    Click="OpenExternalAudioImportInboxButton_OnClick"
+                                                    Content="Open Inbox"
+                                                    AutomationProperties.Name="Open Import Inbox settings" />
                                         </WrapPanel>
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="Imported Audio Review" />
+                                            <TextBlock Margin="0,4,0,0"
+                                                       Foreground="{StaticResource AppMutedTextBrush}"
+                                                       Text="Local copy only. Original files stay in place. You are responsible for recording consent."
+                                                       TextWrapping="Wrap"
+                                                       AutomationProperties.Name="Import privacy and consent notice" />
                                             <TextBlock x:Name="ExternalAudioImportSummaryTextBlock"
                                                        Margin="0,4,0,0"
                                                        Foreground="{StaticResource AppMutedTextBrush}"
-                                                       Text="Add recordings from another source, review them here, then queue the valid files for transcription and optional speaker labeling."
+                                                       AutomationProperties.LiveSetting="Polite"
+                                                       Text="Add recordings from another source, review them here, then queue the valid files. Selected files stay where they are."
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
                                     </DockPanel>
 
                                     <DataGrid x:Name="ExternalAudioImportDataGrid"
                                               Margin="0,12,0,0"
+                                              AutomationProperties.Name="External audio import review: source, status, retention, and recovery"
+                                              AutomationProperties.HelpText="Select a row to edit its meeting details. The original file stays in place."
                                               AutoGenerateColumns="False"
                                               CanUserAddRows="False"
                                               CanUserDeleteRows="False"
@@ -1107,6 +1234,12 @@
                                               MaxHeight="220"
                                               SelectionMode="Single"
                                               SelectionChanged="ExternalAudioImportDataGrid_OnSelectionChanged">
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow">
+                                                <Setter Property="AutomationProperties.Name"
+                                                        Value="{Binding AccessibleName}" />
+                                            </Style>
+                                        </DataGrid.RowStyle>
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Source"
                                                                 Binding="{Binding SourceDisplayName, Mode=OneWay}"
@@ -1125,7 +1258,13 @@
                                                                 Width="0.9*" />
                                             <DataGridTextColumn Header="Status"
                                                                 Binding="{Binding StatusText, Mode=OneWay}"
-                                                                Width="2*" />
+                                                                Width="1.7*" />
+                                            <DataGridTextColumn Header="Source retention"
+                                                                Binding="{Binding RetentionText, Mode=OneWay}"
+                                                                Width="1.1*" />
+                                            <DataGridTextColumn Header="Next step"
+                                                                Binding="{Binding RecoveryText, Mode=OneWay}"
+                                                                Width="1.8*" />
                                         </DataGrid.Columns>
                                     </DataGrid>
 
@@ -1142,6 +1281,7 @@
                                             <TextBox x:Name="ExternalAudioImportTitleTextBox"
                                                      Height="32"
                                                      Margin="0,6,0,0"
+                                                     AutomationProperties.Name="Meeting title for selected import row"
                                                      TextChanged="ExternalAudioImportTitleTextBox_OnTextChanged" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1"
@@ -1151,6 +1291,7 @@
                                             <TextBox x:Name="ExternalAudioImportStartedAtTextBox"
                                                      Height="32"
                                                      Margin="0,6,0,0"
+                                                     AutomationProperties.Name="Local start date and time for selected import row"
                                                      TextChanged="ExternalAudioImportStartedAtTextBox_OnTextChanged" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
@@ -1159,6 +1300,7 @@
                                             <TextBox x:Name="ExternalAudioImportProjectTextBox"
                                                      Height="32"
                                                      Margin="0,6,0,0"
+                                                     AutomationProperties.Name="Optional project for selected import row"
                                                      TextChanged="ExternalAudioImportProjectTextBox_OnTextChanged" />
                                         </StackPanel>
                                     </Grid>
@@ -1166,6 +1308,7 @@
                                     <TextBlock x:Name="ExternalAudioImportDetailStatusTextBlock"
                                                Margin="0,10,0,0"
                                                Foreground="{StaticResource AppMutedTextBrush}"
+                                               AutomationProperties.LiveSetting="Polite"
                                                TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
@@ -1181,6 +1324,7 @@
                                     BorderBrush="{StaticResource AppOutlineBrush}"
                                     BorderThickness="1">
                                 <ListView x:Name="MeetingsDataGrid"
+                                          AutomationProperties.Name="Meetings list"
                                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                                           ScrollViewer.CanContentScroll="True"
@@ -1198,74 +1342,41 @@
                                 </ListView.ItemContainerStyle>
                                 <ListView.ContextMenu>
                                     <ContextMenu Opened="MeetingsContextMenu_OnOpened">
-                                        <MenuItem x:Name="OpenMeetingDetailsMenuItem"
-                                                  Header="Open Details"
-                                                  Click="OpenMeetingDetailsMenuItem_OnClick" />
-                                        <MenuItem x:Name="OpenMeetingTranscriptMenuItem"
-                                                  Header="Open Transcript"
-                                                  Click="OpenMeetingTranscriptMenuItem_OnClick" />
-                                        <MenuItem x:Name="OpenMeetingAudioMenuItem"
-                                                  Header="Open Audio"
-                                                  Click="OpenMeetingAudioMenuItem_OnClick" />
-                                        <MenuItem x:Name="OpenMeetingContainingFolderMenuItem"
-                                                  Header="Open Containing Folder"
-                                                  Click="OpenMeetingContainingFolderMenuItem_OnClick" />
-                                        <MenuItem x:Name="CopyMeetingTranscriptPathMenuItem"
-                                                  Header="Copy Transcript Path"
-                                                  Click="CopyMeetingTranscriptPathMenuItem_OnClick" />
-                                        <MenuItem x:Name="CopyMeetingAudioPathMenuItem"
-                                                  Header="Copy Audio Path"
-                                                  Click="CopyMeetingAudioPathMenuItem_OnClick" />
-                                        <Separator x:Name="SingleMeetingContextMenuSeparator" />
-                                        <MenuItem x:Name="ApplyMeetingRecommendedActionMenuItem"
-                                                  Header="Apply Recommended Action"
-                                                  Click="ApplyMeetingRecommendedActionMenuItem_OnClick" />
-                                        <MenuItem x:Name="RenameMeetingContextMenuItem"
-                                                  Header="Rename"
-                                                  Click="RenameMeetingContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="SuggestMeetingTitleContextMenuItem"
-                                                  Header="Suggest Title"
-                                                  Click="SuggestMeetingTitleContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="RetryMeetingTranscriptContextMenuItem"
-                                                  Header="Re-Generate Transcript"
-                                                  Click="RetryMeetingTranscriptContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="ReTranscribeMeetingWithDifferentModelMenuItem"
-                                                  Header="Re-Transcribe With Different Model"
-                                                  Click="ReTranscribeMeetingWithDifferentModelMenuItem_OnClick" />
-                                        <MenuItem x:Name="AddSpeakerLabelsContextMenuItem"
-                                                  Header="Add Speaker Labels"
-                                                  Click="AddSpeakerLabelsContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="ProcessAsapContextMenuItem"
-                                                  Header="Process ASAP..."
-                                                  Click="ProcessAsapContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="SplitMeetingContextMenuItem"
-                                                  Header="Split"
-                                                  Click="SplitMeetingContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="ArchiveMeetingContextMenuItem"
-                                                  Header="Archive"
-                                                  Click="ArchiveMeetingContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="DeleteMeetingPermanentlyMenuItem"
-                                                  Header="Delete Permanently"
-                                                  Click="MeetingPermanentDeleteMenuItem_OnClick" />
+                                        <MenuItem x:Name="OpenMeetingActionsFamilyMenuItem" Header="Open">
+                                            <MenuItem x:Name="OpenMeetingDetailsMenuItem" Header="Open Details" Click="OpenMeetingDetailsMenuItem_OnClick" />
+                                            <MenuItem x:Name="OpenMeetingTranscriptMenuItem" Header="Open Transcript" Click="OpenMeetingTranscriptMenuItem_OnClick" />
+                                            <MenuItem x:Name="OpenMeetingAudioMenuItem" Header="Open Audio" Click="OpenMeetingAudioMenuItem_OnClick" />
+                                            <MenuItem x:Name="OpenMeetingContainingFolderMenuItem" Header="Open Containing Folder" Click="OpenMeetingContainingFolderMenuItem_OnClick" />
+                                            <MenuItem x:Name="CopyMeetingTranscriptPathMenuItem" Header="Copy Transcript Path" Click="CopyMeetingTranscriptPathMenuItem_OnClick" />
+                                            <MenuItem x:Name="CopyMeetingAudioPathMenuItem" Header="Copy Audio Path" Click="CopyMeetingAudioPathMenuItem_OnClick" />
+                                        </MenuItem>
+                                        <MenuItem x:Name="FixMeetingActionsFamilyMenuItem" Header="Fix">
+                                            <MenuItem x:Name="ApplyMeetingRecommendedActionMenuItem" Header="Recommended action" Click="ApplyMeetingRecommendedActionMenuItem_OnClick" />
+                                            <MenuItem x:Name="RetryMeetingTranscriptContextMenuItem" Header="Re-Generate Transcript" Click="RetryMeetingTranscriptContextMenuItem_OnClick" />
+                                            <MenuItem x:Name="ReTranscribeMeetingWithDifferentModelMenuItem" Header="Re-Transcribe With Different Model" Click="ReTranscribeMeetingWithDifferentModelMenuItem_OnClick" />
+                                            <MenuItem x:Name="AddSpeakerLabelsContextMenuItem" Header="Add Speaker Labels" Click="AddSpeakerLabelsContextMenuItem_OnClick" />
+                                            <MenuItem x:Name="SplitMeetingContextMenuItem" Header="Split" Click="SplitMeetingContextMenuItem_OnClick" />
+                                        </MenuItem>
+                                        <MenuItem x:Name="OrganizeMeetingActionsFamilyMenuItem" Header="Organize">
+                                            <MenuItem x:Name="RenameMeetingContextMenuItem" Header="Rename" Click="RenameMeetingContextMenuItem_OnClick" />
+                                            <MenuItem x:Name="SuggestMeetingTitleContextMenuItem" Header="Suggest Title" Click="SuggestMeetingTitleContextMenuItem_OnClick" />
+                                            <MenuItem x:Name="ArchiveMeetingContextMenuItem" Header="Archive" Click="ArchiveMeetingContextMenuItem_OnClick" />
+                                        </MenuItem>
+                                        <MenuItem x:Name="ProcessingMeetingActionsFamilyMenuItem" Header="Processing">
+                                            <MenuItem x:Name="ProcessAsapContextMenuItem" Header="Process ASAP..." Click="ProcessAsapContextMenuItem_OnClick" />
+                                        </MenuItem>
+                                        <MenuItem x:Name="DangerMeetingActionsFamilyMenuItem" Header="Danger Zone">
+                                            <MenuItem x:Name="DeleteMeetingPermanentlyMenuItem" Header="Delete Permanently" Click="MeetingPermanentDeleteMenuItem_OnClick" />
+                                        </MenuItem>
                                         <Separator x:Name="BulkMeetingContextMenuSeparator" />
-                                        <MenuItem x:Name="ApplyRecommendationsForSelectedMeetingsMenuItem"
-                                                  Header="Apply Recommendations"
-                                                  Click="ApplyRecommendationsForSelectedMeetingsMenuItem_OnClick" />
-                                        <MenuItem x:Name="MergeSelectedMeetingsContextMenuItem"
-                                                  Header="Merge Selected"
-                                                  Click="MergeSelectedMeetingsContextMenuItem_OnClick" />
-                                        <MenuItem x:Name="ReTranscribeSelectedMeetingsWithModelMenuItem"
-                                                  Header="Re-Transcribe Selected With Model"
-                                                  Click="ReTranscribeSelectedMeetingsWithModelMenuItem_OnClick" />
-                                        <MenuItem x:Name="AddSpeakerLabelsToSelectedMeetingsMenuItem"
-                                                  Header="Add Speaker Labels To Selected"
-                                                  Click="AddSpeakerLabelsToSelectedMeetingsMenuItem_OnClick" />
-                                        <MenuItem x:Name="ArchiveSelectedMeetingsMenuItem"
-                                                  Header="Archive Selected"
-                                                  Click="ArchiveSelectedMeetingsMenuItem_OnClick" />
-                                        <MenuItem x:Name="DeleteSelectedMeetingsPermanentlyMenuItem"
-                                                  Header="Delete Selected Permanently"
-                                                  Click="DeleteSelectedMeetingsPermanentlyMenuItem_OnClick" />
+                                        <MenuItem x:Name="BulkMeetingActionsFamilyMenuItem" Header="Selected meetings">
+                                            <MenuItem x:Name="ApplyRecommendationsForSelectedMeetingsMenuItem" Header="Review Recommendations" Click="ApplyRecommendationsForSelectedMeetingsMenuItem_OnClick" />
+                                            <MenuItem x:Name="MergeSelectedMeetingsContextMenuItem" Header="Merge Selected" Click="MergeSelectedMeetingsContextMenuItem_OnClick" />
+                                            <MenuItem x:Name="ReTranscribeSelectedMeetingsWithModelMenuItem" Header="Re-Transcribe Selected With Model" Click="ReTranscribeSelectedMeetingsWithModelMenuItem_OnClick" />
+                                            <MenuItem x:Name="AddSpeakerLabelsToSelectedMeetingsMenuItem" Header="Add Speaker Labels To Selected" Click="AddSpeakerLabelsToSelectedMeetingsMenuItem_OnClick" />
+                                            <MenuItem x:Name="ArchiveSelectedMeetingsMenuItem" Header="Archive Selected" Click="ArchiveSelectedMeetingsMenuItem_OnClick" />
+                                            <MenuItem x:Name="DeleteSelectedMeetingsPermanentlyMenuItem" Header="Delete Selected Permanently" Click="DeleteSelectedMeetingsPermanentlyMenuItem_OnClick" />
+                                        </MenuItem>
                                     </ContextMenu>
                                 </ListView.ContextMenu>
                                 <ListView.GroupStyle>
@@ -1333,16 +1444,22 @@
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="Recommended"
-                                                        Width="96">
+                                        <GridViewColumn Header="Next step"
+                                                        Width="220">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <Button Style="{StaticResource InlineRecommendationButtonStyle}"
-                                                            Click="MeetingRecommendedActionButton_OnClick"
-                                                            Content="{Binding RecommendedActionLabel, Mode=OneWay}"
-                                                            ToolTip="{Binding RecommendedActionToolTip, Mode=OneWay}"
-                                                            IsEnabled="{Binding CanApplyRecommendedAction, Mode=OneWay}"
-                                                            Visibility="{Binding RecommendedActionVisibility, Mode=OneWay}" />
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Recommended, Mode=OneWay}"
+                                                                   Foreground="#45504D"
+                                                                   TextWrapping="Wrap" />
+                                                        <Button Style="{StaticResource InlineRecommendationButtonStyle}"
+                                                                Margin="0,6,0,0"
+                                                                Click="MeetingRecommendedActionButton_OnClick"
+                                                                Content="{Binding RecommendedActionLabel, Mode=OneWay}"
+                                                                ToolTip="{Binding RecommendedActionToolTip, Mode=OneWay}"
+                                                                IsEnabled="{Binding CanApplyRecommendedAction, Mode=OneWay}"
+                                                                Visibility="{Binding RecommendedActionVisibility, Mode=OneWay}" />
+                                                    </StackPanel>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
@@ -1813,11 +1930,11 @@
                                                     CornerRadius="4"
                                                     Background="#FAF7F0">
                                                 <StackPanel>
-                                                    <TextBlock FontWeight="SemiBold" Text="Speaker Labels" />
+                                                    <TextBlock FontWeight="SemiBold" Text="Speaker Name Review" />
                                                     <TextBlock Margin="0,8,0,0"
                                                                Foreground="#45504D"
                                                                TextWrapping="Wrap"
-                                                               Text="If the selected transcript already contains diarized labels like Speaker 1 or Speaker 2, update them here. Use the context menu when you want to queue missing speaker labels first." />
+                                                               Text="Diarization Labels identify anonymous meeting-local clusters. Edit Meeting Display Names here; local Voice Profile suggestions are never confirmed identity. Use Add or Repair Speaker Labels from meeting actions when labels are missing or fragmented." />
                                                     <DataGrid x:Name="SpeakerLabelsEditorDataGrid"
                                                               Margin="0,12,0,0"
                                                               AutoGenerateColumns="False"
@@ -1826,11 +1943,11 @@
                                                               RowHeaderWidth="0"
                                                               Height="160">
                                                         <DataGrid.Columns>
-                                                            <DataGridTextColumn Header="Current Label"
+                                                            <DataGridTextColumn Header="Diarization Label"
                                                                                 Binding="{Binding OriginalLabel, Mode=OneWay}"
                                                                                 IsReadOnly="True"
                                                                                 Width="*" />
-                                                            <DataGridTemplateColumn Header="Display Name"
+                                                            <DataGridTemplateColumn Header="Meeting Display Name"
                                                                                     Width="1.3*">
                                                                 <DataGridTemplateColumn.CellTemplate>
                                                                     <DataTemplate>
@@ -1840,7 +1957,7 @@
                                                                     </DataTemplate>
                                                                 </DataGridTemplateColumn.CellTemplate>
                                                             </DataGridTemplateColumn>
-                                                            <DataGridTextColumn Header="Voice Profile"
+                                                            <DataGridTextColumn Header="Name Provenance"
                                                                                 Binding="{Binding Provenance, Mode=OneWay}"
                                                                                 IsReadOnly="True"
                                                                                 Width="1.4*" />
@@ -1851,7 +1968,7 @@
                                                                 Width="170"
                                                                 Height="34"
                                                                 Click="ApplySpeakerNamesButton_OnClick"
-                                                                Content="Apply Speaker Names" />
+                                                                Content="Apply Name Changes" />
                                                     </WrapPanel>
                                                     <TextBlock x:Name="SpeakerNamesStatusTextBlock"
                                                                Margin="0,10,0,0"
@@ -1924,7 +2041,7 @@
                                                 VerticalAlignment="Center"
                                                 Style="{StaticResource PrimaryActionButtonStyle}"
                                                 Click="TranscriptionOverviewPrimaryButton_OnClick"
-                                                Content="Download Recommended Model" />
+                                                Content="Open Setup" />
                                     </Grid>
                                 </StackPanel>
                             </Border>
@@ -1940,7 +2057,7 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Foreground="#45504D"
                                                TextWrapping="Wrap"
-                                               Text="Recording stays blocked until a transcription model is ready. Use Standard for the recommended smaller download, choose Higher Accuracy for the larger optional download, or import an approved local model." />
+                                               Text="Recording stays blocked until a transcription model is ready. Use recommended to validate the approved local Standard download and available disk space, then download only that smaller model with visible size, progress, cancel, retry, and error states. It does not change microphone capture, meeting detection, hosted services, external credentials, or speaker labeling. Choose Higher Accuracy for the larger optional download when you have more disk space and setup time, or import an approved local model." />
 
                                     <TextBlock Margin="0,12,0,0"
                                                FontWeight="SemiBold"
@@ -1955,7 +2072,14 @@
                                                 Height="34"
                                                 Margin="0,0,12,12"
                                                 Click="UseStandardTranscriptionProfileButton_OnClick"
-                                                Content="Use Standard" />
+                                                Content="Use recommended" />
+                                        <Button x:Name="CancelRecommendedTranscriptionSetupButton"
+                                                Width="155"
+                                                Height="34"
+                                                Margin="0,0,12,12"
+                                                Click="CancelRecommendedTranscriptionSetupButton_OnClick"
+                                                Content="Cancel download"
+                                                Visibility="Collapsed" />
                                         <Button x:Name="UseHighAccuracyTranscriptionProfileButton"
                                                 Width="190"
                                                 Height="34"
@@ -2394,7 +2518,31 @@
                                                    Text="Core Setup" />
                                         <TextBlock Margin="0,6,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Make transcription and optional speaker labeling ready here. Use General for day-to-day recording behavior and the other sections for storage, updates, and troubleshooting." />
+                                                   Text="Make transcription and optional speaker labeling ready here. Use Recording for day-to-day capture behavior and the other sections for storage, updates, and troubleshooting." />
+                                        <Border Margin="0,14,0,0"
+                                                Padding="10"
+                                                Background="{StaticResource AppMutedCardBrush}"
+                                                BorderBrush="{StaticResource AppOutlineBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4">
+                                            <StackPanel>
+                                                <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
+                                                           Text="Recording readiness" />
+                                                <TextBlock x:Name="SettingsSetupReadinessPrimaryTextBlock"
+                                                           Margin="0,4,0,0"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap" />
+                                                <TextBlock x:Name="SettingsSetupReadinessNoticesTextBlock"
+                                                           Margin="0,6,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                                <Button x:Name="SettingsSetupReadinessActionButton"
+                                                        Margin="0,10,0,0"
+                                                        HorizontalAlignment="Left"
+                                                        Click="SettingsSetupReadinessActionButton_OnClick"
+                                                        Visibility="Collapsed" />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                 </Border>
 
@@ -2443,23 +2591,32 @@
                                                     Margin="0,8,0,0"
                                                     Style="{StaticResource ConfigHelpTextStyle}"
                                                     Text="The local Teams detector remains active until you validate a stronger integration path." />
-                                        <TextBlock x:Name="ConfigTeamsIntegrationMetadataTextBlock"
-                                                    Margin="0,8,0,0"
-                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                    Text="Last probe: not run yet." />
-                                        <TextBlock x:Name="ConfigTeamsIntegrationBaselineTextBlock"
-                                                    Margin="0,10,0,0"
-                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                    Text="Heuristic baseline: run the Teams probe to capture what the local detector would do right now." />
+                                        <Expander Margin="0,12,0,0"
+                                                  Header="Advanced probe diagnostics">
+                                            <StackPanel Margin="0,8,0,0">
+                                                <TextBlock x:Name="ConfigTeamsIntegrationAdvancedDetailTextBlock"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           TextWrapping="Wrap"
+                                                           Text="No detailed probe result is saved yet. Run the probe when you need troubleshooting detail." />
+                                                <TextBlock x:Name="ConfigTeamsIntegrationMetadataTextBlock"
+                                                           Margin="0,8,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Last probe: not run yet." />
+                                                <TextBlock x:Name="ConfigTeamsIntegrationBaselineTextBlock"
+                                                           Margin="0,10,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Heuristic baseline: run the Teams probe to capture what the local detector would do right now." />
+                                            </StackPanel>
+                                        </Expander>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
                         </ScrollViewer>
 
-                        <ScrollViewer x:Name="SettingsGeneralSectionPanel"
+                        <ScrollViewer x:Name="SettingsRecordingSectionPanel"
                                       VerticalScrollBarVisibility="Auto"
                                       Visibility="Collapsed">
-                            <StackPanel>
+                            <StackPanel x:Name="SettingsRecordingContentPanel">
                                 <Border Style="{StaticResource ConfigSectionBorderStyle}">
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
@@ -2468,7 +2625,7 @@
                                                    Text="Recording Defaults" />
                                         <TextBlock Margin="0,6,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Use these settings for day-to-day recording behavior after core setup is ready." />
+                                                   Text="Use these settings for day-to-day recording behavior after core setup is ready. Changes apply to future recordings after Save Changes." />
                                         <StackPanel Margin="0,14,0,0">
                                             <CheckBox x:Name="ConfigMicCaptureCheckBox"
                                                       Content="Enable microphone capture" />
@@ -2496,7 +2653,8 @@
                                                        Visibility="Collapsed" />
                                         </StackPanel>
 
-                                        <StackPanel Margin="0,16,0,0">
+                                        <StackPanel x:Name="SettingsProcessingAccelerationPanel"
+                                                    Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigDiarizationGpuAccelerationCheckBox"
                                                       Content="Try GPU acceleration for speaker labeling (DirectML)" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
@@ -2512,7 +2670,8 @@
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
                                         </StackPanel>
 
-                                        <StackPanel Margin="0,16,0,0">
+                                        <StackPanel x:Name="SettingsAdvancedTranscriptionProviderPanel"
+                                                    Margin="0,16,0,0">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="External transcription provider" />
                                             <ComboBox x:Name="ConfigTranscriptionProviderPreferenceComboBox"
@@ -2546,7 +2705,8 @@
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
                                         </StackPanel>
 
-                                        <StackPanel Margin="0,16,0,0">
+                                        <StackPanel x:Name="SettingsAdvancedDiarizationProviderPanel"
+                                                    Margin="0,16,0,0">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="External speaker-labeling provider" />
                                             <ComboBox x:Name="ConfigDiarizationProviderPreferenceComboBox"
@@ -2580,13 +2740,15 @@
                                                        Style="{StaticResource ConfigHelpTextStyle}" />
                                         </StackPanel>
 
-                                        <StackPanel Margin="0,16,0,0">
+                                        <StackPanel x:Name="SettingsRecordingAssistancePanel"
+                                                    Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigAutoDetectCheckBox"
                                                       Content="Enable auto-detection" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                       Text="Watch for supported meetings automatically instead of relying only on manual start and stop. New installs keep this on by default, while older configs that predate the prompt-migration safety pass are still reset once so you can opt back in deliberately." />
-                                            <Expander Margin="20,12,0,0"
-                                                      Header="Detection Tuning">
+                                            <Expander x:Name="SettingsRecordingAssistanceCustomPanel"
+                                                      Margin="20,12,0,0"
+                                                      Header="Recording assistance &gt; Custom">
                                                 <StackPanel Margin="0,12,0,0">
                                                     <TextBlock FontWeight="SemiBold"
                                                                Text="Auto-detect audio threshold" />
@@ -2639,11 +2801,12 @@
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Optional and best-effort. If Outlook is unavailable or blocked, detection continues normally." />
                                         </StackPanel>
-                                        <StackPanel Margin="0,16,0,0">
+                                        <StackPanel x:Name="SettingsProcessingVoiceProfilesPanel"
+                                                    Margin="0,16,0,0">
                                             <CheckBox x:Name="ConfigSpeakerNameLearningCheckBox"
                                                       Content="Learn speaker names from my corrections" />
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
-                                                       Text="Stores local voice-profile embeddings on this PC, suggests lower-confidence matches, and only auto-applies mature high-confidence matches." />
+                                                       Text="Stores local Voice Profile embeddings only on this PC. Explicit Meeting Display Name corrections can teach profiles; refresh, repair, and suggestions never learn by themselves. Disable or delete affects future suggestions, not published names." />
                                             <DataGrid x:Name="VoiceProfilesDataGrid"
                                                       Margin="20,10,0,0"
                                                       AutoGenerateColumns="False"
@@ -2673,7 +2836,12 @@
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                             <WrapPanel Margin="20,10,0,0">
+                                                <Button x:Name="EnableVoiceProfileButton"
+                                                        MinWidth="120"
+                                                        Click="EnableVoiceProfileButton_OnClick"
+                                                        Content="Enable Profile" />
                                                 <Button x:Name="DisableVoiceProfileButton"
+                                                        Margin="10,0,0,0"
                                                         MinWidth="120"
                                                         Click="DisableVoiceProfileButton_OnClick"
                                                         Content="Disable Profile" />
@@ -2701,7 +2869,8 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Style="{StaticResource ConfigSectionBorderStyle}">
+                                <Border x:Name="SettingsSummariesContentPanel"
+                                        Style="{StaticResource ConfigSectionBorderStyle}">
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
                                                    FontSize="18"
@@ -2974,10 +3143,46 @@
                             </StackPanel>
                         </ScrollViewer>
 
-                        <ScrollViewer x:Name="SettingsFilesSectionPanel"
+                        <ScrollViewer x:Name="SettingsProcessingSectionPanel"
                                       VerticalScrollBarVisibility="Auto"
                                       Visibility="Collapsed">
-                            <StackPanel>
+                            <StackPanel x:Name="SettingsProcessingContentPanel">
+                                <Border Style="{StaticResource ConfigSectionBorderStyle}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   FontSize="18"
+                                                   Foreground="{StaticResource AppTextBrush}"
+                                                   Text="Processing" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Control transcript publishing, speaker-label timing, local learning, and supported acceleration for future jobs. Changes apply to the next processing run after Save Changes." />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <ScrollViewer x:Name="SettingsSummariesSectionPanel"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Visibility="Collapsed">
+                            <StackPanel x:Name="SettingsSummariesContentPanelHost">
+                                <Border Style="{StaticResource ConfigSectionBorderStyle}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   FontSize="18"
+                                                   Foreground="{StaticResource AppTextBrush}"
+                                                   Text="Meeting summaries" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Style="{StaticResource ConfigHelpTextStyle}"
+                                                   Text="Choose future summary behavior and review the local or hosted provider boundary before saving. Changes apply to the next processing run after Save Changes." />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <ScrollViewer x:Name="SettingsFilesAndUpdatesSectionPanel"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Visibility="Collapsed">
+                            <StackPanel x:Name="SettingsFilesAndUpdatesContentPanel">
                                 <Border Style="{StaticResource ConfigSectionBorderStyle}">
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
@@ -2986,7 +3191,7 @@
                                                    Text="Meeting Files" />
                                         <TextBlock Margin="0,6,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Choose where published meeting audio and transcripts should be written." />
+                                                   Text="Choose where published meeting audio and transcripts should be written. Audio changes apply to future recordings; transcript-folder changes apply to future processing runs after Save Changes." />
                                         <StackPanel Margin="0,14,0,0">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="Audio output folder" />
@@ -3007,6 +3212,52 @@
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Markdown transcripts and transcript sidecars are written here." />
                                         </StackPanel>
+                                        <Border Margin="0,16,0,0"
+                                                Padding="12"
+                                                BorderBrush="{StaticResource AppOutlineBrush}"
+                                                BorderThickness="1"
+                                                Background="{StaticResource AppCardBrush}">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold"
+                                                           Text="Import Inbox" />
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           Text="Optional batch intake. Audio placed here is copied into managed work storage; it is never moved or deleted by default." />
+                                                <CheckBox x:Name="ConfigImportInboxEnabledCheckBox"
+                                                          Margin="0,10,0,0"
+                                                          Content="Scan this Inbox for new audio while Meeting Recorder is open" />
+                                                <CheckBox x:Name="ConfigImportInboxArchiveAfterQueueEnabledCheckBox"
+                                                          Margin="0,6,0,0"
+                                                          Content="After queueing, move Inbox-owned audio into its Archive folder" />
+                                                <CheckBox x:Name="ConfigImportInboxMoveBlockedToErrorEnabledCheckBox"
+                                                          Margin="0,6,0,0"
+                                                          Content="Move terminally unreadable Inbox-owned audio into its Error folder" />
+                                                <TextBlock Margin="0,10,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Inbox folder" />
+                                                <TextBox x:Name="ConfigImportInboxDirTextBox"
+                                                         Margin="0,6,0,0"
+                                                         Height="32"
+                                                         VerticalContentAlignment="Center" />
+                                                <WrapPanel Margin="0,10,0,0">
+                                                    <Button x:Name="RescanImportInboxButton"
+                                                            Width="112"
+                                                            Height="32"
+                                                            Margin="0,0,10,0"
+                                                            Click="RescanImportInboxButton_OnClick"
+                                                            Content="Rescan Inbox" />
+                                                    <Button x:Name="OpenImportInboxButton"
+                                                            Width="112"
+                                                            Height="32"
+                                                            Click="OpenImportInboxButton_OnClick"
+                                                            Content="Open Inbox" />
+                                                </WrapPanel>
+                                                <TextBlock x:Name="ConfigImportInboxStatusTextBlock"
+                                                           Margin="0,10,0,0"
+                                                           Style="{StaticResource ConfigHelpTextStyle}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -3014,7 +3265,7 @@
                         <ScrollViewer x:Name="SettingsUpdatesSectionPanel"
                                       VerticalScrollBarVisibility="Auto"
                                       Visibility="Collapsed">
-                            <StackPanel>
+                            <StackPanel x:Name="SettingsUpdatesContentPanel">
                                 <Border Style="{StaticResource ConfigSectionBorderStyle}">
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
@@ -3023,7 +3274,7 @@
                                                    Text="App Updates" />
                                         <TextBlock Margin="0,6,0,0"
                                                    Style="{StaticResource ConfigHelpTextStyle}"
-                                                   Text="Control automatic GitHub update checks and whether idle updates can install themselves." />
+                                                   Text="Control automatic GitHub update checks and whether idle updates can install themselves. Preferences apply to future checks after Save Changes; install actions remain explicit." />
                                         <StackPanel Margin="0,14,0,0">
                                             <CheckBox x:Name="ConfigUpdateCheckEnabledCheckBox"
                                                       Content="Run automatic GitHub update checks every day while the app is open" />
@@ -3261,7 +3512,7 @@
                         <ScrollViewer x:Name="SettingsAdvancedSectionPanel"
                                       VerticalScrollBarVisibility="Auto"
                                       Visibility="Collapsed">
-                            <StackPanel>
+                            <StackPanel x:Name="SettingsAdvancedContentPanel">
                                 <Border Style="{StaticResource ConfigSectionBorderStyle}">
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
@@ -3318,7 +3569,8 @@
                                             <TextBlock Style="{StaticResource ConfigHelpTextStyle}"
                                                        Text="Point this at the shared release feed the app should use for update discovery." />
                                         </StackPanel>
-                                        <Border Margin="0,14,0,0"
+                                        <Border x:Name="SettingsProcessingWorkPlanPanel"
+                                                Margin="0,14,0,0"
                                                 Padding="12"
                                                 BorderBrush="{StaticResource AppOutlineBrush}"
                                                 BorderThickness="1"
@@ -3329,6 +3581,16 @@
                                                 <TextBlock Margin="0,4,0,0"
                                                            Style="{StaticResource ConfigHelpTextStyle}"
                                                            Text="Choose the primary recording strategy and which incremental work can use idle time. Selected work receives a bounded boost overnight." />
+                                                <TextBlock Margin="0,12,0,0"
+                                                           FontWeight="SemiBold"
+                                                           Text="Backlog acceleration profile" />
+                                                <ComboBox x:Name="ConfigBacklogAccelerationProfileComboBox"
+                                                          Margin="0,6,0,0"
+                                                          Height="32"
+                                                          AutomationProperties.Name="Backlog acceleration profile"
+                                                          VerticalContentAlignment="Center" />
+                                                <TextBlock x:Name="ConfigBacklogAccelerationProfileHelpTextBlock"
+                                                           Style="{StaticResource ConfigHelpTextStyle}" />
                                                 <TextBlock Margin="0,12,0,0"
                                                            FontWeight="SemiBold"
                                                            Text="Initial processing strategy" />
@@ -3365,7 +3627,7 @@
                                                           Content="Apply safe cleanup fixes" />
                                                 <TextBlock Margin="0,12,0,0"
                                                            FontWeight="SemiBold"
-                                                           Text="Queued recordings overnight" />
+                                                           Text="Overnight work focus" />
                                                 <ComboBox x:Name="ConfigOvernightInitialProcessingStrategyComboBox"
                                                           Margin="0,6,0,0"
                                                           Height="32"
@@ -3389,7 +3651,7 @@
                                                 </StackPanel>
                                                 <TextBlock Margin="0,4,0,0"
                                                            Style="{StaticResource ConfigHelpTextStyle}"
-                                                           Text="Selected work can run whenever idle and receives five-item bursts during this local-time window. Format: HH:mm." />
+                                                           Text="Configured stages drain transcripts, then eligible speaker labels and summaries in this local-time window. New accelerated work pauses while recording. Format: HH:mm." />
                                                 <TextBlock x:Name="ConfigProcessingScheduleSummaryTextBlock"
                                                            Margin="0,8,0,0"
                                                            MinHeight="36"

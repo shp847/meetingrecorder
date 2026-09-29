@@ -30,4 +30,23 @@ public sealed class ArtifactPathBuilderTests
 
         Assert.Equal("2026-03-15_170809_gmeet_q1-review-sales-ops", stem);
     }
+
+    [Fact]
+    public void BuildImportedFileStem_Preserves_The_User_Stem_And_Distinguishes_Sessions()
+    {
+        var builder = new ArtifactPathBuilder();
+        var first = builder.BuildImportedFileStem(
+            MeetingPlatform.Teams,
+            DateTimeOffset.Parse("2026-09-27T14:30:00Z"),
+            "Client planning call",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var second = builder.BuildImportedFileStem(
+            MeetingPlatform.Teams,
+            DateTimeOffset.Parse("2026-09-27T14:30:00Z"),
+            "Client planning call",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+        Assert.StartsWith("2026-09-27_143000_teams_client-planning-call-import-", first, StringComparison.Ordinal);
+        Assert.NotEqual(first, second);
+    }
 }
