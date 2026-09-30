@@ -12569,6 +12569,10 @@ public partial class MainWindow : Window
     {
         if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation.Action))
         {
+            _meetingCleanupWorkLedgerService.RecordContainmentHold(
+                recommendation.Fingerprint,
+                recommendation.Action,
+                AutomaticMutationContainmentPolicy.GetReason(recommendation.Action));
             return false;
         }
 

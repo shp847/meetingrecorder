@@ -78,6 +78,23 @@ public sealed class MeetingCleanupWorkLedgerServiceTests : IDisposable
         Assert.Equal("input-revision-1", entry.InputRevision);
     }
 
+    [Fact]
+    public void RecordContainmentHold_Persists_One_PathFree_ManualReview_Receipt()
+    {
+        var ledger = CreateLedger();
+        const string reason = "Automatic archive is paused. Review and apply this action manually if appropriate.";
+
+        ledger.RecordContainmentHold("opaque-fingerprint", MeetingCleanupAction.Archive, reason);
+        ledger.RecordContainmentHold("opaque-fingerprint", MeetingCleanupAction.Archive, reason);
+
+        var entry = Assert.Single(ledger.GetEntries());
+        Assert.Equal(CleanupWorkState.ManualReview, entry.State);
+        Assert.Equal(MeetingCleanupAction.Archive, entry.Action);
+        Assert.Equal(reason, entry.Detail);
+        Assert.Null(entry.ManifestPath);
+        Assert.Null(entry.AffectedStems);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

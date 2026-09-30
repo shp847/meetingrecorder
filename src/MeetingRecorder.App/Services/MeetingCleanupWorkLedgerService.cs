@@ -110,6 +110,34 @@ internal sealed class MeetingCleanupWorkLedgerService
         }
     }
 
+    public void RecordContainmentHold(string fingerprint, MeetingCleanupAction action, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint) || string.IsNullOrWhiteSpace(reason))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var key = fingerprint.Trim();
+            if (Load().TryGetValue(key, out var existing) &&
+                existing.State == CleanupWorkState.ManualReview &&
+                existing.Action == action &&
+                string.Equals(existing.Detail, reason.Trim(), StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _entries![key] = new CleanupWorkLedgerEntry(
+                key,
+                CleanupWorkState.ManualReview,
+                DateTimeOffset.UtcNow,
+                Action: action,
+                Detail: reason.Trim());
+            Save();
+        }
+    }
+
     public void RecordCompletionForManifest(string manifestPath, bool succeeded, string? detail = null)
     {
         if (string.IsNullOrWhiteSpace(manifestPath))

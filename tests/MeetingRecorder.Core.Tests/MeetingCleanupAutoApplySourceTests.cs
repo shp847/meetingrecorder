@@ -66,6 +66,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         Assert.Contains("AutomaticMutationContainmentPolicy.CanDispatch", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("RecordContainmentHold", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]
