@@ -264,15 +264,42 @@ internal sealed class MeetingCleanupWorkLedgerService
     {
         var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("Ledger path must include a parent directory.");
         Directory.CreateDirectory(directory);
-        var tempPath = _path + ".tmp";
+        var tempPath = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tempPath, JsonSerializer.Serialize(new CleanupWorkLedgerDocument(_entries!.Values.OrderBy(entry => entry.Fingerprint, StringComparer.Ordinal).ToArray()), SerializerOptions));
-        if (File.Exists(_path))
+        try
         {
-            File.Replace(tempPath, _path, null, ignoreMetadataErrors: true);
+            if (File.Exists(_path))
+            {
+                ReplaceWithRetry(tempPath);
+            }
+            else
+            {
+                File.Move(tempPath, _path);
+            }
         }
-        else
+        finally
         {
-            File.Move(tempPath, _path);
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+    }
+
+    private void ReplaceWithRetry(string tempPath)
+    {
+        const int maximumAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Replace(tempPath, _path, null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (IOException) when (attempt < maximumAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
+            }
         }
     }
 }
