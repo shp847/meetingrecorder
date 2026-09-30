@@ -6993,8 +6993,8 @@ Sprint 7 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: validation matrix and package parity harness).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: validation matrix and package parity harness); `Done` (2026-09-29).
 - User outcome: continuity ships only with installed recovery proof and support evidence, not source-test optimism.
 - Scope / non-goals: verify S0–S7; do not use private incidents/live meetings, force-close user app/worker, expose trace data, or publish/upload without authority.
 - Dependencies and decisions: S0 corpus/S1 trace/S4 cutover/S5 healer/S6 recovery/S7 flags and `docs/auto-detection-cyberark-decision-log.md` are authority. Evidence separates source/test/package/installed/live-machine states; source fixture success does not prove live behavior.
@@ -7005,8 +7005,8 @@ Sprint 7 acceptance criteria:
   4. Update README/SETUP/ARCHITECTURE/RELEASING/support and append cyberark decision log with source/test/package/installed/live state, evidence/date/limits. Commit/push/release needs separate authority.
 - Tests and rendered checks: matrix completeness, corpus/trace redaction, cutover/heal/rollback/callback/recovery, package/install smoke and high-contrast keyboard status.
 - Documentation / installer / release work: implementation requires all release docs/decision log and package gates; plan-only work requires none.
-- Evidence and date: audit found no full continuity release matrix, installed synthetic journey, separated-state decision log, support playbook, or package trace exclusion proof. 2026-09-29 added the S0–S8 synthetic evidence matrix, support interpretation, and `Test-Continuity-Release.ps1`: it refuses a running user app, rejects trace payloads, runs the Release continuity journey, and requires its Core DLL to match portable and installed bundles. Source guard tests passed 55/55. The harness deliberately rejected the pre-checkpoint package because its Core DLL hash did not match the Release-tested DLL; rebuild/smoke on the committed checkpoint remains required.
-- Remaining gap or next action: rebuild from the committed checkpoint, run package-parity and smoke scripts, then complete the separated-state release evidence.
+- Evidence and date: audit found no full continuity release matrix, installed synthetic journey, separated-state decision log, support playbook, or package trace exclusion proof. 2026-09-29 added the S0–S8 synthetic evidence matrix, support interpretation, and `Test-Continuity-Release.ps1`: it refuses a running user app, rejects trace payloads, runs the Release continuity journey against the exact bundled Core DLL, and requires it to match the installed bundle. Source guard checks passed 55/55; the bundled-Core journey passed 187/187; portable, MSI-install, integrity, and installed-app smoke passed under PowerShell 7. ZIP SHA-256 `4B05A671028595D44B535014432ACAA6BD8398868AC32B4DDEDADCC521C0F2CF`; MSI SHA-256 `AE67A1312859EAFECCAE05BD416F61561FC167C212FB4A5CE9CF3CE6451C506D`. `Test-All.ps1` built all projects then reported 1,561/1,568 Core tests passing with seven pre-existing debug-apphost/diarization fixture failures; direct integration passed 8/8 and AppPlatform passed 7/7. README, SETUP, ARCHITECTURE, RELEASING, support contract, release matrix, and decision log now distinguish source/package/installed/live evidence. Native high-contrast/keyboard and a consented live meeting are recorded as operational follow-ups, not claimed as package proof.
+- Remaining gap or next action: Meeting Continuity plan complete; proceed to the next chronological `Ready` sprint in `plan.md`.
 
 Goal: ship the reliability model as a supported product behavior, not only a
 development refactor.

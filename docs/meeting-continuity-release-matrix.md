@@ -15,9 +15,10 @@ it does not prove a live meeting outcome.
 | S5 | Strict current-work heal has complete-artifact, identity, lease, order, and conflict gates. | `OngoingMeetingHealEligibilityTests`, `OngoingMeetingHealTransactionTests` | Passed in continuity focus. |
 | S6 | Callback trace is bounded/redacted; reentry and crash/restart recovery remain non-authoritative. | `ContinuityDecisionTraceTests`, callback/recovery source tests | Passed in continuity focus. |
 | S7 | Local migration fails closed; review-only creates metadata-only evidence without mutation. | `AppConfigStoreTests`, `OngoingMeetingHealTransactionTests` | Passed in continuity focus. |
-| S8 source journey | The release-built continuity suite exercises protected false merge, manual stop, Unknown grace, recovery/cutover, review-only, and trace redaction. | `scripts/Test-Continuity-Release.ps1` | Run against package before release. |
-| Package layout | Required app/worker/CLI payloads and integrity manifest exist; diagnostic continuity traces cannot ship. | `scripts/Test-Continuity-Release.ps1` | Run against package before release. |
+| S8 source journey | The release-built continuity suite exercises protected false merge, manual stop, Unknown grace, recovery/cutover, review-only, and trace redaction. | `scripts/Test-Continuity-Release.ps1` | Passed 2026-09-29: 187 tests against the exact bundled Core DLL. |
+| Package layout | Required app/worker/CLI payloads and integrity manifest exist; diagnostic continuity traces cannot ship. | `scripts/Test-Continuity-Release.ps1` | Passed 2026-09-29: no trace payload; bundled and installed Core DLL hashes match. |
 | Package/install startup | Portable, MSI install, installed integrity, and installed app survive their smoke windows while no user app is running. | `scripts/Smoke-Test-Release.ps1 -Runtime win-x64` | Passed 2026-09-29. |
+| Full regression | Core, integration, and deployment boundaries report independently. | `Test-All.ps1`; direct integration and AppPlatform runs | Core 1,561/1,568; seven pre-existing debug-apphost/diarization fixture failures. Integration 8/8 and AppPlatform 7/7 pass. |
 | Native UI/accessibility | Keyboard, Narrator, high contrast, and DPI status states are inspected in a controlled desktop session. | Manual rendered review | Open: no controlled native UI harness. |
 | Live meeting behavior | A consented synthetic/non-user meeting validates auto-stop/restart without protected-process inspection. | Controlled live procedure | Open: no live meeting run in this package gate. |
 

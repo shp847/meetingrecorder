@@ -865,6 +865,20 @@ As of 2026-07-20, executable-policy facts are:
 - Outcome: retained with package/install/startup validation. Matcher defaults for new configurations; migration preserves existing users' local choice.
 - Follow-up / removal condition: retain review-only as immediate circuit-breaker response until S8 protected-negative, recovery, rollback, and installed synthetic-journey gates authorize live healing expansion.
 
+### 2026-09-29: Continuity S8 package validation
+- Trigger / observed symptom: source-only continuity tests and ordinary startup smoke did not prove that the exact packaged Core implementation was exercised or that trace diagnostics were excluded from the shipped bundle.
+- Exact runtime or CyberArk evidence: no CyberArk or execution-control event occurred. Portable/MSI smoke launched only from `C:\Users\psharm04\MeetingRecorder`; the app was closed before and after each smoke window.
+- Hypothesis: an isolated release test harness can load the portable `MeetingRecorder.Core.dll`, run the public synthetic continuity journey, then require that DLL to match the MSI-installed copy without inspecting a user meeting.
+- APIs or signals added/removed: no detector, audio probe, process inspection, executable naming, signing, or install-location behavior changed. `Test-Continuity-Release.ps1` is a local validation wrapper only; it rejects packaged continuity trace sidecars and refuses to run while the user app is active.
+- Positive behavior expected: protected false-merge, manual-stop, Unknown-grace, recovery/cutover, review-only, and trace-redaction cases run against the exact package Core DLL; package/install mismatch or a trace payload fails closed.
+- False-positive/security boundary retained: no live meeting, transcript, audio, title, attendee, endpoint, protected process, or policy change is used. Native accessibility and consented live-meeting checks remain separate operational evidence.
+- Tests added and results: installer-script source guard passed 55/55; exact bundled-Core continuity journey passed 187/187. Full Core reached 1,561/1,568 with seven pre-existing debug-apphost/diarization fixture failures; integration passed 8/8 and AppPlatform passed 7/7.
+- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `4B05A671028595D44B535014432ACAA6BD8398868AC32B4DDEDADCC521C0F2CF` and MSI SHA-256 `AE67A1312859EAFECCAE05BD416F61561FC167C212FB4A5CE9CF3CE6451C506D`.
+- Installed hash/version/signature status: stable WPF/CLI/worker apphosts were used only after byte-identical validation; the portable and installed `MeetingRecorder.Core.dll` hashes match. No signing or install-location policy changed.
+- Live-machine result: PowerShell 7 smoke passed portable startup, MSI install, installed integrity, and installed-app startup. No live call behavior was exercised.
+- Outcome: retained as packaged synthetic validation; it is not a production meeting proof.
+- Follow-up / removal condition: keep the wrapper until a controlled native high-contrast/keyboard check and consented live synthetic meeting journey add their own evidence.
+
 ### 2026-09-28: Generated apphost disappears during local package verification
 - Trigger / observed symptom: Sprint 3 installer rebuild stopped because the portable publish output did not contain `MeetingRecorder.App.exe`.
 - Exact runtime or CyberArk evidence: `dotnet publish` resolved the 193,024-byte intermediate apphost at `%TEMP%\MeetingRecorderBuild\obj\MeetingRecorder.App\Release\net8.0-windows\win-x64\apphost.exe` as `ResolvedFileToPublish` with relative path `MeetingRecorder.App.exe`, but neither the publish directory nor a direct `Copy-Item` destination retained the file. The copy command returned without an error and the destination was immediately absent. Defender, Code Integrity, AppLocker, and Application logs from the preceding three hours contained no matching event.
