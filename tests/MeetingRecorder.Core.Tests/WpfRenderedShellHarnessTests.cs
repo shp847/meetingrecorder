@@ -76,7 +76,7 @@ public sealed class WpfRenderedShellHarnessTests
     }
 
     [Fact]
-    public void Setup_Blocked_Shell_Renders_A_1280x800_125Percent_Raster()
+    public void Setup_Blocked_Shell_Renders_A_1280x800_Viewport_At_125Percent()
     {
         var evidence = WpfRenderHarness.CaptureShellAt125Dpi(
             WpfRenderHarness.SyntheticShellState.SetupBlocked);
@@ -88,8 +88,8 @@ public sealed class WpfRenderedShellHarnessTests
             System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
         var frame = decoder.Frames.Single();
 
-        Assert.Equal(1280, frame.PixelWidth);
-        Assert.Equal(800, frame.PixelHeight);
+        Assert.Equal(1600, frame.PixelWidth);
+        Assert.Equal(1000, frame.PixelHeight);
         Assert.Equal(120d, frame.DpiX);
         Assert.Equal(120d, frame.DpiY);
     }

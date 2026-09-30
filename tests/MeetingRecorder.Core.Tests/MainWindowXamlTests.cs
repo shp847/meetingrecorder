@@ -326,7 +326,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Height=\"920\"", windowTag);
         Assert.Contains("Width=\"1440\"", windowTag);
         Assert.Contains("MinWidth=\"1280\"", windowTag);
-        Assert.Contains("MinHeight=\"860\"", windowTag);
+        Assert.Contains("MinHeight=\"800\"", windowTag);
         Assert.DoesNotContain("Width=\"{Binding ElementName=HomeDashboardScrollViewer, Path=ViewportWidth}\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", recordingConsoleBorderTag);
@@ -724,12 +724,16 @@ public sealed class MainWindowXamlTests
         var statusBorderStart = xaml.IndexOf("<Border x:Name=\"HeaderShellStatusBorder\"", StringComparison.Ordinal);
         var statusBorderEnd = xaml.IndexOf(">", statusBorderStart, StringComparison.Ordinal);
         var statusBorderTag = xaml[statusBorderStart..statusBorderEnd];
+        var queueBorderStart = xaml.IndexOf("<Border x:Name=\"HeaderQueueStatusBorder\"", StringComparison.Ordinal);
+        var queueBorderEnd = xaml.IndexOf(">", queueBorderStart, StringComparison.Ordinal);
+        var queueBorderTag = xaml[queueBorderStart..queueBorderEnd];
         var detailTextStart = xaml.IndexOf("<TextBlock x:Name=\"HeaderShellStatusDetailTextBlock\"", StringComparison.Ordinal);
         var detailTextEnd = xaml.IndexOf(">", detailTextStart, StringComparison.Ordinal);
         var detailTextTag = xaml[detailTextStart..detailTextEnd];
 
         Assert.Contains("MinWidth=\"390\"", statusBorderTag);
         Assert.Contains("MinHeight=\"44\"", statusBorderTag);
+        Assert.Contains("Width=\"176\"", queueBorderTag);
         Assert.Contains("Width=\"220\"", detailTextTag);
         Assert.Contains("TextTrimming=\"CharacterEllipsis\"", detailTextTag);
     }

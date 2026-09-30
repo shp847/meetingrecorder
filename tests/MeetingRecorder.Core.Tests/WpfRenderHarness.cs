@@ -3,6 +3,7 @@ using MeetingRecorder.App.Services;
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using System.IO;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -82,9 +83,9 @@ internal static class WpfRenderHarness
         thread.IsBackground = true;
         thread.Start();
 
-        if (!finished.Wait(TimeSpan.FromSeconds(30)))
+        if (!finished.Wait(TimeSpan.FromSeconds(15)))
         {
-            throw new TimeoutException("WPF render harness did not finish within 30 seconds.");
+            throw new TimeoutException("WPF render harness did not finish within 15 seconds.");
         }
 
         if (failure is not null)
@@ -97,18 +98,25 @@ internal static class WpfRenderHarness
 
     private static WpfRenderEvidence CaptureShellOnStaThread(SyntheticShellState state, double rasterScale)
     {
+        var evidenceRoot = Environment.GetEnvironmentVariable("MEETINGRECORDER_WPF_HARNESS_EVIDENCE_ROOT");
         var rootDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "MeetingRecorderWpfHarness",
+            string.IsNullOrWhiteSpace(evidenceRoot)
+                ? Path.Combine(Path.GetTempPath(), "MeetingRecorderWpfHarness")
+                : Path.GetFullPath(evidenceRoot),
             DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss"),
             Guid.NewGuid().ToString("N"));
         var documentsDirectory = Path.Combine(rootDirectory, "documents");
         Directory.CreateDirectory(documentsDirectory);
+        var progressPath = Path.Combine(rootDirectory, "harness-progress.log");
+        WriteProgress(progressPath, "root-created");
 
         var application = new Application
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown,
         };
+        var previousSynchronizationContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(
+            new DispatcherSynchronizationContext(application.Dispatcher));
         application.Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/AppPlatform.Shell.Wpf;component/ShellTheme.xaml", UriKind.Relative),
@@ -118,7 +126,9 @@ internal static class WpfRenderHarness
         var configPath = Path.Combine(rootDirectory, "config", "appsettings.json");
         var configStore = new AppConfigStore(configPath, documentsDirectory);
         var config = configStore.LoadOrCreateAsync().GetAwaiter().GetResult();
+        WriteProgress(progressPath, "config-loaded");
         config = PrepareSyntheticShellState(configStore, config, state);
+        WriteProgress(progressPath, "fixture-prepared");
         var liveConfig = new LiveAppConfig(configStore, config);
         var logger = new FileLogWriter(Path.Combine(rootDirectory, "logs", "wpf-harness.log"));
         var window = new MainWindow(liveConfig, logger)
@@ -131,14 +141,13 @@ internal static class WpfRenderHarness
             ShowInTaskbar = false,
         };
 
-        window.Width = 1280d / rasterScale;
-        window.Height = 800d / rasterScale;
-
         try
         {
             window.Show();
+            WriteProgress(progressPath, "window-shown");
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            WriteProgress(progressPath, "initial-rendered");
 
             var homeAction = RequireElement<Button>(window, "HomePrimaryActionButton");
             var settingsAction = RequireElement<Button>(window, "HeaderSettingsButton");
@@ -155,7 +164,11 @@ internal static class WpfRenderHarness
             if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
+                WriteProgress(progressPath, "meetings-selected");
+                RequireElement<Button>(window, "RefreshMeetingsButton").RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
                 WaitForMeetingRows(window);
+                WriteProgress(progressPath, "meeting-rows-loaded");
                 if (state == SyntheticShellState.SelectionActive)
                 {
                     var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
@@ -167,6 +180,7 @@ internal static class WpfRenderHarness
                 if (state == SyntheticShellState.CleanupRecommendation)
                 {
                     WaitForCleanupRecommendation(window);
+                    WriteProgress(progressPath, "cleanup-recommendation-loaded");
                 }
             }
 
@@ -208,6 +222,8 @@ internal static class WpfRenderHarness
             {
                 application.Shutdown();
             }
+
+            SynchronizationContext.SetSynchronizationContext(previousSynchronizationContext);
         }
     }
 
@@ -284,51 +300,60 @@ internal static class WpfRenderHarness
     private static void WaitForMeetingRows(FrameworkElement window)
     {
         var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (meetings.Items.Count == 0 && DateTime.UtcNow < deadline)
-        {
-            var frame = new DispatcherFrame();
-            var timer = new DispatcherTimer(DispatcherPriority.Background)
-            {
-                Interval = TimeSpan.FromMilliseconds(25),
-            };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                frame.Continue = false;
-            };
-            timer.Start();
-            Dispatcher.PushFrame(frame);
-        }
+        WaitForCondition(window.Dispatcher, () => meetings.Items.Count > 0, TimeSpan.FromSeconds(10));
 
-        Assert.True(meetings.Items.Count > 0, "Synthetic processing manifest must appear in the Meetings workspace.");
+        if (meetings.Items.Count == 0)
+        {
+            throw new InvalidOperationException("Synthetic processing manifest did not appear in the Meetings workspace.");
+        }
         window.UpdateLayout();
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+    }
+
+    private static void WriteProgress(string path, string stage)
+    {
+        File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {stage}{Environment.NewLine}");
     }
 
     private static void WaitForCleanupRecommendation(FrameworkElement window)
     {
         var banner = RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder");
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (banner.Visibility != Visibility.Visible && DateTime.UtcNow < deadline)
-        {
-            var frame = new DispatcherFrame();
-            var timer = new DispatcherTimer(DispatcherPriority.Background)
-            {
-                Interval = TimeSpan.FromMilliseconds(25),
-            };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                frame.Continue = false;
-            };
-            timer.Start();
-            Dispatcher.PushFrame(frame);
-        }
+        WaitForCondition(window.Dispatcher, () => banner.Visibility == Visibility.Visible, TimeSpan.FromSeconds(10));
 
-        Assert.Equal(Visibility.Visible, banner.Visibility);
+        if (banner.Visibility != Visibility.Visible)
+        {
+            throw new InvalidOperationException("Synthetic cleanup recommendation did not become visible.");
+        }
         window.UpdateLayout();
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+    }
+
+    private static void WaitForCondition(
+        Dispatcher dispatcher,
+        Func<bool> condition,
+        TimeSpan timeout)
+    {
+        if (condition())
+        {
+            return;
+        }
+
+        var deadline = DateTime.UtcNow.Add(timeout);
+        var frame = new DispatcherFrame();
+        using var signal = new System.Threading.Timer(
+            _ => dispatcher.BeginInvoke(
+                new Action(() =>
+                {
+                    if (condition() || DateTime.UtcNow >= deadline)
+                    {
+                        frame.Continue = false;
+                    }
+                }),
+                DispatcherPriority.Send),
+            null,
+            TimeSpan.FromMilliseconds(25),
+            TimeSpan.FromMilliseconds(25));
+        Dispatcher.PushFrame(frame);
     }
 
     private static T RequireElement<T>(FrameworkElement window, string name)
@@ -372,14 +397,24 @@ internal static class WpfRenderHarness
     private static IReadOnlyList<string> CreateKeyboardTrace(Button settingsAction, TabControl tabControl)
     {
         var trace = new List<string>();
-        Assert.True(settingsAction.IsEnabled, "Open Settings must be enabled in the synthetic profile.");
-        Assert.True(settingsAction.Focus(), "Open Settings must accept keyboard focus.");
+        if (!settingsAction.IsEnabled)
+        {
+            throw new InvalidOperationException("Open Settings must be enabled in the synthetic profile.");
+        }
+
+        if (!settingsAction.Focus())
+        {
+            throw new InvalidOperationException("Open Settings must accept keyboard focus.");
+        }
         trace.Add("Focus: " + GetFocusedName());
 
         settingsAction.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
         trace.Add("Tab: " + GetFocusedName());
 
-        Assert.True(tabControl.Focus(), "Primary navigation must accept keyboard focus.");
+        if (!tabControl.Focus())
+        {
+            throw new InvalidOperationException("Primary navigation must accept keyboard focus.");
+        }
         trace.Add("Primary navigation: " + GetFocusedName());
         return trace;
     }

@@ -316,7 +316,9 @@ unchanged.
   pressure test); `Done` (2026-09-27 source-audit completion); `Partial`
   (2026-09-27 validator rerun: control-to-source coverage stale); `Partial`
   (2026-09-29 source inventory and control policy refreshed and validated; the
-  rendered-state matrix remains incomplete).
+  rendered-state matrix remains incomplete); `Partial` (2026-09-30 isolated
+  five-state 100%/125% rendered evidence captured; manual journey replay
+  remains open).
 - User outcome: every current interactive control has a traceable future home,
   so simplification removes no power or safety choice by accident.
 - Scope / non-goals: audit current WPF behavior and document evidence only. Do
@@ -406,16 +408,18 @@ unchanged.
   contained-cleanup contracts, and exposes a shared 125% raster path. Focused
   harness project builds pass with `UseAppHost=false`; this avoids an unrelated
   shared-temp apphost access denial. Direct VSTest runs in the current executor
-  are forcibly cut off at 30 seconds before a result is reported, and policy
-  disallows the bounded hidden background test process used to observe a longer
-  run. Therefore no screenshot, automation, keyboard, DPI, or screen-reader
-  claim is made from these fixtures yet.
-- Remaining gap or next action: run each isolated fixture in an execution
-  environment that permits VSTest to report completion, save the resulting
-  redacted 1280x800/100% and 125% artifacts beneath the ignored audit root,
-  hash and review them, and add the evidence record. Then replay the documented
-  keyboard/accessibility paths; do not use the live installed profile or change
-  production instance behavior for this audit.
+  are forcibly cut off at 30 seconds before a result is reported. On 2026-09-30,
+  the same test-only harness was run through `MeetingRecorder.WpfRenderProbe`,
+  which returned directly without acquiring the production mutex. All five
+  redacted states were captured and visually reviewed at a 1280x800 logical
+  viewport at 100% and 125%; hashes, artifact-relative paths, automation,
+  keyboard evidence, and limits are recorded in
+  `docs/ux-audits/whole-app-sprint-0-rendered-evidence.md`. The render revealed
+  and fixed the 800px-height minimum and bounded queue-card overflow. Focused
+  probe build passes with `UseAppHost=false`.
+- Remaining gap or next action: replay and record the documented nine
+  keyboard/accessibility journeys from synthetic data. Do not use the live
+  installed profile or change production instance behavior for this audit.
 
 Goal: prove where overwhelm comes from before changing the experience.
 

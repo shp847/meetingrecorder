@@ -6,7 +6,7 @@
         Icon="Assets/MeetingRecorder.ico"
         Height="920"
         Width="1440"
-        MinHeight="860"
+        MinHeight="800"
         MinWidth="1280"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
@@ -411,7 +411,7 @@
                     </Border>
 
                     <Border x:Name="HeaderQueueStatusBorder"
-                            MinWidth="176"
+                            Width="176"
                             MinHeight="44"
                             Padding="10,6"
                             Margin="0,0,10,0"
