@@ -93,13 +93,13 @@
                      {
                          "controlId":  "control-activitytextbox",
                          "primaryOwnerControlId":  "control-activitytextbox",
-                         "primaryOwnerSurface":  "Home",
+                         "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-activitytextbox",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Home status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 5",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -282,7 +282,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Apply Recommended Action\u0027.",
+                                         "scope":  "The action \u0027Recommended action\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -326,7 +326,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Apply Recommendations\u0027.",
+                                         "scope":  "The action \u0027Review Recommendations\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -379,12 +379,12 @@
                      {
                          "controlId":  "control-applyspeakernamesbutton-1",
                          "primaryOwnerControlId":  "control-applyspeakernamesbutton-1",
-                         "primaryOwnerSurface":  "Meetings",
+                         "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-applyspeakernamesbutton-1",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 13",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
@@ -392,7 +392,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Apply Speaker Names\u0027.",
+                                         "scope":  "The action \u0027Apply Name Changes\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -401,7 +401,7 @@
                      {
                          "controlId":  "control-applyspeakernamesbutton-2",
                          "primaryOwnerControlId":  "control-applyspeakernamesbutton-1",
-                         "primaryOwnerSurface":  "Meetings",
+                         "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "navigate",
                          "aliasTargetControlId":  "control-applyspeakernamesbutton-1",
@@ -414,7 +414,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Apply Speaker Names\u0027.",
+                                         "scope":  "The action \u0027Apply Names\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -547,6 +547,72 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027control-availableremotemodelscombobox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-backlogexperienceactionbutton",
+                         "primaryOwnerControlId":  "control-backlogexperienceactionbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-backlogexperienceactionbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-backlogexperienceactionbutton\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-bulkmeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-bulkmeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-bulkmeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Selected meetings\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-cancelrecommendedtranscriptionsetupbutton",
+                         "primaryOwnerControlId":  "control-cancelrecommendedtranscriptionsetupbutton",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-cancelrecommendedtranscriptionsetupbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Cancel download\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -795,6 +861,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-configbacklogaccelerationprofilecombobox",
+                         "primaryOwnerControlId":  "control-configbacklogaccelerationprofilecombobox",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-configbacklogaccelerationprofilecombobox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-configbacklogaccelerationprofilecombobox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-configcalendartitlefallbackcheckbox",
                          "primaryOwnerControlId":  "control-configcalendartitlefallbackcheckbox",
                          "primaryOwnerSurface":  "Settings",
@@ -899,6 +987,95 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027control-configdiarizationproviderpreferencecombobox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-configimportinboxarchiveafterqueueenabledcheckbox",
+                         "primaryOwnerControlId":  "control-configimportinboxarchiveafterqueueenabledcheckbox",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-configimportinboxarchiveafterqueueenabledcheckbox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+                                                "destructive",
+                                                "active-work-interruption"
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "Displayed eligible meeting artifacts only.",
+                                         "dataBoundary":  "Affected local artifacts, irreversible impact, and archive availability are shown before execution.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-configimportinboxdirtextbox",
+                         "primaryOwnerControlId":  "control-configimportinboxdirtextbox",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-configimportinboxdirtextbox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-configimportinboxdirtextbox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-configimportinboxenabledcheckbox",
+                         "primaryOwnerControlId":  "control-configimportinboxenabledcheckbox",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-configimportinboxenabledcheckbox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Scan this Inbox for new audio while Meeting Recorder is open\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-configimportinboxmoveblockedtoerrorenabledcheckbox",
+                         "primaryOwnerControlId":  "control-configimportinboxmoveblockedtoerrorenabledcheckbox",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-configimportinboxmoveblockedtoerrorenabledcheckbox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Move terminally unreadable Inbox-owned audio into its Error folder\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -1763,15 +1940,37 @@
                                      }
                      },
                      {
+                         "controlId":  "control-dangermeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-dangermeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-dangermeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Danger Zone\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-dashboardopenupdatesbutton",
                          "primaryOwnerControlId":  "control-dashboardopenupdatesbutton",
-                         "primaryOwnerSurface":  "Header",
+                         "primaryOwnerSurface":  "Meetings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-dashboardopenupdatesbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Header status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 14",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -1787,13 +1986,13 @@
                      {
                          "controlId":  "control-dashboardprimaryactionbutton",
                          "primaryOwnerControlId":  "control-dashboardprimaryactionbutton",
-                         "primaryOwnerSurface":  "Header",
-                         "layer":  "guided",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-dashboardprimaryactionbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Header status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 14",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -2093,6 +2292,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-enablevoiceprofilebutton",
+                         "primaryOwnerControlId":  "control-enablevoiceprofilebutton",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-enablevoiceprofilebutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Enable Profile\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-expandallmeetinggroupsbutton",
                          "primaryOwnerControlId":  "control-expandallmeetinggroupsbutton",
                          "primaryOwnerSurface":  "Meetings",
@@ -2203,6 +2424,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-fixmeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-fixmeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-fixmeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Fix\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-generatesummarybutton",
                          "primaryOwnerControlId":  "control-generatesummarybutton",
                          "primaryOwnerSurface":  "Meeting detail",
@@ -2271,9 +2514,9 @@
                      {
                          "controlId":  "control-headershellstatusactionbutton",
                          "primaryOwnerControlId":  "control-dashboardprimaryactionbutton",
-                         "primaryOwnerSurface":  "Header",
+                         "primaryOwnerSurface":  "Meetings",
                          "layer":  "guided",
-                         "aliasBehavior":  "contextual-duplicate",
+                         "aliasBehavior":  "navigate",
                          "aliasTargetControlId":  "control-dashboardprimaryactionbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Header status and next-action region.",
@@ -2293,13 +2536,13 @@
                      {
                          "controlId":  "control-homeautodetectdisabledbutton",
                          "primaryOwnerControlId":  "control-homeautodetectdisabledbutton",
-                         "primaryOwnerSurface":  "Home",
+                         "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-homeautodetectdisabledbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Home status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 5",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -2374,6 +2617,28 @@
                                          "kind":  "explicit-per-action",
                                          "scope":  "Microphone contribution for the selected recording scope.",
                                          "dataBoundary":  "Microphone audio capture is shown before it is enabled.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-homenextbestactionbutton",
+                         "primaryOwnerControlId":  "control-dashboardprimaryactionbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "navigate",
+                         "aliasTargetControlId":  "control-dashboardprimaryactionbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Home status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 5",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-homenextbestactionbutton\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
@@ -2592,7 +2857,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Maintenance\u0027.",
+                                         "scope":  "The action \u0027Organize \u0026amp; Fix\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -2621,6 +2886,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-meetingscustomviewexpander",
+                         "primaryOwnerControlId":  "control-meetingscustomviewexpander",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-meetingscustomviewexpander",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Custom View\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-meetingsgroupkeycombobox",
                          "primaryOwnerControlId":  "control-meetingsgroupkeycombobox",
                          "primaryOwnerSurface":  "Meetings",
@@ -2637,6 +2924,28 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027control-meetingsgroupkeycombobox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-meetingspresetcombobox",
+                         "primaryOwnerControlId":  "control-meetingspresetcombobox",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-meetingspresetcombobox",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-meetingspresetcombobox\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -2777,13 +3086,13 @@
                      {
                          "controlId":  "control-mergeselectedmeetingsbutton",
                          "primaryOwnerControlId":  "control-mergeselectedmeetingsbutton",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-mergeselectedmeetingsbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -2821,13 +3130,13 @@
                      {
                          "controlId":  "control-mergeselectedmeetingstitletextbox",
                          "primaryOwnerControlId":  "control-mergeselectedmeetingstitletextbox",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-mergeselectedmeetingstitletextbox",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -2885,6 +3194,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-openexternalaudioimportinboxbutton",
+                         "primaryOwnerControlId":  "control-openexternalaudioimportinboxbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-openexternalaudioimportinboxbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Open Inbox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-openexternalaudioimportsetupbutton",
                          "primaryOwnerControlId":  "control-openexternalaudioimportsetupbutton",
                          "primaryOwnerSurface":  "Meetings",
@@ -2929,6 +3260,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-openimportinboxbutton",
+                         "primaryOwnerControlId":  "control-openimportinboxbutton",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-openimportinboxbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Open Inbox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-openlatestreleasepagebutton",
                          "primaryOwnerControlId":  "control-openlatestreleasepagebutton",
                          "primaryOwnerSurface":  "Settings",
@@ -2945,6 +3298,28 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027Open Release Page\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-openmeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-openmeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-openmeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Open\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -3325,6 +3700,28 @@
                                      }
                      },
                      {
+                         "controlId":  "control-organizemeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-organizemeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-organizemeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Organize\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-processasapactionbutton",
                          "primaryOwnerControlId":  "control-processasapactionbutton",
                          "primaryOwnerSurface":  "Meetings",
@@ -3386,6 +3783,28 @@
                                          "kind":  "explicit-per-action",
                                          "scope":  "The selected queued, active, or update work item.",
                                          "dataBoundary":  "Affected active work, cancellation behavior, and recovery route are shown before execution.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-processingmeetingactionsfamilymenuitem",
+                         "primaryOwnerControlId":  "control-processingmeetingactionsfamilymenuitem",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-processingmeetingactionsfamilymenuitem",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Processing\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
@@ -3582,7 +4001,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Refresh Suggestions\u0027.",
+                                         "scope":  "The action \u0027Refresh Local Suggestions\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -3699,6 +4118,50 @@
                                      }
                      },
                      {
+                         "controlId":  "control-rescanimportinboxbutton",
+                         "primaryOwnerControlId":  "control-rescanimportinboxbutton",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-rescanimportinboxbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Rescan Inbox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-resumeblockedaudioimportsbutton",
+                         "primaryOwnerControlId":  "control-resumeblockedaudioimportsbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-resumeblockedaudioimportsbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Resume Blocked Imports\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-retranscribebutton",
                          "primaryOwnerControlId":  "control-retranscribebutton",
                          "primaryOwnerSurface":  "Meeting detail",
@@ -3760,6 +4223,28 @@
                                          "kind":  "explicit-per-action",
                                          "scope":  "The selected queued, active, or update work item.",
                                          "dataBoundary":  "Affected active work, cancellation behavior, and recovery route are shown before execution.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-retryexternalaudioimportbutton",
+                         "primaryOwnerControlId":  "control-retryexternalaudioimportbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-retryexternalaudioimportbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Retry Selected\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
@@ -4007,6 +4492,50 @@
                                      }
                      },
                      {
+                         "controlId":  "control-settingsrecordingassistancecustompanel",
+                         "primaryOwnerControlId":  "control-settingsrecordingassistancecustompanel",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-settingsrecordingassistancecustompanel",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Recording assistance \u0026gt; Custom\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-settingssetupreadinessactionbutton",
+                         "primaryOwnerControlId":  "control-settingssetupreadinessactionbutton",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-settingssetupreadinessactionbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027control-settingssetupreadinessactionbutton\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
                          "controlId":  "control-setupspeakerlabelingrunmodecombobox",
                          "primaryOwnerControlId":  "control-setupspeakerlabelingrunmodecombobox",
                          "primaryOwnerSurface":  "Settings",
@@ -4023,6 +4552,28 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027control-setupspeakerlabelingrunmodecombobox\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-skipduplicateexternalaudioimportbutton",
+                         "primaryOwnerControlId":  "control-skipduplicateexternalaudioimportbutton",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-skipduplicateexternalaudioimportbutton",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Skip Duplicate\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -4097,12 +4648,12 @@
                      {
                          "controlId":  "control-speakerlabelseditordatagrid",
                          "primaryOwnerControlId":  "control-speakerlabelseditordatagrid",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-speakerlabelseditordatagrid",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 13",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
@@ -4111,6 +4662,28 @@
                          "consent":  {
                                          "kind":  "explicit-per-action",
                                          "scope":  "The action \u0027control-speakerlabelseditordatagrid\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "control-speakerreviewexpander",
+                         "primaryOwnerControlId":  "control-speakerreviewexpander",
+                         "primaryOwnerSurface":  "Meeting detail",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "control-speakerreviewexpander",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 13",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027Speaker Review\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -4207,13 +4780,13 @@
                      {
                          "controlId":  "control-splitselectedmeetingbutton",
                          "primaryOwnerControlId":  "control-splitselectedmeetingbutton",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
                          "aliasBehavior":  "primary",
                          "aliasTargetControlId":  "control-splitselectedmeetingbutton",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -4462,7 +5035,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Download Recommended Model\u0027.",
+                                         "scope":  "The action \u0027Open Setup\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -4528,7 +5101,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Undo Name Recognition\u0027.",
+                                         "scope":  "The action \u0027Undo Profile Names\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -4616,7 +5189,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Use Standard\u0027.",
+                                         "scope":  "The action \u0027Use recommended\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -4689,12 +5262,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-button-69",
-                         "primaryOwnerControlId":  "mainwindow-button-69",
+                         "controlId":  "mainwindow-button-84",
+                         "primaryOwnerControlId":  "mainwindow-button-84",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-button-69",
+                         "aliasTargetControlId":  "mainwindow-button-84",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4711,12 +5284,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-button-70",
-                         "primaryOwnerControlId":  "mainwindow-button-70",
+                         "controlId":  "mainwindow-button-85",
+                         "primaryOwnerControlId":  "mainwindow-button-85",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-button-70",
+                         "aliasTargetControlId":  "mainwindow-button-85",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4733,12 +5306,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-button-71",
-                         "primaryOwnerControlId":  "mainwindow-button-71",
+                         "controlId":  "mainwindow-button-86",
+                         "primaryOwnerControlId":  "mainwindow-button-86",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-button-71",
+                         "aliasTargetControlId":  "mainwindow-button-86",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 7",
@@ -4755,12 +5328,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-combobox-174",
-                         "primaryOwnerControlId":  "mainwindow-combobox-174",
+                         "controlId":  "mainwindow-combobox-193",
+                         "primaryOwnerControlId":  "mainwindow-combobox-193",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-combobox-174",
+                         "aliasTargetControlId":  "mainwindow-combobox-193",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 2",
@@ -4770,41 +5343,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-combobox-174\u0027.",
+                                         "scope":  "The action \u0027mainwindow-combobox-193\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-datagrid-102",
-                         "primaryOwnerControlId":  "mainwindow-datagrid-102",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
-                         "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-datagrid-102",
-                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
-                         "automationDisposition":  "explicit-per-action",
-                         "riskCategories":  [
-
-                                            ],
-                         "consent":  {
-                                         "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-datagrid-102\u0027.",
-                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
-                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
-                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
-                                     }
-                     },
-                     {
-                         "controlId":  "mainwindow-datagrid-162",
-                         "primaryOwnerControlId":  "mainwindow-datagrid-162",
+                         "controlId":  "mainwindow-datagrid-117",
+                         "primaryOwnerControlId":  "mainwindow-datagrid-117",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-datagrid-162",
+                         "aliasTargetControlId":  "mainwindow-datagrid-117",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 2",
@@ -4814,19 +5365,41 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-datagrid-162\u0027.",
+                                         "scope":  "The action \u0027mainwindow-datagrid-117\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-datagrid-42",
-                         "primaryOwnerControlId":  "mainwindow-datagrid-42",
+                         "controlId":  "mainwindow-datagrid-180",
+                         "primaryOwnerControlId":  "mainwindow-datagrid-180",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-datagrid-180",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-datagrid-180\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-datagrid-50",
+                         "primaryOwnerControlId":  "mainwindow-datagrid-50",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-datagrid-42",
+                         "aliasTargetControlId":  "mainwindow-datagrid-50",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4836,19 +5409,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-datagrid-42\u0027.",
+                                         "scope":  "The action \u0027mainwindow-datagrid-50\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-datagrid-84",
-                         "primaryOwnerControlId":  "mainwindow-datagrid-84",
+                         "controlId":  "mainwindow-datagrid-51",
+                         "primaryOwnerControlId":  "mainwindow-datagrid-51",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-datagrid-84",
+                         "aliasTargetControlId":  "mainwindow-datagrid-51",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4858,19 +5431,63 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-datagrid-84\u0027.",
+                                         "scope":  "The action \u0027mainwindow-datagrid-51\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-111",
-                         "primaryOwnerControlId":  "mainwindow-expander-111",
+                         "controlId":  "mainwindow-datagrid-99",
+                         "primaryOwnerControlId":  "mainwindow-datagrid-99",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-datagrid-99",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-datagrid-99\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-expander-105",
+                         "primaryOwnerControlId":  "mainwindow-expander-105",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-expander-105",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-expander-105\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-expander-127",
+                         "primaryOwnerControlId":  "mainwindow-expander-127",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "power",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-111",
+                         "aliasTargetControlId":  "mainwindow-expander-127",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 3",
@@ -4887,12 +5504,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-132",
-                         "primaryOwnerControlId":  "mainwindow-expander-132",
+                         "controlId":  "mainwindow-expander-148",
+                         "primaryOwnerControlId":  "mainwindow-expander-148",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "power",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-132",
+                         "aliasTargetControlId":  "mainwindow-expander-148",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 3",
@@ -4909,34 +5526,34 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-155",
-                         "primaryOwnerControlId":  "mainwindow-expander-155",
+                         "controlId":  "mainwindow-expander-160",
+                         "primaryOwnerControlId":  "mainwindow-expander-160",
                          "primaryOwnerSurface":  "Settings",
-                         "layer":  "guided",
+                         "layer":  "power",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-155",
+                         "aliasTargetControlId":  "mainwindow-expander-160",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 2",
+                         "futureOwnerSprint":  "Sprint 3",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Detection Tuning\u0027.",
+                                         "scope":  "The action \u0027Advanced probe diagnostics\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-68",
-                         "primaryOwnerControlId":  "mainwindow-expander-68",
+                         "controlId":  "mainwindow-expander-83",
+                         "primaryOwnerControlId":  "mainwindow-expander-83",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-68",
+                         "aliasTargetControlId":  "mainwindow-expander-83",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4953,12 +5570,12 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-82",
-                         "primaryOwnerControlId":  "mainwindow-expander-82",
+                         "controlId":  "mainwindow-expander-97",
+                         "primaryOwnerControlId":  "mainwindow-expander-97",
                          "primaryOwnerSurface":  "Meetings",
                          "layer":  "assistant",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-82",
+                         "aliasTargetControlId":  "mainwindow-expander-97",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
@@ -4968,41 +5585,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-expander-82\u0027.",
+                                         "scope":  "The action \u0027mainwindow-expander-97\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-expander-90",
-                         "primaryOwnerControlId":  "mainwindow-expander-90",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
-                         "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-expander-90",
-                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
-                         "automationDisposition":  "explicit-per-action",
-                         "riskCategories":  [
-
-                                            ],
-                         "consent":  {
-                                         "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-expander-90\u0027.",
-                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
-                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
-                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
-                                     }
-                     },
-                     {
-                         "controlId":  "mainwindow-hyperlink-120",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-120",
+                         "controlId":  "mainwindow-hyperlink-136",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-136",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-120",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-136",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 2",
@@ -5012,19 +5607,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-120\u0027.",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-136\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-hyperlink-121",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-121",
+                         "controlId":  "mainwindow-hyperlink-137",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-137",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-121",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-137",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 2",
@@ -5034,19 +5629,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-121\u0027.",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-137\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-hyperlink-122",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-122",
+                         "controlId":  "mainwindow-hyperlink-138",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-138",
                          "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-122",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-138",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 2",
@@ -5056,29 +5651,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-122\u0027.",
-                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
-                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
-                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
-                                     }
-                     },
-                     {
-                         "controlId":  "mainwindow-hyperlink-123",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-123",
-                         "primaryOwnerSurface":  "Settings",
-                         "layer":  "guided",
-                         "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-123",
-                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 2",
-                         "automationDisposition":  "explicit-per-action",
-                         "riskCategories":  [
-
-                                            ],
-                         "consent":  {
-                                         "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-123\u0027.",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-138\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -5107,59 +5680,81 @@
                                      }
                      },
                      {
-                         "controlId":  "mainwindow-hyperlink-19",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-19",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
-                         "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-19",
-                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
-                         "automationDisposition":  "explicit-per-action",
-                         "riskCategories":  [
-
-                                            ],
-                         "consent":  {
-                                         "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-19\u0027.",
-                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
-                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
-                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
-                                     }
-                     },
-                     {
-                         "controlId":  "mainwindow-hyperlink-20",
-                         "primaryOwnerControlId":  "mainwindow-hyperlink-20",
-                         "primaryOwnerSurface":  "Meetings",
-                         "layer":  "assistant",
-                         "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-hyperlink-20",
-                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
-                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
-                         "futureOwnerSprint":  "Sprint 6",
-                         "automationDisposition":  "explicit-per-action",
-                         "riskCategories":  [
-
-                                            ],
-                         "consent":  {
-                                         "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027mainwindow-hyperlink-20\u0027.",
-                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
-                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
-                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
-                                     }
-                     },
-                     {
-                         "controlId":  "mainwindow-textbox-103",
-                         "primaryOwnerControlId":  "mainwindow-textbox-103",
-                         "primaryOwnerSurface":  "Meetings",
+                         "controlId":  "mainwindow-hyperlink-155",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-155",
+                         "primaryOwnerSurface":  "Settings",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "mainwindow-textbox-103",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-155",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-155\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-hyperlink-21",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-21",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-21",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
                          "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-21\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-hyperlink-22",
+                         "primaryOwnerControlId":  "mainwindow-hyperlink-22",
+                         "primaryOwnerSurface":  "Meetings",
+                         "layer":  "assistant",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-hyperlink-22",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Meetings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 6",
+                         "automationDisposition":  "explicit-per-action",
+                         "riskCategories":  [
+
+                                            ],
+                         "consent":  {
+                                         "kind":  "explicit-per-action",
+                                         "scope":  "The action \u0027mainwindow-hyperlink-22\u0027.",
+                                         "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
+                                         "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
+                                         "reconfirmWhen":  "Every execution, and again if affected scope changes."
+                                     }
+                     },
+                     {
+                         "controlId":  "mainwindow-textbox-118",
+                         "primaryOwnerControlId":  "mainwindow-textbox-118",
+                         "primaryOwnerSurface":  "Settings",
+                         "layer":  "guided",
+                         "aliasBehavior":  "primary",
+                         "aliasTargetControlId":  "mainwindow-textbox-118",
+                         "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
+                         "userVisibleStatusLocation":  "Current viewport: Settings status and next-action region.",
+                         "futureOwnerSprint":  "Sprint 2",
                          "automationDisposition":  "explicit-per-action",
                          "riskCategories":  [
 
@@ -5173,12 +5768,12 @@
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-button-25",
-                         "primaryOwnerControlId":  "meetingdetailwindow-button-25",
+                         "controlId":  "meetingdetailwindow-button-10",
+                         "primaryOwnerControlId":  "meetingdetailwindow-button-10",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-button-25",
+                         "aliasTargetControlId":  "meetingdetailwindow-button-10",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 13",
@@ -5188,19 +5783,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Use\u0027.",
+                                         "scope":  "The action \u0027Use suggestion\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-button-26",
-                         "primaryOwnerControlId":  "meetingdetailwindow-button-26",
+                         "controlId":  "meetingdetailwindow-button-11",
+                         "primaryOwnerControlId":  "meetingdetailwindow-button-11",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-button-26",
+                         "aliasTargetControlId":  "meetingdetailwindow-button-11",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 13",
@@ -5210,19 +5805,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027Reject\u0027.",
+                                         "scope":  "The action \u0027Reject suggestion\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-button-35",
-                         "primaryOwnerControlId":  "meetingdetailwindow-button-35",
+                         "controlId":  "meetingdetailwindow-button-36",
+                         "primaryOwnerControlId":  "meetingdetailwindow-button-36",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-button-35",
+                         "aliasTargetControlId":  "meetingdetailwindow-button-36",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5239,12 +5834,12 @@
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-datagrid-24",
-                         "primaryOwnerControlId":  "meetingdetailwindow-datagrid-24",
+                         "controlId":  "meetingdetailwindow-datagrid-9",
+                         "primaryOwnerControlId":  "meetingdetailwindow-datagrid-9",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-datagrid-24",
+                         "aliasTargetControlId":  "meetingdetailwindow-datagrid-9",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5254,19 +5849,19 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027meetingdetailwindow-datagrid-24\u0027.",
+                                         "scope":  "The action \u0027meetingdetailwindow-datagrid-9\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-expander-7",
-                         "primaryOwnerControlId":  "meetingdetailwindow-expander-7",
+                         "controlId":  "meetingdetailwindow-expander-15",
+                         "primaryOwnerControlId":  "meetingdetailwindow-expander-15",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-expander-7",
+                         "aliasTargetControlId":  "meetingdetailwindow-expander-15",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5283,12 +5878,12 @@
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-expander-8",
-                         "primaryOwnerControlId":  "meetingdetailwindow-expander-8",
+                         "controlId":  "meetingdetailwindow-expander-16",
+                         "primaryOwnerControlId":  "meetingdetailwindow-expander-16",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-expander-8",
+                         "aliasTargetControlId":  "meetingdetailwindow-expander-16",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5305,12 +5900,12 @@
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-expander-9",
-                         "primaryOwnerControlId":  "meetingdetailwindow-expander-9",
+                         "controlId":  "meetingdetailwindow-expander-17",
+                         "primaryOwnerControlId":  "meetingdetailwindow-expander-17",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "power",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-expander-9",
+                         "aliasTargetControlId":  "meetingdetailwindow-expander-17",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5327,12 +5922,12 @@
                                      }
                      },
                      {
-                         "controlId":  "meetingdetailwindow-listbox-34",
-                         "primaryOwnerControlId":  "meetingdetailwindow-listbox-34",
+                         "controlId":  "meetingdetailwindow-listbox-35",
+                         "primaryOwnerControlId":  "meetingdetailwindow-listbox-35",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "primary",
-                         "aliasTargetControlId":  "meetingdetailwindow-listbox-34",
+                         "aliasTargetControlId":  "meetingdetailwindow-listbox-35",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Meeting detail status and next-action region.",
                          "futureOwnerSprint":  "Sprint 9",
@@ -5342,7 +5937,7 @@
                                             ],
                          "consent":  {
                                          "kind":  "explicit-per-action",
-                                         "scope":  "The action \u0027meetingdetailwindow-listbox-34\u0027.",
+                                         "scope":  "The action \u0027meetingdetailwindow-listbox-35\u0027.",
                                          "dataBoundary":  "No hidden data transfer or background mutation is authorized by this action.",
                                          "reversalPath":  "Cancel before execution or use the displayed recovery route after execution.",
                                          "reconfirmWhen":  "Every execution, and again if affected scope changes."
@@ -5372,11 +5967,11 @@
                      },
                      {
                          "controlId":  "setupwindow-button-4",
-                         "primaryOwnerControlId":  "meetingdetailwindow-button-35",
+                         "primaryOwnerControlId":  "meetingdetailwindow-button-36",
                          "primaryOwnerSurface":  "Meeting detail",
                          "layer":  "guided",
                          "aliasBehavior":  "navigate",
-                         "aliasTargetControlId":  "meetingdetailwindow-button-35",
+                         "aliasTargetControlId":  "meetingdetailwindow-button-36",
                          "defaultBehavior":  "No background mutation; this control performs a direct user-requested action or navigation.",
                          "userVisibleStatusLocation":  "Current viewport: Setup dialog status and next-action region.",
                          "futureOwnerSprint":  "Sprint 4",

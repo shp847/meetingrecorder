@@ -314,7 +314,9 @@ unchanged.
 - Status: `Partial`
 - Status history: `Planned` (2026-09-27 source audit); `Ready` (2026-09-27
   pressure test); `Done` (2026-09-27 source-audit completion); `Partial`
-  (2026-09-27 validator rerun: control-to-source coverage stale).
+  (2026-09-27 validator rerun: control-to-source coverage stale); `Partial`
+  (2026-09-29 source inventory and control policy refreshed and validated; the
+  rendered-state matrix remains incomplete).
 - User outcome: every current interactive control has a traceable future home,
   so simplification removes no power or safety choice by accident.
 - Scope / non-goals: audit current WPF behavior and document evidence only. Do
@@ -386,18 +388,27 @@ unchanged.
   WPF roots), nine synthetic/redacted journey traces, six scored findings, and
   full disposition map. `Validate-UxAudit.ps1 -RefreshInventory` passed:
   `UX audit valid: 244 controls, nine journeys, five rendered states, and 6
-  scored findings.` The rendered-evidence record names the safe synthetic
-  capture blocker: a live installed profile owns
+  scored findings.` The rendered-evidence record initially named the safe
+  synthetic capture blocker: a live installed profile owns
   `Local\\MeetingRecorder.PrimaryInstance`, so this sprint did not open or
-  capture user data. Current rerun of `Validate-UxAudit.ps1` fails with
-  `Control-to-source coverage is stale`; the inventory no longer proves the
-  current UI surface.
-- Remaining gap or next action: refresh the source inventory, review every
-  changed/new disposition rather than accepting generated output blindly, then
-  rerun the validator and policy validator. A separately scoped, reviewed
-  synthetic-profile/instance-identity path or isolated Windows account is
-  needed before rendered/accessibility evidence; do not change launch behavior
-  as part of this audit remediation.
+  capture user data.
+- Evidence and date: 2026-09-29: refreshed the committed inventory to 271
+  controls and reviewed its changes: 56 are newly named controls and 29 are
+  anonymous-control line-number renames; no capability was removed by the
+  refresh. The regenerated 271-row ownership/consent policy includes the new
+  destructive import-archive setting as `explicit-per-action`; both
+  `Validate-UxAudit.ps1` and `Validate-UxControlPolicy.ps1` pass. A test-only
+  STA WPF harness now renders the setup-blocked shell from an isolated temp
+  profile without starting the production entry point, acquiring the mutex, or
+  accessing the installed profile. Its automation and keyboard traces prove
+  the shell's named primary action, navigation, visible setup status, and focus
+  route at 1280x800/100% only. This is not evidence for a production launch,
+  all required fixture states, 125% DPI, or screen-reader behavior.
+- Remaining gap or next action: use the isolated test harness to capture the
+  five required synthetic states at 1280x800/100% and 125%, hash and review
+  the ignored artifacts, and add the redacted evidence record. Then replay the
+  documented keyboard/accessibility paths; do not use the live installed
+  profile or change production instance behavior for this audit.
 
 Goal: prove where overwhelm comes from before changing the experience.
 
