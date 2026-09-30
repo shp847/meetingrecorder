@@ -126,7 +126,7 @@ records an approved dependency change.
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Partial` | 2026-09-29: metadata-only eligibility planner and exclusion tests implemented; dispatch, receipts, and bulk UX remain. |
-| 11 — Bad Diarization Repair Guidance | `Ready` | Define quality diagnosis, action routing, repair lifecycle, and correction-preservation boundaries. |
+| 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
 | 12 — Summary And Derived Output Consistency | `Ready` | Define effective-attribution fingerprinting, readable-stale derived state, and explicit current-name regeneration. |
 | 13 — Profile Management And Privacy | `Ready` | Define profile lifecycle consequences, local-sensitive-data disclosure, concurrency safety, and artifact-exclusion proof. |
 | 14 — Calibration And Experience Harness | `Ready` | Define versioned blinded corpus, false-attribution gates, reproducible promotion, and runtime-safe experience fixtures. |
@@ -3830,8 +3830,8 @@ Sprint 10 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 structural diagnosis slice).
 - User outcome: a reviewer knows whether a speaker problem needs naming, paragraph correction, merge, rematch, or a true label repair—and repair does not silently erase their work.
 - Scope / non-goals: make existing suspicious-label/worker-repair capabilities explainable and safe. Do not silently tune clustering, turn repair into name refresh, guarantee quality improvement, or auto-transfer stale speaker identities to newly generated clusters.
 - Dependencies and decisions: consume S1–S10 identity/revision/receipt rules. Current catalog flags suspicious distributions and cleanup can queue `RepairSpeakerLabels`; worker has oversegmentation recovery. Replace boolean-only presentation with a pure `SpeakerQualityDiagnosis` from bounded structural metadata: cluster count, tiny-turn ratio, run churn, unsupported count, duplicate effective names, sample/turn coverage, and current processing state—never transcript/audio contents.
@@ -3843,7 +3843,8 @@ Sprint 10 acceptance criteria:
 - Tests and rendered checks: diagnosis matrix (normal, oversplit, churn, tiny turns, duplicate names, unsupported, missing/stale), route precedence, threshold fixture evidence, queue/retry/cancel/dedupe, preflight preservation, new-revision invalidation, publication failure, and no hidden transcript/audio logging. Render each route/repair lifecycle at 1280x800/125%, keyboard/screen-reader difference between name/override/merge/rematch/repair.
 - Documentation / installer / release work: document repair scope, expected wait, preservation/invalidations, no guarantee, and action-choice guide. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found suspicious distribution detection, repair cleanup recommendation/queueing, worker recovery, and tests, but no complete diagnosis/routing contract or correction-preservation/new-revision UX proof.
-- Remaining gap or next action: extract diagnosis resolver fixtures and wire its primary route into Speaker Review before modifying repair queue behavior.
+- Evidence and date: 2026-09-29 added `SpeakerQualityDiagnosisResolver` tests for unknown/current/processing, fragmented labels, repair readiness, naming, and normal merge routing. It uses bounded structural metadata only and does not inspect transcript or audio contents.
+- Remaining gap or next action: surface the diagnosis in Speaker Review and add repair preflight receipt/invalidation behavior before marking this sprint Done.
 
 Goal: prevent users from trying to rename their way through broken clustering.
 
