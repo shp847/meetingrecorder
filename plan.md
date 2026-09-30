@@ -130,7 +130,7 @@ records an approved dependency change.
 | 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
-| 15 — UI Polish, Accessibility, And Rendered QA | `Ready` | Define fixture-driven Technical Studio review/profile UX, focus graph, and rendered assistive acceptance. |
+| 15 — UI Polish, Accessibility, And Rendered QA | `Partial` | 2026-09-29: speaker review/profile focus and semantic acceptance contract documented; fixture render matrix remains. |
 | 16 — Documentation, Installer, And Release Smoke | `Ready` | Release evidence matrix, privacy/docs boundaries, package provenance, and installed smoke gates defined below. |
 
 ### Speaker Name Recognition Revised Plan
@@ -4019,8 +4019,8 @@ Sprint 14 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 focus/semantic acceptance contract).
 - User outcome: speaker cleanup is quick, dense, legible, keyboard-operable, and calm across ordinary and difficult review states.
 - Scope / non-goals: polish/verify Speaker Review, transcript label actions/evidence clips, repair states, and Settings profile management after S1–S14 behavior settles. Do not add a marketing wizard/card grid, hide required actions, replace native WPF semantics gratuitously, or redesign unrelated Meetings flows.
 - Dependencies and decisions: `DESIGN.md` is authority: opaque tonal nesting, 1px technical/inset edges, no shadows/gradients, max 4px radius, Segoe interaction text, Cascadia Mono/Consolas technical time/counts, dense spacing. Current detail/Settings use DataGrids and maintenance controls with limited explicit semantic properties; build visual/assistive acceptance from S1–S14 output fixtures, not private real meetings.
@@ -4033,6 +4033,7 @@ Sprint 14 acceptance criteria:
 - Tests and rendered checks: structural XAML/style assertions, state-to-view/focus tests, UI automation or documented Narrator script for fixture matrix, keyboard-only copy/select/label action/suggestion/clip/repair/profile delete, and high-contrast visual review. Capture reproducible screenshots/log-free accessibility observations as release evidence.
 - Documentation / installer / release work: document supported QA sizes/scales, keyboard behavior, speaker accessibility script, and Technical Studio criteria. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found speaker DataGrids/detail controls/profile table and limited tooltips/access-key patterns, but no speaker fixture catalog, focus graph, semantic-name inventory, or rendered/accessibility evidence against `DESIGN.md`.
+- Evidence and date: 2026-09-29 added `docs/speaker-review-accessibility.md` with deterministic supported-size/scale checks, speaker/profile focus graph, semantic/disabled-state expectations, and Technical Studio criteria.
 - Remaining gap or next action: inventory actual Speaker Review/profile controls against the fixture catalog; render generic/suggested/repair/profile-delete states before style changes.
 
 Goal: make the workflow fast, dense, and usable in the real WPF app.
