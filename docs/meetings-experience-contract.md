@@ -76,3 +76,19 @@ archived records, but the installed workbench has no archive-history catalog
 yet, so it clearly reports “Archive catalog is not available” rather than
 scanning or presenting archive files as live meetings. This does not alter the
 existing recoverable archive operation.
+
+## Needs Attention inbox
+
+`MeetingAttentionInboxResolver` creates a metadata-only triage projection with
+at most one row per non-archived meeting. Hard artifact failure and setup block
+win over data-integrity review, processing recovery, ordinary recommendation,
+and cosmetic metadata. The selected row always uses the existing recommendation
+or action target; it cannot dispatch work or make a queue acceptance look
+complete.
+
+Only current low- or medium-risk cleanup, summary-retry, and metadata
+suggestions are dismissible. A failure, block, missing artifact, or speaker
+integrity concern remains visible even when a lower recommendation is
+dismissed. A stale catalog yields `Refresh required`, never all-clear; an empty
+fresh catalog says `No meetings yet`, while a fresh catalog with no triage rows
+says `All current meetings are clear`.

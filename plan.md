@@ -95,7 +95,7 @@ records an approved dependency change.
 | 2 — Meeting State Model | `Ready` | Precedence resolver, freshness/provenance, state-action mapping, and verification plan below. |
 | 3 — Recommendation Engine | `Done` | 2026-09-29: deterministic metadata-only ranking, bounded dismissal, and focused evidence below. |
 | 4 — View Presets | `Done` | 2026-09-29: existing preset resolver, migration, toolbar contract, and focused evidence verified below. |
-| 5 — Needs Attention Inbox | `Ready` | Triage inclusion/ordering, dismissal safety, group/empty states, and verification plan below. |
+| 5 — Needs Attention Inbox | `Done` | 2026-09-29: metadata-only triage resolver and focused evidence below. |
 | 6 — Processing View | `Ready` | Queue-view projection, freshness/ETA rules, safe action boundaries, and verification plan below. |
 | 7 — Selection Strip Redesign | `Ready` | Selection-state projection, per-action eligibility/preview, immutable execution scope, and verification plan below. |
 | 8 — Action Grouping | `Ready` | Canonical action taxonomy, surface parity, destructive/recovery boundaries, and verification plan below. |
@@ -2766,8 +2766,8 @@ Acceptance: Meetings opens usefully without configuration.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 metadata-only resolver and focused verification).
 - User outcome: one calm inbox answers what needs user attention now, why, and safest next step; healthy meetings do not create noise.
 - Scope / non-goals: present derived triage from Sprints 2-4. Do not add automatic repair, hide hard failure, mark work resolved on queue acceptance, or reinterpret artifact diagnostics.
 - Dependencies and decisions: use fresh `MeetingExperienceState` and Recommendation resolver. Inclusion reasons: hard failure, blocked recovery, user decision required, suspicious labels, missing required artifact, summary failure, or current low-risk recommendation. Severity/order: hard failure, blocked/decision, data integrity, processing recovery, recommendation, cosmetic metadata; deterministic time/identity tie-breaker.
@@ -2779,8 +2779,8 @@ Acceptance: Meetings opens usefully without configuration.
   5. Route triage actions through common action catalog, with one-row scope and explicit bulk selection. Queue/retry/repair confirmation/result text differentiates dispatched, processing, failed, and completed.
 - Tests and rendered checks: resolver tests for every inclusion/exclusion, severity/tie, multi-reason single row, stale data, dismissal/reappearance, archive, search/preset intersection, all-clear variants, selection/group mutation, and no sensitive content. Render grouped/flat/all-clear/refresh-required at 1280x800/125%; keyboard/screen-reader test reason and action.
 - Documentation / installer / release work: explain attention reasons/dismissal/all-clear semantics after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 source audit found cleanup review and primary recommendations but no unified cross-domain triage or safe all-clear state.
-- Remaining gap or next action: write resolver fixtures for failure plus dismissed cleanup, stale catalog, and one meeting with blocked summary/labels before adding view UI.
+- Evidence and date: 2026-09-27 source audit found cleanup review and primary recommendations but no unified cross-domain triage or safe all-clear state. 2026-09-29 added `MeetingAttentionInboxResolver`: it produces at most one metadata-only row per non-archived meeting, orders hard failure/block ahead of integrity/processing/suggestions, retains the common recommendation action target, and restricts dismissibility to eligible low/medium cleanup, summary, and metadata suggestions. A stale catalog reports refresh required rather than all-clear; fresh empty and fresh healthy cases are distinct. Resolver plus recommendation/state/preset focused tests passed 45/45 using an isolated build root. Layout binding and keyboard rendering are sequenced with the later view/action UI sprints.
+- Remaining gap or next action: Sprint 6 — derive queue/backlog work as a dedicated Processing view.
 
 - Make `Needs Attention` the triage center.
 - Include failed, blocked, queued-needs-decision, suspicious, missing,
