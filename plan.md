@@ -94,7 +94,7 @@ records an approved dependency change.
 | 1 — Meetings Experience Contract | `Ready` | Guided-workbench state, action ownership, control boundaries, and parity verification plan below. |
 | 2 — Meeting State Model | `Ready` | Precedence resolver, freshness/provenance, state-action mapping, and verification plan below. |
 | 3 — Recommendation Engine | `Done` | 2026-09-29: deterministic metadata-only ranking, bounded dismissal, and focused evidence below. |
-| 4 — View Presets | `Ready` | Pure preset catalog, migration, search/selection semantics, Custom round-trip, and verification plan below. |
+| 4 — View Presets | `Done` | 2026-09-29: existing preset resolver, migration, toolbar contract, and focused evidence verified below. |
 | 5 — Needs Attention Inbox | `Ready` | Triage inclusion/ordering, dismissal safety, group/empty states, and verification plan below. |
 | 6 — Processing View | `Ready` | Queue-view projection, freshness/ETA rules, safe action boundaries, and verification plan below. |
 | 7 — Selection Strip Redesign | `Ready` | Selection-state projection, per-action eligibility/preview, immutable execution scope, and verification plan below. |
@@ -2737,8 +2737,8 @@ reason.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: Meetings opens to useful work without forcing sort/group configuration; users can still restore and edit their exact custom view.
 - Scope / non-goals: introduce view intent over existing filter/sort/group state. Do not delete current table/group/search controls, overwrite custom preferences, change row-state/recommendation truth, or persist transient selection.
 - Dependencies and decisions: consume Sprint 2 state and Sprint 3 recommendation results. `MeetingViewPresetResolver` maps `Recent`, `NeedsAttention`, `Processing`, `Archived`, and `Custom` to immutable view specification plus summary/empty-state. Search intersects every preset; selection remains by stable meeting identity and is cleared only when target is no longer visible with an explicit count/status.
@@ -2750,8 +2750,8 @@ reason.
   5. Bind single preset catalog to toolbar, keyboard, accessibility text, summary, empty state, and Advanced Custom panel. Advanced describes active filters/sort/group and reset behavior; all view changes preserve drafts/focus when safe.
 - Tests and rendered checks: pure predicate/projection/migration tests; legacy/custom round-trip, invalid config, startup/default threshold, stale queue, archive, search intersection, selection visibility, refresh non-thrash, table/group parity. Render each preset/empty state/Custom at 1280x800/125% and keyboard-test picker/Advanced focus.
 - Documentation / installer / release work: document preset semantics and Custom reset/migration after ship; installer/release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found persisted `MeetingsViewMode`, sort, direction, group key, grouped migration and search; no named presets or non-destructive intent/config mapping.
-- Remaining gap or next action: add pure catalog/projection tests with legacy grouped-week config and unresolved/stale fixtures before changing toolbar controls.
+- Evidence and date: 2026-09-27 review found persisted `MeetingsViewMode`, sort, direction, group key, grouped migration and search; no named presets or non-destructive intent/config mapping. 2026-09-29 verified the existing `MeetingViewPresetResolver`, migration-backed `AppConfig` fields, toolbar picker, Custom control disclosure, status/empty text, one-time initial preset persistence, and XAML parity. Presets have fixed projection and search intersection; Custom round-trips without losing its view settings; legacy/invalid settings normalize safely; startup selects Needs Attention when any unresolved work is present, otherwise Recent, and does not background-switch. Archived projection remains explicitly source-gated: the resolver supports an archive catalog, while the current workbench honestly reports it unavailable because no archive-history catalog exists. Focused preset/config/XAML tests passed 92/92 using an isolated build root.
+- Remaining gap or next action: Sprint 5 — consolidate cross-domain triage in Needs Attention.
 
 - Replace always-visible view/sort/direction/group controls with `Recent`,
   `Needs Attention`, `Processing`, `Archived`, and `Custom`.

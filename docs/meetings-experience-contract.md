@@ -60,3 +60,19 @@ Users may dismiss only a matching low- or medium-risk cleanup, summary-retry,
 or metadata recommendation. A dismissal expires after 30 days and is invalid
 when its fingerprint or policy version changes. It cannot hide a failure,
 blocked state, missing artifact, or required repair.
+
+## View presets
+
+Meetings has five named view intents: Recent, Needs Attention, Processing,
+Archived, and Custom. A preset projects a fixed view/sort/group choice and
+then applies the current search text; search never changes the selected preset.
+Custom preserves its own valid table/group/sort/direction choices while a named
+preset is active, and returns to those choices when selected again. The initial
+choice happens once after a fresh catalog: one or more unresolved meetings use
+Needs Attention; otherwise Recent. Background refreshes do not switch it.
+
+Archived is intentionally source-gated. The preset can project supplied
+archived records, but the installed workbench has no archive-history catalog
+yet, so it clearly reports “Archive catalog is not available” rather than
+scanning or presenting archive files as live meetings. This does not alter the
+existing recoverable archive operation.
