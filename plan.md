@@ -3825,8 +3825,8 @@ Sprint 10 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: validation matrix and package parity harness).
 - User outcome: a reviewer knows whether a speaker problem needs naming, paragraph correction, merge, rematch, or a true label repair—and repair does not silently erase their work.
 - Scope / non-goals: make existing suspicious-label/worker-repair capabilities explainable and safe. Do not silently tune clustering, turn repair into name refresh, guarantee quality improvement, or auto-transfer stale speaker identities to newly generated clusters.
 - Dependencies and decisions: consume S1–S10 identity/revision/receipt rules. Current catalog flags suspicious distributions and cleanup can queue `RepairSpeakerLabels`; worker has oversegmentation recovery. Replace boolean-only presentation with a pure `SpeakerQualityDiagnosis` from bounded structural metadata: cluster count, tiny-turn ratio, run churn, unsupported count, duplicate effective names, sample/turn coverage, and current processing state—never transcript/audio contents.
@@ -7005,8 +7005,8 @@ Sprint 7 acceptance criteria:
   4. Update README/SETUP/ARCHITECTURE/RELEASING/support and append cyberark decision log with source/test/package/installed/live state, evidence/date/limits. Commit/push/release needs separate authority.
 - Tests and rendered checks: matrix completeness, corpus/trace redaction, cutover/heal/rollback/callback/recovery, package/install smoke and high-contrast keyboard status.
 - Documentation / installer / release work: implementation requires all release docs/decision log and package gates; plan-only work requires none.
-- Evidence and date: audit found no full continuity release matrix, installed synthetic journey, separated-state decision log, support playbook, or package trace exclusion proof.
-- Remaining gap or next action: create matrix and synthetic package harness before cutover shipping.
+- Evidence and date: audit found no full continuity release matrix, installed synthetic journey, separated-state decision log, support playbook, or package trace exclusion proof. 2026-09-29 added the S0–S8 synthetic evidence matrix, support interpretation, and `Test-Continuity-Release.ps1`: it refuses a running user app, rejects trace payloads, runs the Release continuity journey, and requires its Core DLL to match portable and installed bundles. Source guard tests passed 55/55. The harness deliberately rejected the pre-checkpoint package because its Core DLL hash did not match the Release-tested DLL; rebuild/smoke on the committed checkpoint remains required.
+- Remaining gap or next action: rebuild from the committed checkpoint, run package-parity and smoke scripts, then complete the separated-state release evidence.
 
 Goal: ship the reliability model as a supported product behavior, not only a
 development refactor.

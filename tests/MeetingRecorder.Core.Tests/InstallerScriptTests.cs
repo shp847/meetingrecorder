@@ -1009,4 +1009,23 @@ public sealed class InstallerScriptTests
         Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MSI install smoke left a bundle different from the published integrity manifest", scriptContents, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ContinuityReleaseScript_Requires_Release_Test_Parity_And_Rejects_Packaged_Trace_Payloads()
+    {
+        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
+            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
+        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Test-Continuity-Release.ps1");
+
+        Assert.True(File.Exists(scriptPath), $"Expected continuity release script at '{scriptPath}'.");
+
+        var scriptContents = File.ReadAllText(scriptPath);
+
+        Assert.Contains("Assert-NoRunningMeetingRecorderInstances", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("continuity.*trace|trace.*continuity", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Continuity release test journey failed", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Release-tested core and portable bundle core", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Portable bundle and installed core", scriptContents, StringComparison.Ordinal);
+    }
 }
