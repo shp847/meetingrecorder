@@ -127,3 +127,13 @@ cardinality, eligibility, confirmation, or outcome target. Archive remains an
 Organize action with its recoverability route; permanent delete is Danger only,
 requires typed confirmation, and is excluded from recommendations and automatic
 cleanup.
+
+## Cleanup review
+
+Cleanup candidates use one recommendation snapshot for row promotion, review,
+and safe-batch planning. The review surface can filter and prioritize that
+snapshot, but does not recompute it. `Apply Safe Fixes` remains explicit:
+eligible, blocked, and review-only work are shown before dispatch; every item
+is revalidated independently and result text distinguishes queued work from
+completed work. Recommendation dismissal affects promotion only. Permanent
+delete is never a cleanup candidate or an automatic fix.

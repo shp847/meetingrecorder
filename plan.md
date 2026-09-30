@@ -99,7 +99,7 @@ records an approved dependency change.
 | 6 — Processing View | `Done` | 2026-09-29: existing backlog projection, ASAP lifecycle, UI wiring, and focused evidence verified below. |
 | 7 — Selection Strip Redesign | `Done` | 2026-09-29: existing shared catalog/selection contract and focused evidence verified below. |
 | 8 — Action Grouping | `Done` | 2026-09-29: canonical family catalog, context/detail bindings, and focused evidence verified below. |
-| 9 — Cleanup Consolidation | `Ready` | Recommendation/inbox routing, advanced review, preview/execution ledger, and verification plan below. |
+| 9 — Cleanup Consolidation | `Done` | 2026-09-29: shared recommendation/review/ledger paths and focused evidence verified below. |
 | 10 — Meeting Detail Task Center | `Ready` | Read-first detail state, revision/draft safety, action/recommendation parity, and verification plan below. |
 | 11 — Transcript And Summary Reading | `Ready` | Transcript-first reader model, summary independence/provenance, setup routing, and verification plan below. |
 | 12 — Speaker Workflow Clarity | `Ready` | Meetings-specific speaker state/routing, terminology parity, unavailable guidance, and verification plan below. |
@@ -2883,8 +2883,8 @@ Acceptance: all power remains, but actions no longer compete visually.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: cleanup recommendation engine, review grid, safe batch execution, dismissal persistence, automatic-work ledger); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: cleanup recommendation engine, review grid, safe batch execution, dismissal persistence, automatic-work ledger); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: cleanup appears as relevant meeting maintenance, while users retain a dedicated review path for scope, history, and exceptions.
 - Scope / non-goals: consolidate presentation/entry points. Do not expand automatic safe actions, change fingerprint meaning, execute on refresh, include permanent delete, or treat dispatch as completion.
 - Dependencies and decisions: Sprint 3 recommendation resolver and Sprint 5 inbox become normal discovery; existing cleanup engine/ledger remains execution authority. Each cleanup item has fingerprint/revision, action, affected records, safety/automation class, preview, current ledger state, dismissal, and manual-review route.
@@ -2896,8 +2896,8 @@ Acceptance: all power remains, but actions no longer compete visually.
   5. Enforce permanent-delete exclusion mechanically in engine/catalog/auto planner/UI. Archive and merge require their own recoverability/confirmation contract; no cleanup label disguises destructive action.
 - Tests and rendered checks: cross-domain primary/inbox/review parity; snapshot consistency; preview/revalidation; mixed safe/blocked/failed batch; queue lifecycle; dismissal/reappearance; historical review; permanent delete exclusion; archive/merge route; no duplicate execution after refresh. Render row/inbox/Advanced review/batch result at 1280x800/125% with keyboard/screen-reader labels.
 - Documentation / installer / release work: document cleanup as suggestion/review, preview/result vocabulary, dismissal, and automatic boundaries after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found separate cleanup grid/actions and persisted ledger with row primary recommendations, but no single recommendation/inbox/review information architecture or shared snapshot contract.
-- Remaining gap or next action: write failing parity test for one candidate shown in row/inbox/review and a stale fingerprint before moving cleanup tray controls.
+- Evidence and date: 2026-09-27 review found separate cleanup grid/actions and persisted ledger with row primary recommendations, but no single recommendation/inbox/review information architecture or shared snapshot contract. 2026-09-29 verified the existing shared cleanup recommendation engine, primary recommendation route, filtered review projection, persistent automatic-work cache, bounded safe-batch planner/runner, and permanent-delete exclusion. Cleanup work is revalidated independently and result copy distinguishes dispatch from completion; dismissals remain promotion-only. Focused cleanup, recommendation, interaction, and source-contract tests passed 180/180 using an isolated build root.
+- Remaining gap or next action: Sprint 10 — verify the read-first meeting detail task center and revision safety.
 
 - Fold cleanup recommendations into row recommendations and `Needs Attention`.
 - Keep bulk cleanup review as an advanced review path.
