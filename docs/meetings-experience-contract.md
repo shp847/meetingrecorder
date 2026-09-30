@@ -184,3 +184,11 @@ project, platform, status, local date, transcript availability, recommendation
 reason, and attendees. Whitespace tokens all match; quoted text matches one
 field phrase. Results return match categories and a truthful count without
 reading transcript body, paths, calendar payloads, or changing metadata.
+
+## Refresh state
+
+`MeetingsRefreshCoordinator` presents Current, Refreshing, Deferred, Stale,
+and Retry Needed without exposing internal errors. It coalesces to the strongest
+requested mode and latest stable selection, defers a pending update while
+recording, and preserves the last good rendered list on refresh failure. Manual
+retry uses the same pending request rather than starting duplicate work.

@@ -106,7 +106,7 @@ records an approved dependency change.
 | 13 — Bulk Operations | `Done` | 2026-09-29: immutable bulk preview/result contract and focused evidence below. |
 | 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-09-29: shared archive/recovery/delete preflight complete; receipt-backed restore execution remains. |
 | 15 — Search And Metadata Simplification | `Done` | 2026-09-29: metadata-only query projection and focused evidence below. |
-| 16 — Safe Background Refresh | `Ready` | Define coalesced refresh policy, visible freshness states, and last-good snapshot safety. |
+| 16 — Safe Background Refresh | `Done` | 2026-09-29: pure coalesced refresh state and focused evidence below. |
 | 17 — Imported Meeting Parity | `Ready` | Define imported-source provenance, shared lifecycle parity, and contextual source recovery. |
 | 18 — Rendered UX Polish | `Ready` | Apply `DESIGN.md` component rules with measured multi-viewport visual acceptance. |
 | 19 — Accessibility And Keyboard QA | `Ready` | Define a focus graph, semantic-control contract, and state-based assistive QA. |
@@ -3089,8 +3089,8 @@ richness.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: queued fast/full refreshes, version cancellation, attendee/cleanup background work); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: queued fast/full refreshes, version cancellation, attendee/cleanup background work); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 refresh-state implementation and focused verification).
 - User outcome: the Meetings view stays current without ritual manual refresh, while capture and active reading remain responsive and every delayed or failed update is clearly explained.
 - Scope / non-goals: coordinate catalog/list/metadata/recommendation refreshes and their visible status. Do not poll external services continuously, alter recording/processing semantics, execute cleanup automatically beyond existing policy, or refresh hidden data merely to make a status label look current.
 - Dependencies and decisions: reuse S2 freshness, S4 persisted view, S9 cleanup ledger, S15 query snapshot, S17 imported parity, and Whole-App S10 queue/recovery. Existing code coalesces `Fast`/`Full` requests, versions/cancels superseded work, and starts cleanup/attendee work only for full refresh, but `ShouldDeferMeetingRefresh` currently defers only recording despite receiving tab context, and baseline failure clears the displayed list. Replace booleans/counters as public meaning with a pure refresh coordinator state; retain the existing generation token at the async boundary.
@@ -3102,8 +3102,8 @@ richness.
   5. Make state visible but quiet: current/fresh time only when useful; a compact live status for refreshing, deferred with why, stale with what is safe to view, and retry-needed. Do not call normal cached data inaccurate merely because optional enrichment is pending; distinguish `List current; details loading` from a stale catalog.
 - Tests and rendered checks: pure transition matrix for sources/modes/gates/coalescing/last-request wins, recording and Home deferral, manual request, version supersession, source/config changes, stage completion, retry, and shutdown. Integration tests for published/renamed/archived/deleted/imported/queue-completed changes, no duplicate expensive scans, metadata-only follow-up, cancellation race, last-good retention, selection/query/detail/draft preservation, and freshness copy. Render every freshness state at 1280x800/125%, tab switch/recording stop, keyboard retry/manual refresh, focus retention, and screen-reader non-spam live announcements.
 - Documentation / installer / release work: document automatic refresh triggers, deferred conditions, freshness wording, manual retry, and metadata-only background work. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found fast/full refresh modes, pending request coalescing, refresh-version checks, full-only cleanup/attendee stages, and rendered refresh text. It found no explicit freshness state/state tests, no Home-tab deferral despite tab input, and a baseline exception path that empties the existing meeting list.
-- Remaining gap or next action: write coordinator transition tests for recording/Home/manual/publish/error; then preserve the last-good snapshot before replacing the baseline failure path.
+- Evidence and date: 2026-09-27 source audit found fast/full refresh modes, pending request coalescing, refresh-version checks, full-only cleanup/attendee stages, and rendered refresh text. It found no explicit freshness state/state tests, no Home-tab deferral despite tab input, and a baseline exception path that empties the existing meeting list. 2026-09-29 added pure `MeetingsRefreshCoordinator` covering Current/Refreshing/Deferred/Stale/RetryNeeded presentation, strongest-mode/latest-selection coalescing, recording deferral, last-good retention, and manual retry. Focused coordinator and existing refresh/source-contract tests passed 45/45 using an isolated build root.
+- Remaining gap or next action: Sprint 17 — add display-safe imported-meeting provenance and parity contract.
 
 - Auto-refresh Meetings when opened, after publish, after retry/repair, and
   after safe enrichment.
