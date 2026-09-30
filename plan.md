@@ -125,7 +125,7 @@ records an approved dependency change.
 | 7 — Merge Duplicate Speakers | `Ready` | Define user-confirmed canonical speaker mapping, conflict gates, artifact consistency, and repair boundary. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
-| 10 — Rematch Past Meetings | `Ready` | Define revalidation-safe single/bulk rematch planning, metadata-only integrity, and resumable outcomes. |
+| 10 — Rematch Past Meetings | `Partial` | 2026-09-29: metadata-only eligibility planner and exclusion tests implemented; dispatch, receipts, and bulk UX remain. |
 | 11 — Bad Diarization Repair Guidance | `Ready` | Define quality diagnosis, action routing, repair lifecycle, and correction-preservation boundaries. |
 | 12 — Summary And Derived Output Consistency | `Ready` | Define effective-attribution fingerprinting, readable-stale derived state, and explicit current-name regeneration. |
 | 13 — Profile Management And Privacy | `Ready` | Define profile lifecycle consequences, local-sensitive-data disclosure, concurrency safety, and artifact-exclusion proof. |
@@ -3779,8 +3779,8 @@ Sprint 9 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: detail refresh action, profile refresh service/tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: detail refresh action, profile refresh service/tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 rematch planner slice).
 - User outcome: profiles learned today can safely improve eligible older generic labels without reprocessing or disturbing meeting artifacts.
 - Scope / non-goals: expand existing one-meeting refresh into explicit single then opt-in bounded bulk rematch. Do not automatically scan history, queue worker work, retranscribe/re-diarize, alter audio/text/timestamps, override user names/paragraph overrides, or use external identity data.
 - Dependencies and decisions: use S1/S8 revisioned identity/suppression and S9 eligibility; S13 provides generic bulk mechanics only after single path. Existing refresh updates identities/Markdown through catalog service but lacks target snapshot/outcome ledger. Rematch acts only on current published structured records with compatible stored samples and writes attribution metadata/derived labels; immutable audio/transcript content fingerprints are captured before/after.
@@ -3792,7 +3792,8 @@ Sprint 9 acceptance criteria:
 - Tests and rendered checks: planner eligibility/exclusion/fingerprint, user/override/suppression preservation, stale/busy/cancel/retry/resume/dedupe, partial batch outcomes, one-meeting/bulk parity, no worker invocation/audio/content mutation, and revision race. Render preview/progress/result/no-eligible at 1280x800/125%, keyboard cancel/retry and screen-reader count/reasons.
 - Documentation / installer / release work: document manual metadata-only rematch, eligibility, profile/suppression behavior, cancellation and no transcript/audio reprocessing. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found detail `Refresh Suggestions` and matcher update tests without retranscription, but no historic target planner, bulk preview/result/resume path, concurrency policy, or artifact-integrity proof.
-- Remaining gap or next action: implement pure eligibility planner/fingerprint tests and wire one detail rematch result before creating batch UI.
+- Evidence and date: 2026-09-29 added `PastRematchPlanner` tests for current/published/compatible generic targets and exclusions for busy, stale, user-entered, structured-transcript, sample, and profile state. The planner holds metadata fingerprints only and does not open audio or invoke processing.
+- Remaining gap or next action: revalidate and dispatch the one-meeting path with durable outcome receipt before creating the explicit bounded batch UI.
 
 Goal: let newer confirmed voice profiles improve older generic-speaker
 transcripts.
