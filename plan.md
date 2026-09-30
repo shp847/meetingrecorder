@@ -140,7 +140,7 @@ records an approved dependency change.
 | 1 — Stabilize The Current Feature Baseline | `Partial` | 2026-09-29: authoritative review-state projection and focused baseline checks added; live receipt/rejection wiring remains. |
 | 2 — Build Fixture Evidence And Metrics | `Partial` | 2026-09-29: redacted count/recognition metric arithmetic added; private catalog/truth governance and runner integration remain. |
 | 3 — Calibrate Recognition And Diarization Thresholds | `Partial` | 2026-09-29: coverage/regression/manual-promotion comparison gate added; pinned corpus/holdout receipts remain. |
-| 4 — Repair, Undo, And Release Readiness | `Ready` | Undo/repair transaction boundaries, derived-output safety, release evidence, and installed-smoke contract defined below. |
+| 4 — Repair, Undo, And Release Readiness | `Partial` | 2026-09-29: revision-safe undo preflight added; receipt persistence, release evidence, and package smoke remain. |
 
 ### External Audio Import Seamless Experience
 
@@ -4457,8 +4457,8 @@ Sprint 3 verification:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: undo action/service/status, refresh boundaries, suspicious-label repair queue, and focused tests exist); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: undo action/service/status, refresh boundaries, suspicious-label repair queue, and focused tests exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 undo preflight slice).
 - User outcome: a bad profile-driven name can be safely reversed for one meeting, while users clearly distinguish fast local name refresh from slower diarization repair and can trust released behavior.
 - Scope / non-goals: complete/verify undo, scoped feedback, refresh/repair separation, safety feedback, docs, package evidence, and installed smoke. Do not delete/disable profiles through undo, change recording/audio/text/timing/meeting metadata, mutate unrelated speakers, re-run diarization during refresh, force-close active capture/worker, or publish a release without authorization.
 - Dependencies and decisions: S1 defines stable speaker identity/revision and receipt semantics; S3 defaults are frozen with calibration receipt; S11/S12 of speaker roadmap define repair and derived-output freshness. Existing `UndoProfileSpeakerNameRecognitionAsync`, refresh service, WPF actions, `PublishedMeetingRepairService`, and tests give baseline. Undo operates on an immutable artifact revision and only profile-sourced attribution (auto/suggested/accepted profile decision); restores pre-profile name/provenance snapshot if validated, otherwise stable anonymous label. It records idempotent scoped suppression keyed by meeting/speaker/profile/source revision, preserving explicit user names and historic evidence.
@@ -4471,6 +4471,7 @@ Sprint 3 verification:
 - Tests and rendered checks: undo snapshot/current/stale/no-op/user-name preservation/idempotency/artifact-write failure/feedback failure/race; feedback key isolation and profile lifecycle interaction; Refresh spy proves zero worker/transcription/diarization/learning calls; repair eligibility/snapshot/queue/cancel/retry/artifact preservation; stale summary/derived output after undo or repair; JSON/Markdown/manifest/output/log/provider allowlist/redaction; detail keyboard/screen-reader/busy/unavailable/failure states plus synthetic installed smoke. Re-run calibration report with final default identity and preserve metadata-only receipt.
 - Documentation / installer / release work: README/SETUP explain local-only profiles, suggestions/auto decision/undo/refresh/repair and retention/recovery limits; ARCHITECTURE covers receipts, queue/derived freshness, and exclusion boundary; release notes name only verified behavior. Runtime/UI changes require installer build and package smoke; docs-only planning does not build artifacts.
 - Evidence and date: 2026-09-27 audit found current undo button/event/service, user-edit preservation/idempotency/feedback-failure tests, refresh no-retranscription tests, repair queue tests, and UI copy separating repair. Missing proof includes revisioned undo snapshot/recovery policy, one state model across routes, repair-versus-derived output safety, full artifact/log/provider exclusion scan, calibrated release evidence matrix, and installed end-to-end smoke.
+- Evidence and date: 2026-09-29 added `SpeakerRecognitionUndoPreflight` tests for current profile attribution, stale revisions, and user-entered-name protection; existing undo service tests cover artifact update, suppression, and idempotence.
 - Remaining gap or next action: add undo receipt/revision-race fixtures and action-route spies before modifying existing undo or repair implementation.
 
 Goal: make automatic speaker naming reversible and understandable after release.
