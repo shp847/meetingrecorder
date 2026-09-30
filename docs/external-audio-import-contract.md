@@ -67,7 +67,9 @@ The review surface is a local, bounded decision point. It shows a source file
 name, method, editable meeting metadata, retained-source statement, status, and
 next step. It never binds or announces the full source locator. If an untrusted
 preflight message carries a drive or UNC locator, review replaces it with a
-safe status derived from the stable preflight code.
+safe status derived from the stable preflight code. The same allowlist applies
+to every preflight message, including messages without a locator, so decoder
+diagnostics and source-derived content cannot become default UI text.
 
 | State | Screen-reader/status contract | Keyboard focus |
 | --- | --- | --- |

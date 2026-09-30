@@ -76,6 +76,24 @@ public sealed class ExternalAudioImportReviewProjectionTests
     }
 
     [Fact]
+    public void CreateRow_Uses_The_Status_Allowlist_Even_When_A_Diagnostic_Has_No_Path()
+    {
+        var candidate = Candidate(
+            "C:\\private\\intake\\memo.wav",
+            ExternalAudioImportPreflightStatus.DecodeFailed,
+            "Decoder payload included spoken meeting content without a locator.");
+
+        var row = ExternalAudioImportReviewProjection.CreateRow(
+            candidate,
+            isSetupBlocked: false,
+            hasDraftValidationIssue: false,
+            hasQueueFailure: false);
+
+        Assert.Equal("Meeting Recorder could not read this file. Choose another supported file or repair it, then review it again.", row.StatusText);
+        Assert.DoesNotContain("spoken meeting content", row.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Summarize_Reports_Stable_Counts_For_Bulk_Queue_Decisions()
     {
         var rows = new[]

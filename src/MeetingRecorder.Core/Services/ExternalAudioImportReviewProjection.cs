@@ -110,35 +110,11 @@ public static class ExternalAudioImportReviewProjection
 
     private static string SafeStatusText(ExternalAudioImportCandidate candidate)
     {
-        var message = candidate.Preflight.Message?.Trim();
-        if (string.IsNullOrWhiteSpace(message) ||
-            message.Contains(candidate.SourcePath, StringComparison.OrdinalIgnoreCase) ||
-            ContainsLocalLocator(message))
-        {
-            return GetFallbackStatusText(candidate.Preflight.Status);
-        }
-
-        return message;
-    }
-
-    private static bool ContainsLocalLocator(string message)
-    {
-        if (message.Contains(@"\\", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        for (var index = 0; index < message.Length - 2; index++)
-        {
-            if (char.IsLetter(message[index]) &&
-                message[index + 1] == ':' &&
-                (message[index + 2] == '\\' || message[index + 2] == '/'))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        // Preflight messages may originate with a codec, a storage provider, or
+        // a decoder. Even a message without an obvious Windows path can expose
+        // source-derived transcript or diagnostic content, so the review UI
+        // only renders an allowlisted explanation from the durable status code.
+        return GetFallbackStatusText(candidate.Preflight.Status);
     }
 
     private static string GetFallbackStatusText(ExternalAudioImportPreflightStatus status) => status switch
