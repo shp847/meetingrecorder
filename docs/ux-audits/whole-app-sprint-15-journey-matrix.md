@@ -11,7 +11,7 @@ SHA-256, OS, DPI, theme, test date, and observations here.
 
 | ID | Synthetic state and flow | Keyboard / spoken contract | Capture points | Status |
 | --- | --- | --- | --- | --- |
-| J15-01 | Ready Home; open Settings, edit one harmless setting, Escape | Header Settings has name; focused target or Recording default receives focus; Escape returns focus to opener | Home; Settings at 1280x800/100% and 125% | Partial: Recording rendered at 1280x800/125%; Escape/focus return is captured. Harmless edit remains open. |
+| J15-01 | Ready Home; open Settings, edit one harmless setting, Escape | Header Settings has name; focused target or Recording default receives focus; Escape returns focus to opener | Home; Settings at 1280x800/100% and 125% | Rendered: Recording renders at 1280x800/125%; an isolated calendar-title fallback edit saves, reports success, and Escape returns focus to opener. |
 | J15-02 | Setup-blocked Home | Start action exposes readiness remedy without color-only meaning | Home at 1280x800/125% | Rendered: setup state and named remedy captured at 1280x800 and 1024x768/125%. |
 | J15-03 | Meetings preset, search, select one row | Preset, search, and meeting list have accessible names; Tab reaches each once | Meetings at 1280x800/100% and 1024x768/125% | Partial: processing and selection rendered; interactive preset/search/Tab replay remains open. |
 | J15-04 | Queue/recovery and ASAP state | Status is understandable without row color; selected action keeps focus | Meetings and detail | Partial: queue/recovery state rendered; detail and focus-return path remains open. |

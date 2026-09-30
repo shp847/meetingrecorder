@@ -133,4 +133,20 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: SettingsRecordingSectionButton", keyboardTrace);
         Assert.Contains("Escape: Open Settings", keyboardTrace);
     }
+
+    [Fact]
+    public void Settings_Recording_Saves_A_Harmless_Edit_In_The_Isolated_Profile()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.SettingsRecordingSaved,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("Edit: Use Outlook calendar as a fallback meeting title =", keyboardTrace);
+        Assert.Contains("Save: Config saved and applied to the running app.", keyboardTrace);
+        Assert.Contains("Escape: Open Settings", keyboardTrace);
+    }
 }

@@ -39,6 +39,13 @@ with SHA-256 `4107e381c89d7edae04032d3c7845e346b94115941f5e18d07a3519679b62cef`.
 Its keyboard trace confirms that Escape closes Settings and returns focus to
 the `Open Settings` control that opened it.
 
+The same isolated profile toggled and saved the harmless calendar-title
+fallback at 1280×800/125% as
+`20260930-075838/00f253e0bc0647aebeeacc60205d4dc3/settings-recording-saved-1280x800-125.png`
+with SHA-256 `465a64b4ddd1b6cc16267cb9309975caa6a3f05174e912b0dda313f48ab59eaa`.
+The trace proves the edit enables Save Changes, persists through the running
+test profile, reports success, and returns focus to `Open Settings` on Escape.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -59,6 +66,6 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-harmless Settings edit, dialog confirmation, hosted-consent, profile-delete,
-and detail-return journeys remain unexecuted. Their evidence is still required
-before Sprint 15 can be marked `Done`.
+dialog confirmation, hosted-consent, profile-delete, and detail-return journeys
+remain unexecuted. Their evidence is still required before Sprint 15 can be
+marked `Done`.

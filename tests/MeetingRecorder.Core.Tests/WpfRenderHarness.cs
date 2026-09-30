@@ -171,6 +171,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
                 SyntheticShellState.SettingsRecording => "settings-recording",
                 SyntheticShellState.Processing => "processing",
                 SyntheticShellState.SelectionActive => "selection-active",
@@ -201,7 +202,8 @@ internal static class WpfRenderHarness
                 }
             }
 
-            if (state == SyntheticShellState.SettingsRecording)
+            IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
+            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved)
             {
                 if (!settingsAction.Focus())
                 {
@@ -215,6 +217,12 @@ internal static class WpfRenderHarness
                 settingsWindow.UpdateLayout();
                 settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
                 WriteProgress(progressPath, "settings-opened");
+
+                if (state == SyntheticShellState.SettingsRecordingSaved)
+                {
+                    settingsInteractionTrace = SaveHarmlessSettingsEdit(settingsWindow, window, liveConfig);
+                    WriteProgress(progressPath, "settings-edit-saved");
+                }
             }
 
             var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
@@ -223,12 +231,13 @@ internal static class WpfRenderHarness
             var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace-{scaleToken}.txt");
 
             SaveScreenshot(settingsWindow ?? window, screenshotPath, rasterScale);
-            var traceElements = state == SyntheticShellState.SettingsRecording
+            var traceElements = state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved
                 ? new FrameworkElement[]
                 {
                     RequireElement<Button>(settingsWindow!, "SettingsRecordingSectionButton"),
                     RequireElement<Button>(settingsWindow!, "SaveChangesButton"),
                     RequireElement<TextBlock>(settingsWindow!, "FooterStatusTextBlock"),
+                    RequireElement<CheckBox>(window, "ConfigCalendarTitleFallbackCheckBox"),
                 }
                 : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation
                 ? new FrameworkElement[]
@@ -251,11 +260,10 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(window, "DashboardModelReadinessTextBlock"),
                 };
             File.WriteAllLines(automationTracePath, CreateAutomationTrace(traceElements));
-            File.WriteAllLines(
-                keyboardTracePath,
-                settingsWindow is null
-                    ? CreateKeyboardTrace(settingsAction, tabControl)
-                    : CreateSettingsKeyboardTrace(settingsWindow, settingsAction));
+            var keyboardTrace = settingsWindow is null
+                ? CreateKeyboardTrace(settingsAction, tabControl)
+                : settingsInteractionTrace.Concat(CreateSettingsKeyboardTrace(settingsWindow, settingsAction));
+            File.WriteAllLines(keyboardTracePath, keyboardTrace);
 
             return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
         }
@@ -502,6 +510,44 @@ internal static class WpfRenderHarness
         return trace;
     }
 
+    private static IReadOnlyList<string> SaveHarmlessSettingsEdit(
+        Window settingsWindow,
+        FrameworkElement mainWindow,
+        LiveAppConfig liveConfig)
+    {
+        var calendarFallback = RequireElement<CheckBox>(mainWindow, "ConfigCalendarTitleFallbackCheckBox");
+        var saveChanges = RequireElement<Button>(settingsWindow, "SaveChangesButton");
+        var footerStatus = RequireElement<TextBlock>(settingsWindow, "FooterStatusTextBlock");
+        var nextValue = calendarFallback.IsChecked != true;
+        calendarFallback.IsChecked = nextValue;
+        WaitForCondition(settingsWindow.Dispatcher, () => saveChanges.IsEnabled, TimeSpan.FromSeconds(10));
+        if (!saveChanges.IsEnabled)
+        {
+            throw new InvalidOperationException("A harmless Settings edit must enable Save Changes.");
+        }
+
+        saveChanges.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitForCondition(
+            settingsWindow.Dispatcher,
+            () => liveConfig.Current.CalendarTitleFallbackEnabled == nextValue &&
+                !saveChanges.IsEnabled &&
+                string.Equals(
+                    footerStatus.Text,
+                    "Config saved and applied to the running app.",
+                    StringComparison.Ordinal),
+            TimeSpan.FromSeconds(10));
+        if (liveConfig.Current.CalendarTitleFallbackEnabled != nextValue || saveChanges.IsEnabled)
+        {
+            throw new InvalidOperationException("The harmless Settings edit was not saved to the isolated profile.");
+        }
+
+        return
+        [
+            "Edit: Use Outlook calendar as a fallback meeting title = " + nextValue,
+            "Save: " + footerStatus.Text,
+        ];
+    }
+
     private static string GetFocusedName()
     {
         return Keyboard.FocusedElement is FrameworkElement element
@@ -519,5 +565,6 @@ internal static class WpfRenderHarness
         CleanupRecommendation,
         EmptyHealthy,
         SettingsRecording,
+        SettingsRecordingSaved,
     }
 }

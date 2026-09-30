@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Baseline audited:** 2026-09-27. **Total sprints:** 123. **Done:** 19.
-**Ready:** 82. **Partial:** 20. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Baseline audited:** 2026-09-27. **Total sprints:** 123. **Done:** 24.
+**Ready:** 77. **Partial:** 20. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -67,8 +67,8 @@ records an approved dependency change.
 
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
-| 0 — Friction Audit And Baseline Evidence | `Partial` | 2026-09-27: initial 244-control audit exists, but current validator reports stale control-to-source coverage; refresh/review is required. |
-| 1 — UX Rules And Safety Policy | `Partial` | 2026-09-27: policy validator passes for 244 rows, but its source inventory dependency is stale and must be refreshed/revalidated. |
+| 0 — Friction Audit And Baseline Evidence | `Done` | 2026-09-30: refreshed 271-control audit and its rendered evidence pass current validation. |
+| 1 — UX Rules And Safety Policy | `Done` | 2026-09-30: refreshed 271-control policy inventory and validation pass. |
 | 2 — Settings Preset Engine | `Done` | 2026-09-27: pure core projection/patch service, exact ownership maps, blocked hosted modes, `Custom` reasons, editor-only atomic patches, mapping documentation, and 10 focused passing tests. |
 | 3 — Settings Information Architecture | `Done` | 2026-09-27: six intent sections, transient target/routing contract, legacy deep-link aliases, one-owner/timing map, reparented existing controls, focused source/routing tests, and settings documentation. |
 | 4 — Recording And Setup Simplification | `Done` | 2026-09-27: implementation record and focused evidence below. |
@@ -90,9 +90,9 @@ records an approved dependency change.
 
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
-| 0 — Meetings Friction Audit | `Ready` | Surface inventory, journey evidence, disposition ownership, and audit validation plan below. |
-| 1 — Meetings Experience Contract | `Ready` | Guided-workbench state, action ownership, control boundaries, and parity verification plan below. |
-| 2 — Meeting State Model | `Ready` | Precedence resolver, freshness/provenance, state-action mapping, and verification plan below. |
+| 0 — Meetings Friction Audit | `Done` | 2026-09-29: inventory, disposition, validator, and focused evidence completed. |
+| 1 — Meetings Experience Contract | `Done` | 2026-09-29: shared state/action ownership contract and focused evidence completed. |
+| 2 — Meeting State Model | `Done` | 2026-09-29: metadata-only state precedence and focused evidence completed. |
 | 3 — Recommendation Engine | `Done` | 2026-09-29: deterministic metadata-only ranking, bounded dismissal, and focused evidence below. |
 | 4 — View Presets | `Done` | 2026-09-29: existing preset resolver, migration, toolbar contract, and focused evidence verified below. |
 | 5 — Needs Attention Inbox | `Done` | 2026-09-29: metadata-only triage resolver and focused evidence below. |
@@ -2441,8 +2441,12 @@ Sprint 14 acceptance criteria:
   1280x800/125%. The focused Settings section, forward Tab, Escape close, and
   return to the original `Open Settings` control are captured by the isolated
   harness. A regression check now protects this focus-return contract.
-- Remaining gap or next action: execute the harmless Settings edit,
-  dialog-confirmation, hosted-consent, profile-delete, and detail-return
+- Evidence and date: 2026-09-30: the disposable Settings profile toggled and
+  saved the harmless calendar-title fallback, then rendered the persisted
+  enabled state at 1280x800/125%. The same trace confirms Save Changes becomes
+  available, reports success, and Escape returns focus to the original opener.
+- Remaining gap or next action: execute dialog-confirmation, hosted-consent,
+  profile-delete, and detail-return
   fixtures; capture packaged UI states; validate high contrast, OS DPI, and
   Narrator before marking this sprint done.
 
