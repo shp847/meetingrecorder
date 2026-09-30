@@ -139,7 +139,7 @@ records an approved dependency change.
 | --- | --- | --- |
 | 1 — Stabilize The Current Feature Baseline | `Partial` | 2026-09-29: authoritative review-state projection and focused baseline checks added; live receipt/rejection wiring remains. |
 | 2 — Build Fixture Evidence And Metrics | `Partial` | 2026-09-29: redacted count/recognition metric arithmetic added; private catalog/truth governance and runner integration remain. |
-| 3 — Calibrate Recognition And Diarization Thresholds | `Ready` | Reproducible baseline/candidate protocol, severity gates, holdout protection, and manual-promotion contract defined below. |
+| 3 — Calibrate Recognition And Diarization Thresholds | `Partial` | 2026-09-29: coverage/regression/manual-promotion comparison gate added; pinned corpus/holdout receipts remain. |
 | 4 — Repair, Undo, And Release Readiness | `Ready` | Undo/repair transaction boundaries, derived-output safety, release evidence, and installed-smoke contract defined below. |
 
 ### External Audio Import Seamless Experience
@@ -4363,8 +4363,8 @@ Sprint 2 verification:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: threshold guardrails, candidate schema/example, calibration runner, and promotion-status tests exist); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: threshold guardrails, candidate schema/example, calibration runner, and promotion-status tests exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 comparison gate slice).
 - User outcome: any recognition/diarization threshold change has repeatable evidence that it improves approved cases without silently naming someone wrongly or destabilizing known hard cases.
 - Scope / non-goals: compare named, allowlisted candidate configurations from S2 evidence and manually promote one validated default. Do not tune against live meetings, use expected fixture values at runtime, auto-write source/config defaults, expand automatic identity confidence, or conflate model/runtime replacement with threshold calibration.
 - Dependencies and decisions: S2 provides consented corpus/truth isolation and run identity; S1 preserves conservative correction UX. Existing `Test-DiarizationCalibration.ps1` runs baseline/candidates and reports `eligible_for_manual_promotion`; this is a recommendation, never source mutation. Freeze environment for comparison: source commit, build configuration, OS/runtime, CPU/DirectML mode, diarization/model hashes, candidate-schema version, fixture-catalog/truth-set version, input hashes, seed if available, and exact allowlisted parameter map. CPU/reference path is calibration authority unless an explicitly separate accelerator comparison proves equivalent output.
@@ -4377,6 +4377,7 @@ Sprint 2 verification:
 - Tests and rendered checks: candidate schema/range/unit/unknown/conflict validation; deterministic run identity and baseline parity; no truth leak/environment contamination; missing/disabled/failed/changed-artifact coverage rejection; severity/false-auto/protected-regression/uncertainty gates; repeat-run nondeterminism classification; manual-promotion-only source guard; parameter-to-runtime/default/rollback regression tests in cluster selection, merge, and matcher. Verify report redaction and Settings/detail explanation for a changed/default/rollback status with synthetic fixtures.
 - Documentation / installer / release work: record command, pinned input/config/model identities, corpus split, candidate rationale, reviewer, no-go/rollback, result, and retention location in calibration docs; update user/admin docs only for changed defaults/visible diagnostics. Docs/scripts-only evidence skips installer rebuild; production worker/app/default changes require focused suite, `Test-All.ps1`, installer rebuild, and installed smoke before release consideration.
 - Evidence and date: 2026-09-27 audit found baseline/candidate comparison, allowed candidate variables, false-auto/protected-regression rejection, and manual-promotion recommendation. Missing proof includes fixture split/coverage minimums, reproducibility/pinned environment, typed parameter-to-default mapping, nondeterminism treatment, explicit holdout review, and default rollback evidence.
+- Evidence and date: 2026-09-29 added `CalibrationCandidateComparison` tests for incomplete coverage, protected regression, false-auto regression, no measured improvement, and human-review-only eligibility.
 - Remaining gap or next action: freeze a redacted baseline receipt and parameter map; add a synthetic candidate with missing protected coverage to prove promotion rejection.
 
 Goal: tune the implementation from fixture results instead of guessing.
