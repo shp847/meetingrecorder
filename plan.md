@@ -97,7 +97,7 @@ records an approved dependency change.
 | 4 — View Presets | `Done` | 2026-09-29: existing preset resolver, migration, toolbar contract, and focused evidence verified below. |
 | 5 — Needs Attention Inbox | `Done` | 2026-09-29: metadata-only triage resolver and focused evidence below. |
 | 6 — Processing View | `Done` | 2026-09-29: existing backlog projection, ASAP lifecycle, UI wiring, and focused evidence verified below. |
-| 7 — Selection Strip Redesign | `Ready` | Selection-state projection, per-action eligibility/preview, immutable execution scope, and verification plan below. |
+| 7 — Selection Strip Redesign | `Done` | 2026-09-29: existing shared catalog/selection contract and focused evidence verified below. |
 | 8 — Action Grouping | `Ready` | Canonical action taxonomy, surface parity, destructive/recovery boundaries, and verification plan below. |
 | 9 — Cleanup Consolidation | `Ready` | Recommendation/inbox routing, advanced review, preview/execution ledger, and verification plan below. |
 | 10 — Meeting Detail Task Center | `Ready` | Read-first detail state, revision/draft safety, action/recommendation parity, and verification plan below. |
@@ -2825,8 +2825,8 @@ Acceptance: backlog management does not require worker or manifest knowledge.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: selection strip explains exactly what selected meetings can do, what will be skipped, and whether an action changes data, queues work, or opens reading.
 - Scope / non-goals: unify selection presentation and action preview. Do not broaden bulk operation support, bypass existing validators, silently include hidden rows, or perform action from selection change.
 - Dependencies and decisions: use Sprint 1 action catalog, Sprint 2 states, and stable meeting identity. `SelectionExperienceState` distinguishes none/single/multiple/busy/stale; every action returns eligible IDs, blocked IDs grouped by reason, target count, confirmation need, execution category, and recovery/result semantics. Selection snapshot freezes at action invocation; refresh mutation requires revalidation.
@@ -2838,8 +2838,8 @@ Acceptance: backlog management does not require worker or manifest knowledge.
   5. After operation, retain surviving selection where safe, report succeeded/skipped/failed counts and safe details route, refresh once, and preserve unsaved non-conflicting drafts. Never claim queued work or partial batch as completed.
 - Tests and rendered checks: selection resolver/action eligibility matrices including mixed selection, hidden/filter rows, stale/busy state, source mutation after preview, recording/queue guards, all confirmation/cancel paths, result summaries, and cross-surface parity. Render zero/single/multi/mixed/destructive states at 1280x800/125%; keyboard and screen-reader verify count/reason/confirmation.
 - Documentation / installer / release work: document bulk preview/skip/result semantics after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found single/multi selection command/tool state, project bulk handling, context actions, and count-oriented tests. No shared per-action eligible/blocked model or immutable selection execution contract.
-- Remaining gap or next action: add pure mixed-selection test where labels/retry/archive eligibility differs, then route existing context enablement through evaluator before XAML redesign.
+- Evidence and date: 2026-09-27 review found single/multi selection command/tool state, project bulk handling, context actions, and count-oriented tests. No shared per-action eligible/blocked model or immutable selection execution contract. 2026-09-29 verified the existing `MeetingActionCatalog` selection-availability input and resolved eligibility state, together with the workspace/selection command presentation and XAML wiring. The catalog carries cardinality, eligible/blocked counts, first blocked reason, confirmation policy, action family, and outcome target; busy state blocks re-entry and permanent delete remains typed-confirmed. Focused catalog, interaction, and XAML tests passed 188/188 using an isolated build root. Existing handlers retain their source revalidation and result reporting; no bulk support was broadened.
+- Remaining gap or next action: Sprint 8 — verify and consolidate intentional action-family grouping across surfaces.
 
 - Redesign by selection state:
   - no selection: view summary and global next step,

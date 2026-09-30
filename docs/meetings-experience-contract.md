@@ -107,3 +107,14 @@ ASAP follows one explicit meeting through transcript, publication, and eligible
 speaker labels. Clear ASAP releases future priority only; it never cancels
 active work. Queue acceleration and recovery remain unavailable while live
 recording is protected.
+
+## Selection and bulk actions
+
+Selection is presented as none, one, or many. The shared action catalog owns
+each action's cardinality, eligible and blocked counts, first blocked reason,
+confirmation policy, outcome target, and family. This keeps the strip, context
+menu, and detail discovery route from redefining what a command can affect.
+Busy work blocks a new action rather than changing the selected scope; bulk
+actions show eligible counts and retain their existing explicit review or typed
+delete confirmation. A queued or partially applied action is reported as such,
+not as completed meeting work.
