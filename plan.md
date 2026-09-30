@@ -128,7 +128,7 @@ records an approved dependency change.
 | 10 — Rematch Past Meetings | `Partial` | 2026-09-29: metadata-only eligibility planner and exclusion tests implemented; dispatch, receipts, and bulk UX remain. |
 | 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
 | 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
-| 13 — Profile Management And Privacy | `Ready` | Define profile lifecycle consequences, local-sensitive-data disclosure, concurrency safety, and artifact-exclusion proof. |
+| 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Ready` | Define versioned blinded corpus, false-attribution gates, reproducible promotion, and runtime-safe experience fixtures. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Ready` | Define fixture-driven Technical Studio review/profile UX, focus graph, and rendered assistive acceptance. |
 | 16 — Documentation, Installer, And Release Smoke | `Ready` | Release evidence matrix, privacy/docs boundaries, package provenance, and installed smoke gates defined below. |
@@ -3922,8 +3922,8 @@ Sprint 12 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: local store, settings controls, disable/delete tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: local store, settings controls, disable/delete tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 lifecycle contract slice).
 - User outcome: users see what voice memory is stored locally, control future matching safely, and understand exactly what disable/delete changes.
 - Scope / non-goals: complete local profile lifecycle and privacy UI/docs. Do not create cloud/shared profiles, export embeddings, expose raw vectors/samples by default, or erase published user corrections when a profile changes.
 - Dependencies and decisions: consume S1/S8 receipts/suppression and S9 matching. `VoiceProfileStore` persists local centroids, sample count, meeting ids and rejections; it is sensitive voice-derived data. Default UI projects only name, active/disabled state, maturity, sample count, last match, and local-storage explanation; file path is support/Advanced-only.
@@ -3935,7 +3935,8 @@ Sprint 12 acceptance criteria:
 - Tests and rendered checks: disable/enable/delete/delete-all effects on matcher/learning/historic attribution, confirmation/cancel/stale revision, concurrent learn/delete, corrupt/missing/unwritable store, atomic recovery/migration, no published/export/log/provider profile payload, and settings/detail refresh. Render mature/immature/disabled/missing/corrupt profiles at 1280x800/125%, keyboard/screen-reader sensitive-data/consequence copy.
 - Documentation / installer / release work: document local path class, sensitive voice-derived data, lifecycle, artifact exclusions, backup/recovery limit, and no cloud sharing. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found profile list/disable/delete controls and storage tests, but no full lifecycle consequence contract, matching race proof, corrupt-store UX, or privacy exclusion audit across shipped artifacts.
-- Remaining gap or next action: add lifecycle resolver/store-revision tests and a profile-payload serialization scan before expanding Settings UI.
+- Evidence and date: 2026-09-29 added `VoiceProfileLifecycleResolver` tests for disable/enable/delete consequences, confirmation, active-mutation blocking, unavailable-store behavior, and historic-attribution preservation.
+- Remaining gap or next action: add store-revision serialization and corrupt-store settings state plus profile-payload exclusion scans before marking this sprint Done.
 
 Goal: make voice memory trustworthy and controllable.
 
