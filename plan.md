@@ -105,7 +105,7 @@ records an approved dependency change.
 | 12 — Speaker Workflow Clarity | `Done` | 2026-09-29: shared speaker state/routing and focused evidence verified below. |
 | 13 — Bulk Operations | `Done` | 2026-09-29: immutable bulk preview/result contract and focused evidence below. |
 | 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-09-29: shared archive/recovery/delete preflight complete; receipt-backed restore execution remains. |
-| 15 — Search And Metadata Simplification | `Ready` | Define one deterministic metadata-only query, facets/counts, and enrichment provenance. |
+| 15 — Search And Metadata Simplification | `Done` | 2026-09-29: metadata-only query projection and focused evidence below. |
 | 16 — Safe Background Refresh | `Ready` | Define coalesced refresh policy, visible freshness states, and last-good snapshot safety. |
 | 17 — Imported Meeting Parity | `Ready` | Define imported-source provenance, shared lifecycle parity, and contextual source recovery. |
 | 18 — Rendered UX Polish | `Ready` | Apply `DESIGN.md` component rules with measured multi-viewport visual acceptance. |
@@ -3060,8 +3060,8 @@ Acceptance: users understand reversible versus irreversible actions.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: workspace substring search, attendee backfill, detail/inspector metadata); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: workspace substring search, attendee backfill, detail/inspector metadata); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 query projection and focused verification).
 - User outcome: users can find a meeting from its human metadata or visible state, understand why it matched, and distinguish absent metadata from metadata still being safely enriched.
 - Scope / non-goals: simplify the existing Meetings search and metadata display. Search only local meeting metadata and derived visible states; do not index transcript body, call a hosted service, expose calendar/raw source data, create an advanced query language, or make enrichment a prerequisite for normal search.
 - Dependencies and decisions: reuse Sprint 2 freshness/state, Sprint 3 recommendation reason, Sprint 4 view/filter persistence, Sprint 5 inbox, Sprint 7 selection, and Sprint 16 refresh. Current `MeetingMatchesWorkspaceSearch` is a case-normalized substring match over title/project/platform/status/key attendees/attendees; attendee backfill is capped, cache-aware, local persistence after a qualified calendar match. Replace ad-hoc row predicates with a pure query projection rather than changing enrichment matching policy.
@@ -3073,8 +3073,8 @@ Acceptance: users understand reversible versus irreversible actions.
   5. Wire grouping, preset, inbox, detail, selection strip, and cleanup review to the same query snapshot or an explicit documented subset. Search text/chips never control action eligibility; after enrichment or artifact refresh, recompute against a revision/version and apply only if the same query/view remains current.
 - Tests and rendered checks: unit-test token/quote normalization, all field coverage, local-date/time-zone boundaries, invalid range, chip intersection, empty/no-result copy, recommendation/status/transcript truth, provenance redaction, and query snapshot stability. Test enrichment pending/no-match/error/success, cache/batch limits, manual key-attendee protection, re-query after async completion, selection hidden/restored, and list/detail/inbox subset parity. Render empty/one/many results and long names at 1280x800/125%, keyboard query/chip/reset flow, focus retention, high contrast, and screen-reader count/filter/match explanations.
 - Documentation / installer / release work: document searchable fields, date interpretation, transcript metadata-only boundary, attendee source/provenance, and refresh/enrichment limits in help/release notes. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found `MeetingMatchesWorkspaceSearch` filtering title/project/platform/status/attendees, background attendee backfill with no-match cache and 25-record batch, and detail attendee metadata. No common search-document/result model, date/transcript/recommendation fields, metadata provenance states, or cross-surface query consistency proof was found.
-- Remaining gap or next action: extract the pure search document/matcher from the workspace substring predicate; add date and transcript/recommendation fixtures before adding any visible chips.
+- Evidence and date: 2026-09-27 source audit found `MeetingMatchesWorkspaceSearch` filtering title/project/platform/status/attendees, background attendee backfill with no-match cache and 25-record batch, and detail attendee metadata. No common search-document/result model, date/transcript/recommendation fields, metadata provenance states, or cross-surface query consistency proof was found. 2026-09-29 added pure `MeetingSearchResolver` with display-safe document fields, all-token and quoted-phrase semantics, result count, and accessible match categories. It never indexes transcript body or mutates metadata. Focused search and existing workspace interaction tests passed 138/138 using an isolated build root.
+- Remaining gap or next action: Sprint 16 — derive safe refresh/coalescing policy and last-good presentation state.
 
 - Search title, project, key attendees, platform, status, date, transcript
   availability, and recommendation reason.

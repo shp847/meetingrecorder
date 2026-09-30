@@ -176,3 +176,11 @@ archive recovery expectation, and per-target outcomes (`Succeeded`, `Queued`,
 `Skipped`, `Failed`, `Cancelled`). The planner does not dispatch work; existing
 handlers revalidate immediately before mutation. Permanent delete is excluded
 from this generic contract and remains Sprint 14's typed-confirmation path.
+
+## Search metadata
+
+`MeetingSearchResolver` searches only displayed meeting metadata: title,
+project, platform, status, local date, transcript availability, recommendation
+reason, and attendees. Whitespace tokens all match; quoted text matches one
+field phrase. Results return match categories and a truthful count without
+reading transcript body, paths, calendar payloads, or changing metadata.
