@@ -2445,8 +2445,10 @@ Sprint 14 acceptance criteria:
   saved the harmless calendar-title fallback, then rendered the persisted
   enabled state at 1280x800/125%. The same trace confirms Save Changes becomes
   available, reports success, and Escape returns focus to the original opener.
-- Remaining gap or next action: execute dialog-confirmation, hosted-consent,
-  profile-delete, and detail-return
+- Evidence and date: 2026-09-30: the isolated synthetic permanent-delete
+  confirmation renders named controls, requires exact typed confirmation, and
+  cancels on Escape without deleting any artifact. Focus returns to Meetings.
+- Remaining gap or next action: execute hosted-consent, profile-delete, and detail-return
   fixtures; capture packaged UI states; validate high contrast, OS DPI, and
   Narrator before marking this sprint done.
 

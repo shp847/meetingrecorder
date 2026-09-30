@@ -46,6 +46,13 @@ with SHA-256 `465a64b4ddd1b6cc16267cb9309975caa6a3f05174e912b0dda313f48ab59eaa`.
 The trace proves the edit enables Save Changes, persists through the running
 test profile, reports success, and returns focus to `Open Settings` on Escape.
 
+The synthetic permanent-delete confirmation rendered at 1280×800/125% as
+`20260930-080547/64c26b59c3514575b80273187ba23b42/permanent-delete-cancelled-1280x800-125.png`
+with SHA-256 `279ce4a59b3038cabf67bae8b94f9ae640b99fb4e5c87d58a4589a217e10b9b1`.
+Its accessible text input and cancel action are named, the irreversible action
+is disabled before exact `DELETE`, and Escape cancels with focus back on the
+Meetings list. No synthetic artifact is deleted.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -66,6 +73,5 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-dialog confirmation, hosted-consent, profile-delete, and detail-return journeys
-remain unexecuted. Their evidence is still required before Sprint 15 can be
-marked `Done`.
+hosted-consent, profile-delete, and detail-return journeys remain unexecuted.
+Their evidence is still required before Sprint 15 can be marked `Done`.

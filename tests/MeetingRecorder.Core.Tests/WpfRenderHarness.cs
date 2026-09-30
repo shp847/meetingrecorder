@@ -171,6 +171,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
                 SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
                 SyntheticShellState.SettingsRecording => "settings-recording",
                 SyntheticShellState.Processing => "processing",
@@ -179,7 +180,7 @@ internal static class WpfRenderHarness
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
@@ -200,6 +201,16 @@ internal static class WpfRenderHarness
                     WaitForCleanupRecommendation(window);
                     WriteProgress(progressPath, "cleanup-recommendation-loaded");
                 }
+            }
+
+            if (state == SyntheticShellState.PermanentDeleteCancelled)
+            {
+                return CapturePermanentDeleteCancellation(
+                    window,
+                    logicalWidth,
+                    logicalHeight,
+                    rasterScale,
+                    rootDirectory);
             }
 
             IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
@@ -293,7 +304,7 @@ internal static class WpfRenderHarness
             return config;
         }
 
-        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation))
+        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled))
         {
             return config;
         }
@@ -548,6 +559,127 @@ internal static class WpfRenderHarness
         ];
     }
 
+    private static WpfRenderEvidence CapturePermanentDeleteCancellation(
+        Window window,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory)
+    {
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var screenshotPath = Path.Combine(rootDirectory, $"permanent-delete-cancelled-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"permanent-delete-cancelled-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"permanent-delete-cancelled-keyboard-trace-{scaleToken}.txt");
+        var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
+        if (meetings.Items.Count == 0)
+        {
+            throw new InvalidOperationException("Permanent-delete fixture needs one synthetic meeting.");
+        }
+
+        meetings.SelectedItem = meetings.Items[0];
+        if (!meetings.Focus())
+        {
+            throw new InvalidOperationException("Meetings list must accept focus before a destructive confirmation.");
+        }
+
+        var deleteAction = RequireElement<MenuItem>(window, "DeleteMeetingPermanentlyMenuItem");
+        Window? confirmationWindow = null;
+        var dialogObserved = false;
+        var keyboardTrace = new List<string>();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var cancellationTimer = new DispatcherTimer(DispatcherPriority.Send, window.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(25),
+        };
+        cancellationTimer.Tick += (_, _) =>
+        {
+            confirmationWindow ??= Application.Current.Windows
+                .Cast<Window>()
+                .SingleOrDefault(candidate => !ReferenceEquals(candidate, window));
+            if (confirmationWindow is null)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    cancellationTimer.Stop();
+                    window.Close();
+                }
+
+                return;
+            }
+
+            cancellationTimer.Stop();
+            dialogObserved = true;
+            confirmationWindow.UpdateLayout();
+            confirmationWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            var confirmationText = FindDescendant<TextBox>(confirmationWindow)
+                ?? throw new InvalidOperationException("Permanent-delete confirmation must provide typed confirmation.");
+            var deleteButton = FindDescendant<Button>(confirmationWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Delete permanently", StringComparison.Ordinal));
+            var cancelButton = FindDescendant<Button>(confirmationWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Cancel permanent delete", StringComparison.Ordinal));
+            if (deleteButton is null || cancelButton is null)
+            {
+                throw new InvalidOperationException("Permanent-delete confirmation must expose named delete and cancel actions.");
+            }
+
+            SaveScreenshot(confirmationWindow, screenshotPath, rasterScale);
+            File.WriteAllLines(
+                automationTracePath,
+                CreateAutomationTrace(confirmationText, deleteButton, cancelButton));
+            if (!confirmationText.Focus())
+            {
+                throw new InvalidOperationException("Permanent-delete confirmation input must accept keyboard focus.");
+            }
+
+            keyboardTrace.Add("Focus: " + GetFocusedName());
+            var source = PresentationSource.FromVisual(confirmationWindow)
+                ?? throw new InvalidOperationException("Permanent-delete confirmation has no presentation source for Escape validation.");
+            confirmationWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            });
+        };
+
+        cancellationTimer.Start();
+        deleteAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        cancellationTimer.Stop();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        if (!dialogObserved || confirmationWindow?.IsVisible == true)
+        {
+            throw new InvalidOperationException("Permanent-delete confirmation did not open and close through Escape.");
+        }
+
+        keyboardTrace.Add("Escape: " + GetFocusedName());
+        var status = RequireElement<TextBlock>(window, "MeetingCleanupRecommendationsStatusTextBlock");
+        if (!status.Text.Contains("Permanent delete cancelled", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Escape must cancel permanent deletion without changing synthetic meeting artifacts.");
+        }
+
+        File.WriteAllLines(keyboardTracePath, keyboardTrace);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root, Func<T, bool>? predicate = null)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match && (predicate is null || predicate(match)))
+            {
+                return match;
+            }
+
+            if (FindDescendant(child, predicate) is { } nestedMatch)
+            {
+                return nestedMatch;
+            }
+        }
+
+        return null;
+    }
+
     private static string GetFocusedName()
     {
         return Keyboard.FocusedElement is FrameworkElement element
@@ -566,5 +698,6 @@ internal static class WpfRenderHarness
         EmptyHealthy,
         SettingsRecording,
         SettingsRecordingSaved,
+        PermanentDeleteCancelled,
     }
 }

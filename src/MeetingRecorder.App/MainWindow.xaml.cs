@@ -15200,6 +15200,7 @@ public partial class MainWindow : Window
             MinWidth = 420,
             Background = Brushes.White,
         };
+        AutomationProperties.SetName(confirmationWindow, "Confirm permanent delete");
 
         var confirmationTextBox = new TextBox
         {
@@ -15208,6 +15209,10 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 10, 0, 0),
             VerticalContentAlignment = VerticalAlignment.Center,
         };
+        AutomationProperties.SetName(confirmationTextBox, "Type DELETE to confirm permanent delete");
+        AutomationProperties.SetHelpText(
+            confirmationTextBox,
+            "This permanently deletes the selected meeting files and cannot be undone.");
 
         var deleteButton = new Button
         {
@@ -15217,6 +15222,10 @@ public partial class MainWindow : Window
             IsDefault = true,
             IsEnabled = false,
         };
+        AutomationProperties.SetName(deleteButton, "Delete permanently");
+        AutomationProperties.SetHelpText(
+            deleteButton,
+            "Enabled only after you type DELETE exactly. This action cannot be undone.");
 
         deleteButton.Click += (_, _) =>
         {
@@ -15243,11 +15252,23 @@ public partial class MainWindow : Window
             Margin = new Thickness(10, 0, 0, 0),
             IsCancel = true,
         };
+        AutomationProperties.SetName(cancelButton, "Cancel permanent delete");
 
         cancelButton.Click += (_, _) =>
         {
             confirmationWindow.DialogResult = false;
             confirmationWindow.Close();
+        };
+        confirmationWindow.PreviewKeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key != Key.Escape)
+            {
+                return;
+            }
+
+            confirmationWindow.DialogResult = false;
+            confirmationWindow.Close();
+            eventArgs.Handled = true;
         };
 
         confirmationWindow.Content = new Border

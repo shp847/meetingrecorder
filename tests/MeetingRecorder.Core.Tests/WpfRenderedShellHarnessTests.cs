@@ -149,4 +149,23 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Save: Config saved and applied to the running app.", keyboardTrace);
         Assert.Contains("Escape: Open Settings", keyboardTrace);
     }
+
+    [Fact]
+    public void Permanent_Delete_Confirmation_Exposes_Named_Actions_And_Escape_Cancels()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.PermanentDeleteCancelled,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains(" | Edit | Type DELETE to confirm permanent delete | True", automationTrace);
+        Assert.Contains(" | Button | Delete permanently | False", automationTrace);
+        Assert.Contains(" | Button | Cancel permanent delete | True", automationTrace);
+        Assert.Contains("Focus: Type DELETE to confirm permanent delete", keyboardTrace);
+        Assert.Contains("Escape:", keyboardTrace);
+    }
 }
