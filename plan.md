@@ -2677,8 +2677,8 @@ Acceptance: implementation has clear rules for automation versus control.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: each row answers what happened, current state, why it matters, and safe next action without exposing manifest/worker internals.
 - Scope / non-goals: add a derived metadata-only presentation model. Do not persist duplicate state, mutate meeting/queue artifacts, change recommendation ranking, or hide actionable failures behind `Complete`.
 - Dependencies and decisions: source truth remains catalog artifact/manifest state, fresh queue snapshot, recommendation metadata, summary/label facts, archive state, and refresh timestamp. `MeetingExperienceState` precedence: `RefreshRequired`, `Archived`, `FailedOrNeedsAttention`, `Blocked`, `Processing`, `NeedsAction`, `Complete`, `Unavailable`; exact outcome/action explains ties. Stale/unknown data cannot yield Complete/Idle.
@@ -2690,8 +2690,8 @@ Acceptance: implementation has clear rules for automation versus control.
   5. Replace row/inspector/detail/selection status composition incrementally through resolver; preserve prior artifact fields for Advanced. Keep UI source order stable and no status change solely from display refresh.
 - Tests and rendered checks: exhaustive table tests for precedence/ties, stale disagreement, intentional skip, corrupt/missing artifact, archived, queue state, setup blocks, recommendation, healthy complete, multi-issue ordering, and no sensitive output. Assert row/inspector/detail/filter parity; render labels/badges at 1280x800/125% with screen-reader descriptions.
 - Documentation / installer / release work: document state glossary and diagnostics boundary after behavior ships; installer/release gate is Sprint 16.
-- Evidence and date: 2026-09-27 source review found processing strip, catalog rows, cleanup recommendations, detail statuses, and queue data, but no central row-state resolver or verified precedence/freshness contract.
-- Remaining gap or next action: implement pure resolver with a failing stale-queue-versus-published-artifact case before binding a first row badge.
+- Evidence and date: 2026-09-27 source review found processing strip, catalog rows, cleanup recommendations, detail statuses, and queue data, but no central row-state resolver or verified precedence/freshness contract. 2026-09-29 added pure metadata-only `MeetingPresentationStateResolver` with explicit unavailable/stale/archive/failure/setup/queue/recommendation/complete precedence, safe action presentation, accessible copy, and diagnostic reason code. Complete requires both readable artifacts; stale/unknown cannot claim Complete. The shared contract documents the row-state glossary and diagnostics boundary. Focused presentation/experience/catalog tests passed 17/17. Binding the resolver to row/detail surfaces remains an incremental UI step in the later view/state sprints; this contract does not mutate artifacts or alter current action eligibility.
+- Remaining gap or next action: Sprint 3 — consolidate recommendation precedence and dismissal over the new row-state contract.
 
 - Normalize meeting row state into clear user-facing categories: complete,
   needs attention, processing, blocked, archived, and unavailable.

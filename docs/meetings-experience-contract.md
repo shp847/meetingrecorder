@@ -28,3 +28,13 @@ Refresh preserves selection and drafts unless the underlying catalog mutation
 removes the target; then the UI must report the changed scope instead of
 retargeting an action. Advanced and Custom capabilities remain discoverable
 through their catalog family and the S0 inventory.
+
+## Row-state glossary
+
+`MeetingPresentationStateResolver` is metadata-only and orders row truth as:
+Refresh Required, Archived, Needs Attention, Blocked, Processing, Needs Action,
+Complete, and Unavailable. Stale catalog or queue state never reports Complete.
+Complete requires readable audio and transcript artifacts; archive, failure,
+setup block, and active queue states win over a lower-priority recommendation.
+The resolver exposes a concise accessible explanation and reason code only—no
+path, worker error, transcript, or provider payload.
