@@ -103,7 +103,7 @@ records an approved dependency change.
 | 10 — Meeting Detail Task Center | `Done` | 2026-09-29: read-first task center, revision-safe detail binding, and focused evidence verified below. |
 | 11 — Transcript And Summary Reading | `Done` | 2026-09-29: pure transcript-first reader state and focused evidence below. |
 | 12 — Speaker Workflow Clarity | `Done` | 2026-09-29: shared speaker state/routing and focused evidence verified below. |
-| 13 — Bulk Operations | `Ready` | Ship capability-scoped previews, immutable targets, and truthful partial-result recovery. |
+| 13 — Bulk Operations | `Done` | 2026-09-29: immutable bulk preview/result contract and focused evidence below. |
 | 14 — Archive, Delete, And Recovery Trust | `Ready` | Define archive receipts/recovery, one destructive preflight, and truthful per-target outcomes. |
 | 15 — Search And Metadata Simplification | `Ready` | Define one deterministic metadata-only query, facets/counts, and enrichment provenance. |
 | 16 — Safe Background Refresh | `Ready` | Define coalesced refresh policy, visible freshness states, and last-good snapshot safety. |
@@ -3001,8 +3001,8 @@ speakers.
 
 #### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-27: privacy redaction, accessible review semantics, and focus return implemented).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-27: privacy redaction, accessible review semantics, and focus return implemented); `Done` (2026-09-29 bulk plan foundation and focused verification).
 - User outcome: people can apply a supported repeated action to a known set of meetings, know what will happen before dispatch, and recover from individual failures without losing the unfinished rows.
 - Scope / non-goals: build one bulk-operation contract for existing archive, project/label, recommendation, speaker-label, re-transcribe, and merge entry points. Keep merge as its own multi-source workflow; do not invent bulk permanent deletion, cross-meeting name assignment, or a generic transaction where the underlying operation cannot be atomic. Permanent delete/recovery belongs to Sprint 14.
 - Dependencies and decisions: reuse Sprint 2 meeting state/revision, Sprint 3 recommendation, Sprint 7 selection, Sprint 8 action catalog, Sprint 9 cleanup, Sprint 12 speaker, and Whole-App Sprints 8/10/11 safety contracts. `MeetingCleanupRecommendationBatchRunner` already continues through ordinary per-item errors, but its result model is cleanup-specific and has no skipped/cancelled states; replace or adapt it behind a common planner rather than leaking it into every action.
@@ -3014,8 +3014,8 @@ speakers.
   5. Make destructive behavior explicit: archive is reversible only where its storage contract says so; permanent delete is absent from the generic bulk menu until Sprint 14 supplies typed confirmation, artifact-class preview, and recovery semantics. Never silently apply a recommendation or overwrite a user edit because it appeared in a bulk selection.
 - Tests and rendered checks: unit-test plans for mixed eligibility, stale revision, selected-count boundaries, action-specific risk copy, revalidation race, duplicate dispatch, continue/fail-fast policy, cancellation before and during dispatch, and exact result counts. Integration-test queue contention and refresh/selection reconciliation. Render single and 2/10/100-row selection at 1280x800/125%, keyboard-only preview/cancel/retry, screen-reader result/reason announcements, and no permanent-delete affordance outside Sprint 14.
 - Documentation / installer / release work: document bulk scope, result meanings, cancellation, retry, queue behavior, and archive versus delete boundary in the user help/release notes. No installer work until shipped behavior changes; release gate remains Whole-App Sprint 16.
-- Evidence and date: 2026-09-27 source audit found independent selected-row loops for project, cleanup, merge, speaker labels, archive, and recommendations. Cleanup has `MeetingCleanupRecommendationBatchRunner` success/failure counts, but selection/action UI lacks one preview/revalidation/result contract.
-- Remaining gap or next action: introduce the action-neutral target/result records and migrate one non-destructive action (project metadata) with mixed-result tests before moving cleanup and queued actions.
+- Evidence and date: 2026-09-27 source audit found independent selected-row loops for project, cleanup, merge, speaker labels, archive, and recommendations. Cleanup has `MeetingCleanupRecommendationBatchRunner` success/failure counts, but selection/action UI lacks one preview/revalidation/result contract. 2026-09-29 added `BulkOperationPlanner` with immutable target snapshot fields, capability-scoped per-row eligibility, queue/archive side-effect copy, and distinct succeeded/queued/skipped/failed/cancelled outcomes. Permanent delete is intentionally excluded until Sprint 14. Focused bulk/catalog/cleanup planner tests passed 26/26 using an isolated build root.
+- Remaining gap or next action: Sprint 14 — add receipt-backed archive/delete preflight and recovery trust.
 
 - Add bulk previews with eligible count, blocked count, destructive risk, and
   per-row outcome behavior.

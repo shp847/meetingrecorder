@@ -166,3 +166,13 @@ using, rejecting, applying, refreshing, or undoing local name suggestions is
 name review; profile availability and learning preferences route to Settings.
 The resolver exposes only local metadata state and clear unavailable reasons—no
 audio paths, embeddings, or profile contents.
+
+## Bulk-operation previews
+
+`BulkOperationPlanner` snapshots each target's identity, displayed title,
+artifact revision, and source view before a repeated action is confirmed. Its
+preview shows eligible and blocked rows, queue versus immediate effect,
+archive recovery expectation, and per-target outcomes (`Succeeded`, `Queued`,
+`Skipped`, `Failed`, `Cancelled`). The planner does not dispatch work; existing
+handlers revalidate immediately before mutation. Permanent delete is excluded
+from this generic contract and remains Sprint 14's typed-confirmation path.
