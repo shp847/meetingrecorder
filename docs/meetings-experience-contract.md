@@ -157,3 +157,12 @@ missing or corrupt transcript. Summary routes are concise: setup/consent opens
 Settings, a structured-transcript gap explains itself, failure offers retry,
 and a stale summary offers regeneration. Normal status never includes provider
 keys, endpoint details, raw errors, or transcript content.
+
+## Speaker workflow
+
+`SpeakerExperienceResolver` makes labels, repair, local name suggestions, and
+profile management distinct. Adding or repairing labels is a meeting fix;
+using, rejecting, applying, refreshing, or undoing local name suggestions is
+name review; profile availability and learning preferences route to Settings.
+The resolver exposes only local metadata state and clear unavailable reasons—no
+audio paths, embeddings, or profile contents.

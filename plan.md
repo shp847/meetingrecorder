@@ -102,7 +102,7 @@ records an approved dependency change.
 | 9 — Cleanup Consolidation | `Done` | 2026-09-29: shared recommendation/review/ledger paths and focused evidence verified below. |
 | 10 — Meeting Detail Task Center | `Done` | 2026-09-29: read-first task center, revision-safe detail binding, and focused evidence verified below. |
 | 11 — Transcript And Summary Reading | `Done` | 2026-09-29: pure transcript-first reader state and focused evidence below. |
-| 12 — Speaker Workflow Clarity | `Ready` | Meetings-specific speaker state/routing, terminology parity, unavailable guidance, and verification plan below. |
+| 12 — Speaker Workflow Clarity | `Done` | 2026-09-29: shared speaker state/routing and focused evidence verified below. |
 | 13 — Bulk Operations | `Ready` | Ship capability-scoped previews, immutable targets, and truthful partial-result recovery. |
 | 14 — Archive, Delete, And Recovery Trust | `Ready` | Define archive receipts/recovery, one destructive preflight, and truthful per-target outcomes. |
 | 15 — Search And Metadata Simplification | `Ready` | Define one deterministic metadata-only query, facets/counts, and enrichment provenance. |
@@ -2971,8 +2971,8 @@ actionable.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: speaker actions, detail review controls, labels/profile services); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: speaker actions, detail review controls, labels/profile services); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: users never confuse adding anonymous labels, repairing diarization, reviewing local name suggestions, or managing reusable profiles.
 - Scope / non-goals: apply Whole-App Sprint 13 speaker contract within Meetings row/selection/detail/action grouping. Do not duplicate profile/embedding logic, alter diarization model behavior, or change learning policy.
 - Dependencies and decisions: reuse `SpeakerExperienceState`, terminology, learning authority, and local-only privacy boundary from Whole-App Sprint 13. Meetings action router maps `LabelsMissing/Queued/Running/Ready/Suspicious`, `NamesReadyForReview`, `SamplesUnavailable`, `ProfilesUnavailable`, `LearningDisabled`, `RepairIneligible`, `RefreshRequired` to exactly one next route/action.
@@ -2983,8 +2983,8 @@ actionable.
   4. Route result states with truthful dispatch/running/completed/failed outcomes and local data explanation. Profile change affects future matching as defined by Whole-App plan; historic user names remain authoritative.
 - Tests and rendered checks: cross-surface state/action parity, terminology lint, unavailable state, single/bulk label eligibility, detail name review, stale revision, repair retry, local-only copy, and no profile data leakage. Render row/selection/detail/Settings transitions at 1280x800/125%; keyboard/screen-reader validate names/reasons.
 - Documentation / installer / release work: reuse Whole-App Sprint 13 docs; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found controls but overlapping wording/action surfaces and no Meetings-specific shared route contract.
-- Remaining gap or next action: wire one shared speaker state fixture into row/detail and test `Add labels` versus `Apply name` before rearranging actions.
+- Evidence and date: 2026-09-27 review found controls but overlapping wording/action surfaces and no Meetings-specific shared route contract. 2026-09-29 verified the existing `SpeakerExperienceResolver` and meeting/settings wiring: labels missing/queued/running/ready/suspicious, repair eligibility, names ready for review, unavailable samples/profiles, disabled learning, and refresh state each route to bounded actions with local-only copy. Focused speaker, recommendation, and XAML tests passed 82/82 using an isolated build root.
+- Remaining gap or next action: Sprint 13 — complete common bulk-operation planning and per-target outcome handling.
 
 - Separate anonymous speaker labels, speaker-label repair, speaker-name
   learning, and profile suggestions.
