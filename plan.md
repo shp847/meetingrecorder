@@ -127,7 +127,7 @@ records an approved dependency change.
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Partial` | 2026-09-29: metadata-only eligibility planner and exclusion tests implemented; dispatch, receipts, and bulk UX remain. |
 | 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
-| 12 — Summary And Derived Output Consistency | `Ready` | Define effective-attribution fingerprinting, readable-stale derived state, and explicit current-name regeneration. |
+| 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
 | 13 — Profile Management And Privacy | `Ready` | Define profile lifecycle consequences, local-sensitive-data disclosure, concurrency safety, and artifact-exclusion proof. |
 | 14 — Calibration And Experience Harness | `Ready` | Define versioned blinded corpus, false-attribution gates, reproducible promotion, and runtime-safe experience fixtures. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Ready` | Define fixture-driven Technical Studio review/profile UX, focus graph, and rendered assistive acceptance. |
@@ -3879,8 +3879,8 @@ Sprint 11 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 attribution-state slice).
 - User outcome: people can still read an earlier summary while knowing speaker attribution changed, and can deliberately regenerate it from current effective names.
 - Scope / non-goals: track speaker-attribution staleness for summary and named derived meeting outputs. Do not auto-call a provider, re-run transcription/diarization, edit generated prose in place, overwrite a readable prior result, or broaden external data-sharing consent.
 - Dependencies and decisions: consume S1 effective identity, S6 overrides, S7 merges, S11 repair revisions, and existing summary provider/consent flow. Current summary fingerprint handles transcript generation but not necessarily effective attribution. Define `AttributionFingerprint` over artifact revision plus ordered stable segment ids, effective speaker ids/display labels/sources and override/merge version—never raw profiles/vectors/audio; pair it with existing transcript fingerprint.
@@ -3892,7 +3892,8 @@ Sprint 11 acceptance criteria:
 - Tests and rendered checks: fingerprint sensitivity for rename/override/merge/rematch/repair and insensitivity to irrelevant metadata; legacy snapshot migration; reader stale/current/failure/cancel; provider/consent/setup blocks; atomic revision race; no worker invocation/profile leak. Render current/stale/historic/regenerate-result at 1280x800/125%, keyboard/screen-reader freshness/provenance.
 - Documentation / installer / release work: document stale-summary meaning, manual regeneration, transcript/diarization boundary, and provider/privacy conditions. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found summary transcript fingerprint reuse and speaker identity artifact updates, but no speaker-attribution fingerprint/stale resolver, repair preservation rule, or current-name regeneration proof.
-- Remaining gap or next action: add pure attribution fingerprint/state fixtures before modifying summary persistence or detail copy.
+- Evidence and date: 2026-09-29 added attribution-fingerprint/state fixtures for effective label/source changes, transcript changes, and readable historic summary regeneration state. The model excludes profiles, vectors, and audio.
+- Remaining gap or next action: persist generation provenance and bind manual current-name regeneration to matching revision/fingerprint before marking this sprint Done.
 
 Goal: make speaker edits flow into downstream meeting outputs.
 
