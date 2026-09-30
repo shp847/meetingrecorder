@@ -168,4 +168,23 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: Type DELETE to confirm permanent delete", keyboardTrace);
         Assert.Contains("Escape:", keyboardTrace);
     }
+
+    [Fact]
+    public void Hosted_Summary_Consent_Explains_Its_Boundary_And_Escape_Cancels()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.HostedSummaryConsentCancelled,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("published transcript text", automationTrace, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" | Button | Authorize hosted summaries | True", automationTrace);
+        Assert.Contains(" | Button | Cancel hosted summary authorization | True", automationTrace);
+        Assert.Contains("Focus: Authorize hosted summaries", keyboardTrace);
+        Assert.Contains("Escape:", keyboardTrace);
+    }
 }

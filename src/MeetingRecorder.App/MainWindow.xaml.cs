@@ -4047,13 +4047,7 @@ public partial class MainWindow : Window
             var hostedConsentGrantedAtUtc = currentConfig.SummaryHostedRouteConsentGrantedAtUtc;
             if (usesHostedSummaryRoute && hostedConsentVersion < SummaryExperienceResolver.HostedRouteConsentPolicyVersion)
             {
-                var consent = MessageBox.Show(
-                    this,
-                    "Hosted summaries can send published transcript text to the selected hosted provider. Continue only if you authorize that route and any configured fallback.",
-                    "Authorize hosted summaries",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-                if (consent != MessageBoxResult.Yes)
+                if (!TryConfirmHostedSummaryConsent())
                 {
                     SetConfigSaveStatus("Hosted summary changes were not saved.");
                     return;
@@ -15305,6 +15299,112 @@ public partial class MainWindow : Window
                         Children =
                         {
                             deleteButton,
+                            cancelButton,
+                        },
+                    },
+                },
+            },
+        };
+
+        return confirmationWindow.ShowDialog() == true;
+    }
+
+    private bool TryConfirmHostedSummaryConsent()
+    {
+        var confirmationWindow = new Window
+        {
+            Title = "Authorize hosted summaries",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 460,
+            MaxWidth = 640,
+            Background = Brushes.White,
+        };
+        AutomationProperties.SetName(confirmationWindow, "Authorize hosted summaries");
+
+        var authorizeButton = new Button
+        {
+            Content = "Authorize hosted summaries",
+            Width = 190,
+            Height = 34,
+        };
+        AutomationProperties.SetName(authorizeButton, "Authorize hosted summaries");
+        AutomationProperties.SetHelpText(
+            authorizeButton,
+            "Allows the selected hosted summary provider to receive published transcript text.");
+        authorizeButton.Click += (_, _) =>
+        {
+            confirmationWindow.DialogResult = true;
+            confirmationWindow.Close();
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            Width = 90,
+            Height = 34,
+            Margin = new Thickness(10, 0, 0, 0),
+            IsCancel = true,
+        };
+        AutomationProperties.SetName(cancelButton, "Cancel hosted summary authorization");
+        cancelButton.Click += (_, _) =>
+        {
+            confirmationWindow.DialogResult = false;
+            confirmationWindow.Close();
+        };
+        confirmationWindow.PreviewKeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key != Key.Escape)
+            {
+                return;
+            }
+
+            confirmationWindow.DialogResult = false;
+            confirmationWindow.Close();
+            eventArgs.Handled = true;
+        };
+
+        var disclosureText = new TextBlock
+        {
+            Margin = new Thickness(0, 10, 0, 0),
+            Text = "Hosted summaries can send published transcript text to the selected hosted provider. Continue only if you authorize that route and any configured fallback.",
+            TextWrapping = TextWrapping.Wrap,
+        };
+        AutomationProperties.SetName(
+            disclosureText,
+            "Hosted summaries can send published transcript text to the selected hosted provider.");
+
+        confirmationWindow.Content = new Border
+        {
+            Padding = new Thickness(18),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Authorize hosted summaries?",
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    disclosureText,
+                    new TextBlock
+                    {
+                        Margin = new Thickness(0, 10, 0, 0),
+                        Text = "Cancel keeps these Settings changes unsaved.",
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new StackPanel
+                    {
+                        Margin = new Thickness(0, 16, 0, 0),
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children =
+                        {
+                            authorizeButton,
                             cancelButton,
                         },
                     },

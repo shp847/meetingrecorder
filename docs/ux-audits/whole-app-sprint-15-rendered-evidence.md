@@ -53,6 +53,12 @@ Its accessible text input and cancel action are named, the irreversible action
 is disabled before exact `DELETE`, and Escape cancels with focus back on the
 Meetings list. No synthetic artifact is deleted.
 
+Hosted-summary consent rendered at 1280×800/125% as
+`20260930-081412/023b284f223a402393fe3033822e8864/hosted-summary-consent-cancelled-1280x800-125.png`
+with SHA-256 `011e1ee6f88d372740d08279d1bc79073d85e372c9d5f82e4c4b4ee15424dbe1`.
+The disclosure names published transcript text before authorization. Its named
+Cancel action and Escape leave the isolated Settings config unsaved.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -73,5 +79,6 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-hosted-consent, profile-delete, and detail-return journeys remain unexecuted.
-Their evidence is still required before Sprint 15 can be marked `Done`.
+profile-delete, detail-return, OS per-monitor DPI, high contrast, packaged UI,
+and Narrator journeys remain unexecuted. Their evidence is still required before
+Sprint 15 can be marked `Done`.

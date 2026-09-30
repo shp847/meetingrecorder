@@ -171,6 +171,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.HostedSummaryConsentCancelled => "hosted-summary-consent-cancelled",
                 SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
                 SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
                 SyntheticShellState.SettingsRecording => "settings-recording",
@@ -214,7 +215,7 @@ internal static class WpfRenderHarness
             }
 
             IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
-            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved)
+            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.HostedSummaryConsentCancelled)
             {
                 if (!settingsAction.Focus())
                 {
@@ -228,6 +229,18 @@ internal static class WpfRenderHarness
                 settingsWindow.UpdateLayout();
                 settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
                 WriteProgress(progressPath, "settings-opened");
+
+                if (state == SyntheticShellState.HostedSummaryConsentCancelled)
+                {
+                    return CaptureHostedSummaryConsentCancellation(
+                        window,
+                        settingsWindow,
+                        liveConfig,
+                        logicalWidth,
+                        logicalHeight,
+                        rasterScale,
+                        rootDirectory);
+                }
 
                 if (state == SyntheticShellState.SettingsRecordingSaved)
                 {
@@ -660,6 +673,107 @@ internal static class WpfRenderHarness
         return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
     }
 
+    private static WpfRenderEvidence CaptureHostedSummaryConsentCancellation(
+        Window window,
+        Window settingsWindow,
+        LiveAppConfig liveConfig,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory)
+    {
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var screenshotPath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-keyboard-trace-{scaleToken}.txt");
+        RequireElement<Button>(settingsWindow, "SettingsSummariesSectionButton").RaiseEvent(
+            new RoutedEventArgs(Button.ClickEvent));
+        var summaryEnabled = RequireElement<CheckBox>(window, "ConfigSummaryGenerationEnabledCheckBox");
+        var providerPreference = RequireElement<ComboBox>(window, "ConfigSummaryProviderPreferenceComboBox");
+        var saveChanges = RequireElement<Button>(settingsWindow, "SaveChangesButton");
+        var footerStatus = RequireElement<TextBlock>(settingsWindow, "FooterStatusTextBlock");
+        summaryEnabled.IsChecked = true;
+        providerPreference.SelectedValue = MeetingSummaryProviderPreference.OpenAiOnly;
+        WaitForCondition(settingsWindow.Dispatcher, () => saveChanges.IsEnabled, TimeSpan.FromSeconds(10));
+        if (!saveChanges.Focus())
+        {
+            throw new InvalidOperationException("Save Changes must accept focus before hosted-summary consent.");
+        }
+
+        Window? consentWindow = null;
+        var dialogObserved = false;
+        var keyboardTrace = new List<string>();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var cancellationTimer = new DispatcherTimer(DispatcherPriority.Send, window.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(25),
+        };
+        cancellationTimer.Tick += (_, _) =>
+        {
+            consentWindow ??= Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate =>
+                !ReferenceEquals(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
+            if (consentWindow is null)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    cancellationTimer.Stop();
+                    window.Close();
+                }
+
+                return;
+            }
+
+            cancellationTimer.Stop();
+            dialogObserved = true;
+            consentWindow.UpdateLayout();
+            consentWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            var disclosure = FindDescendant<TextBlock>(consentWindow, textBlock =>
+                AutomationProperties.GetName(textBlock).Contains("published transcript text", StringComparison.Ordinal));
+            var authorizeButton = FindDescendant<Button>(consentWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Authorize hosted summaries", StringComparison.Ordinal));
+            var cancelButton = FindDescendant<Button>(consentWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Cancel hosted summary authorization", StringComparison.Ordinal));
+            if (disclosure is null || authorizeButton is null || cancelButton is null)
+            {
+                throw new InvalidOperationException("Hosted-summary consent must expose its disclosure and named choices.");
+            }
+
+            SaveScreenshot(consentWindow, screenshotPath, rasterScale);
+            File.WriteAllLines(automationTracePath, CreateAutomationTrace(disclosure, authorizeButton, cancelButton));
+            if (!authorizeButton.Focus())
+            {
+                throw new InvalidOperationException("Hosted-summary authorization must accept keyboard focus.");
+            }
+
+            keyboardTrace.Add("Focus: " + GetFocusedName());
+            var source = PresentationSource.FromVisual(consentWindow)
+                ?? throw new InvalidOperationException("Hosted-summary consent has no presentation source for Escape validation.");
+            consentWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            });
+        };
+
+        cancellationTimer.Start();
+        saveChanges.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        cancellationTimer.Stop();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        if (!dialogObserved || consentWindow?.IsVisible == true)
+        {
+            throw new InvalidOperationException("Hosted-summary consent did not open and cancel through Escape.");
+        }
+
+        if (liveConfig.Current.SummaryHostedRouteConsentVersion >= SummaryExperienceResolver.HostedRouteConsentPolicyVersion ||
+            !string.Equals(footerStatus.Text, "Hosted summary changes were not saved.", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Cancelling hosted-summary consent must leave the isolated profile unchanged.");
+        }
+
+        keyboardTrace.Add("Escape: " + GetFocusedName());
+        File.WriteAllLines(keyboardTracePath, keyboardTrace);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
     private static T? FindDescendant<T>(DependencyObject root, Func<T, bool>? predicate = null)
         where T : DependencyObject
     {
@@ -699,5 +813,6 @@ internal static class WpfRenderHarness
         SettingsRecording,
         SettingsRecordingSaved,
         PermanentDeleteCancelled,
+        HostedSummaryConsentCancelled,
     }
 }

@@ -2448,7 +2448,10 @@ Sprint 14 acceptance criteria:
 - Evidence and date: 2026-09-30: the isolated synthetic permanent-delete
   confirmation renders named controls, requires exact typed confirmation, and
   cancels on Escape without deleting any artifact. Focus returns to Meetings.
-- Remaining gap or next action: execute hosted-consent, profile-delete, and detail-return
+- Evidence and date: 2026-09-30: hosted-summary consent now uses an app-owned
+  modal that states the published-transcript boundary before authorization.
+  Its cancel action and Escape preserve unsaved synthetic Settings changes.
+- Remaining gap or next action: execute profile-delete and detail-return
   fixtures; capture packaged UI states; validate high contrast, OS DPI, and
   Narrator before marking this sprint done.
 

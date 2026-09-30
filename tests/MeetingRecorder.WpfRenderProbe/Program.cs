@@ -29,6 +29,7 @@ var syntheticState = state switch
     "settings-recording" => WpfRenderHarness.SyntheticShellState.SettingsRecording,
     "settings-recording-saved" => WpfRenderHarness.SyntheticShellState.SettingsRecordingSaved,
     "permanent-delete-cancelled" => WpfRenderHarness.SyntheticShellState.PermanentDeleteCancelled,
+    "hosted-summary-consent-cancelled" => WpfRenderHarness.SyntheticShellState.HostedSummaryConsentCancelled,
     _ => throw new ArgumentException($"Unknown synthetic state '{state}'."),
 };
 
