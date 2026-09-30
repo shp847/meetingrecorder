@@ -131,7 +131,7 @@ records an approved dependency change.
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Partial` | 2026-09-29: speaker review/profile focus and semantic acceptance contract documented; fixture render matrix remains. |
-| 16 — Documentation, Installer, And Release Smoke | `Ready` | Release evidence matrix, privacy/docs boundaries, package provenance, and installed smoke gates defined below. |
+| 16 — Documentation, Installer, And Release Smoke | `Partial` | 2026-09-29: S1–S15 acceptance matrix added; package gates remain open and upstream Partial evidence is explicit. |
 
 ### Speaker Name Recognition Revised Plan
 
@@ -4068,8 +4068,8 @@ Sprint 15 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 acceptance-matrix slice).
 - User outcome: shipped speaker cleanup, local voice-memory, and recovery behavior is traceable, privacy-safe, and demonstrably works from installed product—not only source checkout.
 - Scope / non-goals: turn accepted S1–S15 behavior into release evidence, docs, package validation, and support-ready recovery guidance. Do not claim unbuilt roadmap behavior, publish any release, upload assets, include private meetings/profiles/audio in evidence, or treat a developer deployment as installer/update validation.
 - Dependencies and decisions: S1–S15 define contracts; `README.md`, `SETUP.md`, `ARCHITECTURE.md`, `PRODUCT_REQUIREMENTS.md`, `RELEASING.md`, `DESIGN.md`, fixture docs, and package scripts are authority. Existing docs already describe local diarization and MSI path, but no release matrix proves expanded review/profile behavior. Only versioned `MeetingRecorder-v<version>-win-x64.zip` is a valid in-app-update asset; installer/MSI/bundle and installed startup must separately pass.
@@ -4082,7 +4082,8 @@ Sprint 15 acceptance criteria:
 - Tests and rendered checks: acceptance-matrix completeness/no false `Done`; source and fixture regression suite; serialization/log/export/provider scans for profile/audio exclusion; installer layout/integrity/apphost assertions; installed smoke; S15 fixture screenshots at 1280x800 and 1440x900/1920x1080, 100%/125%, keyboard/Narrator or UI-automation focus graph, high contrast, long strings, active/busy/error/recovery states. Any clip-cache cleanup, generated summary, or worker result is checked after restart where its contract requires persistence.
 - Documentation / installer / release work: README gives concise capability/privacy boundary; SETUP covers model readiness, local profile data, recovery, and accessibility route; ARCHITECTURE documents artifact boundaries/revisions/freshness; PRODUCT_REQUIREMENTS states user promises; RELEASING carries command order, package provenance, smoke, rollback/support evidence and authorized publish boundary. Behavior changes require fresh installer assets and relevant docs; this planning-only change does not rebuild packages or run a release.
 - Evidence and date: 2026-09-27 audit found local-diarization/readme, MSI/setup, release-script, and fixture-template coverage, but no S1–S15 traceability matrix, installed speaker-review smoke, profile-payload artifact scan, or package provenance tying expanded behavior to a shipped build.
-- Remaining gap or next action: create matrix with current source/test ownership; implement and verify earliest missing S1 contract before declaring any speaker sprint `Done`.
+- Evidence and date: 2026-09-29 added `docs/speaker-review-release-matrix.md`, which maps S1–S15 contracts to current test/doc evidence and explicitly marks missing persistence, UI, fixture, and package proof as open.
+- Remaining gap or next action: implement and verify the listed upstream gaps, then run Test-All, installer build, and installed smoke from a clean committed revision before declaring any speaker sprint Done.
 
 Goal: ship the behavior as a documented product path.
 
