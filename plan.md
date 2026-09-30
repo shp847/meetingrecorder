@@ -398,17 +398,24 @@ unchanged.
   refresh. The regenerated 271-row ownership/consent policy includes the new
   destructive import-archive setting as `explicit-per-action`; both
   `Validate-UxAudit.ps1` and `Validate-UxControlPolicy.ps1` pass. A test-only
-  STA WPF harness now renders the setup-blocked shell from an isolated temp
-  profile without starting the production entry point, acquiring the mutex, or
-  accessing the installed profile. Its automation and keyboard traces prove
-  the shell's named primary action, navigation, visible setup status, and focus
-  route at 1280x800/100% only. This is not evidence for a production launch,
-  all required fixture states, 125% DPI, or screen-reader behavior.
-- Remaining gap or next action: use the isolated test harness to capture the
-  five required synthetic states at 1280x800/100% and 125%, hash and review
-  the ignored artifacts, and add the redacted evidence record. Then replay the
-  documented keyboard/accessibility paths; do not use the live installed
-  profile or change production instance behavior for this audit.
+  STA WPF harness renders from an isolated temp profile without starting the
+  production entry point, acquiring the mutex, or accessing the installed
+  profile. It now builds all required synthetic states (`empty/healthy`,
+  `setup-blocked`, `processing`, `selection-active`, and
+  `cleanup-recommendation`) through real configuration, catalog, manifest, and
+  contained-cleanup contracts, and exposes a shared 125% raster path. Focused
+  harness project builds pass with `UseAppHost=false`; this avoids an unrelated
+  shared-temp apphost access denial. Direct VSTest runs in the current executor
+  are forcibly cut off at 30 seconds before a result is reported, and policy
+  disallows the bounded hidden background test process used to observe a longer
+  run. Therefore no screenshot, automation, keyboard, DPI, or screen-reader
+  claim is made from these fixtures yet.
+- Remaining gap or next action: run each isolated fixture in an execution
+  environment that permits VSTest to report completion, save the resulting
+  redacted 1280x800/100% and 125% artifacts beneath the ignored audit root,
+  hash and review them, and add the evidence record. Then replay the documented
+  keyboard/accessibility paths; do not use the live installed profile or change
+  production instance behavior for this audit.
 
 Goal: prove where overwhelm comes from before changing the experience.
 
