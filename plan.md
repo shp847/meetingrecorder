@@ -129,7 +129,7 @@ records an approved dependency change.
 | 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
 | 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
-| 14 — Calibration And Experience Harness | `Ready` | Define versioned blinded corpus, false-attribution gates, reproducible promotion, and runtime-safe experience fixtures. |
+| 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Ready` | Define fixture-driven Technical Studio review/profile UX, focus graph, and rendered assistive acceptance. |
 | 16 — Documentation, Installer, And Release Smoke | `Ready` | Release evidence matrix, privacy/docs boundaries, package provenance, and installed smoke gates defined below. |
 
@@ -3969,8 +3969,8 @@ Sprint 13 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: fixture/calibration scripts, threshold parser, replay tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: fixture/calibration scripts, threshold parser, replay tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 promotion gate slice).
 - User outcome: threshold/model changes demonstrably reduce manual cleanup without silently increasing wrong automatic names.
 - Scope / non-goals: turn existing synthetic fixture tooling into a controlled quality/release harness. Do not use fixture labels/names/files/attendees as runtime hints, train production profiles from corpus data, collect user meeting data, or auto-promote thresholds.
 - Dependencies and decisions: S9 defines false attribution severity; S11 diagnosis and S15 UX states consume results. Existing scripts support metadata-only calibration candidates. Build a versioned corpus manifest separating public synthetic fixtures from access-controlled consented audio; runtime sees neither labels nor expected outcomes. Candidate config is test-only/explicit and cannot change production defaults outside reviewed release config.
@@ -3983,6 +3983,7 @@ Sprint 13 acceptance criteria:
 - Tests and rendered checks: manifest/schema/hash/split validation, deterministic replay, metric arithmetic/gates, false-auto no-go, baseline/candidate regression, missing/corrupt/unauthorized fixture handling, promotion/rollback metadata, production isolation/redaction, and rendered state matrix at 100/125%.
 - Documentation / installer / release work: document corpus governance, command, promotion authority, no-go rules, report retention/redaction, and release evidence. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found candidate allowlists, metadata-only dry runs and fixture replay, but no labeled/blinded corpus contract, release promotion decision record, false-auto gate, production-isolation proof, or experience-fixture matrix.
+- Evidence and date: 2026-09-29 added `DiarizationPromotionGate` tests that prohibit promotion for incomplete protected evidence, protected false automatic attribution, reduced speaker-count correctness, or higher false-auto counts; passing candidates still require human review.
 - Remaining gap or next action: add corpus-manifest schema and synthetic protected-case metrics before any threshold change.
 
 Goal: prove the system reduces manual effort without unsafe automatic naming.
