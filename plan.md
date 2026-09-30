@@ -7643,16 +7643,16 @@ polish.
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: reusable disposable-device reset and evidence checklist created; no clean-machine claim made).
 - User outcome: self-serve work removes real first-run friction based on clean-machine evidence, not assumptions.
 - Scope / non-goals: inventory/baseline only. Do not retire controls/change installer/store/package/settings, collect private user data, or treat developer machine behavior as clean-machine proof.
 - Dependencies and decisions: current MSI/portable/update/setup/capture contracts and design guidance are authority. Define VM/physical clean-machine reset/image/version/network/permission/model state, synthetic consent-safe journey fixtures, observer checklist and source/test/package/installed/live evidence separation.
 - Implementation slices: 1. Capture first install/launch/model prep/record/publish/reopen/update/uninstall/recovery journey timings/errors/controls with redacted screenshots. 2. Build public-control inventory: normal user, advanced/support, developer/deprecated; owner, dependency, telemetry-free evidence, replacement/retirement/migration/rollback. 3. Gate retirement on user task parity/accessibility/support route, not hidden control count.
 - Tests and rendered checks: repeatable clean-reset checklist, journey/action inventory, viewport/keyboard/Narrator screens, installer/update evidence and no private capture.
 - Documentation / installer / release work: store baseline/retirement ledger in repo docs; no package change.
-- Evidence and date: no clean-machine evidence or approved public-control retirement ledger found.
-- Remaining gap or next action: create disposable clean-machine script/checklist and inventory before UI changes.
+- Evidence and date: 2026-09-29 added `docs/clean-machine-baseline.md`, a disposable VM/device reset record, generated-fixture journey, evidence-redaction, and control-retirement ledger checklist. No clean-machine observation or product-owner retirement approval is claimed.
+- Remaining gap or next action: execute the checklist on a clean machine and complete the public-control inventory before UI changes.
 
 Goal: replace source-only assumptions with real low-technical-user evidence
 before changing public workflows.
