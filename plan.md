@@ -98,7 +98,7 @@ records an approved dependency change.
 | 5 — Needs Attention Inbox | `Done` | 2026-09-29: metadata-only triage resolver and focused evidence below. |
 | 6 — Processing View | `Done` | 2026-09-29: existing backlog projection, ASAP lifecycle, UI wiring, and focused evidence verified below. |
 | 7 — Selection Strip Redesign | `Done` | 2026-09-29: existing shared catalog/selection contract and focused evidence verified below. |
-| 8 — Action Grouping | `Ready` | Canonical action taxonomy, surface parity, destructive/recovery boundaries, and verification plan below. |
+| 8 — Action Grouping | `Done` | 2026-09-29: canonical family catalog, context/detail bindings, and focused evidence verified below. |
 | 9 — Cleanup Consolidation | `Ready` | Recommendation/inbox routing, advanced review, preview/execution ledger, and verification plan below. |
 | 10 — Meeting Detail Task Center | `Ready` | Read-first detail state, revision/draft safety, action/recommendation parity, and verification plan below. |
 | 11 — Transcript And Summary Reading | `Ready` | Transcript-first reader model, summary independence/provenance, setup routing, and verification plan below. |
@@ -2854,8 +2854,8 @@ Acceptance: the strip explains context instead of listing unrelated commands.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: actions are easy to scan by intent, behave identically wherever invoked, and make permanence/recovery unmistakable.
 - Scope / non-goals: reorganize existing action presentation/catalog. Do not alter command implementations, add new permissions, auto-run a group, or remove advanced access.
 - Dependencies and decisions: consume Sprint 1 ownership, S7 eligibility/preview, Sprint 10 queue safety, and Sprint 14 copy. `MeetingActionCatalog` is single authority for intent, group, scope, label, accessible description, eligibility/blocked reason, confirmation, dispatch/result, recoverability, and advanced visibility. Groups: Open, Fix, Organize, Processing, DangerZone; navigation never mixed with mutation.
@@ -2867,8 +2867,8 @@ Acceptance: the strip explains context instead of listing unrelated commands.
   5. Preserve keyboard/context behavior, visible focus, tooltips/accessibility, selection preview, busy/reentry protection, operation result summary, and Advanced discoverability through layout change.
 - Tests and rendered checks: catalog completeness/parity tests; action group/order/scope/blocked/confirmation matrix for none/single/multi/busy/stale; delete exclusion from auto/recommendation; archive/delete copy/result; keyboard/context/detail parity and focus. Render compact/expanded groups at 1280x800/125% and screen-reader test headings/menu labels.
 - Documentation / installer / release work: update action glossary/recoverability guidance after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 plan/source audit found actions spread through tool cards, context menu, cleanup and detail, with partial shared selection state but no canonical all-surface grouping contract.
-- Remaining gap or next action: create catalog fixture and map delete/archive/ASAP/retry/labels first; assert no direct unregistered destructive handler before moving buttons.
+- Evidence and date: 2026-09-27 plan/source audit found actions spread through tool cards, context menu, cleanup and detail, with partial shared selection state but no canonical all-surface grouping contract. 2026-09-29 verified `MeetingActionCatalog` as the canonical Open/Fix/Organize/Processing/Danger taxonomy, context-menu family visibility and catalog presentation, and `MeetingDetailTaskCenter` family-to-section mapping. Archive is explicitly Organize/recoverable while permanent delete is Danger with typed confirmation; the catalog tests mechanically cover the deletion policy. Focused catalog, interaction, and XAML tests passed 188/188 using an isolated build root.
+- Remaining gap or next action: Sprint 9 — consolidate cleanup discovery/review over the shared recommendation and inbox contracts.
 
 - Group row/menu/detail actions into `Open`, `Fix`, `Organize`, `Processing`,
   and `Danger Zone`.

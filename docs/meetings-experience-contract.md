@@ -118,3 +118,12 @@ Busy work blocks a new action rather than changing the selected scope; bulk
 actions show eligible counts and retain their existing explicit review or typed
 delete confirmation. A queued or partially applied action is reported as such,
 not as completed meeting work.
+
+## Action families
+
+The catalog groups actions as Open, Fix, Organize, Processing, and Danger.
+Context and detail surfaces consume those families without changing labels,
+cardinality, eligibility, confirmation, or outcome target. Archive remains an
+Organize action with its recoverability route; permanent delete is Danger only,
+requires typed confirmation, and is excluded from recommendations and automatic
+cleanup.
