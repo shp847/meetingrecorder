@@ -96,7 +96,7 @@ records an approved dependency change.
 | 3 — Recommendation Engine | `Done` | 2026-09-29: deterministic metadata-only ranking, bounded dismissal, and focused evidence below. |
 | 4 — View Presets | `Done` | 2026-09-29: existing preset resolver, migration, toolbar contract, and focused evidence verified below. |
 | 5 — Needs Attention Inbox | `Done` | 2026-09-29: metadata-only triage resolver and focused evidence below. |
-| 6 — Processing View | `Ready` | Queue-view projection, freshness/ETA rules, safe action boundaries, and verification plan below. |
+| 6 — Processing View | `Done` | 2026-09-29: existing backlog projection, ASAP lifecycle, UI wiring, and focused evidence verified below. |
 | 7 — Selection Strip Redesign | `Ready` | Selection-state projection, per-action eligibility/preview, immutable execution scope, and verification plan below. |
 | 8 — Action Grouping | `Ready` | Canonical action taxonomy, surface parity, destructive/recovery boundaries, and verification plan below. |
 | 9 — Cleanup Consolidation | `Ready` | Recommendation/inbox routing, advanced review, preview/execution ledger, and verification plan below. |
@@ -2795,8 +2795,8 @@ Acceptance: the user has one obvious place for "what needs me?"
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: backlog work is readable as meetings and stages, with honest ETA/pause/priority state and safe recovery actions.
 - Scope / non-goals: derive a Processing preset from existing queue/persisted backlog. Do not change worker scheduling, priority, interruption, ETA algorithms, or preempt capture.
 - Dependencies and decisions: reuse Sprint 10 backlog resolver and S10A ASAP lifecycle. Live snapshot wins only while fresh; persisted state is `previously known backlog`, not live work. A queue item states identity/title, current/next stage, run/paused reason, priority/ASAP, recoverability, ETA confidence, and action eligibility; raw manifest/process detail remains Advanced.
@@ -2808,8 +2808,8 @@ Acceptance: the user has one obvious place for "what needs me?"
   5. Keep Rush Backlog/ASAP distinct, show one bounded priority target, preempted item recovery, label continuation, and pause-bypass scope. No bulk acceleration implicitly interrupts a worker or active recording.
 - Tests and rendered checks: queue resolver tests for active/queued/paused, stale/persisted/empty, item disappearance, stage/ETA confidence, ASAP/preempted/clear, deferred labels, failed recovery, recording protection, and action eligibility. Extend existing strip/header tests; render long queues/action confirmations at 1280x800/125% with keyboard/accessibility labels.
 - Documentation / installer / release work: document queue vocabulary/ETA confidence/priority boundaries after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found `ProcessingQueueStatusSnapshot`, strip/header projections, persisted fallback, ETA/diarization/ASAP tests. No dedicated bounded Processing view or cross-item action state contract.
-- Remaining gap or next action: create resolver fixtures for fresh active, pause by recording, stale snapshot plus persisted backlog, and ASAP speaker-label continuation before binding new view.
+- Evidence and date: 2026-09-27 review found `ProcessingQueueStatusSnapshot`, strip/header projections, persisted fallback, ETA/diarization/ASAP tests. No dedicated bounded Processing view or cross-item action state contract. 2026-09-29 verified the existing app-wired `BacklogExperienceResolver` and `AsapLifecycleResolver`: fresh live queue truth, stale/saved-only refresh-required state, recording-protected pause, measured-only ETA, safe recovery intents, failure-stage routing, and transcript/publication/speaker-label ASAP continuation are all preserved. Focused backlog, ASAP, and XAML tests passed 72/72 using an isolated build root. Worker scheduling, priority, and capture behavior were not changed.
+- Remaining gap or next action: Sprint 7 — unify selection eligibility and action preview state.
 
 - Make `Processing` the backlog/work-queue view.
 - Show active item, queued items, paused reason, ETA, ASAP request, and rush

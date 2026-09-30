@@ -92,3 +92,18 @@ integrity concern remains visible even when a lower recommendation is
 dismissed. A stale catalog yields `Refresh required`, never all-clear; an empty
 fresh catalog says `No meetings yet`, while a fresh catalog with no triage rows
 says `All current meetings are clear`.
+
+## Processing view
+
+The processing strip derives its status from `BacklogExperienceResolver` and
+the durable ASAP lifecycle; neither starts, reprioritizes, or interrupts work.
+A fresh live queue is the only source that can say Processing, Queued, or show
+a measured ETA. A stale snapshot or saved-only backlog says `Status needs
+refresh`; a recording-protected pause says so and shows no ETA. Failure and
+recovery routes are bounded review intents such as retry transcript, publish
+transcript, speaker labels later, setup, or refresh—not completion claims.
+
+ASAP follows one explicit meeting through transcript, publication, and eligible
+speaker labels. Clear ASAP releases future priority only; it never cancels
+active work. Queue acceleration and recovery remain unavailable while live
+recording is protected.
