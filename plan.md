@@ -7295,8 +7295,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on the blocked capture-admission and health authority).
 - User outcome: users can deliberately begin local notes/capture with truthful confidence from any app surface.
 - Scope / non-goals: add meeting context/raw notes/controller over existing capture. Do not auto-start from calendar/detection, join meetings/bots, expose attendees/calendar details without existing consent, or treat detection as recording permission.
 - Dependencies and decisions: S0 capture admission/health and current calendar/detection/privacy policy are authority. Context candidates are local, revisioned, freshness/provenance-rated; `Open Note + Start Recording` is explicit user action. Raw note autosave is atomic/local and separates draft from transcript/summary.
@@ -7323,8 +7323,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on the blocked Sprint 1 raw-note and capture contracts).
 - User outcome: people can write/edit notes and action items while seeing what is raw, inferred, grounded, unverified, or reviewed.
 - Scope / non-goals: add local note/action artifacts and provenance. Do not silently alter raw notes/transcript, auto-send tasks, claim model output is fact, or share/provider-send content outside existing consent.
 - Dependencies and decisions: raw-note draft/capture and transcript/summary provenance are authority. Every block/action/decision has stable id, revision, source links/ranges/fingerprint, author/origin/review status and local-only draft/published boundary; link absence means ungrounded, not invented citation.
@@ -7350,8 +7350,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on blocked Sprint 2 note/action provenance).
 - User outcome: users can find local meeting knowledge/actions with source links, freshness and clear scope.
 - Scope / non-goals: add local rebuildable recall/action inbox. Do not upload/index hidden content, claim exhaustive/authoritative answer, auto-complete/send actions, or bypass retention/access boundaries.
 - Dependencies and decisions: S2 note/action provenance and existing meeting artifacts are authority. Index is derived/local/versioned/rebuildable with per-item source revision/retention/access scope; search result/Q&A returns cited source ids/snippets only within allowed local scope, otherwise unknown/no answer.
@@ -7379,8 +7379,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on blocked reviewed action and recall contracts).
 - User outcome: users turn reviewed local meeting evidence into reusable follow-up drafts without accidental external action.
 - Scope / non-goals: add local recipes/workbench/copy-export. Do not send email/messages/tasks, invoke external integrations, conceal generated content, or export unreviewed/private data by default.
 - Dependencies and decisions: S2 provenance/review and S3 recall scope govern all inputs. Recipe is versioned local template with allowed source types/required review/output schema; execution produces a mutable draft with input fingerprints/citations/freshness, never an authoritative action.
@@ -7405,8 +7405,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on blocked meeting context, evidence, and recall contracts).
 - User outcome: users can prepare using transparent local memory without false personal facts or hidden cross-meeting sharing.
 - Scope / non-goals: add local people/project/vocabulary memory and briefs. Do not scrape contacts/calendar, infer sensitive traits, create organization profiles, send/share data, or present recalled inference as fact.
 - Dependencies and decisions: S1 context/S2 evidence/S3 retention access scope apply. Memory entity has stable local id, user-created/approved source, revision, provenance/freshness/confidence/conflict/tombstone and allowed scope; inferred candidate stays draft until review. Vocabulary feedback changes local recognition preference only with explicit review/version/rollback.
@@ -7431,8 +7431,8 @@ recommend capture, but must never join calls or start recording silently.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on blocked Sprints 1–5 data graph and lifecycle contracts).
 - User outcome: users can see, retain, export, and delete local intelligence data with clear consequences and source provenance.
 - Scope / non-goals: complete local data lifecycle across notes/index/memory/recipes/actions. Do not promise secure erasure beyond storage reality, delete raw meeting artifacts outside chosen policy, export hidden/private source data, or send data externally.
 - Dependencies and decisions: S1–S5 derived data graph and existing artifact retention are authority. Define data classes/owners/paths/derived dependencies/legal/user holds, retention default/override/expiry, provenance and deletion semantics. Derived index/memory/export cache is rebuildable; source artifact is authoritative and deletion cascades only disclosed local derived nodes.
