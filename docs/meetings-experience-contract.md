@@ -167,6 +167,16 @@ name review; profile availability and learning preferences route to Settings.
 The resolver exposes only local metadata state and clear unavailable reasons—no
 audio paths, embeddings, or profile contents.
 
+`SpeakerReviewSnapshotResolver` makes one artifact revision the review boundary:
+`(meeting identity, artifact revision, diarization speaker id)`. A `Speaker Label`
+is the anonymous cluster; a `Meeting Display Name` is mutable presentation; and a
+`Voice Profile` is a local remembered signature. User-entered display names win
+over suggestions and auto-applied profile matches. Suggestions never rename a
+speaker until confirmed, and stale snapshots allow reload only. Rows expose source,
+plain-language reason, confidence bucket, local-profile reference, evidence and
+learning readiness, and repair warning—never samples, embeddings, audio paths, or
+profile contents.
+
 ## Bulk-operation previews
 
 `BulkOperationPlanner` snapshots each target's identity, displayed title,

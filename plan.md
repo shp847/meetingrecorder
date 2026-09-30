@@ -116,7 +116,7 @@ records an approved dependency change.
 
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
-| 1 — Speaker Identity Contract | `Ready` | Define revisioned speaker identity/review records, precedence, privacy boundary, and migration proof. |
+| 1 — Speaker Identity Contract | `Done` | 2026-09-29: revisioned safe review snapshot, precedence, migration-safe source state, and privacy tests verified below. |
 | 2 — Speaker Review Surface Foundation | `Ready` | Define transcript-adjacent review well, draft semantics, and clear naming-versus-repair routes. |
 | 3 — Contextual Transcript Evidence | `Ready` | Define deterministic, bounded local evidence selection with truthful weak-evidence states. |
 | 4 — Inline Audio Clip Playback | `Ready` | Define bounded local clip derivation, cache lifecycle, recording safety, and one-session playback. |
@@ -3319,8 +3319,8 @@ users expect speaker cleanup to work.
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: transcript name-source metadata, profile matcher/correction service, detail label rows); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: transcript name-source metadata, profile matcher/correction service, detail label rows); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation: revisioned safe review snapshot and migration-state tests).
 - User outcome: every displayed speaker name has a plain explanation and stable scope; a correction cannot be mistaken for a diarization label or silently overwritten by a profile match.
 - Scope / non-goals: establish the shared identity/review schema used by later diarization sprints. Do not change clustering quality, add per-paragraph attribution, expose embeddings, or broaden profile sharing beyond the existing local-only store.
 - Dependencies and decisions: retain generic diarization speaker id/label as source truth and use current published-transcript schema compatibility. Existing `SpeakerLabelInfo` carries display name, source, suggestion, profile id/confidence/reason and detail rows add accept/reject draft state, but no single revisioned review record has evidence/learning/repair readiness. Speaker identity is `(meeting stable identity, transcript/artifact revision, diarization speaker id)`; display label is mutable presentation, never the key.
@@ -3333,7 +3333,8 @@ users expect speaker cleanup to work.
 - Tests and rendered checks: schema round-trip and backward/unknown-value migration; snapshot resolver matrix for generic/user/suggested/auto/stale/repair/unavailable/learning-disabled; precedence and all-turn scope; stale-write/retry/idempotence; rejection/suppression; privacy serialization/log scan. Test detail/list result parity and render source/reason/warning text with long names and no raw identifiers at 1280x800/125%, keyboard/screen-reader label/source association.
 - Documentation / installer / release work: document label versus person name versus local voice profile, scope, source explanations, and local-data boundary when shipped. No installer work until behavior changes; Sprint 16 owns diarization release gates.
 - Evidence and date: 2026-09-27 audit found `SpeakerNameSource`/decision metadata, profile matcher/correction/learning tests, and `MeetingDetailSpeakerLabelEditorRow`, but no common review snapshot, revision key, explicit precedence/migration contract, or proof all render paths preserve the privacy boundary.
-- Remaining gap or next action: add a pure review-snapshot resolver and a legacy transcript fixture before changing the detail grid or profile learning behavior.
+- Evidence and date: 2026-09-29 added `SpeakerReviewSnapshotResolver` and matrix tests for generic/user/suggested/auto/unknown sources, freshness, repair, evidence, learning readiness, and privacy-safe explanation fields. Existing correction/learning services retain revision-checked all-turn writes, suppression, and local-only profile behavior.
+- Remaining gap or next action: Sprint 2 can bind snapshots to the detail-grid replacement; legacy label-only artifacts resolve as generic rows without profile claims.
 
 Goal: remove ambiguity between anonymous diarization labels and remembered
 person names.
