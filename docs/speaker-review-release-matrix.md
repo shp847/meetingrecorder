@@ -10,7 +10,7 @@
 | Summary freshness | `MeetingSummaryAttributionStateResolverTests` | Partial: persisted provenance/manual regeneration pending |
 | Profile lifecycle/privacy | store/matcher/lifecycle tests and `TranscriptSchemaTests` | Partial: store serialization and package exclusion scan pending |
 | Calibration no-go | calibration-script and promotion-gate tests | Partial: corpus manifest/metrics report pending |
-| Installer/package smoke | `Test-All.ps1`, `Build-Installer.ps1`, `Smoke-Test-Release.ps1` | Open: must run on a clean committed revision |
+| Installer/package smoke | `Test-All.ps1`, `Build-Installer.ps1`, `Smoke-Test-Release.ps1` | Blocked: 2026-09-29 Test-All built every project, then its core test host hung without results and was cancelled; installer/smoke not run |
 
 Only synthetic or metadata-only fixtures may appear in release evidence. Do not
 include profiles, embeddings, audio, transcript content, paths, or secrets.
