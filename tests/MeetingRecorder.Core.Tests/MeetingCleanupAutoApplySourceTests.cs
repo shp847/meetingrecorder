@@ -58,6 +58,17 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
+    public void Automatic_Cleanup_Respects_The_Production_Containment_Fence()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var methodStart = source.IndexOf("private bool IsScheduledIncrementalRecommendation", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool CanExecuteAutomaticCleanupRecommendation", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("AutomaticMutationContainmentPolicy.CanDispatch", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Automatic_Queue_Style_Work_Is_Persisted_In_Ledger_Until_Worker_Completion()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

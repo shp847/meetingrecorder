@@ -12567,6 +12567,11 @@ public partial class MainWindow : Window
 
     private bool IsScheduledIncrementalRecommendation(MeetingCleanupRecommendation recommendation)
     {
+        if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation.Action))
+        {
+            return false;
+        }
+
         var plan = _liveConfig.Current.IncrementalWorkPlan;
         return recommendation.Action switch
         {

@@ -6378,8 +6378,8 @@ Sprint 4 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-28: policy, bounded monitor, queue fence, focused tests, installer build, and portable/MSI smoke all passed).
 - User outcome: GPU-idle signal can help an already-approved GPU stage, but missing/unreliable Windows counters never harms normal CPU processing.
 - Scope / non-goals: add optional capacity input after GPU transcription/Speaker DirectML readiness contracts are implemented. Do not select/enable GPU provider, inspect process trees/other applications, make counters prerequisite, increase CPU-only caps, run multiple GPU jobs by default, or collect/upload GPU telemetry.
 - Dependencies and decisions: GPU transcription S5/S8 and diarization readiness plus S1–S4 staged policy are prerequisites. Counter adapter returns opaque aggregate availability/utilization/validity only; no adapter/device/process names. Missing/access-denied/unsupported/multi-adapter/unknown mapping is `Unavailable` and CPU-safe. GPU idleness is advisory and cannot override user CPU/suppression/power/recording/background policy.
@@ -6416,8 +6416,8 @@ Sprint 5 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29: profile/settings/status/docs, focused tests, Test-All with one unrelated fixture failure, installer build, and portable/MSI smoke recorded; desktop visual review remains a release-approval gate).
 - User outcome: people can choose conservative backlog behavior, understand current stage/reason, and receive a packaged feature that never silently changes recording or transcript safety.
 - Scope / non-goals: ship S0–S5 only after stage/output safety proven. Do not make acceleration default, expose raw hardware/paths/debug data, imply exact speed, add sensing dependency, publish automatically, or ship automatic enrichment if atomic artifact/currentness proof is incomplete.
 - Dependencies and decisions: S0–S5 acceptance matrix plus GPU/Speaker/Summary consent contracts are required. Settings profiles are versioned projection of explicit strategy/window/idle policy—not a second scheduler; migration preserves existing profile/user overrides and maps unknown/future safely to conservative normal. Default remains current normal responsive behavior.
@@ -7092,8 +7092,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: automatic archive, merge, and transcript regeneration are fail-closed behind a manual-review containment fence).
 - User outcome: existing recordings and published meetings remain visible and recoverable while the team establishes a trustworthy, privacy-safe picture of capture, source, cleanup, and promotion failures.
 - Scope / non-goals: add containment, evidence, and contract boundaries before remediation. Do not delete, merge, reprocess, upload, or rewrite user artifacts; do not treat historical count claims as proof without a reproducible local inventory; do not expand capture authority or collect real transcript content in diagnostics.
 - Dependencies and decisions: existing artifact, retention, cleanup, manifest, and `.ready` contracts are authority. Freeze automatic destructive actions behind an explicit reversible policy; inventory only source metadata/hashes and provenance; maintain a local, consent-governed quality corpus separate from user artifacts. Each new additive contract must identify owning writer, reader, schema version, retention, redaction, and migration behavior.
@@ -7104,8 +7104,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
   4. Establish the private local corpus protocol, consent/provenance register, aggregate-only metrics, access/revocation rules, and a safe dashboard that cannot leak identifiers, paths, text, or audio.
 - Tests and rendered checks: test containment precedence/restart persistence/manual-route availability, snapshot determinism/corruption/retry/redaction, schema backward reads/unknown fields, no automatic side effect, and corpus/dashboard privacy guards. Review synthetic status states and support wording at normal and high-DPI layouts.
 - Documentation / installer / release work: document containment scope, evidence classes, corpus governance, and the authority/migration map. If any shipped cleanup/capture default changes, update release notes and rebuild/smoke installer assets in that implementation task.
-- Evidence and date: the detailed roadmap lists historical failure signals, but no dated reproducible snapshot, containment receipt set, or governed corpus evidence is linked as of 2026-09-27.
-- Remaining gap or next action: implement the no-mutation containment policy and run the first metadata-only inventory before accepting any historical-count claim.
+- Evidence and date: 2026-09-29 added a fail-closed automatic-mutation containment fence. Automatic archive, merge, and transcript regeneration no longer dispatch; non-destructive incremental speaker-label and summary work retain their existing controls. Focused policy and source-wiring tests are required. A reproducible inventory, suppression receipts, additive schemas, and governed corpus evidence remain open.
+- Remaining gap or next action: run the first metadata-only inventory, persist suppression receipts, and add read-compatible schemas before accepting any historical-count claim.
 
 - Disable automatic destructive cleanup and published-session raw pruning. Keep recommendations visible; do not automatically archive, delete, merge, or reprocess until later gates pass.
 - Replace hard-coded history counts with a timestamped `HistoryInventorySnapshot`: hash and classify published audio, manifest references, retained raw tracks, and lineage-proven archive sources. Never inspect or export transcript content.
