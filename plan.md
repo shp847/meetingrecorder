@@ -2618,8 +2618,8 @@ This plan keeps all richness, but reduces simultaneous choices.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: every Meetings capability has evidence-backed default home; no control disappears or becomes unreachable during simplification.
 - Scope / non-goals: inventory current UI and action routing only. Do not move controls, alter eligibility, or infer user behavior from source count alone.
 - Dependencies and decisions: use Sprint 0-16 UX evidence plus current WPF/action logic. Inventory unit is `intent + scope + surface + eligibility + side effect + recovery`; same intent across surfaces is one capability with parity variants.
@@ -2630,8 +2630,8 @@ This plan keeps all richness, but reduces simultaneous choices.
   4. Add audit validator: every command/control maps to exactly one capability/disposition; every capability has a surface or documented intentional retirement; destructive actions remain explicit/confirmed; no duplicate dispatch routes conflict.
 - Tests and rendered checks: inventory snapshot diff; source/action-handler coverage; journey keyboard/render checks at 1280x800/125%; manually review hidden/disabled/overflow context commands and selection counts.
 - Documentation / installer / release work: store sanitized inventory and disposition report under docs/test evidence after implementation. No installer work for audit-only slice.
-- Evidence and date: 2026-09-27 source audit found dense Meetings toolbar, grid, context, selection, cleanup, inspector, and detail surfaces; no authoritative capability/disposition matrix.
-- Remaining gap or next action: write extractor fixture and first Read/Open Transcript/Archive/Delete journey before making any Meetings layout change.
+- Evidence and date: 2026-09-27 source audit found dense Meetings toolbar, grid, context, selection, cleanup, inspector, and detail surfaces; no authoritative capability/disposition matrix. 2026-09-29 added metadata-only `docs/meeting-capability-inventory.json` and `docs/meeting-friction-audit.md`: all 25 canonical catalog actions have exactly one disposition/home, confirmation/recovery, and discovery surface; 16 supplemental toolbar, cleanup, and import controls retain a named existing XAML surface. The validator confirms catalog parity, destructive typed confirmation, and supplemental source presence. Focused inventory/catalog tests passed 10/10. Native 1280x800/125% keyboard/overflow capture remains a later layout-sprint operational check, not claimed by this audit-only record.
+- Remaining gap or next action: Sprint 1 — define the shared Meetings experience-state and action ownership contract before moving controls.
 
 - Inventory every Meetings toolbar control, row button, context-menu item,
   cleanup-review action, inspector field, and detail-window action.
