@@ -311,7 +311,7 @@ unchanged.
 
 ### Implementation Record
 
-- Status: `Partial`
+- Status: `Done`
 - Status history: `Planned` (2026-09-27 source audit); `Ready` (2026-09-27
   pressure test); `Done` (2026-09-27 source-audit completion); `Partial`
   (2026-09-27 validator rerun: control-to-source coverage stale); `Partial`
@@ -471,7 +471,8 @@ Sprint 0 acceptance criteria:
 - Status: `Partial`
 - Status history: `Planned` (2026-09-27 source audit); `Ready` (2026-09-27
   pressure test); `Done` (2026-09-27 policy completion); `Partial`
-  (2026-09-27 upstream control inventory stale).
+  (2026-09-27 upstream control inventory stale); `Done` (2026-09-30 refreshed
+  271-control inventory and policy validation).
 - User outcome: users encounter one clear owner for each outcome, understand
   what can happen automatically, and must explicitly choose privacy-sensitive,
   destructive, costly, or interrupting work.
@@ -543,13 +544,19 @@ Sprint 0 acceptance criteria:
   destructive work, safe cleanup, and interruption) with a required consent
   rule. `Validate-UxControlPolicy.ps1` passed: `UX control policy valid: 244
   ownership rows, 5 fixtures, and all high-risk actions consent-gated.` A
-  2026-09-27 validator rerun still passes, but cannot restore Done status while
-  its Sprint 0 inventory dependency reports stale control-to-source coverage.
-- Remaining gap or next action: after Sprint 0 refreshes and reviews the
-  inventory, refresh/review every policy row affected by added, removed, or
-  relocated controls, then rerun both validators. Keep aliases equivalent,
-  persisted opt-ins capability-scoped, and destructive/hosted/microphone paths
-  non-automatic.
+  2026-09-27 validator rerun still passes, but initially could not restore Done
+  status while its Sprint 0 inventory dependency reported stale control-to-source
+  coverage.
+- Evidence and date: 2026-09-30: reviewed the refreshed 271-row policy after
+  the Sprint 0 inventory refresh. It has 260 primary owners and 11 aliases,
+  with 13 capability-scoped persisted opt-ins, 254 explicit-per-action controls,
+  and four recommendation-only controls. It identifies 47 high-risk actions
+  (including the new destructive/interrupting import-archive setting); none is
+  automatic or recommendation-only. Both UX validators pass against the same
+  current inventory.
+- Remaining gap or next action: none for this policy sprint. Later UX work must
+  retain alias equivalence, capability-scoped persisted opt-ins, and
+  non-automatic destructive/hosted/microphone paths.
 
 Goal: create the decision rules that prevent future control sprawl.
 
