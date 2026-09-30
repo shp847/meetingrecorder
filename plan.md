@@ -104,7 +104,7 @@ records an approved dependency change.
 | 11 — Transcript And Summary Reading | `Done` | 2026-09-29: pure transcript-first reader state and focused evidence below. |
 | 12 — Speaker Workflow Clarity | `Done` | 2026-09-29: shared speaker state/routing and focused evidence verified below. |
 | 13 — Bulk Operations | `Done` | 2026-09-29: immutable bulk preview/result contract and focused evidence below. |
-| 14 — Archive, Delete, And Recovery Trust | `Ready` | Define archive receipts/recovery, one destructive preflight, and truthful per-target outcomes. |
+| 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-09-29: shared archive/recovery/delete preflight complete; receipt-backed restore execution remains. |
 | 15 — Search And Metadata Simplification | `Ready` | Define one deterministic metadata-only query, facets/counts, and enrichment provenance. |
 | 16 — Safe Background Refresh | `Ready` | Define coalesced refresh policy, visible freshness states, and last-good snapshot safety. |
 | 17 — Imported Meeting Parity | `Ready` | Define imported-source provenance, shared lifecycle parity, and contextual source recovery. |
@@ -3031,8 +3031,8 @@ Acceptance: bulk work stays powerful but no longer surprising.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: archive/delete service, typed confirmation, action-state tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: archive/delete service, typed confirmation, action-state tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 shared preflight implemented; receipt-backed restore remains).
 - User outcome: users can distinguish moving published artifacts aside from erasing them, find enough evidence to recover an archive safely, and see exactly which meetings succeeded or need attention.
 - Scope / non-goals: make user-requested archive, recovery, and permanent delete safe and consistent across row, selection, and detail surfaces. Do not promise OS recycle-bin recovery, restore a deleted meeting, delete arbitrary folders, conflate maintenance repair backups with user archive, or permit archive/delete through recommendations or safe automation.
 - Dependencies and decisions: build on S2 freshness, S7 immutable selection, S8 taxonomy, S9 cleanup exclusion, S10 detail lifecycle, and S13 batch results. Current `ArchiveMeetingAsync` moves published audio/markdown/json/ready-marker to a timestamped archive category and leaves linked session folders; `DeleteMeetingPermanentlyAsync` removes those published artifacts and then a linked session folder when present. Model that exact scope with a receipt; do not call archive a complete backup or delete a reversible operation.
@@ -3044,8 +3044,8 @@ Acceptance: bulk work stays powerful but no longer surprising.
   5. Treat archive/recovery/delete as exclusive maintenance work: prevent concurrent queue/recording/conflicting cleanup mutations, refresh source truth once, clear/close stale selection/detail safely, retain failures with retry/recovery reason, and record concise local audit activity. No permanent delete appears in recommendation or automatic paths.
 - Tests and rendered checks: service tests for complete/partial archive receipt, missing artifact, move/copy failure, collision-safe restore/rollback, tampered receipt, distinct repair archive, source/session-folder scope, and cloud placeholder behavior. UI/integration tests for shared preflight in row/bulk/detail, exact typed confirmation, cancel/escape, stale target/revalidation, partial batch error/cancel, blocked recording/queue, selection/detail refresh, and delete absence from recommendations/automation. Render one/many target preview and results at 1280x800/125%, high contrast, keyboard focus return, screen-reader artifact/count/irreversibility announcements.
 - Documentation / installer / release work: document archive location/recovery limits, repair-backup distinction, artifact/session scope, typed delete, and unsupported recovery plainly in help/release notes. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found a common `TryConfirmPermanentDelete` typed-`DELETE` dialog and service tests for artifact move/delete. It also found no archive receipt or restore service, archive/delete loops that stop on first exception, and no cross-surface preflight/result/recovery contract.
-- Remaining gap or next action: specify receipt schema and implement receipt-backed archive for one meeting, with simulated move failure and restore-collision tests, before exposing bulk recovery or changing delete UI.
+- Evidence and date: 2026-09-27 source audit found a common `TryConfirmPermanentDelete` typed-`DELETE` dialog and service tests for artifact move/delete. It also found no archive receipt or restore service, archive/delete loops that stop on first exception, and no cross-surface preflight/result/recovery contract. 2026-09-29 added pure `MeetingArchivePreflight`, defining revalidated archive/recovery/delete scope, artifact classes, busy/missing/receipt/collision blocks, linked-session scope, and typed-delete requirement without file mutation. Focused preflight, execution-service, and confirmation tests passed 139/139 using an isolated build root.
+- Remaining gap or next action: add a receipt schema, write receipt only after a complete archive move, then implement collision-safe receipt-backed restore and failure/rollback tests before returning Sprint 14 to Ready.
 
 - Make archive visibly recoverable.
 - Show archive destination and recovery expectation without unnecessary
