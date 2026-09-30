@@ -138,7 +138,7 @@ records an approved dependency change.
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
 | 1 — Stabilize The Current Feature Baseline | `Partial` | 2026-09-29: authoritative review-state projection and focused baseline checks added; live receipt/rejection wiring remains. |
-| 2 — Build Fixture Evidence And Metrics | `Ready` | Private-corpus governance, truth isolation, reproducible catalog reporting, and no-mutation proof plan defined below. |
+| 2 — Build Fixture Evidence And Metrics | `Partial` | 2026-09-29: redacted count/recognition metric arithmetic added; private catalog/truth governance and runner integration remain. |
 | 3 — Calibrate Recognition And Diarization Thresholds | `Ready` | Reproducible baseline/candidate protocol, severity gates, holdout protection, and manual-promotion contract defined below. |
 | 4 — Repair, Undo, And Release Readiness | `Ready` | Undo/repair transaction boundaries, derived-output safety, release evidence, and installed-smoke contract defined below. |
 
@@ -4268,8 +4268,8 @@ Sprint 1 verification:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: catalog runner, schema/example, replay/full-audio scripts, hash/redaction tests exist); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: catalog runner, schema/example, replay/full-audio scripts, hash/redaction tests exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 redacted metric slice).
 - User outcome: maintainers can measure diarization/name-recognition regressions locally without exposing meeting content or letting expected answers influence production decisions.
 - Scope / non-goals: operationalize private, consented fixture evidence and metadata-only reports over existing runners. Do not commit real fixtures, names, transcripts, audio, embeddings, profile stores, expected answers, or production threshold changes; do not call app/worker/installer/update services from harness.
 - Dependencies and decisions: S1 freezes correction behavior; S3 consumes evidence. `Test-DiarizationFixtureCatalog.ps1`, full-audio/stored-turn runners, schemas/examples, and contract tests already cover parts of catalog, output placement, protected hashes, and redaction. Treat catalog metadata as untrusted input. Separate opaque fixture identity from a restricted truth store: production invocation receives only audio/manifest/config; assertion process receives expected count/name/mapping after production result is immutable. Never pass truth through environment, command line, working folder visible to worker, profile store, manifest, attendee metadata, or runtime config.
@@ -4282,6 +4282,7 @@ Sprint 1 verification:
 - Tests and rendered checks: schema/path/reparse/allowlist validation; fixture/category/filter/disabled/expired dispatch; truth isolation static and runtime spy; clean-config/no-network/profile-store fence; deterministic report and run identity; timeout/cancel/temp cleanup; protected hash/add/delete mutation; false-auto/unknown/missing-name/count-direction arithmetic; safe console/JSON sentinel scans. Preserve existing `DiarizationCalibrationScriptTests` and `DiarizationFixtureReplayTests`; check report UX as text at normal/redirected console without names/content.
 - Documentation / installer / release work: document private-fixture setup, consent/retention/owner, trust-store location, one-command filters, redacted report, coverage failure, baseline comparison, and no-runtime-hint rule. Script/test/docs-only work skips installer rebuild with recorded rationale; any worker/app/runtime behavior change takes full gate, installer rebuild, and installed smoke.
 - Evidence and date: 2026-09-27 audit found tracked fixture catalog schema/example, catalog runner with safe output path and protected artifact hashes, and tests scanning private sentinels. No accessible local consented corpus, restricted truth-store governance, full matrix coverage receipt, deterministic clean-environment proof, reparse/add-delete mutation proof, or mapping-level false-auto evidence was found.
+- Evidence and date: 2026-09-29 added `DiarizationFixtureEvidenceMetrics` tests that keep speaker-count correctness, false automatic names, and unknown mappings separate with no fixture name/text/path inputs.
 - Remaining gap or next action: add catalog/truth schema and synthetic isolation tests, then register first approved local fixture without exposing its content.
 
 Goal: create a repeatable local calibration loop that evaluates full-audio meetings without deploys, app clicks, or runtime hints.
