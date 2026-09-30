@@ -100,7 +100,7 @@ records an approved dependency change.
 | 7 — Selection Strip Redesign | `Done` | 2026-09-29: existing shared catalog/selection contract and focused evidence verified below. |
 | 8 — Action Grouping | `Done` | 2026-09-29: canonical family catalog, context/detail bindings, and focused evidence verified below. |
 | 9 — Cleanup Consolidation | `Done` | 2026-09-29: shared recommendation/review/ledger paths and focused evidence verified below. |
-| 10 — Meeting Detail Task Center | `Ready` | Read-first detail state, revision/draft safety, action/recommendation parity, and verification plan below. |
+| 10 — Meeting Detail Task Center | `Done` | 2026-09-29: read-first task center, revision-safe detail binding, and focused evidence verified below. |
 | 11 — Transcript And Summary Reading | `Ready` | Transcript-first reader model, summary independence/provenance, setup routing, and verification plan below. |
 | 12 — Speaker Workflow Clarity | `Ready` | Meetings-specific speaker state/routing, terminology parity, unavailable guidance, and verification plan below. |
 | 13 — Bulk Operations | `Ready` | Ship capability-scoped previews, immutable targets, and truthful partial-result recovery. |
@@ -2911,8 +2911,8 @@ Acceptance: cleanup feels like guided maintenance, not a separate mini-app.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: detail state builder/window, transcript/summary, maintenance events, stable-stem refresh, focused tests); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: detail state builder/window, transcript/summary, maintenance events, stable-stem refresh, focused tests); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: a meeting opens to calm reading first, with truthful recommendation/status and every maintenance action available in an intentional section.
 - Scope / non-goals: restructure detail presentation/state. Do not duplicate artifact ownership, mutate on open/refresh, change summary/speaker engines, or permit detail actions that bypass catalog/selection safety.
 - Dependencies and decisions: use S1/S8 action catalog, S2 state, S3 recommendation, S7 preview, S11 reading, S12 speakers. `MeetingDetailExperienceState` is revision/freshness-aware and contains Read, Details, Fix, Organize, recommendation, artifact availability, busy/blocked states, and focus target. Detail follows selected stable identity; missing/archived/deleted source gets explicit closed/stale state.
@@ -2924,8 +2924,8 @@ Acceptance: cleanup feels like guided maintenance, not a separate mini-app.
   5. Define deletion/archive behavior: archive keeps reading/recovery route per contract; permanent delete closes/clears detail after confirmed success, prevents deferred callbacks, and never reads stale artifacts. Missing/corrupt artifact routes to Repair/Help with raw diagnostics Advanced only.
 - Tests and rendered checks: pure detail-state section/action/recommendation/blocked tests; revision/draft/async identity race, archive/delete/missing source, summary/speaker/queue transitions, catalog parity, focus/keyboard escape. Render Read/Details/Fix/Organize/DangerZone at 1280x800/125% with long transcript, no artifact, and high contrast.
 - Documentation / installer / release work: document detail section/action semantics after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found current event-rich detail window and state tests but no read-first section contract, revision-safe editing model, or all action family/catalog parity.
-- Remaining gap or next action: write state fixture for transcript-ready plus failed recommendation and an async stale-refresh test before moving detail XAML.
+- Evidence and date: 2026-09-27 review found current event-rich detail window and state tests but no read-first section contract, revision-safe editing model, or all action family/catalog parity. 2026-09-29 verified the existing `MeetingDetailTaskCenterResolver`, revision token, read/fix/organize/danger catalog mapping, task-center application in the detail window, and draft-safe refresh disposition. Material background revisions preserve active drafts and offer reload; archived/deleted/identity-invalidated detail closes safely. Focused detail, recommendation-presentation, and XAML tests passed 56/56 using an isolated build root.
+- Remaining gap or next action: Sprint 11 — verify transcript-first reading and independent summary state.
 
 - Rebuild detail around `Read`, `Details`, `Fix`, and `Organize`.
 - Default to `Read`: transcript, summary, search, artifact shortcuts.

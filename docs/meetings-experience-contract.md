@@ -137,3 +137,13 @@ eligible, blocked, and review-only work are shown before dispatch; every item
 is revalidated independently and result text distinguishes queued work from
 completed work. Recommendation dismissal affects promotion only. Permanent
 delete is never a cleanup candidate or an automatic fix.
+
+## Meeting detail
+
+Meeting detail opens in Read with transcript status and artifact actions. The
+shared task center places catalog actions in Read, Fix, Organize, and Danger,
+and shows one resolved recommendation without executing it. Its revision token
+keeps background catalog/artifact/recommendation updates from overwriting title,
+project, speaker, or split drafts; a material change preserves drafts and asks
+for reload, while an archived, deleted, or identity-mismatched meeting closes
+the invalid detail safely.
