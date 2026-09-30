@@ -77,8 +77,18 @@ internal static class OngoingMeetingHealPass
                 HasCompletePublishedArtifacts: HasCompletePublishedArtifacts(predecessorOutput) && HasCompletePublishedArtifacts(successorOutput),
                 ArtifactOrderIsMonotonic: predecessorOutput.StartedAtUtc <= successorOutput.StartedAtUtc,
                 HasLineageCycle: false);
-            if (reviewOnly && new OngoingMeetingHealEligibilityResolver().Evaluate(candidate, nowUtc) == OngoingMeetingHealEligibility.Eligible)
+            var eligibility = new OngoingMeetingHealEligibilityResolver().Evaluate(candidate, nowUtc);
+            if (reviewOnly && eligibility == OngoingMeetingHealEligibility.Eligible)
             {
+                await new OngoingMeetingHealReviewRecommendationStore(workDirectory).SaveAsync(
+                    new OngoingMeetingHealReviewRecommendation(
+                        OngoingMeetingHealReviewRecommendation.CurrentSchemaVersion,
+                        predecessor.Manifest.SessionId,
+                        successor.Manifest.SessionId,
+                        eligibility,
+                        nowUtc,
+                        nowUtc + OngoingMeetingHealReviewRecommendation.Lifetime),
+                    cancellationToken);
                 return new OngoingMeetingHealTransactionResult(
                     OngoingMeetingHealTransactionStatus.ReviewOnly,
                     predecessorOutput.Stem);

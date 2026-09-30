@@ -145,3 +145,33 @@ use manifest checkpoints and normal interrupted-session recovery. A trace never
 starts capture, overrides manual stop, assigns `SameMeeting`, merges meetings,
 or retries a failed callback recursively. The ongoing healer remains a later,
 explicit post-publish pass governed by its own receipt and eligibility checks.
+
+## Sprint 7 — rollout, retirement, and rollback boundary
+
+`ContinuityEngineRolloutMode` is local and versioned. New configurations use
+`Matcher`; migrated configurations retain their prior local continuity choice;
+malformed or future values fail closed to `Legacy`. In `Matcher` mode,
+`ContinuityCutoverPolicy` is the sole verdict authority for active continuation,
+recent auto-stop recovery, reclassification, and rollover. Only its
+`DifferentMeeting` result can pass into the legacy mechanics that choose the
+safe transition shape. The retained `AutoRecordingContinuityPolicy` branches
+are evidence and safety extractors for the rollback-only `Legacy` mode; they
+must not create a matcher-mode verdict.
+
+| Retained branch | Matcher-mode role | Deletion condition |
+| --- | --- | --- |
+| `ShouldRefreshLastPositiveSignal` | Supplies capture/activity evidence only; matcher selects Continue or bounded grace. | Remove after equivalent normalized activity evidence is owned by the matcher adapter. |
+| `ShouldRecoverFromRecentAutoStop` | Legacy fallback only; matcher compares persisted/observed identity when context exists. | Remove after recovery corpus and installed synthetic journey prove matcher-only recovery. |
+| `GetEligibleActiveSessionTransition` and rollover/reclassify helpers | Choose transition mechanics only after matcher returns `DifferentMeeting`. | Remove or reduce after matcher owns transition selection without altering manual-stop protections. |
+| `OngoingMeetingHealEligibilityResolver` | Uses the shared matcher directly for manifest-to-manifest eligibility. | Retain as the post-publish admission adapter; it contains no title-only verdict. |
+
+`OngoingMeetingHealRolloutMode` is also local and versioned: `Off`,
+`ReviewOnly`, or `Live`. Invalid values and corrupt migration state resolve to
+`Off`; a rollback changes only future decision snapshots and never edits an
+active capture or an existing transaction. `ReviewOnly` writes one expiring,
+metadata-only candidate recommendation keyed by opaque session IDs. It writes
+no audio, transcript, archive, lease, or transaction receipt and grants no
+merge authority. Support can clear stale review evidence only by waiting for
+its 24-hour expiry or removing the local `.ongoing-heal/review` entry while the
+app is stopped; changing `Live` to `ReviewOnly` is the immediate circuit-breaker
+response to an unexpected potential merge.

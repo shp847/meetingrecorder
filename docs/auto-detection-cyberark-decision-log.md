@@ -851,19 +851,19 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Open Work
 
-### 2026-09-29: Identity-gated continuity cutover (source work in progress)
+### 2026-09-29: Identity-gated continuity cutover (package validated)
 - Trigger / observed symptom: the legacy continuity policy still derives continuation and recent auto-stop recovery from platform/title heuristics, despite the completed privacy-safe identity and shadow contracts.
 - Exact runtime or CyberArk evidence: source audit found `AutoRecordingContinuityPolicy.ShouldRecoverFromRecentAutoStop` accepts a matching platform inside two minutes, and `ShouldRefreshLastPositiveSignal` owns title/shell-based continuation. No CyberArk or executable-path evidence is implicated.
 - Hypothesis: a disabled-by-default matcher gate can make only verified `SameMeeting` continue/recover while retaining bounded `Unknown` grace and explicit manual-stop authority.
-- APIs or signals added/removed: source work will add no external signal, audio probe, executable naming, signing, or install-location change. Any lifecycle route must retain the legacy fallback and decision trace.
+- APIs or signals added/removed: no external signal, audio probe, executable naming, signing, or install-location change. Versioned local matcher and heal rollout modes now gate future decision snapshots; matcher owns continuation, recovery, reclassification, and rollover verdicts when selected. Review-only heal emits an expiring metadata-only local recommendation and cannot reach lease, transaction receipt, archive, or merge code.
 - Positive behavior expected: compatible strong identity can prevent a false split; generic/missing/key-rotated evidence remains `Unknown` and cannot start, merge, or resurrect an explicitly stopped recording.
 - False-positive/security boundary retained: manual stop, consent, capture readiness, storage safeguards, and bounded stop deadlines remain authoritative; no endpoint execution-control policy changes are authorized.
-- Tests added and results: focused cutover, policy, configuration, recorder lifecycle, and XAML contract tests passed 172/172. The full script built all product and test projects before the runner lost its aggregate tail; no continuity failure was emitted.
-- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `5FDA8AC343352A2AE7140490DDAFD203B598E76088808E585CB2E4F646EB6297` and MSI SHA-256 `EC715B78F40FE9969DA29436B7AF8F2912D4BFEDDF8E13BB873C37439995D44D`.
-- Installed hash/version/signature status: the installed and portable `MeetingRecorder.App.exe` SHA-256 values match at `C5A27692134C7C774D3287EAF0ED2BC3DF82A61F78566E99DAC121A6C95B0BD6`; no signing or location policy changed.
-- Live-machine result: portable/MSI smoke completed with no remaining `MeetingRecorder.App` process; the installed apphost timestamp refreshed from this package.
-- Outcome: retained behind the disabled-by-default gate.
-- Follow-up / removal condition: retain the disabled gate until protected-negative, recovery, and grace/rollback tests pass and a labeled shadow-report gate authorizes activation.
+- Tests added and results: focused configuration, cutover, source-contract, lifecycle policy, matcher, and healer tests passed 186/186. The full script built all product and test projects before the runner lost its aggregate tail; no continuity failure was emitted.
+- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `83E6D6818189DB7808688F2F969F452DF37AEADF6EE754DC6E4306E4A56F3CED` and MSI SHA-256 `0928FB1CF00A548C7E47DA2D8A0F47F7F5EE35578CC736A25D8D8F4D808EF45E`.
+- Installed hash/version/signature status: stable apphosts from `C:\Users\psharm04\MeetingRecorder` were hash-verified for packaging; no signing or location policy changed.
+- Live-machine result: PowerShell 7 smoke passed portable startup, MSI install, installed bundle integrity, and installed-app startup. The temporary app ran from `C:\Users\psharm04\MeetingRecorder\MeetingRecorder.App.exe` and was cleaned up; no live meeting was exercised.
+- Outcome: retained with package/install/startup validation. Matcher defaults for new configurations; migration preserves existing users' local choice.
+- Follow-up / removal condition: retain review-only as immediate circuit-breaker response until S8 protected-negative, recovery, rollback, and installed synthetic-journey gates authorize live healing expansion.
 
 ### 2026-09-28: Generated apphost disappears during local package verification
 - Trigger / observed symptom: Sprint 3 installer rebuild stopped because the portable publish output did not contain `MeetingRecorder.App.exe`.

@@ -111,7 +111,7 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
     }
 
     [Fact]
-    public async Task ReviewOnly_Pass_Returns_Candidate_Without_Mutating_Artifacts_Or_Receipt()
+    public async Task ReviewOnly_Pass_Returns_A_Expiring_Metadata_Recommendation_Without_Mutating_Artifacts_Or_Transaction_Receipt()
     {
         var request = await CreateRequestAsync();
         var result = await OngoingMeetingHealPass.RunOnceAsync(
@@ -128,6 +128,17 @@ public sealed class OngoingMeetingHealTransactionTests : IDisposable
         Assert.True(File.Exists(request.PredecessorOutput.AudioPath!));
         Assert.True(File.Exists(request.SuccessorOutput.AudioPath!));
         Assert.False(File.Exists(request.ReceiptPath));
+        var workDirectory = Path.GetDirectoryName(Path.GetDirectoryName(request.PredecessorOutput.ManifestPath!)!)!;
+        var reviewDirectory = Path.Combine(workDirectory, ".ongoing-heal", "review");
+        var reviewPath = Path.Combine(
+            reviewDirectory,
+            OngoingMeetingHealReviewRecommendationStore.GetFileName("first", "second"));
+        Assert.True(File.Exists(reviewPath));
+        var review = System.Text.Json.JsonSerializer.Deserialize<OngoingMeetingHealReviewRecommendation>(
+            await File.ReadAllTextAsync(reviewPath));
+        Assert.NotNull(review);
+        Assert.Equal(OngoingMeetingHealEligibility.Eligible, review!.Eligibility);
+        Assert.Equal(Now.AddHours(24), review.ExpiresAtUtc);
     }
 
     private OngoingMeetingHealTransaction CreateTransaction()
