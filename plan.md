@@ -7685,8 +7685,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires the clean-machine baseline and public-control ledger from Sprint 0).
 - User outcome: a Store install behaves as the complete product, with a clear Store-owned update path and no broken worker or data assumptions.
 - Scope / non-goals: define the MSIX/Store feasibility, package, and channel contract. Do not submit a Store package, change the existing MSI channel, bypass Store policy/signing, assume unrestricted filesystem/process behavior, or replace user data without migration and rollback proof.
 - Dependencies and decisions: Sprint 0 clean-machine baseline plus the product manifest, worker, launcher, updater, data-root, and Store-policy evidence are authority. Define package family identity, capabilities, entry points, worker activation, data roots, model assets, crash diagnostics, and update ownership. Store must disable or truthfully route the in-app updater; MSI/portable remain separately identified with non-destructive migration and side-by-side rules.
@@ -7734,8 +7734,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires the blocked Store/channel contract from Sprint 1).
 - User outcome: required default capabilities become ready automatically, with understandable progress and recovery, without making a normal user configure models.
 - Scope / non-goals: prepare only an approved capability set through the product-owned workflow. Do not silently download unapproved content, send user data, expose source paths or provider tuning in normal setup, delete valid custom assets, or claim readiness before verification.
 - Dependencies and decisions: Sprint 1 defines the package/channel/data-root contract. A signed or otherwise release-pinned approved catalog is authoritative for asset identity, version, size, hash, provenance, compatibility, and delivery policy. Define durable states `pending`, `downloading`, `verifying`, `ready`, `blocked`, `failed`, and `cancelled`, plus resumable ownership and a single visible readiness projection.
@@ -7780,8 +7780,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires blocked capability preparation and clean-machine evidence).
 - User outcome: a new user understands capture scope, grants only needed permission, records once, and finds the result without opening Settings or learning implementation vocabulary.
 - Scope / non-goals: replace configuration-first setup with a short, Home-led, consent-led path. Do not start capture without explicit user action/consent, make microphone inclusion implicit, force auto-detection or launch-at-login, hide a blocked state, or send transcript/audio outside the local contract.
 - Dependencies and decisions: Sprint 2 owns capability preparation; capture admission remains separate from transcription readiness. Define a versioned durable onboarding state with fulfilled consent/permission/preparation/first-record/publish checkpoints, a migration rule for existing users, and one authoritative next-action resolver so refreshes and restarts cannot loop or skip a consent boundary.
@@ -7827,8 +7827,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires the Sprint 0 product-owner retirement ledger and blocked onboarding contracts).
 - User outcome: normal Settings has understandable choices for recording and local data, while supported expert control remains findable and no existing data/configuration disappears unexpectedly.
 - Scope / non-goals: simplify public settings using the Sprint 0 retirement ledger. Do not remove a capability solely because it is technical, strand existing deep links/support procedures, delete configuration/artifacts, present developer controls as normal choices, or convert Advanced into a second onboarding flow.
 - Dependencies and decisions: Sprint 0 requires a signed-off disposition/replacement/owner for every retired or relocated control; Sprints 1-3 own channel, capability, and onboarding copy. Define canonical settings ownership, normal versus advanced/support visibility, config version/migration/round-trip behavior, deep-link aliases, permission/consent boundaries, and rollback for each retirement.
@@ -7874,8 +7874,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: depends on blocked channel, onboarding, and settings evidence).
 - User outcome: people can choose the appropriate distribution channel from clear, truthful guidance and receive only the support detail appropriate to that channel.
 - Scope / non-goals: define acquisition, trust, release-provenance, and public/support documentation contracts. Do not claim Store availability before publication, minimize or bypass Windows security warnings, publish hashes/signatures without release evidence, expose developer-only installers/scripts to normal users, or collect telemetry to decide copy.
 - Dependencies and decisions: Sprint 1 establishes channel ownership; Sprint 4 establishes public versus advanced/support terminology. Store-first wording is conditional on an actual published, certified Store listing. Define channel selector rules, release version/build provenance, signature/hash verification source, support escalation route, rollback/revocation notice, and an explicit portable/developer artifact fence.
@@ -7915,8 +7915,8 @@ Acceptance:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: cannot qualify a release before clean-machine/channel/accessibility evidence exists).
 - User outcome: a release decision is based on reproducible clean-machine, channel, accessibility, and usability evidence—not on source completeness or a developer-machine success.
 - Scope / non-goals: define the release qualification matrix and evidence gates for the preceding sprints. Do not self-certify Store acceptance, treat a test VM as a live-user study, ship/publish/upload, waive a failed gate, or infer production readiness from a passing build.
 - Dependencies and decisions: Sprints 0-5 provide their acceptance evidence. Define environment/image/build/artifact provenance, deterministic synthetic fixtures, channel/device/upgrade coverage, test ownership, severity/no-go rules, defect triage/retest criteria, evidence retention/redaction, and the named authority required for Store submission or external release.
