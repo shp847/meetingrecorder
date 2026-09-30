@@ -7117,8 +7117,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires completed Sprint 0 authorized inventory and governed corpus evidence before capture behavior changes).
 - User outcome: recording starts only from clear, consent-safe evidence, remains one coherent meeting through short endpoint failures, and preserves captured audio even when transcription cannot run.
 - Scope / non-goals: replace admission/continuity decisions and retention safety only. Do not silently start recording, inspect protected processes, infer consent, rely on title/probe heuristics as session creators, discard a viable source because a model is unavailable, or merge distinct meetings automatically.
 - Dependencies and decisions: complete Sprint 0 containment/inventory first. Before changing meeting detection, Windows audio probing, launch paths, or executable naming, read and append `docs/auto-detection-cyberark-decision-log.md`, recording source/test/package/installed/live-machine state separately. `CaptureAdmissionController` owns provisional-to-visible promotion; explicit consent and capture proof are separate from transcription readiness; identity evidence is tri-state and bounded by expiry/suppression rules.
@@ -7144,8 +7144,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires Sprint 0 governance and Sprint 1 source-track evidence).
 - User outcome: transcripts disclose the approved engine/profile and any source limitation; a missing, invalid, or poor-quality model blocks processing safely instead of producing a silent downgrade or losing a recording.
 - Scope / non-goals: establish approved transcription profiles, source-health assessment, and quality gates. Do not auto-download/fallback to an unapproved model, change language or provider silently, export corpus data, fabricate quality scores, or make low-speech audio disappear from the user’s library.
 - Dependencies and decisions: Sprint 0 corpus/provenance governance and Sprint 1 source-track records are required. `ApprovedTranscriptionProfile` is immutable and release-pinned by provider/model/hash/size/language/worker-load/benchmark evidence. Define a quality-result schema that separates usable low-speech input, unsupported/corrupt input, model availability, and transcription failure; any policy change needs a reproducible candidate-versus-baseline decision.
@@ -7169,8 +7169,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires completed Sprint 0 inventory and Sprint 1–2 provenance and quality evidence).
 - User outcome: cleanup and rebuilt output either completes as one coherent meeting or remains safely recoverable; users never see a partial, duplicated, or silently merged result.
 - Scope / non-goals: replace cleanup ownership, promotion, and conservative derived-merge behavior. Do not automatically merge weakly related meetings, concatenate legacy Markdown, delete source before validation, expose an incomplete destination, or treat a file copy as a completed publication.
 - Dependencies and decisions: Sprints 0-2 establish source inventory, capture provenance, profile/quality acceptance, and retention. A lease is the only scheduler execution authority; `ArtifactPromotionJournal` owns staged/verified/promoted/ready/committed/recovered transitions; `.ready` is written last. Define stable fingerprints, source/destination volume capacity, idempotency keys, failure taxonomy, retry/backoff limits, and a catalog projection that hides journal-locked stems behind truthful updating/recovery state.
@@ -7197,8 +7197,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires completed source lineage, approved profile, and promotion recovery from blocked Sprints 0–3).
 - User outcome: historically damaged meetings improve only when a verified recoverable source and approved pilot evidence exist; otherwise the existing visible result is preserved with an honest limitation.
 - Scope / non-goals: classify and selectively rebuild history through the new pipeline. Do not mass-reprocess by filename/title alone, mutate original artifacts without a journal/approval, promise a completion date before measured throughput, overwrite unrecoverable legacy records, or run history work while live capture/safety pressure is active.
 - Dependencies and decisions: require S0 inventory, S1 source lineage, S2 approved profile/quality, and S3 leases/promotion/recovery. Define a source-precedence ladder, hash de-duplication, classification schema, pilot cohort/approval authority, job resume/cancel behavior, no-go conditions, and artifact lineage from original source to rebuilt output. Preserve `LegacyNoRecoverableAudio` as a user-visible state, not an error to hide.
@@ -7223,8 +7223,8 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: qualification depends on evidence from blocked Sprints 0–4 and cannot be self-certified).
 - User outcome: a release can credibly claim safer capture, transcription, cleanup, and historical recovery only after deterministic, packaged, and explicitly authorized live evidence meets predeclared no-go thresholds.
 - Scope / non-goals: assemble and enforce remediation qualification. Do not substitute a green unit suite for installed behavior, use unconsented meetings as a test corpus, self-authorize production canaries or release upload, collapse source/test/package/installed/live evidence, or waive a failed no-go criterion without a documented new decision.
 - Dependencies and decisions: Sprints 0-4 supply containment, admission, quality, promotion, and pilot evidence. Define a traceability matrix from each acceptance condition to fixture, environment, owner, redacted evidence, pass threshold, defect/retest rule, and release decision. Keep deterministic synthetic tests separate from consented live canaries; channel/package verification follows repository release guidance.
