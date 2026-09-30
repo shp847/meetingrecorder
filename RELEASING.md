@@ -324,6 +324,17 @@ If you want the packaged startup smoke test before publishing, run:
 powershell -ExecutionPolicy Bypass -File .\scripts\Smoke-Test-Release.ps1 -Runtime win-x64
 ```
 
+For continuity changes, run the package-parity gate before the startup smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Test-Continuity-Release.ps1 -Runtime win-x64
+```
+
+It refuses to run while Meeting Recorder is open, rejects a packaged continuity
+trace sidecar, runs the synthetic continuity journey against the exact portable
+`MeetingRecorder.Core.dll`, and requires that DLL to match the installed bundle.
+It does not authorize publication or prove a real user meeting outcome.
+
 ## Publish To GitHub
 
 1. Go to the repo releases page:

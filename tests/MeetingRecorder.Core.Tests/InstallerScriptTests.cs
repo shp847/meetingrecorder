@@ -1024,8 +1024,8 @@ public sealed class InstallerScriptTests
 
         Assert.Contains("Assert-NoRunningMeetingRecorderInstances", scriptContents, StringComparison.Ordinal);
         Assert.Contains("continuity.*trace|trace.*continuity", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Continuity release test journey failed", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Release-tested core and portable bundle core", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Bundled-Core continuity release test journey failed", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Copy-Item -LiteralPath $bundleCorePath", scriptContents, StringComparison.Ordinal);
         Assert.Contains("Portable bundle and installed core", scriptContents, StringComparison.Ordinal);
     }
 }

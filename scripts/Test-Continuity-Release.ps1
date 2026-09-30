@@ -68,12 +68,26 @@ if ($tracePayload) {
 }
 
 if (-not $SkipReleaseTests.IsPresent) {
-    & dotnet test (Join-Path $repoRoot "tests\MeetingRecorder.Core.Tests\MeetingRecorder.Core.Tests.csproj") `
-        -c Release -p:NuGetAudit=false --filter "FullyQualifiedName~Continuity|FullyQualifiedName~OngoingMeetingHeal|FullyQualifiedName~MeetingIdentity|FullyQualifiedName~AutoRecordingContinuityPolicyTests|FullyQualifiedName~MainWindowStartupSourceTests|FullyQualifiedName~RecordingStopPipelineSourceTests|FullyQualifiedName~AppConfigStoreTests"
-    if ($LASTEXITCODE -ne 0) { throw "Continuity release test journey failed." }
+    $testProjectPath = Join-Path $repoRoot "tests\MeetingRecorder.Core.Tests\MeetingRecorder.Core.Tests.csproj"
+    & dotnet build $testProjectPath -c Release -p:NuGetAudit=false
+    if ($LASTEXITCODE -ne 0) { throw "Could not build the continuity release test harness." }
 
-    $releaseTestedCorePath = Join-Path $repoRoot "src\MeetingRecorder.Core\bin\Release\net8.0-windows\MeetingRecorder.Core.dll"
-    Assert-SameHash -ExpectedPath $releaseTestedCorePath -ActualPath $bundleCorePath -Label "Release-tested core and portable bundle core"
+    $testOutputRoot = Join-Path $repoRoot "tests\MeetingRecorder.Core.Tests\bin\Release\net8.0-windows"
+    $testAssemblyName = "MeetingRecorder.Core.Tests.dll"
+    $testOutputPath = Join-Path $testOutputRoot $testAssemblyName
+    if (-not (Test-Path -LiteralPath $testOutputPath)) { throw "Continuity release test harness is missing '$testOutputPath'." }
+    $isolatedTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("MeetingRecorderContinuityRelease-" + [guid]::NewGuid().ToString("N"))
+    Copy-Item -LiteralPath $testOutputRoot -Destination $isolatedTestRoot -Recurse
+    $isolatedTestAssembly = Join-Path $isolatedTestRoot $testAssemblyName
+    Copy-Item -LiteralPath $bundleCorePath -Destination (Join-Path $isolatedTestRoot "MeetingRecorder.Core.dll") -Force
+    $testFilter = "FullyQualifiedName~Continuity|FullyQualifiedName~OngoingMeetingHeal|FullyQualifiedName~MeetingIdentity|FullyQualifiedName~AutoRecordingContinuityPolicyTests|FullyQualifiedName~MainWindowStartupSourceTests|FullyQualifiedName~RecordingStopPipelineSourceTests|FullyQualifiedName~AppConfigStoreTests"
+    try {
+        & dotnet vstest $isolatedTestAssembly ("--TestCaseFilter:" + $testFilter)
+        if ($LASTEXITCODE -ne 0) { throw "Bundled-Core continuity release test journey failed." }
+    }
+    finally {
+        if (Test-Path -LiteralPath $isolatedTestRoot) { Remove-Item -LiteralPath $isolatedTestRoot -Recurse -Force }
+    }
 }
 
 if (-not $SkipInstalledHash.IsPresent) {
@@ -81,4 +95,4 @@ if (-not $SkipInstalledHash.IsPresent) {
     Assert-SameHash -ExpectedPath $bundleCorePath -ActualPath $installedCorePath -Label "Portable bundle and installed core"
 }
 
-Write-Host "Continuity release validation passed. Package has no trace payload; release-tested core matches the portable bundle$($(if ($SkipInstalledHash.IsPresent) { '' } else { ' and installed bundle' }))."
+Write-Host "Continuity release validation passed. Package has no trace payload; the exact bundled Core DLL passed the release continuity journey$($(if ($SkipInstalledHash.IsPresent) { '' } else { ' and matches the installed bundle' }))."

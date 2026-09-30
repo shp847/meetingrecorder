@@ -111,6 +111,7 @@ For newer managed installs, the app can also migrate prior portable data forward
 
 - Manual Start and Stop controls
 - Auto-detection for Teams desktop, Google Meet, and calendar-matched Zoom Web calls, on by default for new installs and still reset off once for older configs that predate the security-prompt migration so existing users can opt back in deliberately
+- Active-meeting continuity is identity-gated: compatible strong local evidence continues one session, contradictory strong evidence permits a new-session transition, and unknown evidence gets only bounded grace. A manual stop remains final; post-publish review-only healing records a local expiring recommendation without changing meeting artifacts.
 - Google Meet detection now relies on explicit browser titles plus endpoint render activity, so a visible Meet window can still be recognized without inspecting browser tabs or per-app audio sessions
 - Windows render audio probing now also uses a short timeout and backoff window, so a hung Core Audio query cannot stall supported-call detection for minutes before an auto-started Teams meeting is noticed
 - Teams render probing now gives each scan up to `1.5 s` and retries after a `15 s` cooldown when one pass is slow, while avoiding per-app session attribution on endpoint-protected machines
