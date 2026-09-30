@@ -325,8 +325,8 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("Height=\"920\"", windowTag);
         Assert.Contains("Width=\"1440\"", windowTag);
-        Assert.Contains("MinWidth=\"1280\"", windowTag);
-        Assert.Contains("MinHeight=\"800\"", windowTag);
+        Assert.Contains("MinWidth=\"1024\"", windowTag);
+        Assert.Contains("MinHeight=\"768\"", windowTag);
         Assert.DoesNotContain("Width=\"{Binding ElementName=HomeDashboardScrollViewer, Path=ViewportWidth}\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", recordingConsoleBorderTag);
@@ -731,10 +731,10 @@ public sealed class MainWindowXamlTests
         var detailTextEnd = xaml.IndexOf(">", detailTextStart, StringComparison.Ordinal);
         var detailTextTag = xaml[detailTextStart..detailTextEnd];
 
-        Assert.Contains("MinWidth=\"390\"", statusBorderTag);
+        Assert.Contains("Width=\"600\"", statusBorderTag);
         Assert.Contains("MinHeight=\"44\"", statusBorderTag);
         Assert.Contains("Width=\"176\"", queueBorderTag);
-        Assert.Contains("Width=\"220\"", detailTextTag);
+        Assert.DoesNotContain("Width=", detailTextTag);
         Assert.Contains("TextTrimming=\"CharacterEllipsis\"", detailTextTag);
     }
 

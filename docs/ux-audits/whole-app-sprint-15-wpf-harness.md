@@ -32,20 +32,23 @@ properties as the harness tests.
 $env:DOTNET_ROOT='C:\Users\psharm04\.dotnet'
 $env:PATH='C:\Users\psharm04\.dotnet;' + $env:PATH
 dotnet build .\tests\MeetingRecorder.WpfRenderProbe\MeetingRecorder.WpfRenderProbe.csproj --no-restore -p:NuGetAudit=false -p:UseAppHost=false
-dotnet .\tests\MeetingRecorder.WpfRenderProbe\bin\Debug\net8.0-windows\MeetingRecorder.WpfRenderProbe.dll processing 125
+dotnet .\tests\MeetingRecorder.WpfRenderProbe\bin\Debug\net8.0-windows\MeetingRecorder.WpfRenderProbe.dll processing 125 .\.artifacts\ux-audits\whole-app-sprint-15 1024x768
 ```
 
-The final argument is `100` or `125`; valid states are `empty-healthy`,
+The arguments are `state`, `scale`, optional artifact root, and optional logical
+viewport. Scales are `100`, `125`, or `200`; valid states are `empty-healthy`,
 `setup-blocked`, `processing`, `selection-active`, and
-`cleanup-recommendation`. The probe writes artifact paths and screenshot
-SHA-256 values to standard output.
+`cleanup-recommendation`. The probe fails if WPF clamps the requested viewport
+and otherwise writes artifact paths and screenshot SHA-256 values to standard
+output.
 
 ## Current Coverage And Limit
 
-Sprint 0 now has reviewed redacted captures of all five fixtures at a 1280×800
-logical viewport at 100% and 125%; see
-`whole-app-sprint-0-rendered-evidence.md`. The harness verifies the rendered
+Sprint 0 and Sprint 15 now have reviewed redacted captures of all five fixtures
+at 1280×800/100%, 1280×800/125%, and 1024×768/125%; Sprint 15 also has a
+processing 200% raster. See `whole-app-sprint-0-rendered-evidence.md` and
+`whole-app-sprint-15-rendered-evidence.md`. The harness verifies the rendered
 shell, `Start recording` accessible name, complete setup-reason text, primary
 navigation automation peer, and keyboard focus movement. It is not a substitute
-for the remaining journey, smaller viewport, theme, packaged, Narrator, or
-manual visual review matrix required by Sprint 15.
+for interactive journey replay, high-contrast/OS-DPI behavior, packaged UI
+rendering, Narrator, or manual visual review required by Sprint 15.

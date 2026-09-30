@@ -6,8 +6,8 @@
         Icon="Assets/MeetingRecorder.ico"
         Height="920"
         Width="1440"
-        MinHeight="800"
-        MinWidth="1280"
+        MinHeight="768"
+        MinWidth="1024"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="DashboardStartButtonStyle" TargetType="Button">
@@ -338,6 +338,10 @@
             </Grid.RowDefinitions>
 
             <Grid Margin="4,4,4,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -352,12 +356,13 @@
                            Foreground="{StaticResource AppTextBrush}"
                            Text="MEETING RECORDER" />
 
-                <StackPanel Grid.Column="2"
+                <StackPanel Grid.Row="0"
+                            Grid.Column="1"
                             Orientation="Horizontal"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center">
                     <Border x:Name="HeaderShellStatusBorder"
-                            MinWidth="390"
+                            Width="600"
                             MinHeight="44"
                             Padding="10,6"
                             Margin="0,0,10,0"
@@ -367,8 +372,8 @@
                             CornerRadius="4">
                         <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="155" />
+                                <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
@@ -380,17 +385,18 @@
                                          Margin="0,0,8,0"
                                          Fill="{StaticResource AppSignalBrush}" />
                                 <TextBlock x:Name="HeaderShellStatusLabelTextBlock"
+                                           Width="155"
                                            VerticalAlignment="Center"
                                            FontFamily="{StaticResource AppMonoFontFamily}"
                                            FontSize="11"
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource AppTextBrush}"
-                                           Text="READY" />
+                                           Text="READY"
+                                           TextTrimming="CharacterEllipsis" />
                             </StackPanel>
 
                             <TextBlock x:Name="HeaderShellStatusDetailTextBlock"
                                        Grid.Column="1"
-                                       Width="220"
                                        Margin="10,0,0,0"
                                        VerticalAlignment="Center"
                                        FontFamily="{StaticResource AppMonoFontFamily}"
@@ -410,33 +416,6 @@
                             </Grid>
                     </Border>
 
-                    <Border x:Name="HeaderQueueStatusBorder"
-                            Width="176"
-                            MinHeight="44"
-                            Padding="10,6"
-                            Margin="0,0,10,0"
-                            Background="{StaticResource AppCardBrush}"
-                            BorderBrush="{StaticResource AppOutlineBrush}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Visibility="Collapsed">
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock x:Name="HeaderQueueStatusLabelTextBlock"
-                                       FontFamily="{StaticResource AppMonoFontFamily}"
-                                       FontSize="11"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource AppTextBrush}"
-                                       Text="QUEUED 0" />
-                            <TextBlock x:Name="HeaderQueueStatusDetailTextBlock"
-                                       Margin="0,2,0,0"
-                                       FontFamily="{StaticResource AppMonoFontFamily}"
-                                       FontSize="11"
-                                       Foreground="{StaticResource AppMutedTextBrush}"
-                                       Text="Approximate processing status"
-                                       TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
-                    </Border>
-
                     <Button x:Name="HeaderSettingsButton"
                             AutomationProperties.Name="Open Settings"
                             Style="{StaticResource HeaderActionButtonStyle}"
@@ -449,6 +428,36 @@
                             Click="HeaderHelpButton_OnClick"
                             Content="Help" />
                 </StackPanel>
+
+                <Border x:Name="HeaderQueueStatusBorder"
+                        Grid.Row="1"
+                        Grid.Column="1"
+                        Width="176"
+                        MinHeight="44"
+                        Padding="10,6"
+                        Margin="0,8,0,0"
+                        HorizontalAlignment="Right"
+                        Background="{StaticResource AppCardBrush}"
+                        BorderBrush="{StaticResource AppOutlineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="HeaderQueueStatusLabelTextBlock"
+                                   FontFamily="{StaticResource AppMonoFontFamily}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource AppTextBrush}"
+                                   Text="QUEUED 0" />
+                        <TextBlock x:Name="HeaderQueueStatusDetailTextBlock"
+                                   Margin="0,2,0,0"
+                                   FontFamily="{StaticResource AppMonoFontFamily}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                   Text="Approximate processing status"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
             </Grid>
 
             <Grid Grid.Row="1"

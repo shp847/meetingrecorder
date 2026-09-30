@@ -30,35 +30,39 @@ internal static class WpfRenderHarness
 {
     public static WpfRenderEvidence CaptureHomeShell()
     {
-        return CaptureShell(SyntheticShellState.SetupBlocked, rasterScale: 1d);
+        return CaptureShell(SyntheticShellState.SetupBlocked, 1280, 800, 1d);
     }
 
     public static WpfRenderEvidence CaptureProcessingShell()
     {
-        return CaptureShell(SyntheticShellState.Processing, rasterScale: 1d);
+        return CaptureShell(SyntheticShellState.Processing, 1280, 800, 1d);
     }
 
     public static WpfRenderEvidence CaptureSelectionActiveShell()
     {
-        return CaptureShell(SyntheticShellState.SelectionActive, rasterScale: 1d);
+        return CaptureShell(SyntheticShellState.SelectionActive, 1280, 800, 1d);
     }
 
     public static WpfRenderEvidence CaptureCleanupRecommendationShell()
     {
-        return CaptureShell(SyntheticShellState.CleanupRecommendation, rasterScale: 1d);
+        return CaptureShell(SyntheticShellState.CleanupRecommendation, 1280, 800, 1d);
     }
 
     public static WpfRenderEvidence CaptureEmptyHealthyShell()
     {
-        return CaptureShell(SyntheticShellState.EmptyHealthy, rasterScale: 1d);
+        return CaptureShell(SyntheticShellState.EmptyHealthy, 1280, 800, 1d);
     }
 
     public static WpfRenderEvidence CaptureShellAt125Dpi(SyntheticShellState state)
     {
-        return CaptureShell(state, rasterScale: 1.25d);
+        return CaptureShell(state, 1280, 800, 1.25d);
     }
 
-    private static WpfRenderEvidence CaptureShell(SyntheticShellState state, double rasterScale)
+    public static WpfRenderEvidence CaptureShell(
+        SyntheticShellState state,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale)
     {
         WpfRenderEvidence? evidence = null;
         Exception? failure = null;
@@ -68,7 +72,7 @@ internal static class WpfRenderHarness
         {
             try
             {
-                evidence = CaptureShellOnStaThread(state, rasterScale);
+                evidence = CaptureShellOnStaThread(state, logicalWidth, logicalHeight, rasterScale);
             }
             catch (Exception exception)
             {
@@ -96,7 +100,11 @@ internal static class WpfRenderHarness
         return evidence ?? throw new InvalidOperationException("WPF render harness produced no evidence.");
     }
 
-    private static WpfRenderEvidence CaptureShellOnStaThread(SyntheticShellState state, double rasterScale)
+    private static WpfRenderEvidence CaptureShellOnStaThread(
+        SyntheticShellState state,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale)
     {
         var evidenceRoot = Environment.GetEnvironmentVariable("MEETINGRECORDER_WPF_HARNESS_EVIDENCE_ROOT");
         var rootDirectory = Path.Combine(
@@ -133,8 +141,8 @@ internal static class WpfRenderHarness
         var logger = new FileLogWriter(Path.Combine(rootDirectory, "logs", "wpf-harness.log"));
         var window = new MainWindow(liveConfig, logger)
         {
-            Width = 1280,
-            Height = 800,
+            Width = logicalWidth,
+            Height = logicalHeight,
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = -10000,
             Top = -10000,
@@ -148,6 +156,13 @@ internal static class WpfRenderHarness
             window.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
             WriteProgress(progressPath, "initial-rendered");
+
+            if (window.ActualWidth != logicalWidth || window.ActualHeight != logicalHeight)
+            {
+                throw new InvalidOperationException(
+                    $"Requested {logicalWidth}x{logicalHeight} viewport but WPF rendered " +
+                    $"{window.ActualWidth:0}x{window.ActualHeight:0}.");
+            }
 
             var homeAction = RequireElement<Button>(window, "HomePrimaryActionButton");
             var settingsAction = RequireElement<Button>(window, "HeaderSettingsButton");
@@ -184,8 +199,8 @@ internal static class WpfRenderHarness
                 }
             }
 
-            var scaleToken = rasterScale == 1.25d ? "125" : "100";
-            var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-1280x800-{scaleToken}.png");
+            var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+            var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
             var automationTracePath = Path.Combine(rootDirectory, $"{stateToken}-automation-tree-{scaleToken}.txt");
             var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace-{scaleToken}.txt");
 

@@ -93,4 +93,26 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Equal(120d, frame.DpiX);
         Assert.Equal(120d, frame.DpiY);
     }
+
+    [Fact]
+    public void Processing_Shell_Renders_A_1024x768_Viewport_At_125Percent()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.Processing,
+            logicalWidth: 1024,
+            logicalHeight: 768,
+            rasterScale: 1.25d);
+
+        using var stream = File.OpenRead(evidence.ScreenshotPath);
+        var decoder = new System.Windows.Media.Imaging.PngBitmapDecoder(
+            stream,
+            System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+            System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+        var frame = decoder.Frames.Single();
+
+        Assert.Equal(1280, frame.PixelWidth);
+        Assert.Equal(960, frame.PixelHeight);
+        Assert.Equal(120d, frame.DpiX);
+        Assert.Equal(120d, frame.DpiY);
+    }
 }

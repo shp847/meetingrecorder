@@ -57,7 +57,8 @@ function Get-SourceAnchorLine {
 function Get-ControlSurface {
     param(
         [Parameter(Mandatory)][string]$Source,
-        [Parameter(Mandatory)][int]$Line,
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][int]$Index,
         [Parameter(Mandatory)][AllowEmptyString()][string]$Name
     )
 
@@ -69,18 +70,20 @@ function Get-ControlSurface {
         return 'Setup dialog'
     }
 
-    if ($Line -ge 1872 -or $Name -match '^(Config|Settings|UseStandard|UseHighAccuracy|SkipSpeaker|ImportApproved|DownloadRecommended|RefreshRemote|AvailableRemote|OpenDiarization|DiarizationAsset)') {
-        return 'Settings'
-    }
-
-    if ($Line -ge 756 -or $Name -match '(Meeting|Meetings|Cleanup|ExternalAudio|Backlog|Rush)') {
-        return 'Meetings'
-    }
-
-    if ($Name -match '^(Header|Dashboard)') {
+    if ($Name -match '^Header') {
         return 'Header'
     }
 
+    $dashboardStart = $Text.IndexOf('<TabItem x:Name="DashboardTabItem"', [StringComparison]::Ordinal)
+    $meetingsStart = $Text.IndexOf('<TabItem x:Name="MeetingsTabItem"', [StringComparison]::Ordinal)
+    $settingsStart = $Text.IndexOf('<Border x:Name="SettingsSetupTranscriptionBodyHostBorder"', [StringComparison]::Ordinal)
+    if ($dashboardStart -lt 0 -or $meetingsStart -lt 0 -or $settingsStart -lt 0) {
+        throw "MainWindow section markers are missing; cannot classify '$Name'."
+    }
+
+    if ($Index -ge $settingsStart) { return 'Settings' }
+    if ($Index -ge $meetingsStart) { return 'Meetings' }
+    if ($Index -ge $dashboardStart) { return 'Home' }
     return 'Home'
 }
 
@@ -179,7 +182,7 @@ function Get-InteractiveControls {
             else {
                 "control-$name".ToLowerInvariant()
             }
-            $surface = Get-ControlSurface -Source $source -Line $line -Name $effectiveName
+            $surface = Get-ControlSurface -Source $source -Text $text -Index $match.Index -Name $effectiveName
             $nameAndCopy = "$name $copy $handler"
             $classification = Get-ControlClassification -NameAndCopy $nameAndCopy
             $records.Add([pscustomobject][ordered]@{

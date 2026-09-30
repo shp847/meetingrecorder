@@ -86,13 +86,13 @@ destructive, privacy, cost, microphone, and processing-interruption boundary nam
 | control-renameselectedmeetingbutton | retain | assistant | Meetings | Sprint 6 | none |
 | control-splitselectedmeetingpointtextbox | retain | assistant | Meetings | Sprint 6 | none |
 | control-splitselectedmeetingslider | retain | assistant | Meetings | Sprint 6 | none |
-| control-splitselectedmeetingbutton | combine | guided | Settings | Sprint 2 | none |
-| control-mergeselectedmeetingstitletextbox | combine | guided | Settings | Sprint 2 | none |
-| control-mergeselectedmeetingsbutton | combine | guided | Settings | Sprint 2 | none |
-| control-speakerlabelseditordatagrid | combine | guided | Settings | Sprint 13 | none |
-| mainwindow-datagrid-117 | combine | guided | Settings | Sprint 2 | none |
-| mainwindow-textbox-118 | retain | guided | Settings | Sprint 2 | none |
-| control-applyspeakernamesbutton-1 | combine | guided | Settings | Sprint 13 | control-applyspeakernamesbutton-2 |
+| control-splitselectedmeetingbutton | retain | assistant | Meetings | Sprint 6 | none |
+| control-mergeselectedmeetingstitletextbox | retain | assistant | Meetings | Sprint 6 | none |
+| control-mergeselectedmeetingsbutton | retain | assistant | Meetings | Sprint 6 | none |
+| control-speakerlabelseditordatagrid | retain | assistant | Meetings | Sprint 13 | none |
+| mainwindow-datagrid-117 | retain | assistant | Meetings | Sprint 6 | none |
+| mainwindow-textbox-118 | retain | guided | Meetings | Sprint 6 | none |
+| control-applyspeakernamesbutton-1 | combine | assistant | Meetings | Sprint 13 | control-applyspeakernamesbutton-2 |
 | control-transcriptionoverviewprimarybutton | combine | guided | Settings | Sprint 2 | none |
 | control-usestandardtranscriptionprofilebutton | combine | guided | Settings | Sprint 2 | none |
 | control-cancelrecommendedtranscriptionsetupbutton | combine | guided | Settings | Sprint 2 | none |
@@ -208,20 +208,20 @@ destructive, privacy, cost, microphone, and processing-interruption boundary nam
 | control-headershellstatusactionbutton | combine | guided | Header | Sprint 14 | control-homenextbestactionbutton, control-dashboardprimaryactionbutton |
 | control-headersettingsbutton | retain | guided | Header | Sprint 14 | none |
 | control-headerhelpbutton | retain | guided | Header | Sprint 14 | none |
-| control-dashboardtabitem | retain | guided | Header | Sprint 14 | none |
-| control-currentmeetingtitletextbox | retain | assistant | Meetings | Sprint 6 | none |
-| control-currentmeetingprojecttextbox | retain | assistant | Meetings | Sprint 6 | none |
-| control-currentmeetingkeyattendeestextbox | retain | guided | Meetings | Sprint 6 | none |
+| control-dashboardtabitem | retain | assistant | Home | Sprint 5 | none |
+| control-currentmeetingtitletextbox | retain | assistant | Home | Sprint 5 | none |
+| control-currentmeetingprojecttextbox | retain | assistant | Home | Sprint 5 | none |
+| control-currentmeetingkeyattendeestextbox | retain | guided | Home | Sprint 5 | none |
 | control-homeprimaryactionbutton | retain | assistant | Home | Sprint 5 | none |
 | control-stopbutton | retain | assistant | Home | Sprint 5 | none |
 | control-homenextbestactionbutton | combine | assistant | Home | Sprint 5 | control-headershellstatusactionbutton, control-dashboardprimaryactionbutton |
 | control-homemiccaptureenabledbutton | retain | assistant | Home | Sprint 5 | none |
 | control-homemiccapturedisabledbutton | retain | assistant | Home | Sprint 5 | none |
 | control-homeautodetectenabledbutton | retain | assistant | Home | Sprint 5 | none |
-| control-homeautodetectdisabledbutton | retain | assistant | Meetings | Sprint 6 | none |
-| control-dashboardopenupdatesbutton | retain | guided | Meetings | Sprint 6 | none |
-| control-dashboardprimaryactionbutton | combine | assistant | Meetings | Sprint 6 | control-headershellstatusactionbutton, control-homenextbestactionbutton |
-| control-activitytextbox | retain | assistant | Meetings | Sprint 6 | none |
+| control-homeautodetectdisabledbutton | retain | assistant | Home | Sprint 5 | none |
+| control-dashboardopenupdatesbutton | retain | guided | Home | Sprint 5 | none |
+| control-dashboardprimaryactionbutton | combine | assistant | Home | Sprint 5 | control-headershellstatusactionbutton, control-homenextbestactionbutton |
+| control-activitytextbox | retain | assistant | Home | Sprint 5 | none |
 | control-meetingstabitem | retain | assistant | Meetings | Sprint 6 | none |
 | control-backlogexperienceactionbutton | retain | assistant | Meetings | Sprint 6 | none |
 | control-rushbacklogbutton | retain | assistant | Meetings | Sprint 6 | none |

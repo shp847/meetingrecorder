@@ -47,5 +47,4 @@ thin outlines, small radii, and no shadows.
 This run is evidence for the five redacted baseline states only. It does not
 claim a packaged render, a 1024×768 viewport, high-contrast behavior, complete
 nine-journey keyboard replay, or Narrator validation. Those are tracked by
-Sprint 15; Sprint 0 remains `Partial` until its documented manual journey
-replay is recorded.
+Sprint 15; they are not prerequisites for Sprint 0's baseline-audit acceptance.

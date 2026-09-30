@@ -318,7 +318,8 @@ unchanged.
   (2026-09-29 source inventory and control policy refreshed and validated; the
   rendered-state matrix remains incomplete); `Partial` (2026-09-30 isolated
   five-state 100%/125% rendered evidence captured; manual journey replay
-  remains open).
+  remains open); `Done` (2026-09-30 rendered-state acceptance record complete;
+  broader accessibility replay is owned by Sprint 15).
 - User outcome: every current interactive control has a traceable future home,
   so simplification removes no power or safety choice by accident.
 - Scope / non-goals: audit current WPF behavior and document evidence only. Do
@@ -417,9 +418,9 @@ unchanged.
   `docs/ux-audits/whole-app-sprint-0-rendered-evidence.md`. The render revealed
   and fixed the 800px-height minimum and bounded queue-card overflow. Focused
   probe build passes with `UseAppHost=false`.
-- Remaining gap or next action: replay and record the documented nine
-  keyboard/accessibility journeys from synthetic data. Do not use the live
-  installed profile or change production instance behavior for this audit.
+- Remaining gap or next action: none for Sprint 0. Sprint 15 owns the broader
+  synthetic keyboard/accessibility journey matrix; do not use the live
+  installed profile or change production instance behavior for that work.
 
 Goal: prove where overwhelm comes from before changing the experience.
 
@@ -472,7 +473,7 @@ Sprint 0 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
+- Status: `Done`
 - Status history: `Planned` (2026-09-27 source audit); `Ready` (2026-09-27
   pressure test); `Done` (2026-09-27 policy completion); `Partial`
   (2026-09-27 upstream control inventory stale); `Done` (2026-09-30 refreshed
@@ -2352,7 +2353,9 @@ Sprint 14 acceptance criteria:
 - Status: `Partial`
 - Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27
   pressure test); `Partial` (2026-09-27: source accessibility contracts and
-  redacted journey matrix complete; rendered capture blocked).
+  redacted journey matrix complete; rendered capture blocked); `Partial`
+  (2026-09-30: isolated 1280x800 and 1024x768 rendered matrix plus package
+  startup evidence recorded; interactive and Narrator paths remain open).
 - User outcome: simplified workflows remain usable without a mouse and legible
   at realistic desktop sizes; users receive status and recovery information
   without visual-only or hover-only discovery.
@@ -2422,9 +2425,22 @@ Sprint 14 acceptance criteria:
   .NET SHA-256, and no-profile portable publish plus `Build-Installer.ps1`
   completed on 2026-09-29 (ZIP 88,627,930 bytes; MSI 76,292,096 bytes). No
   packaged-render evidence is claimed yet.
-- Remaining gap or next action: run the harness for every J15 fixture at all
-  required viewport/DPI/theme states, add packaged evidence, and manually
-  validate Narrator before marking this sprint done.
+- Evidence and date: 2026-09-30: `MeetingRecorder.WpfRenderProbe` captured
+  all five safe synthetic shell states at 1280x800/100%, 1280x800/125%, and
+  1024x768/125%, plus the processing state at a 200% raster. The harness now
+  fails if WPF clamps its requested logical viewport. That check exposed and
+  fixed the former 1280x800 minimum and header action overflow; the remaining
+  Meetings table is intentionally horizontally scrollable at 1024px. Source
+  anchors now use named XAML sections rather than brittle line cutoffs, so the
+  refreshed 271-control audit retains accurate Home/Meetings/Settings ownership.
+  `Build-Installer.ps1` passed; portable startup, MSI installation, 15-file
+  installed-integrity verification, and a five-second installed-app smoke with
+  no qualifying crash event passed. See
+  `docs/ux-audits/whole-app-sprint-15-rendered-evidence.md`.
+- Remaining gap or next action: execute the interactive Settings/edit/Escape,
+  dialog-confirmation, hosted-consent, profile-delete, and detail-return
+  fixtures; capture packaged UI states; validate high contrast, OS DPI, and
+  Narrator before marking this sprint done.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 
