@@ -123,7 +123,7 @@ records an approved dependency change.
 | 5 — Transcript-Label Click Editing | `Ready` | Define accessible label-to-review focus, current-revision global rename, and additive override schema reservation. |
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
 | 7 — Merge Duplicate Speakers | `Ready` | Define user-confirmed canonical speaker mapping, conflict gates, artifact consistency, and repair boundary. |
-| 8 — Corrections, Rejections, Undo, And Local Learning | `Ready` | Define identity-keyed correction receipts, scoped feedback, idempotent learning, and exact undo boundaries. |
+| 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
 | 9 — Automatic Future Naming | `Ready` | Define post-processing eligibility, explainable local decisions, safe rollout, and false-attribution containment. |
 | 10 — Rematch Past Meetings | `Ready` | Define revalidation-safe single/bulk rematch planning, metadata-only integrity, and resumable outcomes. |
 | 11 — Bad Diarization Repair Guidance | `Ready` | Define quality diagnosis, action routing, repair lifecycle, and correction-preservation boundaries. |
@@ -3673,8 +3673,8 @@ Sprint 7 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: correction/rejection/refresh/undo services and profile tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: correction/rejection/refresh/undo services and profile tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 identity-keyed correction decision slice).
 - User outcome: confirmed names persist even when local learning cannot, bad suggestions stay rejected only where wrong, and undo removes only recognition-derived changes.
 - Scope / non-goals: harden speaker-level correction, rejection, profile learning, and undo. Do not make profiles cloud/shared, train from segment overrides/merges, silently reapply rejection, or add profile deletion here.
 - Dependencies and decisions: use S1 revisioned speaker ids, S6 override boundary, S7 canonical clusters. Existing service writes artifacts before best-effort learning and has scoped rejection/undo, but its correction map is keyed by display label. Mutations carry meeting/revision/speaker id (canonical id when merged), never display text as identity.
@@ -3687,7 +3687,8 @@ Sprint 7 acceptance criteria:
 - Tests and rendered checks: duplicate/renamed display labels, stale revision, canonical merge, artifact success/profile failure, receipt retry/idempotence, learning-dedupe/no-learning matrix, scoped rejection/refresh, undo boundaries, conflict/cancel, privacy/log redaction. Render warning/result/undo focus and accessible status.
 - Documentation / installer / release work: document local-only learning, confirmation, scoped rejection, artifact-first success, and undo limits. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found artifact-first learning, scoped rejected matches, user-edit-preserving/idempotent undo tests. It found display-name keyed correction maps, no revisioned receipt, and no merge-aware learning-dedupe proof.
-- Remaining gap or next action: add identity-keyed correction request/receipt fixtures and migrate one detail apply path before changing learning storage.
+- Evidence and date: 2026-09-29 added `SpeakerCorrectionReceiptResolver` tests covering canonical speaker identity, stale fingerprint/revision, duplicate/no-op requests, learning eligibility, scoped rejection, and recognition-only undo. Existing correction service remains artifact-first with scoped feedback and idempotent undo.
+- Remaining gap or next action: persist additive correction receipts and migrate the detail apply path to issue identity-keyed operation ids before marking this sprint Done.
 
 Goal: make speaker-name corrections durable while teaching future recognition
 only when safe.

@@ -183,6 +183,12 @@ drafts when a background revision changes. `Refresh Local Suggestions` only
 checks local profiles; `Repair Speaker Labels` remains a separate Fix action
 for cluster quality. Neither route silently renames a speaker.
 
+Speaker correction decisions are keyed by operation, meeting, artifact revision,
+and canonical diarization speaker—not by the displayed name. They reject stale,
+duplicate, and no-op work before any write. A confirmed name can be eligible for
+local learning only with explicit confirmation and usable local evidence;
+recognition undo and rejection apply only to profile-derived attribution.
+
 ## Bulk-operation previews
 
 `BulkOperationPlanner` snapshots each target's identity, displayed title,
