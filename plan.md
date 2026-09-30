@@ -5537,8 +5537,8 @@ Sprint 1 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: Sprint 1 has no selected signed/licensed runtime-model candidate or matched CPU-fallback evidence).
 - User outcome: GPU-capable builds can use verified optional assets, while missing/bad/incompatible assets never make normal transcription or setup look broken.
 - Scope / non-goals: define catalog/readiness/packaging/update contract after one S1 candidate passes. Do not select/download assets yet, change visible profile names, auto-fetch runtime/model, make GPU required, or hide security/privacy consequences from advanced support status.
 - Dependencies and decisions: S1 chosen candidate evidence and CPU catalog/readiness are prerequisites. Each asset set is immutable tuple: runtime id/version/architecture/OS range, model profile+format/tokenizer, file relative path/length/SHA-256, signing/license/source/provenance, compatibility ABI/model manifest version, release channel and rollback target. CPU `ggml` remains sole baseline readiness; GPU status is additive/local metadata only.
@@ -5589,8 +5589,8 @@ Sprint 2 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires Sprint 2's immutable verified asset tuple, which cannot exist before Sprint 1 selects a candidate).
 - User outcome: support can explain CPU/GPU attempt/fallback truth without changing transcript/output behavior or leaking device/private data.
 - Scope / non-goals: add versioned optional execution provenance before provider factory. Do not change provider selection, `.ready`, transcript text/segments/timestamps, CPU default, summary input, or expose full device/driver/path/model telemetry.
 - Dependencies and decisions: S0 state machine and S2 asset tuple define vocabulary. Record an immutable per-attempt `TranscriptionExecutionMetadata`: requested preference, eligible/selected/effective provider, runtime/asset opaque ids+versions, start/end/elapsed, fallback/suppression code, retry/attempt id, schema version. `requested` never means used; CPU fallback must be observable. Unknown enum fields are preserved/treated safely by readers, not coerced to GPU success.
@@ -5636,8 +5636,8 @@ Sprint 3 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires the Sprint 2 asset tuple and Sprint 3 execution metadata contracts).
 - User outcome: acceleration cannot change what a trustworthy transcript means; CPU remains exact default and recovery path.
 - Scope / non-goals: introduce minimal provider factory/policy seams after S1–S3 proof. Do not enable GPU, rewrite CPU provider, duplicate normalization, alter retry UI, or make output quality a provider-specific subjective rule.
 - Dependencies and decisions: existing `WhisperNetTranscriptionProvider` is canonical CPU. Factory input is immutable job/config/readiness/asset snapshot; provider returns normalized candidate plus S3 metadata, never writes artifacts. Selection precedence: `CpuOnly` always CPU; Auto selects GPU only S2-ready/S5-probed/unsuppressed snapshot; any factory/probe/init/run/quality failure returns CPU under same attempt policy. Program wiring remains composition-only.
@@ -5681,8 +5681,8 @@ Sprint 4 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires a Sprint 2 verified tuple and Sprint 4 provider policy; neither is available).
 - User outcome: app can truthfully say GPU is usable or falls back, without touching meeting data or making startup/recording less reliable.
 - Scope / non-goals: add isolated worker capability probe/readiness cache after S1–S4. Do not benchmark user meetings, auto-download models, inspect arbitrary processes/devices, block setup/queue, or make manual Probe a diagnostic escape from safety policy.
 - Dependencies and decisions: S2 verified asset tuple/S3 metadata/S4 factory/S0 scheduler gates. Worker receives minimal generated probe config with only verified app-owned asset paths/tuple id and no provider credentials/source paths; input is bundled/generated deterministic audio and expected normalized shape/hash, not transcript content. Probe output is capability evidence, not performance claim.
@@ -5728,8 +5728,8 @@ Sprint 5 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires selected provider, verified assets, probe evidence, and factory policy from blocked Sprints 1–5).
 - User outcome: eligible backlog work may accelerate; every incompatible/unstable outcome still yields normal CPU transcript without action or data loss.
 - Scope / non-goals: implement selected S1 provider after S2–S5 gates. Do not run GPU during recording, publish partial candidate output, accept runtime-internal CPU as GPU success, retry user cancellation, or change transcript/ready contract.
 - Dependencies and decisions: S4 factory owns selection/S5 fresh ready cache gates; provider consumes prepared WAV only and returns isolated candidate plus S3 metadata. Candidate never writes snapshot/artifacts. Arbitration is provider-neutral and happens before final persistence; quality failure/init/run/diagnostic internal fallback results in at most one CPU attempt for same immutable input/attempt id. Cancellation/preemption is terminal cancellation, not CPU fallback.
@@ -5775,8 +5775,8 @@ Sprint 6 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: GPU-attributable recovery requires the blocked provider and per-attempt contract from Sprints 3–6).
 - User outcome: a hard GPU worker failure becomes one normal CPU recovery attempt, not a stranded meeting or crash loop.
 - Scope / non-goals: recover crashes causally attributable to a GPU transcription attempt. Do not retry arbitrary worker/app crashes as CPU, restart recording, delete models/sources/published artifacts, hide failure evidence, or make suppression global across unrelated runtime/model versions.
 - Dependencies and decisions: S3 attempt metadata/S4 factory/S5 probe/S6 immutable job and final snapshot contracts are authority. Persist launch + in-flight checkpoint before GPU work: job/input/revision/attempt id, requested/selected provider, tuple hash, stage, start/heartbeat, worker PID/exit disposition. A crash is GPU-attributable only when current uncompleted checkpoint/exit timing proves that attempt; otherwise normal worker recovery applies.
@@ -5821,8 +5821,8 @@ Sprint 7 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: scheduler truth depends on verified probe, provider, crash, and suppression evidence from blocked Sprints 5–7).
 - User outcome: acceleration helps eligible backlog only when device conditions allow; recording/interactivity/battery trust outrank a faster estimate.
 - Scope / non-goals: define scheduler/ETA/status over S0–S7. Do not add hardware telemetry/upload, guarantee speed/battery gain, kill in-flight work on a policy switch, run concurrent GPU jobs, or override `CpuOnly`/user pause.
 - Dependencies and decisions: existing background mode/recording/queue policy plus S5 readiness/S7 suppression are authority. Policy inputs are bounded local standard power state, app recording/queue state, user preference, current effective provider/timing and tuple health; unknown/unavailable power/thermal signal chooses conservative CPU in responsive mode. GPU decision happens at job boundary and is revalidated immediately before launch.
@@ -5866,8 +5866,8 @@ Sprint 8 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: user-facing status cannot truthfully exist before blocked asset, probe, attempt, and policy contracts).
 - User outcome: normal users never need think about GPU; advanced users can choose CPU, request a safe synthetic probe, and see exact effective result/fallback.
 - Scope / non-goals: surface S2/S3/S5/S7/S8 truth in existing Advanced settings. Do not alter Setup/readiness completion, promise speed, offer drivers/models/manual path editing, expose device identifiers/paths/raw diagnostics, or force active work to switch provider.
 - Dependencies and decisions: CPU is default and Settings preference applies next eligible job only. `Auto` means policy may select GPU, not enabled/guaranteed; `CpuOnly` wins all automatic/mannual launch selection except a Test probe that still obeys safety gates and never processes meeting content. Status derives one resolver from asset tuple + probe freshness + suppression + last final attempt—not independent labels.
@@ -5915,8 +5915,8 @@ Sprint 9 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: requires an approved candidate and verified provider outputs; Sprint 1 has neither).
 - User outcome: packaged Auto is enabled only when local evidence shows real eligible-device gain with no protected transcript regressions.
 - Scope / non-goals: create isolated metadata-only benchmark/quality gate. Do not benchmark user meetings, upload telemetry/fixtures/text, use benchmark labels at runtime, treat one machine as fleet proof, or change packaged default until reviewer-approved evidence.
 - Dependencies and decisions: S0 protocol/S1 candidate/S4 normalized quality/S6 final arbitration/S8 policy are authority. Corpus has versioned opaque ids/hashes, consent/classification/owner/expiry, scenario tags and development/holdout splits; private audio/text/reference remain outside source control. Runtime receives no corpus labels/categories/expected output. CPU and actual-effective GPU runs use identical pinned input/options/model/profile/app/runtime/power mode.
@@ -5963,8 +5963,8 @@ Sprint 10 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: no selected licensed tuple or delivery policy exists; packaging would be speculative).
 - User outcome: installer/update either contains a verified optional GPU tuple or safely runs CPU; packaging cannot silently corrupt normal product.
 - Scope / non-goals: package selected S1 tuple and prove install/update paths. Do not assume binary checkout/LFS strategy, publish assets, require GPU hardware on every tester, weaken CPU packaging, or conflate diarization DirectML files with transcription runtime.
 - Dependencies and decisions: S1 license/provenance/S2 tuple manifest/S10 promotion and current V2 stable-apphost/bundle-integrity contracts are authority. Resolve delivery strategy after size/license/security evidence: bundled, separately signed/verified release asset, or no ship. Every route needs SBOM/license/source/hash/signature/architecture/version compatibility; no dynamic unverified runtime/model acquisition.
@@ -6015,8 +6015,8 @@ Sprint 11 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: rollback semantics depend on the blocked tuple, packaging, and crash-suppression contracts).
 - User outcome: any bad GPU rollout is neutralized locally and immediately by CPU behavior, without reinstalling or risking existing models/transcripts.
 - Scope / non-goals: define durable local override/suppression/update/rollback safety after S7/S11. Do not add remote telemetry/kill switch, let support edit artifacts, delete CPU models, classify optional tuple asset as app update, or bypass update integrity policy.
 - Dependencies and decisions: precedence is explicit: release-disabled/incompatible tuple → local safety kill switch → user CpuOnly → S7 tuple suppression → S5/S8 policy → Auto eligible GPU. Higher safety state wins; UI records which one and clear conditions. Kill switch is versioned local config/policy record with reason/source/time/expiry/review token, atomic write/backup/migration and no transcript/manifest mutation; only explicit local user/support-approved action can set/clear it.
@@ -6062,8 +6062,8 @@ Sprint 12 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-29: verified user/support guidance depends on the blocked candidate, benchmark, and packaging outcomes).
 - User outcome: people and support can understand CPU/GPU outcome, recover safely, and never need hidden driver/Python/model work.
 - Scope / non-goals: document only verified S1–S12 behavior at ship time. Do not advertise unsupported hardware/speed, reveal private diagnostics, instruct driver/manual runtime/model conversion, change CPU fallback, or turn docs into a release approval substitute.
 - Dependencies and decisions: S1 selection/S10 promotion/S11 package evidence/S12 safety policy are required before final wording. Docs distinguish `available`, `requested`, `attempted`, `effective`, `fallback`, `suppressed`, and `CPU only`; no status means a performance claim. Auto default is conditional on approved S10/S11 evidence—until then CPU-safe default remains authoritative.
