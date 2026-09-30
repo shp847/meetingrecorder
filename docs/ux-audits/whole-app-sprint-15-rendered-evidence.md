@@ -33,6 +33,12 @@ The processing state also rendered at 1280×800/200% as
 `20260930-073643/b0d2366949464202a98aefd26cd4405c/processing-1280x800-200.png`
 with SHA-256 `c65c84b1f825a00cf86ca83e378b220197c22fe1ee9a45be68afb5dd321736a8`.
 
+Settings > Recording rendered at 1280×800/125% as
+`20260930-075154/32c06cf14b1e4237b098ccba08d2c4fd/settings-recording-1280x800-125.png`
+with SHA-256 `4107e381c89d7edae04032d3c7845e346b94115941f5e18d07a3519679b62cef`.
+Its keyboard trace confirms that Escape closes Settings and returns focus to
+the `Open Settings` control that opened it.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -53,6 +59,6 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-interactive Settings/edit/Escape, dialog confirmation, hosted-consent,
-profile-delete, and detail-return journeys remain unexecuted. Their evidence is
-still required before Sprint 15 can be marked `Done`.
+harmless Settings edit, dialog confirmation, hosted-consent, profile-delete,
+and detail-return journeys remain unexecuted. Their evidence is still required
+before Sprint 15 can be marked `Done`.

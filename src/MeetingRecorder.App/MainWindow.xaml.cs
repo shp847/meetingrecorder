@@ -1532,6 +1532,7 @@ public partial class MainWindow : Window
 
         if (_settingsWindow is null)
         {
+            var focusReturnTarget = Keyboard.FocusedElement as UIElement;
             _settingsWindow = new SettingsHostWindow(MeetingRecorderProductModule.Instance.GetSettingsSections())
             {
                 Owner = this,
@@ -1550,6 +1551,15 @@ public partial class MainWindow : Window
                 var detachedBody = _settingsWindow.DetachBody();
                 RestoreSettingsBody(detachedBody);
                 _settingsWindow = null;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (focusReturnTarget is { IsVisible: true, IsEnabled: true } && focusReturnTarget.Focus())
+                    {
+                        return;
+                    }
+
+                    HeaderSettingsButton.Focus();
+                }, DispatcherPriority.Input);
             };
         }
 

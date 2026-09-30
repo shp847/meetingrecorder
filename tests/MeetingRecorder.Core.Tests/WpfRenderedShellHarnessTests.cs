@@ -115,4 +115,22 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Equal(120d, frame.DpiX);
         Assert.Equal(120d, frame.DpiY);
     }
+
+    [Fact]
+    public void Settings_Recording_Closes_On_Escape_And_Returns_Focus_To_Its_Opener()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.SettingsRecording,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("SettingsRecordingSectionButton | Button | Recording | True", automationTrace);
+        Assert.Contains("Focus: SettingsRecordingSectionButton", keyboardTrace);
+        Assert.Contains("Escape: Open Settings", keyboardTrace);
+    }
 }

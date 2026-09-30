@@ -148,6 +148,7 @@ internal static class WpfRenderHarness
             Top = -10000,
             ShowInTaskbar = false,
         };
+        Window? settingsWindow = null;
 
         try
         {
@@ -170,6 +171,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.SettingsRecording => "settings-recording",
                 SyntheticShellState.Processing => "processing",
                 SyntheticShellState.SelectionActive => "selection-active",
                 SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
@@ -199,13 +201,36 @@ internal static class WpfRenderHarness
                 }
             }
 
+            if (state == SyntheticShellState.SettingsRecording)
+            {
+                if (!settingsAction.Focus())
+                {
+                    throw new InvalidOperationException("Open Settings must accept focus before opening the Settings window.");
+                }
+
+                settingsAction.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                settingsWindow = Application.Current.Windows
+                    .Cast<Window>()
+                    .Single(candidate => !ReferenceEquals(candidate, window));
+                settingsWindow.UpdateLayout();
+                settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                WriteProgress(progressPath, "settings-opened");
+            }
+
             var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
             var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
             var automationTracePath = Path.Combine(rootDirectory, $"{stateToken}-automation-tree-{scaleToken}.txt");
             var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace-{scaleToken}.txt");
 
-            SaveScreenshot(window, screenshotPath, rasterScale);
-            var traceElements = state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation
+            SaveScreenshot(settingsWindow ?? window, screenshotPath, rasterScale);
+            var traceElements = state == SyntheticShellState.SettingsRecording
+                ? new FrameworkElement[]
+                {
+                    RequireElement<Button>(settingsWindow!, "SettingsRecordingSectionButton"),
+                    RequireElement<Button>(settingsWindow!, "SaveChangesButton"),
+                    RequireElement<TextBlock>(settingsWindow!, "FooterStatusTextBlock"),
+                }
+                : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation
                 ? new FrameworkElement[]
                 {
                     homeAction,
@@ -226,12 +251,17 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(window, "DashboardModelReadinessTextBlock"),
                 };
             File.WriteAllLines(automationTracePath, CreateAutomationTrace(traceElements));
-            File.WriteAllLines(keyboardTracePath, CreateKeyboardTrace(settingsAction, tabControl));
+            File.WriteAllLines(
+                keyboardTracePath,
+                settingsWindow is null
+                    ? CreateKeyboardTrace(settingsAction, tabControl)
+                    : CreateSettingsKeyboardTrace(settingsWindow, settingsAction));
 
             return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
         }
         finally
         {
+            settingsWindow?.Close();
             window.Close();
             if (!application.Dispatcher.HasShutdownStarted)
             {
@@ -434,6 +464,44 @@ internal static class WpfRenderHarness
         return trace;
     }
 
+    private static IReadOnlyList<string> CreateSettingsKeyboardTrace(
+        Window settingsWindow,
+        Button settingsAction)
+    {
+        var sectionButton = RequireElement<Button>(settingsWindow, "SettingsRecordingSectionButton");
+        if (!sectionButton.Focus())
+        {
+            throw new InvalidOperationException("Settings Recording section must accept keyboard focus.");
+        }
+
+        var trace = new List<string>
+        {
+            "Focus: " + GetFocusedName(),
+        };
+        sectionButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        trace.Add("Tab: " + GetFocusedName());
+
+        var source = PresentationSource.FromVisual(settingsWindow)
+            ?? throw new InvalidOperationException("Settings window has no presentation source for Escape validation.");
+        settingsWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent,
+        });
+        settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        if (settingsWindow.IsVisible)
+        {
+            throw new InvalidOperationException("Escape must close the Settings window.");
+        }
+
+        trace.Add("Escape: " + GetFocusedName());
+        if (!string.Equals(GetFocusedName(), "Open Settings", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Escape must return focus to Open Settings.");
+        }
+
+        return trace;
+    }
+
     private static string GetFocusedName()
     {
         return Keyboard.FocusedElement is FrameworkElement element
@@ -450,5 +518,6 @@ internal static class WpfRenderHarness
         SelectionActive,
         CleanupRecommendation,
         EmptyHealthy,
+        SettingsRecording,
     }
 }

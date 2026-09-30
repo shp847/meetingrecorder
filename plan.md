@@ -2437,7 +2437,11 @@ Sprint 14 acceptance criteria:
   installed-integrity verification, and a five-second installed-app smoke with
   no qualifying crash event passed. See
   `docs/ux-audits/whole-app-sprint-15-rendered-evidence.md`.
-- Remaining gap or next action: execute the interactive Settings/edit/Escape,
+- Evidence and date: 2026-09-30: Settings > Recording rendered safely at
+  1280x800/125%. The focused Settings section, forward Tab, Escape close, and
+  return to the original `Open Settings` control are captured by the isolated
+  harness. A regression check now protects this focus-return contract.
+- Remaining gap or next action: execute the harmless Settings edit,
   dialog-confirmation, hosted-consent, profile-delete, and detail-return
   fixtures; capture packaged UI states; validate high contrast, OS DPI, and
   Narrator before marking this sprint done.

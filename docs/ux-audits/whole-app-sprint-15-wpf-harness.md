@@ -38,7 +38,7 @@ dotnet .\tests\MeetingRecorder.WpfRenderProbe\bin\Debug\net8.0-windows\MeetingRe
 The arguments are `state`, `scale`, optional artifact root, and optional logical
 viewport. Scales are `100`, `125`, or `200`; valid states are `empty-healthy`,
 `setup-blocked`, `processing`, `selection-active`, and
-`cleanup-recommendation`. The probe fails if WPF clamps the requested viewport
+`cleanup-recommendation`, and `settings-recording`. The probe fails if WPF clamps the requested viewport
 and otherwise writes artifact paths and screenshot SHA-256 values to standard
 output.
 
@@ -50,5 +50,5 @@ processing 200% raster. See `whole-app-sprint-0-rendered-evidence.md` and
 `whole-app-sprint-15-rendered-evidence.md`. The harness verifies the rendered
 shell, `Start recording` accessible name, complete setup-reason text, primary
 navigation automation peer, and keyboard focus movement. It is not a substitute
-for interactive journey replay, high-contrast/OS-DPI behavior, packaged UI
+for harmless Settings edits, other interactive journey replay, high-contrast/OS-DPI behavior, packaged UI
 rendering, Narrator, or manual visual review required by Sprint 15.

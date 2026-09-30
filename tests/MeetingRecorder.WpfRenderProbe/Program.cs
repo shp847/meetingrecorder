@@ -26,6 +26,7 @@ var syntheticState = state switch
     "processing" => WpfRenderHarness.SyntheticShellState.Processing,
     "selection-active" => WpfRenderHarness.SyntheticShellState.SelectionActive,
     "cleanup-recommendation" => WpfRenderHarness.SyntheticShellState.CleanupRecommendation,
+    "settings-recording" => WpfRenderHarness.SyntheticShellState.SettingsRecording,
     _ => throw new ArgumentException($"Unknown synthetic state '{state}'."),
 };
 
