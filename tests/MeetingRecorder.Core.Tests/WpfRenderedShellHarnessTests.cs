@@ -18,4 +18,20 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: Open Settings", keyboardTrace);
         Assert.DoesNotContain("<none>", keyboardTrace);
     }
+
+    [Fact]
+    public void Processing_Shell_Renders_A_Synthetic_Manifest_In_The_Meetings_Workspace()
+    {
+        var evidence = WpfRenderHarness.CaptureProcessingShell();
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        Assert.True(new FileInfo(evidence.ScreenshotPath).Length > 0);
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("MeetingsDataGrid | List |", automationTrace);
+        Assert.Contains("MeetingsProcessingStatusBorder", automationTrace);
+        Assert.Contains("Focus: Open Settings", keyboardTrace);
+        Assert.DoesNotContain("<none>", keyboardTrace);
+    }
 }
