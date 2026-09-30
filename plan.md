@@ -2388,10 +2388,11 @@ Sprint 14 acceptance criteria:
   `docs/ux-audits/whole-app-sprint-15-wpf-harness.md`.
   The first rendered review exposed truncated setup-remediation text in the
   1280px header; its detail width is now 220px and the harness asserts the
-  complete synthetic reason. `Build-Installer.ps1` rebuilt portable payloads
-  but its WiX/MSBuild stage stopped producing output before an MSI or product
-  ZIP; that local package-gate attempt was terminated after several idle
-  minutes, so no packaged-render evidence is claimed.
+  complete synthetic reason. A no-profile package runner exposed a
+  shell-dependent `Get-FileHash` call during portable publish; it now uses
+  .NET SHA-256, and no-profile portable publish plus `Build-Installer.ps1`
+  completed on 2026-09-29 (ZIP 88,627,930 bytes; MSI 76,292,096 bytes). No
+  packaged-render evidence is claimed yet.
 - Remaining gap or next action: run the harness for every J15 fixture at all
   required viewport/DPI/theme states, add packaged evidence, and manually
   validate Narrator before marking this sprint done.

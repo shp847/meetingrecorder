@@ -394,7 +394,8 @@ public sealed class InstallerScriptTests
         var scriptContents = File.ReadAllText(scriptPath);
 
         Assert.Contains("bundle-integrity.json", scriptContents, StringComparison.Ordinal);
-        Assert.Contains("Get-FileHash", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("Get-Sha256Hash", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("System.Security.Cryptography.SHA256", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.App.exe", scriptContents, StringComparison.Ordinal);
         Assert.Contains("AppPlatform.Deployment.Cli.exe", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.ProcessingWorker.exe", scriptContents, StringComparison.Ordinal);

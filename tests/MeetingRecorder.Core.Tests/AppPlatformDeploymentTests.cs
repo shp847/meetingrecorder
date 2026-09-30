@@ -566,7 +566,8 @@ public sealed class AppPlatformDeploymentTests
         Assert.Contains("sherpa-onnx-c-api.dll", script, StringComparison.Ordinal);
         Assert.Contains("onnxruntime.dll", script, StringComparison.Ordinal);
         Assert.Contains("DirectML.dll", script, StringComparison.Ordinal);
-        Assert.Contains("Get-FileHash", script, StringComparison.Ordinal);
+        Assert.Contains("function Get-Sha256Hash", script, StringComparison.Ordinal);
+        Assert.Contains("System.Security.Cryptography.SHA256", script, StringComparison.Ordinal);
         Assert.Contains("length does not match sherpa-directml-runtime.json", script, StringComparison.Ordinal);
         Assert.Contains("Bundled DirectML speaker-labeling runtime", script, StringComparison.Ordinal);
     }

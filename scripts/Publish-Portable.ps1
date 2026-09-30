@@ -151,6 +151,22 @@ function Read-ModelCatalog {
     return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
 }
 
+function Get-Sha256Hash {
+    param(
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace("-", [string]::Empty).ToLowerInvariant()
+    }
+    finally {
+        $hasher.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function New-BundleIntegrityEntry {
     param(
         [string]$BundleRoot,
@@ -166,7 +182,7 @@ function New-BundleIntegrityEntry {
     return [ordered]@{
         relativePath = $RelativePath
         lengthBytes  = [int64]$item.Length
-        sha256       = ((Get-FileHash -Path $resolvedPath -Algorithm SHA256).Hash).ToLowerInvariant()
+        sha256       = Get-Sha256Hash -Path $resolvedPath
     }
 }
 
@@ -243,15 +259,15 @@ function Restore-VerifiedStableAppHostIfNeeded {
         throw "Cannot verify stable apphost because current build apphost '$expectedAppHostPath' does not exist."
     }
 
-    $expectedHash = (Get-FileHash -LiteralPath $expectedAppHostPath -Algorithm SHA256).Hash
-    $stableHash = (Get-FileHash -LiteralPath $ConfiguredStableAppHostPath -Algorithm SHA256).Hash
+    $expectedHash = Get-Sha256Hash -Path $expectedAppHostPath
+    $stableHash = Get-Sha256Hash -Path $ConfiguredStableAppHostPath
     if ($stableHash -ne $expectedHash) {
         throw "Configured stable apphost hash does not match the current build apphost."
     }
 
     Copy-Item -LiteralPath $ConfiguredStableAppHostPath -Destination $publishedAppHostPath -Force
     if (-not (Test-Path -LiteralPath $publishedAppHostPath) -or
-        (Get-FileHash -LiteralPath $publishedAppHostPath -Algorithm SHA256).Hash -ne $expectedHash) {
+        (Get-Sha256Hash -Path $publishedAppHostPath) -ne $expectedHash) {
         throw "Verified stable apphost could not be restored to '$publishedAppHostPath'."
     }
 
@@ -338,7 +354,7 @@ function Copy-SherpaDirectMlRuntimeIfAvailable {
             throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' length does not match sherpa-directml-runtime.json. Git LFS may not have fetched the runtime binaries."
         }
 
-        $runtimeFileSha256 = ((Get-FileHash -Path $runtimeFilePath -Algorithm SHA256).Hash).ToLowerInvariant()
+        $runtimeFileSha256 = Get-Sha256Hash -Path $runtimeFilePath
         if ($runtimeFileSha256 -ne [string]$manifestEntry[0].sha256) {
             throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' hash does not match sherpa-directml-runtime.json."
         }
