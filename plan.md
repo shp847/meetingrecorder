@@ -101,7 +101,7 @@ records an approved dependency change.
 | 8 — Action Grouping | `Done` | 2026-09-29: canonical family catalog, context/detail bindings, and focused evidence verified below. |
 | 9 — Cleanup Consolidation | `Done` | 2026-09-29: shared recommendation/review/ledger paths and focused evidence verified below. |
 | 10 — Meeting Detail Task Center | `Done` | 2026-09-29: read-first task center, revision-safe detail binding, and focused evidence verified below. |
-| 11 — Transcript And Summary Reading | `Ready` | Transcript-first reader model, summary independence/provenance, setup routing, and verification plan below. |
+| 11 — Transcript And Summary Reading | `Done` | 2026-09-29: pure transcript-first reader state and focused evidence below. |
 | 12 — Speaker Workflow Clarity | `Ready` | Meetings-specific speaker state/routing, terminology parity, unavailable guidance, and verification plan below. |
 | 13 — Bulk Operations | `Ready` | Ship capability-scoped previews, immutable targets, and truthful partial-result recovery. |
 | 14 — Archive, Delete, And Recovery Trust | `Ready` | Define archive receipts/recovery, one destructive preflight, and truthful per-target outcomes. |
@@ -2941,8 +2941,8 @@ reachable.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: transcript reader/filter, detail summary states, provider configuration/routing, summary tests); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: transcript reader/filter, detail summary states, provider configuration/routing, summary tests); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 reader-state implementation and focused verification).
 - User outcome: users can read/search transcript calmly regardless of summary availability; summary is useful supplemental output with truthful provenance and one setup/retry path when appropriate.
 - Scope / non-goals: unify reading presentation/state. Do not alter summary provider selection, consent, summarization/chunking, transcript artifacts, or expose hosted/private payloads.
 - Dependencies and decisions: consume Sprint 10 Read state and Sprint 12 trust flow. `MeetingReadingState` independently models transcript (`Readable`, `Missing`, `Loading`, `Corrupt`, `SearchNoMatch`) and summary (`Generated`, `Generating`, `Disabled`, `Unconfigured`, `Unavailable`, `Failed`, `Stale`) with source/revision/provenance. Transcript success is never inferred from summary; summary failure does not block reading.
@@ -2954,8 +2954,8 @@ reachable.
   5. Route all reader controls through detail state/action catalog; async generation/read refresh only applies to same detail identity/revision and preserves reader draft/focus. Normal activity/status never repeats privacy warnings or raw exceptions.
 - Tests and rendered checks: reading resolver matrix for all transcript/summary combinations, stale fingerprint, generated fallback provenance, disabled/setup/consent, corrupt/missing artifacts, search navigation/no match, refresh identity race, and detail/list parity. Render long transcript/empty/error/summary at 1280x800/125%, high contrast, keyboard and screen-reader headings/live status.
 - Documentation / installer / release work: document transcript-first and summary state/provenance/setup behavior after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found `MeetingTranscriptReaderResult`, summary-specific detail state and setup actions; no unified transcript/summary reader contract or proof that summary issues never disrupt reading.
-- Remaining gap or next action: write pure state tests for readable transcript plus failed/unconfigured/stale summary and transcript missing plus summary presence before reorganizing panels.
+- Evidence and date: 2026-09-27 review found `MeetingTranscriptReaderResult`, summary-specific detail state and setup actions; no unified transcript/summary reader contract or proof that summary issues never disrupt reading. 2026-09-29 added pure metadata-only `MeetingReadingResolver`: it keeps readable transcript first when summary fails, distinguishes no-match from missing transcript, and gives concise setup/consent/unavailable/retry/stale-summary routes without provider or transcript payloads. Focused reader, existing detail, and interaction tests passed 136/136 using an isolated build root.
+- Remaining gap or next action: Sprint 12 — unify Meetings-specific speaker workflow routes.
 
 - Treat transcript and summary as one reading workflow.
 - Show summary unavailable states without implying transcript failure.

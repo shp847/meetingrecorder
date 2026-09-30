@@ -147,3 +147,13 @@ keeps background catalog/artifact/recommendation updates from overwriting title,
 project, speaker, or split drafts; a material change preserves drafts and asks
 for reload, while an archived, deleted, or identity-mismatched meeting closes
 the invalid detail safely.
+
+## Reading and summaries
+
+`MeetingReadingResolver` treats transcript and summary as independent states.
+Transcript stays first and searchable when readable even if summary setup,
+consent, generation, or retry has failed. Search-no-match is distinct from a
+missing or corrupt transcript. Summary routes are concise: setup/consent opens
+Settings, a structured-transcript gap explains itself, failure offers retry,
+and a stale summary offers regeneration. Normal status never includes provider
+keys, endpoint details, raw errors, or transcript content.
