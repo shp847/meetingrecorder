@@ -40,4 +40,20 @@ public sealed class AppDataPathsTests
             appRoot);
         Assert.False(AppDataPaths.IsPortableMode(root));
     }
+
+    [Fact]
+    public void PushTestAppRoot_Is_Scoped_And_Does_Not_Override_Explicit_Base_Directory()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var explicitBaseDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var defaultRoot = AppDataPaths.GetAppRoot();
+
+        using (AppDataPaths.PushTestAppRoot(testRoot))
+        {
+            Assert.Equal(Path.GetFullPath(testRoot), AppDataPaths.GetAppRoot());
+            Assert.Equal(AppDataPaths.GetManagedAppRoot(), AppDataPaths.GetAppRoot(explicitBaseDirectory));
+        }
+
+        Assert.Equal(defaultRoot, AppDataPaths.GetAppRoot());
+    }
 }

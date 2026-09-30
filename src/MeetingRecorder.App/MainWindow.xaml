@@ -390,7 +390,7 @@
 
                             <TextBlock x:Name="HeaderShellStatusDetailTextBlock"
                                        Grid.Column="1"
-                                       Width="180"
+                                       Width="220"
                                        Margin="10,0,0,0"
                                        VerticalAlignment="Center"
                                        FontFamily="{StaticResource AppMonoFontFamily}"

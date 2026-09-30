@@ -730,7 +730,7 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("MinWidth=\"390\"", statusBorderTag);
         Assert.Contains("MinHeight=\"44\"", statusBorderTag);
-        Assert.Contains("Width=\"180\"", detailTextTag);
+        Assert.Contains("Width=\"220\"", detailTextTag);
         Assert.Contains("TextTrimming=\"CharacterEllipsis\"", detailTextTag);
     }
 

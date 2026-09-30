@@ -2379,12 +2379,22 @@ Sprint 14 acceptance criteria:
   the pre-existing unused `TrackingWaveIn.DataAvailable` test event. A current
   `MeetingRecorder.App` process (PID 23488) owns the live user profile; the
   global single-instance mutex and available computer-use inventory make a
-  separate synthetic native capture unavailable.
-- Remaining gap or next action: add a reviewed test-only synthetic
-  profile/instance identity or run the matrix under an isolated Windows account.
-  Then collect development and packaged screenshots plus automation-tree and
-  keyboard traces for every J15 row at required viewport/DPI/theme states, and
-  record visual/accessibility findings before marking this sprint done.
+  separate synthetic native capture unavailable. 2026-09-29 added
+  `WpfRenderedShellHarnessTests`: a real `MainWindow` is rendered at 1280x800
+  from a fresh disposable profile on a dedicated STA thread, with a PNG,
+  automation-peer trace, and keyboard-focus trace. It does not run app startup,
+  acquire the single-instance mutex, access the installed profile, or start
+  capture. Harness documentation is in
+  `docs/ux-audits/whole-app-sprint-15-wpf-harness.md`.
+  The first rendered review exposed truncated setup-remediation text in the
+  1280px header; its detail width is now 220px and the harness asserts the
+  complete synthetic reason. `Build-Installer.ps1` rebuilt portable payloads
+  but its WiX/MSBuild stage stopped producing output before an MSI or product
+  ZIP; that local package-gate attempt was terminated after several idle
+  minutes, so no packaged-render evidence is claimed.
+- Remaining gap or next action: run the harness for every J15 fixture at all
+  required viewport/DPI/theme states, add packaged evidence, and manually
+  validate Narrator before marking this sprint done.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 
