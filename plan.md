@@ -124,7 +124,7 @@ records an approved dependency change.
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
 | 7 — Merge Duplicate Speakers | `Ready` | Define user-confirmed canonical speaker mapping, conflict gates, artifact consistency, and repair boundary. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
-| 9 — Automatic Future Naming | `Ready` | Define post-processing eligibility, explainable local decisions, safe rollout, and false-attribution containment. |
+| 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Ready` | Define revalidation-safe single/bulk rematch planning, metadata-only integrity, and resumable outcomes. |
 | 11 — Bad Diarization Repair Guidance | `Ready` | Define quality diagnosis, action routing, repair lifecycle, and correction-preservation boundaries. |
 | 12 — Summary And Derived Output Consistency | `Ready` | Define effective-attribution fingerprinting, readable-stale derived state, and explicit current-name regeneration. |
@@ -3729,8 +3729,8 @@ Sprint 8 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: `VoiceProfileMatcher`, config thresholds, decision tests); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: `VoiceProfileMatcher`, config thresholds, decision tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 eligibility decision matrix).
 - User outcome: future meetings may receive a remembered name only when local evidence clears conservative rules; all uncertainty remains clearly reviewable.
 - Scope / non-goals: harden post-processing profile attribution. Do not identify live speakers, use attendee/calendar/file/title/count hints, alter diarization, send embeddings off-device, or turn a suggestion into a correction.
 - Dependencies and decisions: consume S1/S8 identity, revision, suppression and receipts. Current matcher applies threshold/margin/profile-maturity/minimum-duration and one auto winner per profile. Run only after final speaker samples/artifact revision exist; candidate input is profile/sample embedding compatibility plus scoped rejection, nothing else.
@@ -3742,7 +3742,8 @@ Sprint 8 acceptance criteria:
 - Tests and rendered checks: exhaustive gate/precedence matrix, one-profile-per-speaker collision, revisions/retry/idempotence, user/override preservation, suppression/undo/disabled rollback, incompatible model, no-hint static dependency test, and local-only log redaction. Render each readiness state and immediate undo at 1280x800/125%, keyboard/screen-reader source/reason.
 - Documentation / installer / release work: document post-processing-only/local recognition, conservative rules, suggestion/undo and no hidden identity hints. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found threshold/margin/maturity/duration/duplicate gates and tests, but no lifecycle snapshot, rollout/rollback contract, revisioned attribution receipt, or mechanical no-hint evidence.
-- Remaining gap or next action: extract eligibility/decision snapshot tests before moving prediction dispatch.
+- Evidence and date: 2026-09-29 added `FutureNamingEligibilityResolver` with conservative precedence tests for disabled, evidence/profile gaps, suppression, thresholds, ambiguity, suggestions, and auto-apply. It admits no attendee, calendar, title, filename, or speaker-count inputs.
+- Remaining gap or next action: bind the versioned eligibility snapshot to post-publish prediction dispatch and persistent attribution receipts before marking this sprint Done.
 
 Goal: automatically convert generic labels to person names in future calls
 without increasing false attribution risk.
