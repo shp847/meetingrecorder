@@ -107,7 +107,7 @@ records an approved dependency change.
 | 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-09-29: shared archive/recovery/delete preflight complete; receipt-backed restore execution remains. |
 | 15 — Search And Metadata Simplification | `Done` | 2026-09-29: metadata-only query projection and focused evidence below. |
 | 16 — Safe Background Refresh | `Done` | 2026-09-29: pure coalesced refresh state and focused evidence below. |
-| 17 — Imported Meeting Parity | `Ready` | Define imported-source provenance, shared lifecycle parity, and contextual source recovery. |
+| 17 — Imported Meeting Parity | `Done` | 2026-09-29: display-safe provenance projection and focused evidence verified below. |
 | 18 — Rendered UX Polish | `Ready` | Apply `DESIGN.md` component rules with measured multi-viewport visual acceptance. |
 | 19 — Accessibility And Keyboard QA | `Ready` | Define a focus graph, semantic-control contract, and state-based assistive QA. |
 | 20 — Tests, Docs, Release | `Ready` | Gate shipped Meetings changes on traceable contract tests, package smoke, docs, and authorized release evidence. |
@@ -3118,8 +3118,8 @@ Acceptance: users trust the list without habitually pressing refresh.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: import preflight/queue, manifest provenance, catalog marker handling, import tests); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: import preflight/queue, manifest provenance, catalog marker handling, import tests); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation audit and focused verification).
 - User outcome: an imported audio file becomes an ordinary meeting in the same library and task flow, with one concise origin cue and recovery guidance only when import-specific information matters.
 - Scope / non-goals: carry existing imported-audio sessions through the same Meeting state/action/detail/archive/delete/retry/speaker/summary routes. Do not modify the external original file, expose its absolute path, treat imported audio as live capture, fabricate provenance for legacy records, or add a second “Imports” library/tab.
 - Dependencies and decisions: reuse S1 contract, S2 state, S4 presets, S8 action catalog, S10 detail, S12 speakers, S14 archive/delete, S16 refresh, and Whole-App S10 queue recovery. `ExternalAudioImportService` copies the source into its session processing root, preserves the original, and writes `ImportedSourceAudioInfo` (path, display name, size/time, method, retained flag, probe); catalog manifest selection carries only an imported flag. `.ready` remains the published-artifact authority, not a proxy for whether an original source is still available.
@@ -3131,8 +3131,8 @@ Acceptance: users trust the list without habitually pressing refresh.
   5. Apply S14 semantics consistently: archive/delete preview lists published artifacts and linked session scope, not the retained external original. Archive receipt/recovery names imported provenance safely; permanent delete never deletes the original import source. After an action, reselect by stable meeting identity and keep any contextual recovery detail current.
 - Tests and rendered checks: test picker/drag/drop/watched-folder origin mapping, source copy/preserve, private path redaction, missing/offline/changed source, malformed/legacy provenance, retry/re-import decision, duplicate/superseded imports, `.ready`/publish/retry transitions, and no original-source mutation on archive/delete. Assert parity matrices for imported and captured states across preset/search/inbox/action/detail/bulk/refresh and expected capability exceptions. Render queued/processing/published/failed imported detail at 1280x800/125%, keyboard recovery/focus return, long source display names, high contrast, and screen-reader origin without a path.
 - Documentation / installer / release work: document that importing copies audio for processing while leaving the chosen original intact, what `Source: Imported audio` means, which artifacts archive/delete affects, and source-missing recovery. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found source-copy queueing with `ImportedSourceAudioInfo`, duplicate/ready-marker checks, imported manifest catalog priority, and service coverage for preservation/metadata. It found no visible imported provenance contract in Meetings, no parity matrix across actions/detail, and no explicit boundary proving archive/delete cannot touch the original source.
-- Remaining gap or next action: add the display-safe provenance projection to a published imported-record fixture and parity tests for list/detail/archive/delete before changing import UI.
+- Evidence and date: 2026-09-27 source audit found source-copy queueing with `ImportedSourceAudioInfo`, duplicate/ready-marker checks, imported manifest catalog priority, and service coverage for preservation/metadata. It found no visible imported provenance contract in Meetings, no parity matrix across actions/detail, and no explicit boundary proving archive/delete cannot touch the original source. 2026-09-29 verified the existing `MeetingOriginResolver` and catalog origin projection: imported source display/method/retention fields are safe, paths/fingerprints/sizes are absent, and source-copy/publish/catalog preservation remains covered. Focused origin, import service, and catalog tests passed 58/58 using an isolated build root.
+- Remaining gap or next action: Sprint 18 requires a selected supported visual runtime; it remains Blocked by the recorded runtime/fixture prerequisite.
 
 - Ensure imported meetings use the same presets, recommendations, action
   groups, detail sections, archive/delete rules, retry, summary, and

@@ -192,3 +192,12 @@ and Retry Needed without exposing internal errors. It coalesces to the strongest
 requested mode and latest stable selection, defers a pending update while
 recording, and preserves the last good rendered list on refresh failure. Manual
 retry uses the same pending request rather than starting duplicate work.
+
+## Imported meetings
+
+`MeetingOriginResolver` projects imported audio as one ordinary meeting origin:
+`Imported audio`, its safe display name/method, and retained-at-import state.
+It excludes original paths, source fingerprints, sizes, and probe diagnostics.
+Import processing copies are verified before queueing; archive/delete concerns
+published artifacts and the linked session scope, never the retained external
+original.
