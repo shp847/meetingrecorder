@@ -61,6 +61,22 @@ public enum MeetingRecommendationActionTarget
     CleanupReview = 4,
 }
 
+/// <summary>Describes the bounded surface a recommendation may address.</summary>
+public enum MeetingRecommendationScope
+{
+    None = 0,
+    SingleMeeting = 1,
+    CleanupReview = 2,
+}
+
+/// <summary>States whether the recommendation may be promoted without another refresh.</summary>
+public enum MeetingRecommendationFreshness
+{
+    Current = 0,
+    RefreshRequired = 1,
+    Unknown = 2,
+}
+
 public sealed record MeetingRecommendationDismissal(
     string Fingerprint,
     int RecommendationVersion,
@@ -82,7 +98,14 @@ public sealed record MeetingRecommendationInput(
     bool SummaryRetryAvailable,
     bool MetadataPolishAvailable,
     IReadOnlyList<MeetingCleanupRecommendation>? CleanupRecommendations = null,
-    IReadOnlyList<MeetingRecommendationDismissal>? Dismissals = null);
+    IReadOnlyList<MeetingRecommendationDismissal>? Dismissals = null)
+{
+    /// <summary>
+    /// Optional Sprint 2 row truth. Callers that have not derived presentation state yet
+    /// retain the existing metadata-only ranking behavior.
+    /// </summary>
+    public MeetingPresentationState? PresentationState { get; init; }
+}
 
 public sealed record MeetingPrimaryRecommendation(
     MeetingPrimaryRecommendationKind Kind,
@@ -96,7 +119,10 @@ public sealed record MeetingPrimaryRecommendation(
     int RecommendationVersion,
     int SnapshotVersion,
     DateTimeOffset EvaluatedAtUtc,
-    bool IsDismissed)
+    bool IsDismissed,
+    string ReasonCode = "unknown",
+    MeetingRecommendationScope Scope = MeetingRecommendationScope.None,
+    MeetingRecommendationFreshness Freshness = MeetingRecommendationFreshness.Unknown)
 {
     public bool HasPrimaryAction =>
         IsActionEligible &&
@@ -106,7 +132,7 @@ public sealed record MeetingPrimaryRecommendation(
 
 public sealed class MeetingRecommendationResolver
 {
-    public const int CurrentRecommendationVersion = 1;
+    public const int CurrentRecommendationVersion = 2;
 
     public static readonly TimeSpan DismissalLifetime = TimeSpan.FromDays(30);
 
@@ -124,6 +150,38 @@ public sealed class MeetingRecommendationResolver
         MeetingRecommendationInput input,
         DateTimeOffset evaluatedAtUtc)
     {
+        // Sprint 2 owns truth about stale and archived rows. A recommendation must not
+        // manufacture an action against either terminal presentation state.
+        if (input.IsSnapshotStale || input.SnapshotObservedAtUtc is null ||
+            input.PresentationState == MeetingPresentationState.RefreshRequired)
+        {
+            return Build(
+                input,
+                evaluatedAtUtc,
+                MeetingPrimaryRecommendationKind.Evaluating,
+                "Status needs refresh",
+                "Meeting status is stale, so no recommendation is promoted yet.",
+                MeetingRecommendationSeverity.Information,
+                MeetingRecommendationActionTarget.None,
+                eligible: false,
+                blockReason: "Refresh meeting status before acting on a recommendation.",
+                reasonCode: "stale-status");
+        }
+
+        if (input.PresentationState == MeetingPresentationState.Archived)
+        {
+            return Build(
+                input,
+                evaluatedAtUtc,
+                MeetingPrimaryRecommendationKind.NoActionNeeded,
+                "Archived",
+                "This meeting is archived and has no promoted next action.",
+                MeetingRecommendationSeverity.None,
+                MeetingRecommendationActionTarget.None,
+                eligible: false,
+                reasonCode: "archived");
+        }
+
         var transcriptNeedsRecovery = input.SessionState == SessionState.Failed ||
             input.Transcript == MeetingRecommendationAvailability.Missing;
         if (transcriptNeedsRecovery)
@@ -224,9 +282,23 @@ public sealed class MeetingRecommendationResolver
                 eligible: true);
         }
 
+        if (input.SummaryRetryAvailable)
+        {
+            return Build(
+                input,
+                evaluatedAtUtc,
+                MeetingPrimaryRecommendationKind.RetrySummary,
+                "Review summary retry",
+                "A previous summary attempt can be retried from the published transcript.",
+                MeetingRecommendationSeverity.Low,
+                MeetingRecommendationActionTarget.MeetingDetails,
+                eligible: true,
+                reasonCode: "summary-retry");
+        }
+
         var cleanup = input.CleanupRecommendations?
             .Where(item => item.Action != MeetingCleanupAction.GenerateSummary)
-            .OrderBy(item => item.Confidence)
+            .OrderByDescending(item => item.Confidence)
             .ThenBy(item => item.Action)
             .ThenBy(item => item.Fingerprint, StringComparer.Ordinal)
             .FirstOrDefault();
@@ -243,20 +315,8 @@ public sealed class MeetingRecommendationResolver
                     : MeetingRecommendationSeverity.Low,
                 MeetingRecommendationActionTarget.CleanupReview,
                 eligible: true,
-                cleanupFingerprint: cleanup.Fingerprint);
-        }
-
-        if (input.SummaryRetryAvailable)
-        {
-            return Build(
-                input,
-                evaluatedAtUtc,
-                MeetingPrimaryRecommendationKind.RetrySummary,
-                "Review summary retry",
-                "A previous summary attempt can be retried from the published transcript.",
-                MeetingRecommendationSeverity.Low,
-                MeetingRecommendationActionTarget.MeetingDetails,
-                eligible: true);
+                cleanupFingerprint: cleanup.Fingerprint,
+                reasonCode: "cleanup-review");
         }
 
         if (input.MetadataPolishAvailable)
@@ -272,9 +332,8 @@ public sealed class MeetingRecommendationResolver
                 eligible: true);
         }
 
-        if (input.IsSnapshotStale ||
-            input.SnapshotObservedAtUtc is null ||
-            HasUnknownMaterialState(input))
+        if (HasUnknownMaterialState(input) ||
+            input.PresentationState == MeetingPresentationState.Unavailable)
         {
             return Build(
                 input,
@@ -356,14 +415,10 @@ public sealed class MeetingRecommendationResolver
         MeetingRecommendationActionTarget actionTarget,
         bool eligible,
         string? blockReason = null,
-        string? cleanupFingerprint = null)
+        string? cleanupFingerprint = null,
+        string? reasonCode = null)
     {
-        // Cleanup fingerprints already identify their bounded metadata source and are persisted by
-        // earlier releases. Preserve that compatibility while rule version protects later changes.
-        var fingerprint = kind == MeetingPrimaryRecommendationKind.ReviewCleanup &&
-            !string.IsNullOrWhiteSpace(cleanupFingerprint)
-            ? cleanupFingerprint
-            : BuildFingerprint(input, kind, actionTarget, cleanupFingerprint);
+        var fingerprint = BuildFingerprint(input, kind, actionTarget, cleanupFingerprint);
         return new MeetingPrimaryRecommendation(
             kind,
             label,
@@ -376,7 +431,10 @@ public sealed class MeetingRecommendationResolver
             CurrentRecommendationVersion,
             Math.Max(0, input.SnapshotVersion),
             evaluatedAtUtc,
-            IsDismissed: false);
+            IsDismissed: false,
+            ReasonCode: reasonCode ?? ToReasonCode(kind),
+            Scope: ToScope(actionTarget),
+            Freshness: ToFreshness(input));
     }
 
     private static string BuildFingerprint(
@@ -389,6 +447,7 @@ public sealed class MeetingRecommendationResolver
         {
             CurrentRecommendationVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
             input.MeetingStem.Trim(),
+            Math.Max(0, input.SnapshotVersion).ToString(System.Globalization.CultureInfo.InvariantCulture),
             kind.ToString(),
             actionTarget.ToString(),
             input.SessionState?.ToString() ?? "unknown",
@@ -401,6 +460,7 @@ public sealed class MeetingRecommendationResolver
             input.Processing.ToString(),
             input.SummaryRetryAvailable.ToString(),
             input.MetadataPolishAvailable.ToString(),
+            input.PresentationState?.ToString() ?? "not-derived",
             cleanupFingerprint ?? string.Empty,
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintData)));
@@ -413,6 +473,39 @@ public sealed class MeetingRecommendationResolver
                 MeetingPrimaryRecommendationKind.RetrySummary or
                 MeetingPrimaryRecommendationKind.ImproveMetadata;
     }
+
+    private static MeetingRecommendationScope ToScope(MeetingRecommendationActionTarget target) => target switch
+    {
+        MeetingRecommendationActionTarget.CleanupReview => MeetingRecommendationScope.CleanupReview,
+        MeetingRecommendationActionTarget.None => MeetingRecommendationScope.None,
+        _ => MeetingRecommendationScope.SingleMeeting,
+    };
+
+    private static MeetingRecommendationFreshness ToFreshness(MeetingRecommendationInput input)
+    {
+        if (input.IsSnapshotStale || input.SnapshotObservedAtUtc is null ||
+            input.PresentationState == MeetingPresentationState.RefreshRequired)
+            return MeetingRecommendationFreshness.RefreshRequired;
+
+        return HasUnknownMaterialState(input) || input.PresentationState == MeetingPresentationState.Unavailable
+            ? MeetingRecommendationFreshness.Unknown
+            : MeetingRecommendationFreshness.Current;
+    }
+
+    private static string ToReasonCode(MeetingPrimaryRecommendationKind kind) => kind switch
+    {
+        MeetingPrimaryRecommendationKind.NoActionNeeded => "complete",
+        MeetingPrimaryRecommendationKind.Evaluating => "status-evaluating",
+        MeetingPrimaryRecommendationKind.Blocked => "blocked",
+        MeetingPrimaryRecommendationKind.RecoverTranscript => "transcript-recovery",
+        MeetingPrimaryRecommendationKind.RepairSpeakerLabels => "speaker-repair",
+        MeetingPrimaryRecommendationKind.ReviewMissingTranscript => "transcript-artifact-missing",
+        MeetingPrimaryRecommendationKind.ReviewProcessing => "processing-review",
+        MeetingPrimaryRecommendationKind.ReviewCleanup => "cleanup-review",
+        MeetingPrimaryRecommendationKind.RetrySummary => "summary-retry",
+        MeetingPrimaryRecommendationKind.ImproveMetadata => "metadata-polish",
+        _ => "unknown",
+    };
 
     private static bool HasActiveDismissal(
         IReadOnlyList<MeetingRecommendationDismissal>? dismissals,

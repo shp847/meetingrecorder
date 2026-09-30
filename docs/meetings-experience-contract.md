@@ -38,3 +38,25 @@ Complete requires readable audio and transcript artifacts; archive, failure,
 setup block, and active queue states win over a lower-priority recommendation.
 The resolver exposes a concise accessible explanation and reason code only—no
 path, worker error, transcript, or provider payload.
+
+## Primary recommendations
+
+`MeetingRecommendationResolver` returns zero or one presentational next step
+from metadata already collected for that meeting. The ranking is deterministic:
+recovery and setup blockers win over speaker repair, missing artifacts and
+processing; summary retry wins over cleanup; cleanup wins over cosmetic
+metadata work. The result carries a stable reason code, bounded target scope,
+freshness, input revision, and a policy-versioned fingerprint. It never reads
+audio, transcript, speaker-profile, path, or provider payloads.
+
+Recommendations are suggestions, not execution authority. They may navigate to
+a meeting or cleanup review, but they cannot invoke a destructive action,
+expand to bulk scope, bypass a confirmation, or dispatch work automatically.
+Stale or archived Sprint 2 row state promotes no action. Existing UI surfaces
+may continue to show normal catalog actions and use the shared resolved result
+for their concise explanation.
+
+Users may dismiss only a matching low- or medium-risk cleanup, summary-retry,
+or metadata recommendation. A dismissal expires after 30 days and is invalid
+when its fingerprint or policy version changes. It cannot hide a failure,
+blocked state, missing artifact, or required repair.

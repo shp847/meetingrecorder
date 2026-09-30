@@ -93,7 +93,7 @@ records an approved dependency change.
 | 0 — Meetings Friction Audit | `Ready` | Surface inventory, journey evidence, disposition ownership, and audit validation plan below. |
 | 1 — Meetings Experience Contract | `Ready` | Guided-workbench state, action ownership, control boundaries, and parity verification plan below. |
 | 2 — Meeting State Model | `Ready` | Precedence resolver, freshness/provenance, state-action mapping, and verification plan below. |
-| 3 — Recommendation Engine | `Ready` | Deterministic cross-domain ranking, eligibility/dismissal rules, automation boundary, and verification plan below. |
+| 3 — Recommendation Engine | `Done` | 2026-09-29: deterministic metadata-only ranking, bounded dismissal, and focused evidence below. |
 | 4 — View Presets | `Ready` | Pure preset catalog, migration, search/selection semantics, Custom round-trip, and verification plan below. |
 | 5 — Needs Attention Inbox | `Ready` | Triage inclusion/ordering, dismissal safety, group/empty states, and verification plan below. |
 | 6 — Processing View | `Ready` | Queue-view projection, freshness/ETA rules, safe action boundaries, and verification plan below. |
@@ -2706,8 +2706,8 @@ Acceptance: every row can explain its state in plain language.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: cleanup recommendation engine, primary recommendation, fingerprint dismissal, UI/action wiring); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: cleanup recommendation engine, primary recommendation, fingerprint dismissal, UI/action wiring); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 implementation and focused verification).
 - User outcome: every meeting has zero or one honest primary next action; users know why it is suggested, can decline it, and retain all alternatives.
 - Scope / non-goals: unify ranking/presentation of existing safe metadata signals. Do not inspect transcript/audio/profile payloads, auto-execute, bypass confirmations, alter state source, or suppress an error merely to show a recommendation.
 - Dependencies and decisions: consume Sprint 2 state result, setup/queue/recovery, cleanup, summary, and speaker facts. `MeetingRecommendationResolver` is pure and outputs action intent, reason code, target/scope, eligibility, blocked reason, severity, fingerprint/input revision, confidence/freshness, and alternatives. Rank: failed transcript; required setup; blocked recovery; suspicious labels; missing transcript; summary retry; safe cleanup; metadata polish. Terminal/archive/stale rules may yield no actionable recommendation.
@@ -2719,8 +2719,8 @@ Acceptance: every row can explain its state in plain language.
   5. Bind shared result to row, inspector, detail, selection/context, cleanup review, and automation eligibility. Show concise reason/action, target count, and `Why?`; preserve keyboard access and never expose raw diagnostics.
 - Tests and rendered checks: table tests for every rank/tie/conflict, metadata-only guarantee, stale/missing target, archive, blocked action, fingerprint change/dismiss/reappearance, manual override, automation exclusion, and surface parity. Render zero/one/multiple candidate states, selected/bulk scope, and screen-reader explanation.
 - Documentation / installer / release work: document recommendations as suggestions, dismissal scope, and automation boundary after ship; release gate Sprint 16.
-- Evidence and date: 2026-09-27 review found current cleanup-only recommendation analysis and primary selection. No consolidated precedence across processing/setup/summary/speaker state, freshness contract, or full dismissal/automation parity proof.
-- Remaining gap or next action: write failing pure rank table for failed transcript versus cleanup, blocked labels, stale queue, and dismissed fingerprint before replacing current primary helper.
+- Evidence and date: 2026-09-27 review found current cleanup-only recommendation analysis and primary selection. No consolidated precedence across processing/setup/summary/speaker state, freshness contract, or full dismissal/automation parity proof. 2026-09-29 extended the existing pure resolver rather than duplicating it: the policy is now versioned, fingerprints include snapshot revision and target state, and results expose non-sensitive reason code, scope, and freshness. Sprint 2 stale/archived state cannot promote an action; summary retry ranks ahead of cleanup; cleanup selection is confidence-first with stable action/fingerprint ties. Dismissal remains limited to low/medium cleanup, summary, and metadata results. `MeetingRecommendationResolver`, presentation, row-state, and experience tests passed 30/30 using an isolated build root. The established UI already reads the shared primary result; broader layout rendering remains in later view/action sprints.
+- Remaining gap or next action: Sprint 4 — derive useful view presets from the shared state and recommendation contracts.
 
 - Centralize recommendation ranking.
 - Rank one primary recommendation per meeting.

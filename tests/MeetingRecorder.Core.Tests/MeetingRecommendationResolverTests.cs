@@ -117,6 +117,75 @@ public sealed class MeetingRecommendationResolverTests
     }
 
     [Fact]
+    public void Resolve_Does_Not_Promote_Stale_State_Over_A_Failure_Or_Cleanup_Candidate()
+    {
+        var input = Input(
+            sessionState: SessionState.Failed,
+            transcript: MeetingRecommendationAvailability.Missing,
+            cleanupRecommendations: [Cleanup()]) with
+        {
+            PresentationState = MeetingPresentationState.RefreshRequired,
+        };
+
+        var result = _resolver.Resolve(input, Now);
+
+        Assert.Equal(MeetingPrimaryRecommendationKind.Evaluating, result.Kind);
+        Assert.False(result.HasPrimaryAction);
+        Assert.Equal("stale-status", result.ReasonCode);
+        Assert.Equal(MeetingRecommendationScope.None, result.Scope);
+        Assert.Equal(MeetingRecommendationFreshness.RefreshRequired, result.Freshness);
+    }
+
+    [Fact]
+    public void Resolve_Does_Not_Promote_An_Archived_Meeting()
+    {
+        var result = _resolver.Resolve(Input(cleanupRecommendations: [Cleanup()]) with
+        {
+            PresentationState = MeetingPresentationState.Archived,
+        }, Now);
+
+        Assert.Equal(MeetingPrimaryRecommendationKind.NoActionNeeded, result.Kind);
+        Assert.Equal("archived", result.ReasonCode);
+        Assert.False(result.HasPrimaryAction);
+        Assert.Equal(MeetingRecommendationScope.None, result.Scope);
+    }
+
+    [Fact]
+    public void Resolve_Ranks_Summary_Retry_Above_Cleanup_And_Uses_A_Single_Meeting_Scope()
+    {
+        var result = _resolver.Resolve(Input(
+            summaryRetryAvailable: true,
+            cleanupRecommendations: [Cleanup(MeetingCleanupAction.Archive)]), Now);
+
+        Assert.Equal(MeetingPrimaryRecommendationKind.RetrySummary, result.Kind);
+        Assert.Equal("summary-retry", result.ReasonCode);
+        Assert.Equal(MeetingRecommendationScope.SingleMeeting, result.Scope);
+    }
+
+    [Fact]
+    public void Resolve_Uses_Highest_Confidence_Cleanup_Then_Stable_Action_And_Fingerprint_Tie_Breakers()
+    {
+        var low = Cleanup(MeetingCleanupAction.Rename) with { Confidence = MeetingCleanupConfidence.Low, Fingerprint = "z" };
+        var high = Cleanup(MeetingCleanupAction.Archive) with { Confidence = MeetingCleanupConfidence.High, Fingerprint = "a" };
+
+        var first = _resolver.Resolve(Input(cleanupRecommendations: [low, high]), Now);
+        var second = _resolver.Resolve(Input(cleanupRecommendations: [high, low]), Now);
+
+        Assert.Equal(MeetingPrimaryRecommendationKind.ReviewCleanup, first.Kind);
+        Assert.Equal(first.SnapshotFingerprint, second.SnapshotFingerprint);
+        Assert.Equal(MeetingRecommendationScope.CleanupReview, first.Scope);
+    }
+
+    [Fact]
+    public void Resolve_Fingerprint_Changes_When_The_Input_Revision_Changes()
+    {
+        var initial = _resolver.Resolve(Input(cleanupRecommendations: [Cleanup()]), Now);
+        var revised = _resolver.Resolve(Input(cleanupRecommendations: [Cleanup()]) with { SnapshotVersion = 8 }, Now);
+
+        Assert.NotEqual(initial.SnapshotFingerprint, revised.SnapshotFingerprint);
+    }
+
+    [Fact]
     public void Resolve_Dismisses_Only_The_Same_Low_Risk_Fingerprint_And_Reappears_On_Change_Or_Expiry()
     {
         var original = _resolver.Resolve(Input(cleanupRecommendations: [Cleanup()]), Now);
