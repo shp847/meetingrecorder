@@ -3825,8 +3825,8 @@ Sprint 10 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: validation matrix and package parity harness).
+- Status: `Ready`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
 - User outcome: a reviewer knows whether a speaker problem needs naming, paragraph correction, merge, rematch, or a true label repair—and repair does not silently erase their work.
 - Scope / non-goals: make existing suspicious-label/worker-repair capabilities explainable and safe. Do not silently tune clustering, turn repair into name refresh, guarantee quality improvement, or auto-transfer stale speaker identities to newly generated clusters.
 - Dependencies and decisions: consume S1–S10 identity/revision/receipt rules. Current catalog flags suspicious distributions and cleanup can queue `RepairSpeakerLabels`; worker has oversegmentation recovery. Replace boolean-only presentation with a pure `SpeakerQualityDiagnosis` from bounded structural metadata: cluster count, tiny-turn ratio, run churn, unsupported count, duplicate effective names, sample/turn coverage, and current processing state—never transcript/audio contents.
@@ -6993,8 +6993,8 @@ Sprint 7 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29: validation matrix and package parity harness).
 - User outcome: continuity ships only with installed recovery proof and support evidence, not source-test optimism.
 - Scope / non-goals: verify S0–S7; do not use private incidents/live meetings, force-close user app/worker, expose trace data, or publish/upload without authority.
 - Dependencies and decisions: S0 corpus/S1 trace/S4 cutover/S5 healer/S6 recovery/S7 flags and `docs/auto-detection-cyberark-decision-log.md` are authority. Evidence separates source/test/package/installed/live-machine states; source fixture success does not prove live behavior.
