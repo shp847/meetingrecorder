@@ -177,6 +177,12 @@ plain-language reason, confidence bucket, local-profile reference, evidence and
 learning readiness, and repair warning—never samples, embeddings, audio paths, or
 profile contents.
 
+The meeting-detail `Speaker Review` well appears before Organize & Fix. It keeps
+one explicit Apply Names commit, reports pending draft count, and preserves
+drafts when a background revision changes. `Refresh Local Suggestions` only
+checks local profiles; `Repair Speaker Labels` remains a separate Fix action
+for cluster quality. Neither route silently renames a speaker.
+
 ## Bulk-operation previews
 
 `BulkOperationPlanner` snapshots each target's identity, displayed title,

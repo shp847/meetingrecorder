@@ -7151,9 +7151,46 @@ public partial class MainWindow : Window
                     : "Add Speaker Labels",
             };
             var speakerArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
-            var speakerRows = _meetingOutputCatalogService
-                .ListSpeakerLabelDetails(row.Source)
-                .Select(label => new MeetingDetailSpeakerLabelEditorRow(
+            var speakerLabels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
+            var evidenceSpeakerIds = new HashSet<string>(StringComparer.Ordinal);
+            if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
+            {
+                try
+                {
+                    var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
+                    foreach (var sample in manifest.ProcessingMetadata?.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(sample.SpeakerId))
+                        {
+                            evidenceSpeakerIds.Add(sample.SpeakerId);
+                        }
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    _logger.Log($"Meeting speaker review evidence state could not be loaded: {exception}");
+                }
+            }
+
+            var speakerReview = SpeakerReviewSnapshotResolver.Resolve(new SpeakerReviewSnapshotInput(
+                row.Source.Stem,
+                speakerArtifactRevision,
+                speakerLabels.Select((label, index) => new SpeakerIdentity(
+                    label.SpeakerId ?? $"legacy_{index}",
+                    label.DisplayName,
+                    label.NameSource == SpeakerNameSource.UserEdited,
+                    label.ProfileId,
+                    label.NameSource,
+                    label.Confidence,
+                    label.SuggestedDisplayName,
+                    label.DecisionReason)).ToArray(),
+                evidenceSpeakerIds,
+                _liveConfig.Current.SpeakerNameLearningMode,
+                IsLocalProfileStoreAvailable: true,
+                IsStale: false,
+                HasRepairWarning: row.Source.HasSuspiciousSpeakerLabels));
+            var speakerRows = speakerLabels
+                .Select((label, index) => new MeetingDetailSpeakerLabelEditorRow(
                     label.DisplayName,
                     BuildSpeakerNameProvenanceText(label),
                     label.SuggestedDisplayName,
@@ -7161,7 +7198,8 @@ public partial class MainWindow : Window
                     label.ProfileId,
                     HasProfileSpeakerNameAttribution(label),
                     speakerArtifactRevision,
-                    label.NameSource))
+                    label.NameSource,
+                    speakerReview.Rows[index]))
                 .ToArray();
             var detailTaskCenter = MeetingDetailTaskCenterResolver.Resolve(new MeetingDetailTaskCenterInput(
                 new MeetingDetailSnapshotRevision(

@@ -23,7 +23,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     string? profileId = null,
     bool hasProfileAttribution = false,
     string artifactRevision = "",
-    SpeakerNameSource expectedNameSource = SpeakerNameSource.None)
+    SpeakerNameSource expectedNameSource = SpeakerNameSource.None,
+    SpeakerReviewRow? reviewSnapshot = null)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -42,6 +43,14 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public string ArtifactRevision { get; } = artifactRevision;
 
     public SpeakerNameSource ExpectedNameSource { get; } = expectedNameSource;
+
+    public string AnonymousLabel => reviewSnapshot?.AnonymousLabel ?? OriginalLabel;
+
+    public string SourceExplanation => reviewSnapshot?.Explanation ?? Provenance;
+
+    public string ReviewStatus => reviewSnapshot is null
+        ? string.Empty
+        : $"Evidence: {reviewSnapshot.EvidenceAvailability}. Learning: {reviewSnapshot.LearningEligibility}.";
 
     public bool HasSuggestion => !string.IsNullOrWhiteSpace(SuggestedDisplayName);
 
@@ -184,9 +193,7 @@ public partial class MeetingDetailWindow : Window
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
         _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
-        MaintenanceStatusTextBlock.Text = speakerLabelRows.Count == 0
-            ? "No editable speaker labels are available for this transcript yet."
-            : "Edit speaker display names, then apply changes.";
+        UpdateSpeakerReviewStatus(speakerLabelRows);
         UpdateMaintenanceButtonAvailability();
 
         _allTranscriptSegments = state.Transcript.Segments.ToArray();
@@ -326,6 +333,20 @@ public partial class MeetingDetailWindow : Window
         DeleteButton.IsEnabled = canUseMaintenance && _canDelete;
     }
 
+    private void UpdateSpeakerReviewStatus(IEnumerable<MeetingDetailSpeakerLabelEditorRow>? rows = null)
+    {
+        var reviewRows = rows ?? SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>;
+        var pendingCount = reviewRows?.Count(row =>
+            row.IsSuggestionRejected ||
+            !string.Equals(row.OriginalLabel.Trim(), row.EditedLabel.Trim(), StringComparison.Ordinal)) ?? 0;
+        SpeakerReviewStatusTextBlock.Text = _canApplySpeakerNames
+            ? pendingCount == 0
+                ? "Name a speaker here. Suggestions are local and need confirmation."
+                : $"{pendingCount} name change(s) pending. Apply names updates every turn for each speaker in this revision."
+            : "Labels are unavailable until this meeting has a published transcript and diarization labels.";
+        SpeakerReviewPendingTextBlock.Text = pendingCount == 0 ? string.Empty : $"{pendingCount} pending";
+    }
+
     private void TranscriptSearchTextBox_OnTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
         ApplyTranscriptFilter();
@@ -414,6 +435,11 @@ public partial class MeetingDetailWindow : Window
             new MeetingDetailSpeakerLabelsEventArgs(rows?.ToArray() ?? Array.Empty<MeetingDetailSpeakerLabelEditorRow>()));
     }
 
+    private void SpeakerLabelsDataGrid_OnCellEditEnding(object sender, System.Windows.Controls.DataGridCellEditEndingEventArgs e)
+    {
+        Dispatcher.BeginInvoke(UpdateSpeakerReviewStatus);
+    }
+
     private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)
     {
         RefreshSpeakerNamesRequested?.Invoke(this, EventArgs.Empty);
@@ -430,6 +456,7 @@ public partial class MeetingDetailWindow : Window
         {
             row.AcceptSuggestion();
             SpeakerLabelsDataGrid.Items.Refresh();
+            UpdateSpeakerReviewStatus();
         }
     }
 
@@ -439,6 +466,7 @@ public partial class MeetingDetailWindow : Window
         {
             row.RejectSuggestion();
             SpeakerLabelsDataGrid.Items.Refresh();
+            UpdateSpeakerReviewStatus();
         }
     }
 

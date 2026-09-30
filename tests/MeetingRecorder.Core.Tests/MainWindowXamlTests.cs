@@ -542,7 +542,12 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Diarization Label", xaml);
         Assert.Contains("Meeting Display Name", xaml);
         Assert.Contains("Local Name Suggestion", xaml);
-        Assert.Contains("Repair Speaker Labels above", xaml);
+        Assert.Contains("Speaker Review", xaml);
+        Assert.Contains("SpeakerReviewExpander", xaml);
+        Assert.Contains("Repair Speaker Labels is a separate Fix action", xaml);
+        Assert.Contains("SpeakerReviewStatusTextBlock", xaml);
+        Assert.Contains("Binding=\"{Binding AnonymousLabel, Mode=OneWay}\"", xaml);
+        Assert.Contains("SpeakerReviewSnapshotResolver.Resolve", mainWindowSource);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);
@@ -1055,7 +1060,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Header=\"Organize &amp; Fix\"", xaml);
         Assert.Contains("Text=\"Organize\"", xaml);
         Assert.Contains("Text=\"Fix\"", xaml);
-        Assert.Contains("Text=\"Speaker Name Review\"", xaml);
+        Assert.Contains("x:Name=\"SpeakerReviewExpander\"", xaml);
+        Assert.Contains("Header=\"Speaker Review\"", xaml);
         Assert.Contains("Text=\"Danger Zone\"", xaml);
         Assert.Contains("typing DELETE", xaml);
         Assert.Contains("GetRefreshDisposition", detailCode);

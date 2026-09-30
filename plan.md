@@ -117,7 +117,7 @@ records an approved dependency change.
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
 | 1 — Speaker Identity Contract | `Done` | 2026-09-29: revisioned safe review snapshot, precedence, migration-safe source state, and privacy tests verified below. |
-| 2 — Speaker Review Surface Foundation | `Ready` | Define transcript-adjacent review well, draft semantics, and clear naming-versus-repair routes. |
+| 2 — Speaker Review Surface Foundation | `Partial` | 2026-09-29: snapshot-backed discoverable review well, draft/pending state, and separate repair route implemented; suggestion-choice sources and rendered fixture sweep remain. |
 | 3 — Contextual Transcript Evidence | `Ready` | Define deterministic, bounded local evidence selection with truthful weak-evidence states. |
 | 4 — Inline Audio Clip Playback | `Ready` | Define bounded local clip derivation, cache lifecycle, recording safety, and one-session playback. |
 | 5 — Transcript-Label Click Editing | `Ready` | Define accessible label-to-review focus, current-revision global rename, and additive override schema reservation. |
@@ -3377,8 +3377,8 @@ Sprint 1 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Partial` (2026-09-27 source audit: `SpeakerLabelsDataGrid`, apply/refresh/undo controls, detail state wiring); `Ready` (2026-09-27 pressure test).
+- Status: `Partial`
+- Status history: `Partial` (2026-09-27 source audit: `SpeakerLabelsDataGrid`, apply/refresh/undo controls, detail state wiring); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 snapshot-backed review-well slice).
 - User outcome: a person sees where to name anonymous speakers while reading a meeting, understands suggestion provenance, and cannot confuse naming a cluster with repairing diarization.
 - Scope / non-goals: replace the current detail maintenance speaker grid with the initial Speaker Review well using Sprint 1 snapshots. Do not add segment-level edits, inline playback, automatic profile changes on open, or a second profile-management surface.
 - Dependencies and decisions: consume Sprint 1 revisioned `SpeakerReviewSnapshot`; use S3 evidence, S4 clips, S8 correction/learning, S11 repair guidance, S15 accessibility/render acceptance as later extensions. Current `MeetingDetailWindow` shows a 130px `SpeakerLabelsDataGrid` among processing/split maintenance controls and applies all drafts at once. The new well is an editing surface with one explicit persisted commit; row buttons edit draft state only.
@@ -3391,7 +3391,8 @@ Sprint 1 acceptance criteria:
 - Tests and rendered checks: snapshot-to-row mapping; source/reason/availability routes; draft accept/reject/edit/clear, duplicate and whitespace normalization, dirty-draft refresh/close/revision conflict, commit/retry idempotence, profile learning disabled, and repair/name separation. Render 0/1/5/12 speakers, long/duplicate names, suggestion/no-suggestion, queued/failed states at 1280x800/125% using `DESIGN.md` wells; keyboard/screen-reader verify labelled row fields, pending count, provenance, and focus return after apply.
 - Documentation / installer / release work: add user wording for Speaker Review, local suggestion/provenance, draft/apply behavior, and repair distinction when shipped. No installer work until behavior changes; Sprint 16 owns diarization release gates.
 - Evidence and date: 2026-09-27 audit found current detail rows with Current/Display Name/Voice Profile/Suggestion/Use/Reject and Apply/Refresh/Undo controls, but no transcript-adjacent review hierarchy, snapshot-driven state, dirty-draft contract, or explicit repair versus naming route.
-- Remaining gap or next action: create the pure row view model and render the no-labels, generic-label, suggested-name, and repair-needed fixtures before moving XAML.
+- Evidence and date: 2026-09-29 moved the snapshot-backed `Speaker Review` well ahead of Organize & Fix, added anonymous-label/provenance rows, accessible review context, pending draft text, and clear local-refresh versus repair wording. Existing apply/reject/refresh/undo handlers retain revision-checked transactional writes.
+- Remaining gap or next action: add bounded dropdown choices from attendees/current names/confirmed local profiles, then complete the 0/1/5/12-speaker rendered fixture sweep before marking this sprint Done.
 
 Goal: make speaker cleanup an obvious first-class meeting-detail workflow.
 
