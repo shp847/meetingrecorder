@@ -2649,8 +2649,8 @@ Acceptance: every existing capability has a future home.
 
 #### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test).
+- Status: `Done`
+- Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27 pressure test); `Done` (2026-09-29).
 - User outcome: Meetings behaves as a calm workbench: browse first, one next action when needed, clear focus/bulk scope, and full advanced power without hidden behavior.
 - Scope / non-goals: define shared interaction contract before moving controls. Do not delete commands, alter meeting artifacts, change recommendation scoring, or enable automation beyond named policy.
 - Dependencies and decisions: build on Sprint 0 inventory and Sprints 1/7/8/9/10 safety contracts. State is `Library`, `SingleSelection`, `MultiSelection`, `Detail`, `Busy`, or `RefreshRequired`; selection scope is source of truth. Default layer offers reading/navigation/one primary remedy; grouped layer exposes relevant safe actions; Advanced retains every dispositioned capability.
@@ -2662,8 +2662,8 @@ Acceptance: every existing capability has a future home.
   5. Route toolbar, row, context, selection strip, inspector, detail, keyboard, and cleanup actions through shared intent/action catalog. Advanced controls stay discoverable from default/grouped surface; no action is only visually hidden or changes semantics by entry point.
 - Tests and rendered checks: table-drive experience state/action matrix for no/single/multi selection, stale/empty/busy/recording/failed states, recommendation conflicts, eligibility changes, refresh mutation, keyboard/context parity, and draft/focus preservation. Render each state at 1280x800/125% DPI with accessible region/action labels.
 - Documentation / installer / release work: add contract/glossary to UX evidence/docs after implementation; installer/release work belongs to Sprint 16 for shipped changes.
-- Evidence and date: 2026-09-27 source review found `MeetingWorkspaceToolState`, selection command state, grouped/table view, selection messages, and tests. No single authoritative workbench state/action ownership contract covers all entry points or refresh/draft semantics.
-- Remaining gap or next action: write failing pure state matrix for no/single/multi/busy/stale selection, then adapt existing selection/tool-state builders before rearranging XAML.
+- Evidence and date: 2026-09-27 source review found `MeetingWorkspaceToolState`, selection command state, grouped/table view, selection messages, and tests. No single authoritative workbench state/action ownership contract covers all entry points or refresh/draft semantics. 2026-09-29 added pure `MeetingsExperienceResolver` and `docs/meetings-experience-contract.md`. The resolver establishes precedence for stale, busy, empty, detail, multi-, single-, and library states; promotes at most one safe primary presentation action; preserves action-family access; withholds recommendation dispatch during recording; and maps catalog actions to library/single/multi/detail/cleanup/destructive owners. Focused experience/catalog/inventory tests passed 16/16. The contract is intentionally not a WPF routing change; rendered keyboard/focus validation belongs to the layout/UI sprint.
+- Remaining gap or next action: Sprint 2 — derive metadata-only per-row state with explicit stale/archived/blocked/complete precedence.
 
 - Define Meetings as a guided workbench, not a generic table.
 - Document what can be assumed safely and what requires explicit user intent.
