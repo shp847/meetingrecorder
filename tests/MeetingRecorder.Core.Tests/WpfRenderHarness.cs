@@ -29,15 +29,35 @@ internal static class WpfRenderHarness
 {
     public static WpfRenderEvidence CaptureHomeShell()
     {
-        return CaptureShell(SyntheticShellState.SetupBlocked);
+        return CaptureShell(SyntheticShellState.SetupBlocked, rasterScale: 1d);
     }
 
     public static WpfRenderEvidence CaptureProcessingShell()
     {
-        return CaptureShell(SyntheticShellState.Processing);
+        return CaptureShell(SyntheticShellState.Processing, rasterScale: 1d);
     }
 
-    private static WpfRenderEvidence CaptureShell(SyntheticShellState state)
+    public static WpfRenderEvidence CaptureSelectionActiveShell()
+    {
+        return CaptureShell(SyntheticShellState.SelectionActive, rasterScale: 1d);
+    }
+
+    public static WpfRenderEvidence CaptureCleanupRecommendationShell()
+    {
+        return CaptureShell(SyntheticShellState.CleanupRecommendation, rasterScale: 1d);
+    }
+
+    public static WpfRenderEvidence CaptureEmptyHealthyShell()
+    {
+        return CaptureShell(SyntheticShellState.EmptyHealthy, rasterScale: 1d);
+    }
+
+    public static WpfRenderEvidence CaptureShellAt125Dpi(SyntheticShellState state)
+    {
+        return CaptureShell(state, rasterScale: 1.25d);
+    }
+
+    private static WpfRenderEvidence CaptureShell(SyntheticShellState state, double rasterScale)
     {
         WpfRenderEvidence? evidence = null;
         Exception? failure = null;
@@ -47,7 +67,7 @@ internal static class WpfRenderHarness
         {
             try
             {
-                evidence = CaptureShellOnStaThread(state);
+                evidence = CaptureShellOnStaThread(state, rasterScale);
             }
             catch (Exception exception)
             {
@@ -75,7 +95,7 @@ internal static class WpfRenderHarness
         return evidence ?? throw new InvalidOperationException("WPF render harness produced no evidence.");
     }
 
-    private static WpfRenderEvidence CaptureShellOnStaThread(SyntheticShellState state)
+    private static WpfRenderEvidence CaptureShellOnStaThread(SyntheticShellState state, double rasterScale)
     {
         var rootDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -111,6 +131,9 @@ internal static class WpfRenderHarness
             ShowInTaskbar = false,
         };
 
+        window.Width = 1280d / rasterScale;
+        window.Height = 800d / rasterScale;
+
         try
         {
             window.Show();
@@ -121,19 +144,39 @@ internal static class WpfRenderHarness
             var settingsAction = RequireElement<Button>(window, "HeaderSettingsButton");
             var tabControl = RequireElement<TabControl>(window, "MainTabControl");
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
-            var stateToken = state == SyntheticShellState.Processing ? "processing" : "setup-blocked";
-            if (state == SyntheticShellState.Processing)
+            var stateToken = state switch
+            {
+                SyntheticShellState.Processing => "processing",
+                SyntheticShellState.SelectionActive => "selection-active",
+                SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
+                SyntheticShellState.EmptyHealthy => "empty-healthy",
+                _ => "setup-blocked",
+            };
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WaitForMeetingRows(window);
+                if (state == SyntheticShellState.SelectionActive)
+                {
+                    var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
+                    meetings.SelectedItem = meetings.Items[0];
+                    window.UpdateLayout();
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                }
+
+                if (state == SyntheticShellState.CleanupRecommendation)
+                {
+                    WaitForCleanupRecommendation(window);
+                }
             }
 
-            var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-1280x800-100.png");
-            var automationTracePath = Path.Combine(rootDirectory, $"{stateToken}-automation-tree.txt");
-            var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace.txt");
+            var scaleToken = rasterScale == 1.25d ? "125" : "100";
+            var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-1280x800-{scaleToken}.png");
+            var automationTracePath = Path.Combine(rootDirectory, $"{stateToken}-automation-tree-{scaleToken}.txt");
+            var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace-{scaleToken}.txt");
 
-            SaveScreenshot(window, screenshotPath);
-            var traceElements = state == SyntheticShellState.Processing
+            SaveScreenshot(window, screenshotPath, rasterScale);
+            var traceElements = state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation
                 ? new FrameworkElement[]
                 {
                     homeAction,
@@ -141,8 +184,18 @@ internal static class WpfRenderHarness
                     shellStatusDetail,
                     RequireElement<ListView>(window, "MeetingsDataGrid"),
                     RequireElement<Border>(window, "MeetingsProcessingStatusBorder"),
+                    RequireElement<TextBlock>(window, "SelectedMeetingInspectorTitleTextBlock"),
+                    RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder"),
+                    RequireElement<TextBlock>(window, "MeetingCleanupReviewBannerTextBlock"),
+                    RequireElement<TextBlock>(window, "DashboardModelReadinessTextBlock"),
                 }
-                : new FrameworkElement[] { homeAction, tabControl, shellStatusDetail };
+                : new FrameworkElement[]
+                {
+                    homeAction,
+                    tabControl,
+                    shellStatusDetail,
+                    RequireElement<TextBlock>(window, "DashboardModelReadinessTextBlock"),
+                };
             File.WriteAllLines(automationTracePath, CreateAutomationTrace(traceElements));
             File.WriteAllLines(keyboardTracePath, CreateKeyboardTrace(settingsAction, tabControl));
 
@@ -163,14 +216,24 @@ internal static class WpfRenderHarness
         AppConfig config,
         SyntheticShellState state)
     {
-        if (state != SyntheticShellState.Processing)
+        if (state == SyntheticShellState.EmptyHealthy)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(config.TranscriptionModelPath)!);
+            using var model = File.Create(config.TranscriptionModelPath);
+            model.SetLength(WhisperModelService.MinimumExpectedModelBytes + 1);
+            return config;
+        }
+
+        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation))
         {
             return config;
         }
 
         var processingConfig = config with
         {
-            MeetingsViewPreset = MeetingsViewPreset.Processing,
+            MeetingsViewPreset = state == SyntheticShellState.CleanupRecommendation
+                ? MeetingsViewPreset.NeedsAttention
+                : MeetingsViewPreset.Processing,
             MeetingsViewPresetInitialized = true,
         };
         var pathBuilder = new ArtifactPathBuilder();
@@ -206,6 +269,14 @@ internal static class WpfRenderHarness
         };
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         new SessionManifestStore(pathBuilder).SaveAsync(manifest, manifestPath).GetAwaiter().GetResult();
+        if (state == SyntheticShellState.CleanupRecommendation)
+        {
+            var artifactPath = Path.Combine(
+                processingConfig.AudioOutputDir,
+                pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc.AddHours(-1), "Teams") + ".wav");
+            Directory.CreateDirectory(Path.GetDirectoryName(artifactPath)!);
+            File.WriteAllBytes(artifactPath, Array.Empty<byte>());
+        }
         configStore.SaveAsync(processingConfig).GetAwaiter().GetResult();
         return processingConfig;
     }
@@ -235,6 +306,31 @@ internal static class WpfRenderHarness
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
     }
 
+    private static void WaitForCleanupRecommendation(FrameworkElement window)
+    {
+        var banner = RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder");
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (banner.Visibility != Visibility.Visible && DateTime.UtcNow < deadline)
+        {
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(25),
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                frame.Continue = false;
+            };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+        }
+
+        Assert.Equal(Visibility.Visible, banner.Visibility);
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+    }
+
     private static T RequireElement<T>(FrameworkElement window, string name)
         where T : FrameworkElement
     {
@@ -242,11 +338,12 @@ internal static class WpfRenderHarness
             ?? throw new InvalidOperationException($"Could not find WPF element '{name}'.");
     }
 
-    private static void SaveScreenshot(FrameworkElement element, string path)
+    private static void SaveScreenshot(FrameworkElement element, string path, double rasterScale)
     {
-        var width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
-        var height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        var width = Math.Max(1, (int)Math.Ceiling(element.ActualWidth * rasterScale));
+        var height = Math.Max(1, (int)Math.Ceiling(element.ActualHeight * rasterScale));
+        var dpi = 96d * rasterScale;
+        var bitmap = new RenderTargetBitmap(width, height, dpi, dpi, PixelFormats.Pbgra32);
         bitmap.Render(element);
 
         using var stream = File.Create(path);
@@ -296,9 +393,12 @@ internal static class WpfRenderHarness
             : "<none>";
     }
 
-    private enum SyntheticShellState
+    public enum SyntheticShellState
     {
         SetupBlocked,
         Processing,
+        SelectionActive,
+        CleanupRecommendation,
+        EmptyHealthy,
     }
 }
