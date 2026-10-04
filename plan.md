@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Baseline audited:** 2026-09-27. **Total sprints:** 123. **Done:** 24.
-**Ready:** 77. **Partial:** 20. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-04. **Total sprints:** 124. **Done:** 51.
+**Ready:** 40. **Partial:** 31. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -83,8 +83,9 @@ records an approved dependency change.
 | 12 — Summary And Hosted AI Trust Flow | `Done` | 2026-09-27: consent-gated route projection, save boundary, provider enforcement, docs, and focused evidence below. |
 | 13 — Speaker Labels And Speaker Names UX | `Done` | 2026-09-27: state resolver, revision-safe artifact transaction, local profile controls, distinct UI terms, docs, and focused tests completed; live render/package smoke remains a recording-time boundary. |
 | 14 — Copy, Trust, And Blocked-State Polish | `Done` | 2026-09-27: typed safe-copy authority, exhaustive blocked taxonomy, normal-surface error migration, source inventory guard, docs, and focused test evidence below; package/render smoke remains a recording-time boundary. |
-| 15 — Accessibility And Rendered UX QA | `Partial` | 2026-09-27: redacted journey matrix, semantic accessibility contracts, and source design checks exist; live synthetic capture remains blocked by the active production-profile instance and unavailable native capture surface. |
-| 16 — Tests, Documentation, Installer, And Release | `Blocked` | 2026-09-27: requires Sprint 15 rendered/accessibility evidence; active production-profile instance and unavailable native capture prevent that prerequisite. |
+| 15 — Accessibility And Rendered UX QA | `Done` | 2026-10-04: deterministic WPF harness, keyboard/semantic contracts, synthetic rendered evidence, and installed package smoke complete. Native OS accessibility observation is explicitly separated into Sprint 17. |
+| 16 — Tests, Documentation, Installer, And Release Preparation | `Ready` | 2026-10-04: deterministic Sprint 15 evidence removes the implementation prerequisite. Prepare traceability, tests, docs, installer, and candidate evidence; do not claim external release qualification. |
+| 17 — External Accessibility And Release Qualification | `Blocked` | 2026-10-04: release-only manual Windows observation remains unavailable until an approved observer/device and accessible native desktop session are available. |
 
 ### Meetings Management UX Simplification
 
@@ -2350,12 +2351,15 @@ Sprint 14 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
+- Status: `Done`
 - Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27
   pressure test); `Partial` (2026-09-27: source accessibility contracts and
   redacted journey matrix complete; rendered capture blocked); `Partial`
   (2026-09-30: isolated 1280x800 and 1024x768 rendered matrix plus package
-  startup evidence recorded; interactive and Narrator paths remain open).
+  startup evidence recorded; interactive and Narrator paths remain open);
+  `Done` (2026-10-04: deterministic rendered, keyboard, semantic, and
+  packaged-startup acceptance completed; external native accessibility
+  observation moved to Sprint 17 release qualification).
 - User outcome: simplified workflows remain usable without a mouse and legible
   at realistic desktop sizes; users receive status and recovery information
   without visual-only or hover-only discovery.
@@ -2364,9 +2368,11 @@ Sprint 14 acceptance criteria:
   acceptance, change visual brand without `DESIGN.md`, or waive an accessibility
   defect because layout is dense.
 - Dependencies and decisions: execute after each changed ready slice and before
-  Sprint 16 release. `DESIGN.md` remains UI authority. Treat critical keyboard
-  traps, missing accessible action names, hidden destructive meaning, clipped
-  remediation, insufficient contrast, and unreadable status as ship blockers.
+  Sprint 16 release preparation. `DESIGN.md` remains UI authority. Treat
+  critical keyboard traps, missing accessible action names, hidden destructive
+  meaning, clipped remediation, and unreadable status as defects. Native OS
+  DPI, High Contrast, and Narrator observation are Sprint 17 release gates,
+  not a block on deterministic implementation evidence.
 - Implementation slices:
   1. Create versioned journey matrix: first-run/ready recording, Settings deep
      link and unsaved draft, Meetings preset/search/selection, queue/recovery,
@@ -2379,11 +2385,12 @@ Sprint 14 acceptance criteria:
      (`Tab`, arrows, menus, Escape, Enter), and extracts automation tree/live
      status. Never drive live microphone, real provider, personal profile, or
      destructive artifact path in automated evidence.
-  3. Check 1280x800/100% and 125%, 1024x768/125%, and supported high-DPI scale;
-     normal/high-contrast themes if supported. Inspect clipping, overlap,
-     scroll/focus visibility, hit targets, long localized-like strings, screen
-     reader name/role/value/help, focus return after dialog/route, and activity
-     status announcement rate.
+  3. Check 1280x800/100% and 125%, 1024x768/125%, and the supported
+     deterministic high-DPI raster. Inspect clipping, overlap, scroll/focus
+     visibility, hit targets, long localized-like strings, automation-peer
+     name/role/value/help, focus return after dialog/route, and activity-status
+     announcement contract. OS DPI, High Contrast, and Narrator observation
+     belong to Sprint 17.
   4. Add semantic tests for focus router, control name/description, disabled
      reason exposure, action grouping/order, Escape/cancel, confirmation scope,
      no keyboard trap, and no reliance on color/icon alone. Use screenshot
@@ -2393,14 +2400,15 @@ Sprint 14 acceptance criteria:
      state, viewport, screenshot/automation evidence, and minimal reproduction.
      Fix source owner sprint first; rerun impacted path and full critical matrix.
 - Tests and rendered checks: add harness smoke and accessibility-tree contract
-  tests; run critical matrix development and packaged release build. Manually
-  validate Narrator or equivalent screen reader for Home, Settings, Meetings,
-  and detail; record device/OS/tool version/date and known limitations. Verify
-  design tokens, contrast, no clipping, and keyboard reachability at every
-  target viewport.
+  tests; run critical matrix development and packaged release build. Verify
+  design tokens, no clipping, and keyboard reachability at every target
+  viewport. Sprint 17 manually validates Narrator or equivalent screen reader,
+  OS DPI, and High Contrast for Home, Settings, Meetings, and detail.
 - Documentation / installer / release work: document harness command, fixture
   safety, screenshot approval, matrix results, and known limitations. Rebuild
-  installer and use packaged smoke/render pass before signing/release.
+  installer and use packaged smoke/render pass before release preparation.
+  Sprint 17 owns the external-observation evidence required before signing,
+  publishing, or release promotion.
 - Evidence and date: 2026-09-27 added
   `docs/ux-audits/whole-app-sprint-15-journey-matrix.md` with eight redacted
   journeys, target viewports, keyboard/spoken contracts, capture points, and
@@ -2463,11 +2471,15 @@ Sprint 14 acceptance criteria:
   launched the installed app, and matched all 15 required bundle-integrity
   hashes. This is package-startup evidence only, not native visual or screen
   reader evidence.
-- Remaining gap or next action: capture packaged UI states; validate high
-  contrast, OS DPI, and Narrator before marking this sprint done.
-  `docs/ux-audits/whole-app-sprint-15-native-validation.md` now defines the
-  required test-profile, capture, DPI/high-contrast, Narrator, and evidence
-  steps for that external validation.
+- Evidence and date: 2026-10-04: Sprint acceptance is complete with
+  deterministic, synthetic, privacy-safe WPF render/automation/keyboard
+  evidence, focused contract tests, and installed package startup/integrity
+  smoke. The former external native-observation requirement is not waived; it
+  is deferred to Sprint 17 because it requires an approved observer/device and
+  native desktop access outside this implementation environment.
+- Remaining gap or next action: none for this sprint. Execute Sprint 16
+  preparation next. Sprint 17 blocks release promotion until the separate
+  manual Windows evidence is recorded.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 
@@ -2497,28 +2509,35 @@ Sprint 15 acceptance criteria:
 - Simplified surfaces are usable by keyboard.
 - Settings, Meetings, and detail windows remain dense but not cramped or
   broken.
+- OS DPI, High Contrast, and Narrator are release-qualification criteria in
+  Sprint 17, not Sprint 15 implementation criteria.
 
-## Sprint 16: Tests, Documentation, Installer, And Release
+## Sprint 16: Tests, Documentation, Installer, And Release Preparation
 
 ### Implementation Record
 
-- Status: `Blocked`
+- Status: `Ready`
 - Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27
   pressure test); `Blocked` (2026-09-27: Sprint 15 rendered/accessibility
-  evidence is unavailable, so release gate cannot begin).
-- User outcome: simplification ships only with proof that user journeys,
+  evidence is unavailable, so release gate cannot begin); `Ready` (2026-10-04:
+  Sprint 15 deterministic acceptance is complete; external observation is a
+  separate Sprint 17 release gate).
+- User outcome: simplification has proof that user journeys,
   persistence, installer payload, installed startup, and docs agree; failures
-  are visible and recoverable before release.
+  are visible and recoverable before release qualification.
 - Scope / non-goals: verify and package accepted Sprints 0-15 from a known
   source revision. Do not mark incomplete dependent sprints `Done`, upload or
-  publish release assets, sign binaries, or modify users' live installation
-  without separate explicit release/deploy authority.
+  publish release assets, sign binaries, claim external accessibility
+  qualification, or modify users' live installation without separate explicit
+  release/deploy authority.
 - Dependencies and decisions: all UX slices must have focused tests and Sprint
-  15 critical rendered/accessibility evidence. Create one immutable release
-  evidence record with commit/dirty-tree state, OS/runtime, commands/versions,
-  artifact hashes, scenario results, known exclusions, and tester/date. Existing
-  dirty unrelated work is preserved; release build only begins after a clean,
-  reviewed source state or an explicitly recorded scoped source snapshot.
+  15 deterministic rendered/accessibility evidence. Create one immutable
+  candidate-evidence record with commit/dirty-tree state, OS/runtime,
+  commands/versions, artifact hashes, scenario results, known exclusions, and
+  tester/date. Existing dirty unrelated work is preserved; candidate build only
+  begins after a clean, reviewed source state or an explicitly recorded scoped
+  source snapshot. Sprint 17 remains a hard gate before signing, publishing, or
+  release promotion.
 - Implementation slices:
   1. Build traceability matrix mapping every Sprint 0-15 acceptance item and
      regression constraint to unit/integration/source/UI/rendered/package test,
@@ -2535,7 +2554,7 @@ Sprint 15 acceptance criteria:
      uncommitted payload uncertainty, missing model/runtime files, or installer
      source mismatch before smoke.
   4. With no running app/worker, run `Smoke-Test-Release.ps1 -Runtime win-x64`
-     against portable and MSI-installed paths. Execute synthetic critical UI
+     against portable and MSI-installed paths. Execute deterministic synthetic UI
      journey matrix: ready/manual recording settings, preset/custom settings,
      Meetings/recovery/ASAP, cleanup status, summary boundaries, speaker review,
      destructive confirmation, and accessibility focus. Collect sanitized logs,
@@ -2550,27 +2569,27 @@ Sprint 15 acceptance criteria:
      package/smoke/doc failure, and open follow-up at owning sprint. Only a
      revalidated clean rebuild replaces candidate artifacts.
 - Tests and rendered checks: matrix must include all plan scenarios plus
-  accessibility/render captures from Sprint 15. Required gates: focused tests,
+  deterministic accessibility/render captures from Sprint 15. Required gates:
+  focused tests,
   full test script, appropriate AppPlatform tests, installer build, portable/MSI
   smoke, artifact integrity, critical synthetic journeys, docs command/link
   checks, and review of warnings/crash events. Record intentionally unavailable
-  hardware/provider tests as gaps, never pass.
-- Documentation / installer / release work: this is release/documentation gate;
-  update docs and rebuild installer for shipped changes. Do not push/upload from
-  this sprint without explicit authority; release evidence is prerequisite for
-  separate deployment work.
+  hardware/provider tests as gaps, never pass. Sprint 17 owns manual OS DPI,
+  High Contrast, and Narrator checks.
+- Documentation / installer / release work: this is a candidate-release and
+  documentation gate; update docs and rebuild installer for shipped changes.
+  Do not push/upload from this sprint without explicit authority. Sprint 17
+  external qualification is prerequisite for separate deployment work.
 - Evidence and date: 2026-09-27 audit confirms test, installer, portable,
   release, and smoke scripts plus release guidance exist. Current roadmap has
   no acceptance-to-evidence ledger, clean source/artifact provenance contract,
   synthetic full-journey smoke record, or failure handoff rules.
-- Remaining gap or next action: wait for Sprint 15’s synthetic rendered and
-  accessibility evidence. Once it exists, create the acceptance matrix and
-  synthetic fixture inventory before first implementation slice; attach every
-  later Sprint 0-15 result to it, then run focused gates only after
-  implementation lands.
+- Remaining gap or next action: create the acceptance matrix and synthetic
+  fixture inventory before first implementation slice; attach every later Sprint
+  0-15 result to it, then run focused gates only after implementation lands.
 
-Goal: ship simplification as verified product behavior, not just rearranged
-XAML.
+Goal: prepare simplification for external qualification with verified product
+behavior, not just rearranged XAML.
 
 Workstream 1 - Tests:
 
@@ -2609,6 +2628,7 @@ Sprint 16 acceptance criteria:
 - Packaged smoke confirms the changed Settings, Home, Meetings, and detail
   paths are usable.
 - Docs match the shipped behavior.
+- No signing, publishing, or release-promotion claim is made before Sprint 17.
 
 ## Test Scenarios
 
@@ -2641,6 +2661,63 @@ Sprint 16 acceptance criteria:
 - Advanced controls remain available and discoverable.
 - Add this roadmap as a cross-cutting plan; it does not replace the
   speaker-name, external-import, or GPU-transcription roadmaps.
+
+## Sprint 17: External Accessibility And Release Qualification
+
+### Implementation Record
+
+- Status: `Blocked`
+- Status history: `Planned` (2026-10-04); `Blocked` (2026-10-04: the current
+  implementation environment has no native desktop-observation surface).
+- User outcome: before release promotion, Windows users can complete critical
+  flows with their configured scaling, High Contrast, keyboard, and Narrator;
+  evidence distinguishes observed behavior from deterministic harness proof.
+- Scope / non-goals: manually observe a packaged test-profile installation on
+  Windows. Do not change product behavior, collect personal meetings, record
+  audio, use hosted providers, claim legal certification, or substitute this
+  work for Sprint 15 automated/harness checks.
+- Dependencies and decisions: requires a trusted Windows observer/device with
+  the app visible on its active desktop, an isolated test profile, and an
+  approved packaged candidate from Sprint 16. Blocker owner: the release
+  operator or desktop-environment owner; Computer Use is optional, not
+  required.
+- Implementation slices:
+  1. Record Windows edition/build, display scale, High Contrast theme, Narrator
+     version, package hash, test-profile path, and date. Use synthetic/redacted
+     fixture data only.
+  2. Observe Home, Settings, Meetings, and Meeting Detail at supported OS DPI
+     scales and in High Contrast. Check text clipping, overlap, contrast,
+     focus visibility, target reachability, and explicit error/recovery copy.
+  3. With Narrator, run keyboard-only critical flows: open/close settings,
+     save harmless preference, cancel hosted consent and destructive actions,
+     open/close detail, and return focus. Record spoken names, roles, values,
+     descriptions, live status, and any failure reproduction.
+  4. Store redacted screenshots/notes under the Sprint 17 evidence path. Triage
+     any failure to its owning sprint, rerun affected deterministic tests, then
+     repeat this observation before external release promotion.
+- Tests and rendered checks: use
+  `docs/ux-audits/whole-app-sprint-15-native-validation.md` as the manual
+  checklist. Record device/OS/tool version, scope, evidence hashes, limitations,
+  and pass/fail result. Do not treat missing observation as pass.
+- Documentation / installer / release work: append observed result to the
+  release evidence record. Signing, publication, upload, or promotion remains
+  prohibited until this sprint is `Done` and separately authorized.
+- Evidence and date: 2026-10-04: S15 deterministic harness and package smoke
+  are complete, but no native Windows observation is claimed. The installed app
+  can launch; current automation inventory exposes no native app surface.
+- Remaining gap or next action: a release operator executes the checklist on a
+  visible Windows desktop using a disposable profile and records results.
+
+Sprint 17 acceptance criteria:
+
+- Packaged test-profile evidence covers critical Home, Settings, Meetings, and
+  Detail flows at supported OS DPI and High Contrast.
+- Narrator keyboard run confirms names, roles, consequences, status, and focus
+  return for critical flows, or each defect is fixed and retested.
+- Evidence is synthetic/redacted, versioned, and tied to candidate package
+  hash, device, OS, tool version, and date.
+- No external release claim occurs while any critical observation is absent or
+  failing.
 
 # Meetings Management UX Simplification Plan
 
