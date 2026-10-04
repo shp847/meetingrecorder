@@ -106,4 +106,5 @@ Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
 OS per-monitor DPI, high contrast, packaged UI, and Narrator journeys remain
 unexecuted. Their evidence is still required before Sprint 15 can be marked
-`Done`.
+`Done`. Run `whole-app-sprint-15-native-validation.md` on a non-user test
+profile when a native desktop surface is available.

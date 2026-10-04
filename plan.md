@@ -2465,6 +2465,9 @@ Sprint 14 acceptance criteria:
   reader evidence.
 - Remaining gap or next action: capture packaged UI states; validate high
   contrast, OS DPI, and Narrator before marking this sprint done.
+  `docs/ux-audits/whole-app-sprint-15-native-validation.md` now defines the
+  required test-profile, capture, DPI/high-contrast, Narrator, and evidence
+  steps for that external validation.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 
