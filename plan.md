@@ -2456,9 +2456,11 @@ Sprint 14 acceptance criteria:
   isolated harness seeds one fake local profile, renders the single-delete
   scope/consequence and named choices, cancels with Escape, and proves the
   disposable profile remains unchanged.
-- Remaining gap or next action: execute detail-return fixture; capture packaged
-  UI states; validate high contrast, OS DPI, and Narrator before marking this
-  sprint done.
+- Evidence and date: 2026-10-04: synthetic Meeting detail now opens before
+  asynchronous state hydration, exposes a keyboard-focusable named Close action,
+  and returns focus to the Meetings list after Escape.
+- Remaining gap or next action: capture packaged UI states; validate high
+  contrast, OS DPI, and Narrator before marking this sprint done.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 

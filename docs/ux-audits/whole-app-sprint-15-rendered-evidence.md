@@ -70,6 +70,13 @@ existing meeting display names remain unchanged, and exposes named Delete and
 Cancel choices. Escape cancels the action; the test verifies that the rendered
 grid and persisted disposable store still contain that one profile.
 
+Meeting detail rendered at 1280×800/125% as
+`20261004-043256/392cddec7a89441f971f9f8da7508f4c/meeting-detail-closed-1280x800-125.png`
+with SHA-256 `805d941057d1130401f650e4e44c5bd31112dfd2d022a6feea5f3ad2abe84cac`.
+The real detail route opened from the synthetic meeting list; its Close action
+is named and keyboard-focusable. Escape closes the detail and returns focus to
+the accessible `Meetings list` control.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -90,6 +97,6 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-detail-return, OS per-monitor DPI, high contrast, packaged UI, and Narrator
-journeys remain unexecuted. Their evidence is still required before Sprint 15
-can be marked `Done`.
+OS per-monitor DPI, high contrast, packaged UI, and Narrator journeys remain
+unexecuted. Their evidence is still required before Sprint 15 can be marked
+`Done`.

@@ -206,4 +206,22 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: Delete selected Voice Profile", keyboardTrace);
         Assert.Contains("Escape:", keyboardTrace);
     }
+
+    [Fact]
+    public void Meeting_Detail_Close_Is_Named_And_Returns_Focus_To_Meetings()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.MeetingDetailClosed,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("Synthetic processing review", automationTrace);
+        Assert.Contains(" | Button | Close meeting details | True", automationTrace);
+        Assert.Contains("Focus: Close meeting details", keyboardTrace);
+        Assert.Contains("Escape: Meetings list", keyboardTrace);
+    }
 }

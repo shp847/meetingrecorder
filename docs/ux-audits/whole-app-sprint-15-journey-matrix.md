@@ -18,7 +18,7 @@ SHA-256, OS, DPI, theme, test date, and observations here.
 | J15-05 | Cleanup recommendation; archive/delete confirmation | Confirmation names durable effect and Escape cancels | Meetings and confirmation | Rendered: cleanup state plus typed permanent-delete confirmation captured. Delete is disabled before exact confirmation; Escape cancels and returns focus to Meetings. |
 | J15-06 | Hosted-summary consent and blocked state | Consent boundary is stated before action; summary status has polite live announcement | Settings and detail | Partial: hosted-consent modal rendered at 1280x800/125%; named Cancel/Escape leaves config unsaved. Runtime summary announcement remains open. |
 | J15-07 | Speaker review; disable/delete profile | Profile action exposes disabled reason and preserves existing meeting display names | Settings and detail | Rendered: a disposable fake profile opens an app-owned deletion confirmation at 1280x800/125%; named Delete/Cancel choices state scope, Escape cancels, and the fake profile remains persisted. |
-| J15-08 | Detail read/maintain path | Summary/footer status has polite live announcement; Close has accessible name and returns focus | Detail at 1280x800/100% and 125% | Source-only: detail runtime route remains open. |
+| J15-08 | Detail read/maintain path | Summary/footer status has polite live announcement; Close has accessible name and returns focus | Detail at 1280x800/100% and 125% | Partial: real synthetic detail route rendered at 1280x800/125%; named Close/Escape returns focus to Meetings. Runtime status announcement remains open. |
 
 ## Current source evidence
 
@@ -37,6 +37,5 @@ The isolated fixture path is available through
 `MeetingRecorder.WpfRenderProbe`; the rendered evidence and hashes are recorded
 in `whole-app-sprint-15-rendered-evidence.md`. It does not use the live profile
 or primary-instance mutex. The remaining work is interactive journey replay,
-detail-return replay, high-contrast/OS-DPI validation, packaged UI rendering,
-and Narrator validation.
+high-contrast/OS-DPI validation, packaged UI rendering, and Narrator validation.
 Do not substitute the source or raster evidence for those checks.

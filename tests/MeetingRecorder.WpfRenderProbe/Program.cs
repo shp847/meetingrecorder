@@ -31,6 +31,7 @@ var syntheticState = state switch
     "permanent-delete-cancelled" => WpfRenderHarness.SyntheticShellState.PermanentDeleteCancelled,
     "hosted-summary-consent-cancelled" => WpfRenderHarness.SyntheticShellState.HostedSummaryConsentCancelled,
     "voice-profile-delete-cancelled" => WpfRenderHarness.SyntheticShellState.VoiceProfileDeleteCancelled,
+    "meeting-detail-closed" => WpfRenderHarness.SyntheticShellState.MeetingDetailClosed,
     _ => throw new ArgumentException($"Unknown synthetic state '{state}'."),
 };
 

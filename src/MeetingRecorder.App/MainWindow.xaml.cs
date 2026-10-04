@@ -7064,6 +7064,13 @@ public partial class MainWindow : Window
             {
                 _meetingDetailWindow = null;
                 _openMeetingDetailStem = null;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (MeetingsDataGrid.IsVisible && MeetingsDataGrid.IsEnabled)
+                    {
+                        MeetingsDataGrid.Focus();
+                    }
+                }, DispatcherPriority.Input);
             };
             _meetingDetailWindow.OpenTranscriptRequested += (_, _) => OpenMeetingDetailTranscript();
             _meetingDetailWindow.OpenAudioRequested += (_, _) => OpenMeetingDetailAudio();
@@ -7087,9 +7094,9 @@ public partial class MainWindow : Window
             _meetingDetailWindow.DeleteRequested += async (_, _) => await DeleteOpenMeetingDetailAsync();
         }
 
-        _ = ApplyMeetingDetailWindowStateAsync(row);
         _meetingDetailWindow.Show();
         _meetingDetailWindow.Activate();
+        _ = ApplyMeetingDetailWindowStateAsync(row);
     }
 
     private void RefreshOpenMeetingDetailWindow()

@@ -172,6 +172,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.MeetingDetailClosed => "meeting-detail-closed",
                 SyntheticShellState.VoiceProfileDeleteCancelled => "voice-profile-delete-cancelled",
                 SyntheticShellState.HostedSummaryConsentCancelled => "hosted-summary-consent-cancelled",
                 SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
@@ -183,7 +184,7 @@ internal static class WpfRenderHarness
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
@@ -209,6 +210,16 @@ internal static class WpfRenderHarness
             if (state == SyntheticShellState.PermanentDeleteCancelled)
             {
                 return CapturePermanentDeleteCancellation(
+                    window,
+                    logicalWidth,
+                    logicalHeight,
+                    rasterScale,
+                    rootDirectory);
+            }
+
+            if (state == SyntheticShellState.MeetingDetailClosed)
+            {
+                return CaptureMeetingDetailClose(
                     window,
                     logicalWidth,
                     logicalHeight,
@@ -330,7 +341,7 @@ internal static class WpfRenderHarness
             return config;
         }
 
-        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled))
+        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed))
         {
             return config;
         }
@@ -714,6 +725,78 @@ internal static class WpfRenderHarness
         return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
     }
 
+    private static WpfRenderEvidence CaptureMeetingDetailClose(
+        Window window,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory)
+    {
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var screenshotPath = Path.Combine(rootDirectory, $"meeting-detail-closed-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"meeting-detail-closed-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"meeting-detail-closed-keyboard-trace-{scaleToken}.txt");
+        var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
+        meetings.SelectedItem = meetings.Items[0];
+        if (!meetings.Focus())
+        {
+            throw new InvalidOperationException("Meetings list must accept focus before opening details.");
+        }
+
+        var openDetails = RequireElement<Button>(window, "OpenMeetingDetailsButton");
+        if (!openDetails.IsEnabled)
+        {
+            throw new InvalidOperationException("Detail fixture requires a synthetic meeting eligible for Open Details.");
+        }
+
+        var keyboardTrace = new List<string>();
+        openDetails.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        WaitForCondition(
+            window.Dispatcher,
+            () => Application.Current.Windows.Cast<Window>().Any(candidate => !ReferenceEquals(candidate, window)),
+            TimeSpan.FromSeconds(10));
+        var detailWindow = Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate => !ReferenceEquals(candidate, window))
+            ?? throw new InvalidOperationException("Meeting detail did not open.");
+        detailWindow.UpdateLayout();
+        detailWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        var title = RequireElement<TextBlock>(detailWindow, "MeetingTitleTextBlock");
+        var closeButton = FindDescendant<Button>(detailWindow, button =>
+            string.Equals(AutomationProperties.GetName(button), "Close meeting details", StringComparison.Ordinal))
+            ?? throw new InvalidOperationException("Meeting detail must expose a named Close action.");
+        SaveScreenshot(detailWindow, screenshotPath, rasterScale);
+        File.WriteAllLines(automationTracePath, CreateAutomationTrace(title, closeButton));
+        if (!closeButton.Focus())
+        {
+            throw new InvalidOperationException("Meeting detail Close must accept keyboard focus.");
+        }
+
+        keyboardTrace.Add("Focus: " + GetFocusedName());
+        var source = PresentationSource.FromVisual(detailWindow)
+            ?? throw new InvalidOperationException("Meeting detail has no presentation source for Escape validation.");
+        detailWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent,
+        });
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        if (detailWindow.IsVisible)
+        {
+            throw new InvalidOperationException("Escape must close meeting detail.");
+        }
+
+        WaitForCondition(
+            window.Dispatcher,
+            () => string.Equals(GetFocusedName(), "Meetings list", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5));
+        keyboardTrace.Add("Escape: " + GetFocusedName());
+        if (!string.Equals(GetFocusedName(), "Meetings list", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Closing meeting detail must return focus to the Meetings list.");
+        }
+
+        File.WriteAllLines(keyboardTracePath, keyboardTrace);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
     private static WpfRenderEvidence CaptureHostedSummaryConsentCancellation(
         Window window,
         Window settingsWindow,
@@ -965,5 +1048,6 @@ internal static class WpfRenderHarness
         PermanentDeleteCancelled,
         HostedSummaryConsentCancelled,
         VoiceProfileDeleteCancelled,
+        MeetingDetailClosed,
     }
 }
