@@ -85,6 +85,13 @@ forward Tab navigation, and primary navigation focus.
 
 ## Package smoke
 
+On 2026-10-04, `Smoke-Test-Release.ps1 -Runtime win-x64` completed its MSI
+install and installed-app launch path. The installed bundle at
+`C:\Users\psharm04\MeetingRecorder` matched every one of the 15 required
+`bundle-integrity.json` file hashes. The only recent .NET Application errors
+were earlier test-probe timeout records for `dotnet.exe`, not
+`MeetingRecorder.App.exe`.
+
 `Build-Installer.ps1` rebuilt the portable payload and MSI. The standard smoke
 command started its portable phase and completed MSI installation before the
 executor's 30-second ceiling. A follow-up deterministic check verified all 15

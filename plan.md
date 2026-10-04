@@ -2459,6 +2459,10 @@ Sprint 14 acceptance criteria:
 - Evidence and date: 2026-10-04: synthetic Meeting detail now opens before
   asynchronous state hydration, exposes a keyboard-focusable named Close action,
   and returns focus to the Meetings list after Escape.
+- Evidence and date: 2026-10-04: the rebuilt MSI installed to the test path,
+  launched the installed app, and matched all 15 required bundle-integrity
+  hashes. This is package-startup evidence only, not native visual or screen
+  reader evidence.
 - Remaining gap or next action: capture packaged UI states; validate high
   contrast, OS DPI, and Narrator before marking this sprint done.
 
