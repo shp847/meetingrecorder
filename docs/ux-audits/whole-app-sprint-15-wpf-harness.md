@@ -45,6 +45,10 @@ operation starts.
 `hosted-summary-consent-cancelled` renders the disclosure required before a
 hosted route, verifies its named choices, then cancels it without saving the
 synthetic Settings change.
+`voice-profile-delete-cancelled` seeds one fake local profile in the disposable
+root, opens the actual single-profile deletion confirmation, and verifies its
+scope, named choices, Escape cancellation, and unchanged persisted fake
+profile.
 The probe fails if WPF clamps the requested viewport
 and otherwise writes artifact paths and screenshot SHA-256 values to standard
 output.
@@ -57,5 +61,5 @@ processing 200% raster. See `whole-app-sprint-0-rendered-evidence.md` and
 `whole-app-sprint-15-rendered-evidence.md`. The harness verifies the rendered
 shell, `Start recording` accessible name, complete setup-reason text, primary
 navigation automation peer, and keyboard focus movement. It is not a substitute
-for profile-delete/detail interactive replay, high-contrast/OS-DPI behavior, packaged UI
+for detail interactive replay, high-contrast/OS-DPI behavior, packaged UI
 rendering, Narrator, or manual visual review required by Sprint 15.

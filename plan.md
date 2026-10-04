@@ -2451,9 +2451,14 @@ Sprint 14 acceptance criteria:
 - Evidence and date: 2026-09-30: hosted-summary consent now uses an app-owned
   modal that states the published-transcript boundary before authorization.
   Its cancel action and Escape preserve unsaved synthetic Settings changes.
-- Remaining gap or next action: execute profile-delete and detail-return
-  fixtures; capture packaged UI states; validate high contrast, OS DPI, and
-  Narrator before marking this sprint done.
+- Evidence and date: 2026-10-04: profile deletion now uses an app-owned,
+  accessible confirmation for both single and all-local-profile routes. The
+  isolated harness seeds one fake local profile, renders the single-delete
+  scope/consequence and named choices, cancels with Escape, and proves the
+  disposable profile remains unchanged.
+- Remaining gap or next action: execute detail-return fixture; capture packaged
+  UI states; validate high contrast, OS DPI, and Narrator before marking this
+  sprint done.
 
 Goal: verify simplification in the rendered WPF app, not just in code.
 

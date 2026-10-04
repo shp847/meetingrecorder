@@ -187,4 +187,23 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: Authorize hosted summaries", keyboardTrace);
         Assert.Contains("Escape:", keyboardTrace);
     }
+
+    [Fact]
+    public void Voice_Profile_Delete_Explains_Its_Scope_And_Escape_Cancels()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.VoiceProfileDeleteCancelled,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("Existing meeting display names stay unchanged", automationTrace);
+        Assert.Contains(" | Button | Delete selected Voice Profile | True", automationTrace);
+        Assert.Contains(" | Button | Cancel Voice Profile deletion | True", automationTrace);
+        Assert.Contains("Focus: Delete selected Voice Profile", keyboardTrace);
+        Assert.Contains("Escape:", keyboardTrace);
+    }
 }

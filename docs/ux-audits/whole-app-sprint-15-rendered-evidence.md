@@ -59,6 +59,17 @@ with SHA-256 `011e1ee6f88d372740d08279d1bc79073d85e372c9d5f82e4c4b4ee15424dbe1`.
 The disclosure names published transcript text before authorization. Its named
 Cancel action and Escape leave the isolated Settings config unsaved.
 
+## 2026-10-04 profile-delete capture record
+
+The synthetic Voice Profile deletion confirmation rendered at 1280×800/125% as
+`20261004-041945/5e8743af64464368989de1157d880a0b/voice-profile-delete-cancelled-1280x800-125.png`
+with SHA-256 `d4dc9a69c915059dfde90068a2f0fac15a8e7504b0acd7e7307c33e3de9d4a86`.
+The test seeds exactly one fake profile inside the disposable profile root.
+The app-owned dialog names the local-only future-suggestion scope, states that
+existing meeting display names remain unchanged, and exposes named Delete and
+Cancel choices. Escape cancels the action; the test verifies that the rendered
+grid and persisted disposable store still contain that one profile.
+
 Visual review found no header overflow at the supported viewports. The Meetings
 table deliberately retains a horizontal scroll surface at 1024px rather than
 hiding columns. Automation evidence includes full setup-state text, accessible
@@ -79,6 +90,6 @@ render evidence.
 
 Raster DPI scales the synthetic image and is not a substitute for OS
 per-monitor-DPI behavior, high-contrast rendering, or Narrator speech. The
-profile-delete, detail-return, OS per-monitor DPI, high contrast, packaged UI,
-and Narrator journeys remain unexecuted. Their evidence is still required before
-Sprint 15 can be marked `Done`.
+detail-return, OS per-monitor DPI, high contrast, packaged UI, and Narrator
+journeys remain unexecuted. Their evidence is still required before Sprint 15
+can be marked `Done`.

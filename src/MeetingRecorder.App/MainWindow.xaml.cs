@@ -8995,6 +8995,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!TryConfirmVoiceProfileDeletion(row.DisplayName, 1))
+        {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = "Voice Profile deletion cancelled.";
+            return;
+        }
+
         try
         {
             await _voiceProfileStore.DeleteProfileAsync(row.ProfileId, _lifetimeCts.Token);
@@ -9014,14 +9020,12 @@ public partial class MainWindow : Window
     private async void DeleteAllVoiceProfilesButton_OnClick(object sender, RoutedEventArgs e)
     {
         var copy = UserActionCopyResolver.Resolve(UserActionIntent.DeleteAllVoiceProfiles);
-        var confirmed = MessageBox.Show(
-            this,
-            $"{copy.HelperText} {copy.ConfirmationText}",
-            copy.Label,
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning) == MessageBoxResult.Yes;
-        if (!confirmed)
+        var profileCount = VoiceProfilesDataGrid.ItemsSource is IEnumerable<VoiceProfileSettingsRow> rows
+            ? rows.Count()
+            : 0;
+        if (!TryConfirmVoiceProfileDeletion(null, profileCount))
         {
+            ConfigSpeakerNameLearningStatusTextBlock.Text = "Voice Profile deletion cancelled.";
             return;
         }
 
@@ -15405,6 +15409,119 @@ public partial class MainWindow : Window
                         Children =
                         {
                             authorizeButton,
+                            cancelButton,
+                        },
+                    },
+                },
+            },
+        };
+
+        return confirmationWindow.ShowDialog() == true;
+    }
+
+    private bool TryConfirmVoiceProfileDeletion(string? profileDisplayName, int profileCount)
+    {
+        var deletingOneProfile = profileCount == 1 && !string.IsNullOrWhiteSpace(profileDisplayName);
+        var scopeText = deletingOneProfile
+            ? $"Delete the local Voice Profile '{profileDisplayName}'?"
+            : $"Delete all {profileCount} local Voice Profiles?";
+        var consequenceText = deletingOneProfile
+            ? "This removes the selected local profile from future suggestions. Existing meeting display names stay unchanged."
+            : "This removes every local profile from future suggestions. Existing meeting display names stay unchanged.";
+        var confirmationWindow = new Window
+        {
+            Title = "Delete Voice Profile",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 440,
+            MaxWidth = 640,
+            Background = Brushes.White,
+        };
+        AutomationProperties.SetName(confirmationWindow, "Confirm Voice Profile deletion");
+
+        var deleteButton = new Button
+        {
+            Content = deletingOneProfile ? "Delete Profile" : "Delete All Profiles",
+            Width = 150,
+            Height = 34,
+        };
+        AutomationProperties.SetName(
+            deleteButton,
+            deletingOneProfile ? "Delete selected Voice Profile" : "Delete all Voice Profiles");
+        AutomationProperties.SetHelpText(
+            deleteButton,
+            "Deletes local Voice Profile data used only for future suggestions. Existing meeting display names remain unchanged.");
+        deleteButton.Click += (_, _) =>
+        {
+            confirmationWindow.DialogResult = true;
+            confirmationWindow.Close();
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            Width = 90,
+            Height = 34,
+            Margin = new Thickness(10, 0, 0, 0),
+            IsCancel = true,
+        };
+        AutomationProperties.SetName(cancelButton, "Cancel Voice Profile deletion");
+        cancelButton.Click += (_, _) =>
+        {
+            confirmationWindow.DialogResult = false;
+            confirmationWindow.Close();
+        };
+        confirmationWindow.PreviewKeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key != Key.Escape)
+            {
+                return;
+            }
+
+            confirmationWindow.DialogResult = false;
+            confirmationWindow.Close();
+            eventArgs.Handled = true;
+        };
+
+        var consequenceTextBlock = new TextBlock
+        {
+            Margin = new Thickness(0, 10, 0, 0),
+            Text = consequenceText,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        AutomationProperties.SetName(consequenceTextBlock, consequenceText);
+
+        confirmationWindow.Content = new Border
+        {
+            Padding = new Thickness(18),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = scopeText,
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    consequenceTextBlock,
+                    new TextBlock
+                    {
+                        Margin = new Thickness(0, 10, 0, 0),
+                        Text = "Cancel leaves local Voice Profiles unchanged.",
+                        FontWeight = FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new StackPanel
+                    {
+                        Margin = new Thickness(0, 16, 0, 0),
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children =
+                        {
+                            deleteButton,
                             cancelButton,
                         },
                     },

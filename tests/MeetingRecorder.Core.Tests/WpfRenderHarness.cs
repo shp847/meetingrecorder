@@ -136,6 +136,7 @@ internal static class WpfRenderHarness
         var config = configStore.LoadOrCreateAsync().GetAwaiter().GetResult();
         WriteProgress(progressPath, "config-loaded");
         config = PrepareSyntheticShellState(configStore, config, state);
+        PrepareSyntheticVoiceProfiles(state);
         WriteProgress(progressPath, "fixture-prepared");
         var liveConfig = new LiveAppConfig(configStore, config);
         var logger = new FileLogWriter(Path.Combine(rootDirectory, "logs", "wpf-harness.log"));
@@ -171,6 +172,7 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.VoiceProfileDeleteCancelled => "voice-profile-delete-cancelled",
                 SyntheticShellState.HostedSummaryConsentCancelled => "hosted-summary-consent-cancelled",
                 SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
                 SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
@@ -215,7 +217,7 @@ internal static class WpfRenderHarness
             }
 
             IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
-            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.HostedSummaryConsentCancelled)
+            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.HostedSummaryConsentCancelled or SyntheticShellState.VoiceProfileDeleteCancelled)
             {
                 if (!settingsAction.Focus())
                 {
@@ -236,6 +238,17 @@ internal static class WpfRenderHarness
                         window,
                         settingsWindow,
                         liveConfig,
+                        logicalWidth,
+                        logicalHeight,
+                        rasterScale,
+                        rootDirectory);
+                }
+
+                if (state == SyntheticShellState.VoiceProfileDeleteCancelled)
+                {
+                    return CaptureVoiceProfileDeleteCancellation(
+                        window,
+                        settingsWindow,
                         logicalWidth,
                         logicalHeight,
                         rasterScale,
@@ -372,6 +385,34 @@ internal static class WpfRenderHarness
         }
         configStore.SaveAsync(processingConfig).GetAwaiter().GetResult();
         return processingConfig;
+    }
+
+    private static void PrepareSyntheticVoiceProfiles(SyntheticShellState state)
+    {
+        if (state != SyntheticShellState.VoiceProfileDeleteCancelled)
+        {
+            return;
+        }
+
+        var profileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+        Task.Run(() => profileStore.SaveAsync(
+                new VoiceProfileStoreDocument(
+                    VoiceProfileStore.CurrentSchemaVersion,
+                    DateTimeOffset.UtcNow,
+                    [
+                        new VoiceProfile(
+                            "synthetic-voice-profile",
+                            "Synthetic Voice Profile",
+                            "embedding.onnx",
+                            3,
+                            [1f, 0f, 0f],
+                            2,
+                            ["synthetic-meeting"],
+                            null,
+                            VoiceProfileStatus.Active),
+                    ])))
+            .GetAwaiter()
+            .GetResult();
     }
 
     private static void WaitForMeetingRows(FrameworkElement window)
@@ -774,6 +815,115 @@ internal static class WpfRenderHarness
         return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
     }
 
+    private static WpfRenderEvidence CaptureVoiceProfileDeleteCancellation(
+        Window window,
+        Window settingsWindow,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory)
+    {
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var screenshotPath = Path.Combine(rootDirectory, $"voice-profile-delete-cancelled-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"voice-profile-delete-cancelled-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"voice-profile-delete-cancelled-keyboard-trace-{scaleToken}.txt");
+        RequireElement<Button>(settingsWindow, "SettingsProcessingSectionButton").RaiseEvent(
+            new RoutedEventArgs(Button.ClickEvent));
+        var profiles = RequireElement<DataGrid>(window, "VoiceProfilesDataGrid");
+        var deleteProfile = RequireElement<Button>(window, "DeleteVoiceProfileButton");
+        var status = RequireElement<TextBlock>(window, "ConfigSpeakerNameLearningStatusTextBlock");
+        WaitForCondition(settingsWindow.Dispatcher, () => profiles.Items.Count == 1, TimeSpan.FromSeconds(10));
+        if (profiles.Items.Count != 1)
+        {
+            throw new InvalidOperationException("Voice-profile deletion fixture needs one synthetic local profile.");
+        }
+
+        profiles.SelectedItem = profiles.Items[0];
+        WaitForCondition(settingsWindow.Dispatcher, () => deleteProfile.IsEnabled, TimeSpan.FromSeconds(10));
+        if (!deleteProfile.IsEnabled)
+        {
+            throw new InvalidOperationException("Delete Profile must become available after selecting a synthetic profile.");
+        }
+
+        Window? confirmationWindow = null;
+        var dialogObserved = false;
+        var keyboardTrace = new List<string>();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var cancellationTimer = new DispatcherTimer(DispatcherPriority.Send, window.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(25),
+        };
+        cancellationTimer.Tick += (_, _) =>
+        {
+            confirmationWindow ??= Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate =>
+                !ReferenceEquals(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
+            if (confirmationWindow is null)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    cancellationTimer.Stop();
+                    window.Close();
+                }
+
+                return;
+            }
+
+            cancellationTimer.Stop();
+            dialogObserved = true;
+            confirmationWindow.UpdateLayout();
+            confirmationWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            var consequence = FindDescendant<TextBlock>(confirmationWindow, textBlock =>
+                AutomationProperties.GetName(textBlock).Contains("Existing meeting display names stay unchanged", StringComparison.Ordinal));
+            var deleteButton = FindDescendant<Button>(confirmationWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Delete selected Voice Profile", StringComparison.Ordinal));
+            var cancelButton = FindDescendant<Button>(confirmationWindow, button =>
+                string.Equals(AutomationProperties.GetName(button), "Cancel Voice Profile deletion", StringComparison.Ordinal));
+            if (consequence is null || deleteButton is null || cancelButton is null)
+            {
+                throw new InvalidOperationException("Voice-profile deletion must expose its scope, consequence, and named choices.");
+            }
+
+            SaveScreenshot(confirmationWindow, screenshotPath, rasterScale);
+            File.WriteAllLines(automationTracePath, CreateAutomationTrace(consequence, deleteButton, cancelButton));
+            if (!deleteButton.Focus())
+            {
+                throw new InvalidOperationException("Voice-profile deletion must expose a keyboard-focusable delete choice.");
+            }
+
+            keyboardTrace.Add("Focus: " + GetFocusedName());
+            var source = PresentationSource.FromVisual(confirmationWindow)
+                ?? throw new InvalidOperationException("Voice-profile deletion confirmation has no presentation source for Escape validation.");
+            confirmationWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            });
+        };
+
+        cancellationTimer.Start();
+        deleteProfile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        cancellationTimer.Stop();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        if (!dialogObserved || confirmationWindow?.IsVisible == true)
+        {
+            throw new InvalidOperationException("Voice-profile deletion confirmation did not open and cancel through Escape.");
+        }
+
+        var profileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+        var remainingProfiles = Task.Run(() => profileStore.LoadOrCreateAsync())
+            .GetAwaiter()
+            .GetResult()
+            .Profiles;
+        if (profiles.Items.Count != 1 || remainingProfiles.Count != 1 ||
+            !string.Equals(status.Text, "Voice Profile deletion cancelled.", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Cancelling Voice-profile deletion must leave the isolated profile unchanged.");
+        }
+
+        keyboardTrace.Add("Escape: " + GetFocusedName());
+        File.WriteAllLines(keyboardTracePath, keyboardTrace);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
     private static T? FindDescendant<T>(DependencyObject root, Func<T, bool>? predicate = null)
         where T : DependencyObject
     {
@@ -814,5 +964,6 @@ internal static class WpfRenderHarness
         SettingsRecordingSaved,
         PermanentDeleteCancelled,
         HostedSummaryConsentCancelled,
+        VoiceProfileDeleteCancelled,
     }
 }

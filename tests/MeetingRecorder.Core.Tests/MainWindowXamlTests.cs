@@ -567,6 +567,9 @@ public sealed class MainWindowXamlTests
         Assert.Contains("ApplyVoiceProfileActionState", source);
         Assert.Contains("AutomationProperties.SetHelpText", source);
         Assert.Contains("UserActionIntent.DeleteAllVoiceProfiles", source);
+        Assert.Contains("TryConfirmVoiceProfileDeletion(row.DisplayName, 1)", source);
+        Assert.Contains("TryConfirmVoiceProfileDeletion(null, profileCount)", source);
+        Assert.Contains("Cancel Voice Profile deletion", source);
         Assert.Contains("SpeakerExperienceSurface.Settings", source);
     }
 
