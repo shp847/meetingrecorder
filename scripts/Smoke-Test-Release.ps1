@@ -42,6 +42,27 @@ function New-SmokeTestLogPath {
     return Join-Path $logDirectory ("{0}-{1}.log" -f $Prefix, (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
 
+function Get-FileSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Resolve-ManagedInstallRoot {
     param(
         [string]$ManifestPath
@@ -220,7 +241,7 @@ function Assert-InstalledBundleMatchesPublishedIntegrity {
             }
 
             $installedFile = Get-Item -LiteralPath $installedFilePath
-            $installedHash = (Get-FileHash -LiteralPath $installedFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $installedHash = Get-FileSha256 -Path $installedFilePath
             if ($installedFile.Length -ne [int64]$_.lengthBytes -or $installedHash -ne $_.sha256) {
                 $_.relativePath
             }

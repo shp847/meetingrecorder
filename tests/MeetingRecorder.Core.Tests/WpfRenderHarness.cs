@@ -28,6 +28,12 @@ internal sealed record WpfRenderEvidence(
 /// </summary>
 internal static class WpfRenderHarness
 {
+    private static readonly object CaptureGate = new();
+    private static readonly ManualResetEventSlim ApplicationReady = new();
+    private static Dispatcher? applicationDispatcher;
+    private static Window? applicationAnchor;
+    private static Exception? applicationStartupFailure;
+
     public static WpfRenderEvidence CaptureHomeShell()
     {
         return CaptureShell(SyntheticShellState.SetupBlocked, 1280, 800, 1d);
@@ -64,40 +70,95 @@ internal static class WpfRenderHarness
         int logicalHeight,
         double rasterScale)
     {
-        WpfRenderEvidence? evidence = null;
-        Exception? failure = null;
-        using var finished = new ManualResetEventSlim();
+        lock (CaptureGate)
+        {
+            var dispatcher = GetApplicationDispatcher();
+            var capture = dispatcher.InvokeAsync(
+                () => CaptureShellOnStaThread(state, logicalWidth, logicalHeight, rasterScale));
+            if (!capture.Task.Wait(TimeSpan.FromSeconds(15)))
+            {
+                throw new TimeoutException("WPF render harness did not finish within 15 seconds.");
+            }
 
+            try
+            {
+                return capture.Task.GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException("WPF render harness failed.", exception);
+            }
+        }
+    }
+
+    private static Dispatcher GetApplicationDispatcher()
+    {
+        if (applicationDispatcher is not null)
+        {
+            return applicationDispatcher;
+        }
+
+        ApplicationReady.Reset();
+        applicationStartupFailure = null;
         var thread = new Thread(() =>
         {
             try
             {
-                evidence = CaptureShellOnStaThread(state, logicalWidth, logicalHeight, rasterScale);
+                var application = new Application
+                {
+                    ShutdownMode = ShutdownMode.OnExplicitShutdown,
+                };
+                application.Resources.MergedDictionaries.Add(new ResourceDictionary
+                {
+                    Source = new Uri("/AppPlatform.Shell.Wpf;component/ShellTheme.xaml", UriKind.Relative),
+                });
+                applicationAnchor = new Window
+                {
+                    Width = 1,
+                    Height = 1,
+                    Left = -10000,
+                    Top = -10000,
+                    ShowInTaskbar = false,
+                    WindowStyle = WindowStyle.None,
+                };
+                application.Startup += (_, _) =>
+                {
+                    applicationDispatcher = application.Dispatcher;
+                    ApplicationReady.Set();
+                };
+                application.Exit += (_, _) =>
+                {
+                    if (!ApplicationReady.IsSet)
+                    {
+                        applicationStartupFailure = new InvalidOperationException(
+                            "WPF render harness application stopped before its dispatcher started.");
+                        ApplicationReady.Set();
+                    }
+                };
+                application.Run(applicationAnchor);
             }
             catch (Exception exception)
             {
-                failure = exception;
-            }
-            finally
-            {
-                finished.Set();
+                applicationStartupFailure = exception;
+                ApplicationReady.Set();
             }
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.IsBackground = true;
         thread.Start();
 
-        if (!finished.Wait(TimeSpan.FromSeconds(15)))
+        if (!ApplicationReady.Wait(TimeSpan.FromSeconds(15)))
         {
-            throw new TimeoutException("WPF render harness did not finish within 15 seconds.");
+            throw new TimeoutException("WPF render harness application did not start within 15 seconds.");
         }
 
-        if (failure is not null)
+        if (applicationStartupFailure is not null)
         {
-            throw new InvalidOperationException("WPF render harness failed.", failure);
+            throw new InvalidOperationException("WPF render harness application failed to start.", applicationStartupFailure);
         }
 
-        return evidence ?? throw new InvalidOperationException("WPF render harness produced no evidence.");
+        return applicationDispatcher
+            ?? throw new InvalidOperationException("WPF render harness application produced no dispatcher.");
     }
 
     private static WpfRenderEvidence CaptureShellOnStaThread(
@@ -118,17 +179,9 @@ internal static class WpfRenderHarness
         var progressPath = Path.Combine(rootDirectory, "harness-progress.log");
         WriteProgress(progressPath, "root-created");
 
-        var application = new Application
-        {
-            ShutdownMode = ShutdownMode.OnExplicitShutdown,
-        };
         var previousSynchronizationContext = SynchronizationContext.Current;
         SynchronizationContext.SetSynchronizationContext(
-            new DispatcherSynchronizationContext(application.Dispatcher));
-        application.Resources.MergedDictionaries.Add(new ResourceDictionary
-        {
-            Source = new Uri("/AppPlatform.Shell.Wpf;component/ShellTheme.xaml", UriKind.Relative),
-        });
+            new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
 
         using var profileScope = AppDataPaths.PushTestAppRoot(rootDirectory);
         var configPath = Path.Combine(rootDirectory, "config", "appsettings.json");
@@ -156,7 +209,7 @@ internal static class WpfRenderHarness
             window.Show();
             WriteProgress(progressPath, "window-shown");
             window.UpdateLayout();
-            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
             WriteProgress(progressPath, "initial-rendered");
 
             if (window.ActualWidth != logicalWidth || window.ActualHeight != logicalHeight)
@@ -197,7 +250,7 @@ internal static class WpfRenderHarness
                     var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
                     meetings.SelectedItem = meetings.Items[0];
                     window.UpdateLayout();
-                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                    FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
                 }
 
                 if (state == SyntheticShellState.CleanupRecommendation)
@@ -238,9 +291,9 @@ internal static class WpfRenderHarness
                 settingsAction.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 settingsWindow = Application.Current.Windows
                     .Cast<Window>()
-                    .Single(candidate => !ReferenceEquals(candidate, window));
+                    .Single(candidate => IsVisibleCaptureWindow(candidate, window));
                 settingsWindow.UpdateLayout();
-                settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                FlushDispatcher(settingsWindow.Dispatcher, DispatcherPriority.Render);
                 WriteProgress(progressPath, "settings-opened");
 
                 if (state == SyntheticShellState.HostedSummaryConsentCancelled)
@@ -317,14 +370,13 @@ internal static class WpfRenderHarness
         }
         finally
         {
-            settingsWindow?.Close();
-            window.Close();
-            if (!application.Dispatcher.HasShutdownStarted)
-            {
-                application.Shutdown();
-            }
-
+            WriteProgress(progressPath, "capture-cleanup-started");
+            settingsWindow?.Hide();
+            WriteProgress(progressPath, "settings-hidden");
+            window.Hide();
+            WriteProgress(progressPath, "main-window-hidden");
             SynchronizationContext.SetSynchronizationContext(previousSynchronizationContext);
+            WriteProgress(progressPath, "synchronization-context-restored");
         }
     }
 
@@ -436,7 +488,7 @@ internal static class WpfRenderHarness
             throw new InvalidOperationException("Synthetic processing manifest did not appear in the Meetings workspace.");
         }
         window.UpdateLayout();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
     }
 
     private static void WriteProgress(string path, string stage)
@@ -454,7 +506,7 @@ internal static class WpfRenderHarness
             throw new InvalidOperationException("Synthetic cleanup recommendation did not become visible.");
         }
         window.UpdateLayout();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
     }
 
     private static void WaitForCondition(
@@ -483,6 +535,23 @@ internal static class WpfRenderHarness
             TimeSpan.FromMilliseconds(25),
             TimeSpan.FromMilliseconds(25));
         Dispatcher.PushFrame(frame);
+    }
+
+    private static void FlushDispatcher(Dispatcher dispatcher, DispatcherPriority priority)
+    {
+        if (dispatcher.CheckAccess())
+        {
+            return;
+        }
+
+        dispatcher.Invoke(() => { }, priority);
+    }
+
+    private static bool IsVisibleCaptureWindow(Window candidate, Window currentWindow)
+    {
+        return candidate.IsVisible &&
+            !ReferenceEquals(candidate, currentWindow) &&
+            !ReferenceEquals(candidate, applicationAnchor);
     }
 
     private static T RequireElement<T>(FrameworkElement window, string name)
@@ -571,16 +640,22 @@ internal static class WpfRenderHarness
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         });
-        settingsWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        FlushDispatcher(settingsWindow.Dispatcher, DispatcherPriority.Background);
         if (settingsWindow.IsVisible)
         {
             throw new InvalidOperationException("Escape must close the Settings window.");
         }
 
+        WaitForCondition(
+            settingsWindow.Dispatcher,
+            () => string.Equals(GetFocusedName(), "Open Settings", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5));
+
         trace.Add("Escape: " + GetFocusedName());
         if (!string.Equals(GetFocusedName(), "Open Settings", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("Escape must return focus to Open Settings.");
+            throw new InvalidOperationException(
+                $"Escape must return focus to Open Settings; actual focus was '{GetFocusedName()}'.");
         }
 
         return trace;
@@ -660,7 +735,7 @@ internal static class WpfRenderHarness
         {
             confirmationWindow ??= Application.Current.Windows
                 .Cast<Window>()
-                .SingleOrDefault(candidate => !ReferenceEquals(candidate, window));
+                .SingleOrDefault(candidate => IsVisibleCaptureWindow(candidate, window));
             if (confirmationWindow is null)
             {
                 if (DateTime.UtcNow >= deadline)
@@ -675,7 +750,7 @@ internal static class WpfRenderHarness
             cancellationTimer.Stop();
             dialogObserved = true;
             confirmationWindow.UpdateLayout();
-            confirmationWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            FlushDispatcher(confirmationWindow.Dispatcher, DispatcherPriority.Render);
             var confirmationText = FindDescendant<TextBox>(confirmationWindow)
                 ?? throw new InvalidOperationException("Permanent-delete confirmation must provide typed confirmation.");
             var deleteButton = FindDescendant<Button>(confirmationWindow, button =>
@@ -708,7 +783,7 @@ internal static class WpfRenderHarness
         cancellationTimer.Start();
         deleteAction.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         cancellationTimer.Stop();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Background);
         if (!dialogObserved || confirmationWindow?.IsVisible == true)
         {
             throw new InvalidOperationException("Permanent-delete confirmation did not open and close through Escape.");
@@ -753,12 +828,12 @@ internal static class WpfRenderHarness
         openDetails.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         WaitForCondition(
             window.Dispatcher,
-            () => Application.Current.Windows.Cast<Window>().Any(candidate => !ReferenceEquals(candidate, window)),
+            () => Application.Current.Windows.Cast<Window>().Any(candidate => IsVisibleCaptureWindow(candidate, window)),
             TimeSpan.FromSeconds(10));
-        var detailWindow = Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate => !ReferenceEquals(candidate, window))
+        var detailWindow = Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate => IsVisibleCaptureWindow(candidate, window))
             ?? throw new InvalidOperationException("Meeting detail did not open.");
         detailWindow.UpdateLayout();
-        detailWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        FlushDispatcher(detailWindow.Dispatcher, DispatcherPriority.Render);
         var title = RequireElement<TextBlock>(detailWindow, "MeetingTitleTextBlock");
         var closeButton = FindDescendant<Button>(detailWindow, button =>
             string.Equals(AutomationProperties.GetName(button), "Close meeting details", StringComparison.Ordinal))
@@ -777,7 +852,7 @@ internal static class WpfRenderHarness
         {
             RoutedEvent = Keyboard.PreviewKeyDownEvent,
         });
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Background);
         if (detailWindow.IsVisible)
         {
             throw new InvalidOperationException("Escape must close meeting detail.");
@@ -790,7 +865,8 @@ internal static class WpfRenderHarness
         keyboardTrace.Add("Escape: " + GetFocusedName());
         if (!string.Equals(GetFocusedName(), "Meetings list", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("Closing meeting detail must return focus to the Meetings list.");
+            throw new InvalidOperationException(
+                $"Closing meeting detail must return focus to the Meetings list; actual focus was '{GetFocusedName()}'.");
         }
 
         File.WriteAllLines(keyboardTracePath, keyboardTrace);
@@ -835,7 +911,7 @@ internal static class WpfRenderHarness
         cancellationTimer.Tick += (_, _) =>
         {
             consentWindow ??= Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate =>
-                !ReferenceEquals(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
+                IsVisibleCaptureWindow(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
             if (consentWindow is null)
             {
                 if (DateTime.UtcNow >= deadline)
@@ -850,7 +926,7 @@ internal static class WpfRenderHarness
             cancellationTimer.Stop();
             dialogObserved = true;
             consentWindow.UpdateLayout();
-            consentWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            FlushDispatcher(consentWindow.Dispatcher, DispatcherPriority.Render);
             var disclosure = FindDescendant<TextBlock>(consentWindow, textBlock =>
                 AutomationProperties.GetName(textBlock).Contains("published transcript text", StringComparison.Ordinal));
             var authorizeButton = FindDescendant<Button>(consentWindow, button =>
@@ -881,7 +957,7 @@ internal static class WpfRenderHarness
         cancellationTimer.Start();
         saveChanges.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         cancellationTimer.Stop();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Background);
         if (!dialogObserved || consentWindow?.IsVisible == true)
         {
             throw new InvalidOperationException("Hosted-summary consent did not open and cancel through Escape.");
@@ -939,7 +1015,7 @@ internal static class WpfRenderHarness
         cancellationTimer.Tick += (_, _) =>
         {
             confirmationWindow ??= Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate =>
-                !ReferenceEquals(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
+                IsVisibleCaptureWindow(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
             if (confirmationWindow is null)
             {
                 if (DateTime.UtcNow >= deadline)
@@ -954,7 +1030,7 @@ internal static class WpfRenderHarness
             cancellationTimer.Stop();
             dialogObserved = true;
             confirmationWindow.UpdateLayout();
-            confirmationWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            FlushDispatcher(confirmationWindow.Dispatcher, DispatcherPriority.Render);
             var consequence = FindDescendant<TextBlock>(confirmationWindow, textBlock =>
                 AutomationProperties.GetName(textBlock).Contains("Existing meeting display names stay unchanged", StringComparison.Ordinal));
             var deleteButton = FindDescendant<Button>(confirmationWindow, button =>
@@ -985,7 +1061,7 @@ internal static class WpfRenderHarness
         cancellationTimer.Start();
         deleteProfile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         cancellationTimer.Stop();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Background);
         if (!dialogObserved || confirmationWindow?.IsVisible == true)
         {
             throw new InvalidOperationException("Voice-profile deletion confirmation did not open and cancel through Escape.");

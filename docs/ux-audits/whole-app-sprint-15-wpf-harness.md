@@ -3,7 +3,10 @@
 ## Purpose
 
 `WpfRenderedShellHarnessTests` renders the real `MainWindow` on a dedicated
-STA thread. It never runs `MeetingRecorder.App.App`, so it does not acquire the
+STA thread through one test-owned WPF `Application`. Each capture receives a
+fresh disposable profile and hides its completed shell instead of starting app
+shutdown; this permits repeat capture in one VSTest process without creating a
+second WPF `Application`. It never runs `MeetingRecorder.App.App`, so it does not acquire the
 single-instance mutex or touch the installed application process.
 
 The harness scopes `AppDataPaths` to a fresh disposable `%TEMP%` directory and

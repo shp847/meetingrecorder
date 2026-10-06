@@ -228,7 +228,9 @@ public sealed class DiarizationFixtureReplayTests
                 "-DryRun",
                 "-ReportPath", reportPath);
 
-            Assert.Equal(0, result.ExitCode);
+            Assert.True(
+                result.ExitCode == 0,
+                $"Fixture catalog script failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
             Assert.True(File.Exists(reportPath), "Expected catalog report to be written.");
             Assert.Equal(privateMarker + " protected artifact", File.ReadAllText(markdownPath));
 
@@ -261,7 +263,7 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Contains("Test-DiarizationFixture.ps1", scriptContents, StringComparison.Ordinal);
             Assert.Contains("Test-DiarizationFullAudioFixture.ps1", scriptContents, StringComparison.Ordinal);
             Assert.Contains("protectedArtifactPaths", scriptContents, StringComparison.Ordinal);
-            Assert.Contains("Get-FileHash", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Get-FileSha256", scriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);
         }

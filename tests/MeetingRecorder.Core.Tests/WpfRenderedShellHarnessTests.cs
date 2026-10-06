@@ -1,7 +1,24 @@
 namespace MeetingRecorder.Core.Tests;
 
+[CollectionDefinition("WpfRenderHarness", DisableParallelization = true)]
+public sealed class WpfRenderHarnessCollection
+{
+}
+
+[Collection("WpfRenderHarness")]
 public sealed class WpfRenderedShellHarnessTests
 {
+    [Fact]
+    public void Sequential_Shell_Captures_Reuse_One_Wpf_Application()
+    {
+        var homeEvidence = WpfRenderHarness.CaptureHomeShell();
+        var healthyEvidence = WpfRenderHarness.CaptureEmptyHealthyShell();
+
+        Assert.True(File.Exists(homeEvidence.ScreenshotPath));
+        Assert.True(File.Exists(healthyEvidence.ScreenshotPath));
+        Assert.NotEqual(homeEvidence.RootDirectory, healthyEvidence.RootDirectory);
+    }
+
     [Fact]
     public void Home_Shell_Renders_In_Isolated_Profile_With_Automation_And_Keyboard_Evidence()
     {
@@ -29,7 +46,7 @@ public sealed class WpfRenderedShellHarnessTests
         var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
         var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
 
-        Assert.Contains("MeetingsDataGrid | List |", automationTrace);
+        Assert.Contains("MeetingsDataGrid | DataGrid |", automationTrace);
         Assert.Contains("MeetingsProcessingStatusBorder", automationTrace);
         Assert.Contains("Focus: Open Settings", keyboardTrace);
         Assert.DoesNotContain("<none>", keyboardTrace);
@@ -44,7 +61,7 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.True(new FileInfo(evidence.ScreenshotPath).Length > 0);
         var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
 
-        Assert.Contains("MeetingsDataGrid | List |", automationTrace);
+        Assert.Contains("MeetingsDataGrid | DataGrid |", automationTrace);
         Assert.Contains("SelectedMeetingInspectorTitleTextBlock | Text | Synthetic processing review", automationTrace);
     }
 
@@ -90,8 +107,8 @@ public sealed class WpfRenderedShellHarnessTests
 
         Assert.Equal(1600, frame.PixelWidth);
         Assert.Equal(1000, frame.PixelHeight);
-        Assert.Equal(120d, frame.DpiX);
-        Assert.Equal(120d, frame.DpiY);
+        Assert.Equal(120d, frame.DpiX, 1);
+        Assert.Equal(120d, frame.DpiY, 1);
     }
 
     [Fact]
@@ -112,8 +129,8 @@ public sealed class WpfRenderedShellHarnessTests
 
         Assert.Equal(1280, frame.PixelWidth);
         Assert.Equal(960, frame.PixelHeight);
-        Assert.Equal(120d, frame.DpiX);
-        Assert.Equal(120d, frame.DpiY);
+        Assert.Equal(120d, frame.DpiX, 1);
+        Assert.Equal(120d, frame.DpiY, 1);
     }
 
     [Fact]

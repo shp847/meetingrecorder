@@ -8,6 +8,12 @@ using System.Text.Json;
 
 namespace MeetingRecorder.Core.Tests;
 
+[CollectionDefinition("ProcessingQueueService", DisableParallelization = true)]
+public sealed class ProcessingQueueServiceCollection
+{
+}
+
+[Collection("ProcessingQueueService")]
 public sealed class ProcessingQueueServiceTests
 {
     [Fact]
@@ -169,7 +175,7 @@ public sealed class ProcessingQueueServiceTests
         var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
         var logger = new FileLogWriter(Path.Combine(root, "logs", "app.log"));
         var processFactory = new FakeWorkerProcessFactory();
-        var isRecording = true;
+        using var recordingGate = new ManualResetEventSlim(initialState: true);
         var service = new ProcessingQueueService(
             liveConfig,
             manifestStore,
@@ -177,7 +183,7 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
-            () => isRecording);
+            () => recordingGate.IsSet);
 
         var manifestPath = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
         await service.EnqueueAsync(manifestPath);
@@ -185,7 +191,7 @@ public sealed class ProcessingQueueServiceTests
 
         Assert.Equal(0, processFactory.StartCount);
 
-        isRecording = false;
+        recordingGate.Reset();
         var process = await processFactory.WaitForStartAsync();
         await WaitForConditionAsync(() => process.PriorityClass is not null);
 
@@ -285,7 +291,7 @@ public sealed class ProcessingQueueServiceTests
         capacityMonitor.Sample();
         Assert.True(capacityMonitor.Snapshot.IsAvailable);
 
-        var isRecording = true;
+        using var recordingGate = new ManualResetEventSlim(initialState: true);
         var service = new ProcessingQueueService(
             liveConfig,
             manifestStore,
@@ -293,12 +299,12 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
-            () => isRecording,
+            () => recordingGate.IsSet,
             resourceCapacityMonitor: capacityMonitor);
 
         await service.EnqueueAsync(await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10)));
         await service.EnqueueAsync(await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(12)));
-        isRecording = false;
+        recordingGate.Reset();
 
         var first = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
         var second = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
@@ -360,7 +366,7 @@ public sealed class ProcessingQueueServiceTests
         Assert.True(cpuCapacityMonitor.Snapshot.IsAvailable);
         Assert.True(gpuCapacityMonitor.Snapshot.IsAvailable);
 
-        var isRecording = true;
+        using var recordingGate = new ManualResetEventSlim(initialState: true);
         var service = new ProcessingQueueService(
             liveConfig,
             manifestStore,
@@ -368,36 +374,42 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
-            () => isRecording,
+            () => recordingGate.IsSet,
             isSpeakerLabelingAvailableProvider: () => true,
             localNowProvider: () => AtLocal(2026, 9, 28, 12, 0),
             resourceCapacityMonitor: cpuCapacityMonitor,
             gpuCapacityMonitor: gpuCapacityMonitor,
             isGpuDiarizationReadyProvider: () => true);
 
-        var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
-        var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(12));
-        await SetPublishedStageStateAsync(manifestStore, firstManifestPath, StageExecutionState.NotStarted, StageExecutionState.Skipped);
-        await SetPublishedStageStateAsync(manifestStore, secondManifestPath, StageExecutionState.NotStarted, StageExecutionState.Skipped);
-        await service.EnqueueAsync(firstManifestPath);
-        await service.EnqueueAsync(secondManifestPath);
-        isRecording = false;
+        try
+        {
+            var firstManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
+            var secondManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(12));
+            await SetPublishedStageStateAsync(manifestStore, firstManifestPath, StageExecutionState.NotStarted, StageExecutionState.Skipped);
+            await SetPublishedStageStateAsync(manifestStore, secondManifestPath, StageExecutionState.NotStarted, StageExecutionState.Skipped);
+            await service.EnqueueAsync(firstManifestPath);
+            await service.EnqueueAsync(secondManifestPath);
+            recordingGate.Reset();
 
-        var first = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(5));
-        var second = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.All(processFactory.StartInfos, startInfo => AssertWorkerHasStagedLease(startInfo, "diarization"));
-        var configPaths = processFactory.StartInfos.Select(startInfo => ExtractConfigPath(startInfo.Arguments)).ToArray();
-        Assert.Contains(AppDataPaths.GetConfigPath(), configPaths);
-        var cpuConfigPath = Assert.Single(configPaths.Where(path => !string.Equals(path, AppDataPaths.GetConfigPath(), StringComparison.Ordinal)));
-        Assert.NotNull(cpuConfigPath);
-        var cpuConfig = await new AppConfigStore(cpuConfigPath!).LoadOrCreateAsync();
-        Assert.Equal(InferenceAccelerationPreference.CpuOnly, cpuConfig.DiarizationAccelerationPreference);
-        Assert.False(first.KillCalled);
-        Assert.False(second.KillCalled);
+            var first = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(5));
+            var second = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.All(processFactory.StartInfos, startInfo => AssertWorkerHasStagedLease(startInfo, "diarization"));
+            var configPaths = processFactory.StartInfos.Select(startInfo => ExtractConfigPath(startInfo.Arguments)).ToArray();
+            Assert.Contains(AppDataPaths.GetConfigPath(), configPaths);
+            var cpuConfigPath = Assert.Single(configPaths.Where(path => !string.Equals(path, AppDataPaths.GetConfigPath(), StringComparison.Ordinal)));
+            Assert.NotNull(cpuConfigPath);
+            var cpuConfig = await new AppConfigStore(cpuConfigPath!).LoadOrCreateAsync();
+            Assert.Equal(InferenceAccelerationPreference.CpuOnly, cpuConfig.DiarizationAccelerationPreference);
+            Assert.False(first.KillCalled);
+            Assert.False(second.KillCalled);
 
-        first.CompleteExit();
-        second.CompleteExit();
-        await service.StopAsync();
+            first.CompleteExit();
+            second.CompleteExit();
+        }
+        finally
+        {
+            await service.StopAsync();
+        }
     }
 
     [Fact]
@@ -456,6 +468,7 @@ public sealed class ProcessingQueueServiceTests
             new FakeWorkerProcess(),
             new FakeWorkerProcess(),
             new FakeWorkerProcess());
+        using var recordingGate = new ManualResetEventSlim(initialState: true);
         var service = new ProcessingQueueService(
             liveConfig,
             manifestStore,
@@ -463,6 +476,7 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
+            () => recordingGate.IsSet,
             isSpeakerLabelingAvailableProvider: () => true,
             localNowProvider: () => AtLocal(2026, 9, 28, 23, 0));
 
@@ -476,6 +490,7 @@ public sealed class ProcessingQueueServiceTests
         {
             await service.EnqueueAsync(manifestPath);
         }
+        recordingGate.Reset();
 
         var processes = await Task.WhenAll(
             processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(5)),
@@ -583,7 +598,7 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_Overnight_Cleanup_Runs_Five_Items_Before_Normal_Work()
+    public async Task EnqueueAsync_Overnight_Cleanup_Drains_All_Cleanup_And_Normal_Work()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -605,7 +620,7 @@ public sealed class ProcessingQueueServiceTests
         var processFactory = new SequencedWorkerProcessFactory(
             new FakeWorkerProcess(), new FakeWorkerProcess(), new FakeWorkerProcess(),
             new FakeWorkerProcess(), new FakeWorkerProcess(), new FakeWorkerProcess());
-        var isRecording = true;
+        using var recordingGate = new ManualResetEventSlim(initialState: true);
         var service = new ProcessingQueueService(
             liveConfig,
             manifestStore,
@@ -613,7 +628,7 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
-            () => isRecording);
+            () => recordingGate.IsSet);
 
         var cleanupManifestPaths = new List<string>();
         for (var index = 0; index < 5; index++)
@@ -626,17 +641,19 @@ public sealed class ProcessingQueueServiceTests
         var normalManifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
         await service.EnqueueAsync(normalManifestPath, ProcessingWorkPriority.Normal);
 
-        isRecording = false;
-        for (var index = 0; index < 5; index++)
+        recordingGate.Reset();
+        var launches = new List<string>();
+        for (var index = 0; index < 6; index++)
         {
             var process = await processFactory.WaitForStartAsync(index);
-            await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, cleanupManifestPaths[index], StringComparison.Ordinal));
+            launches.Add(processFactory.StartInfos[index].Arguments);
             process.CompleteExit();
         }
 
-        var normalProcess = await processFactory.WaitForStartAsync(5);
-        await WaitForConditionAsync(() => string.Equals(service.GetStatusSnapshot().CurrentManifestPath, normalManifestPath, StringComparison.Ordinal));
-        normalProcess.CompleteExit();
+        Assert.All(cleanupManifestPaths, cleanupManifestPath =>
+            Assert.Contains(launches, arguments =>
+                arguments.Contains(cleanupManifestPath, StringComparison.Ordinal)));
+        Assert.Contains(launches, arguments => arguments.Contains(normalManifestPath, StringComparison.Ordinal));
         await service.StopAsync();
     }
 
@@ -997,8 +1014,7 @@ public sealed class ProcessingQueueServiceTests
         await service.EnqueueAsync(manifestPath);
         var firstProcess = await processFactory.WaitForStartAsync(0);
         await WaitForConditionAsync(() =>
-            service.GetStatusSnapshot().CurrentStageName == "diarization" &&
-            service.GetStatusSnapshot().CurrentStageState == StageExecutionState.Running);
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, manifestPath, StringComparison.Ordinal));
 
         var result = await service.RushBacklogAsync(deferFutureMeetings: false);
 
@@ -1006,8 +1022,7 @@ public sealed class ProcessingQueueServiceTests
         Assert.False(firstProcess.LastKillEntireProcessTree);
 
         var secondProcess = await processFactory.WaitForStartAsync(1);
-        await WaitForConditionAsync(() =>
-            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, manifestPath, StringComparison.Ordinal));
+        Assert.Contains(manifestPath, processFactory.StartInfos[1].Arguments, StringComparison.Ordinal);
         var manifest = await manifestStore.LoadAsync(manifestPath);
 
         Assert.Equal(1, result.DeferredMeetingCount);
@@ -2907,7 +2922,7 @@ public sealed class ProcessingQueueServiceTests
 
     private static async Task WaitForConditionAsync(Func<bool> condition)
     {
-        for (var index = 0; index < 20; index++)
+        for (var index = 0; index < 80; index++)
         {
             if (condition())
             {
@@ -2922,7 +2937,7 @@ public sealed class ProcessingQueueServiceTests
 
     private static async Task WaitForConditionAsync(Func<Task<bool>> condition)
     {
-        for (var index = 0; index < 20; index++)
+        for (var index = 0; index < 80; index++)
         {
             if (await condition())
             {

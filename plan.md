@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-04. **Total sprints:** 124. **Done:** 51.
-**Ready:** 40. **Partial:** 31. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-06. **Total sprints:** 124. **Done:** 52.
+**Ready:** 39. **Partial:** 31. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -83,8 +83,8 @@ records an approved dependency change.
 | 12 — Summary And Hosted AI Trust Flow | `Done` | 2026-09-27: consent-gated route projection, save boundary, provider enforcement, docs, and focused evidence below. |
 | 13 — Speaker Labels And Speaker Names UX | `Done` | 2026-09-27: state resolver, revision-safe artifact transaction, local profile controls, distinct UI terms, docs, and focused tests completed; live render/package smoke remains a recording-time boundary. |
 | 14 — Copy, Trust, And Blocked-State Polish | `Done` | 2026-09-27: typed safe-copy authority, exhaustive blocked taxonomy, normal-surface error migration, source inventory guard, docs, and focused test evidence below; package/render smoke remains a recording-time boundary. |
-| 15 — Accessibility And Rendered UX QA | `Done` | 2026-10-04: deterministic WPF harness, keyboard/semantic contracts, synthetic rendered evidence, and installed package smoke complete. Native OS accessibility observation is explicitly separated into Sprint 17. |
-| 16 — Tests, Documentation, Installer, And Release Preparation | `Ready` | 2026-10-04: deterministic Sprint 15 evidence removes the implementation prerequisite. Prepare traceability, tests, docs, installer, and candidate evidence; do not claim external release qualification. |
+| 15 — Accessibility And Rendered UX QA | `Done` | 2026-10-06: repeat-capture WPF lifecycle repair verified by the full 14-test rendered suite; external OS accessibility remains Sprint 17. |
+| 16 — Tests, Documentation, Installer, And Release Preparation | `Done` | 2026-10-06: full regression, shared-platform regression, installer build, and portable/MSI smoke passed; external Windows qualification remains Sprint 17. |
 | 17 — External Accessibility And Release Qualification | `Blocked` | 2026-10-04: release-only manual Windows observation remains unavailable until an approved observer/device and accessible native desktop session are available. |
 
 ### Meetings Management UX Simplification
@@ -2359,7 +2359,10 @@ Sprint 14 acceptance criteria:
   startup evidence recorded; interactive and Narrator paths remain open);
   `Done` (2026-10-04: deterministic rendered, keyboard, semantic, and
   packaged-startup acceptance completed; external native accessibility
-  observation moved to Sprint 17 release qualification).
+  observation moved to Sprint 17 release qualification); `Partial`
+  (2026-10-04: full regression exposed repeat-capture WPF harness failures);
+  `Done` (2026-10-06: one test-owned WPF application now supports repeat
+  synthetic captures; full rendered suite passed 14/14).
 - User outcome: simplified workflows remain usable without a mouse and legible
   at realistic desktop sizes; users receive status and recovery information
   without visual-only or hover-only discovery.
@@ -2477,6 +2480,11 @@ Sprint 14 acceptance criteria:
   smoke. The former external native-observation requirement is not waived; it
   is deferred to Sprint 17 because it requires an approved observer/device and
   native desktop access outside this implementation environment.
+- Evidence and date: 2026-10-06: `WpfRenderedShellHarnessTests` passed 14/14
+  after replacing per-capture `Application` construction with one test-owned
+  WPF application and hiding completed disposable shells. The direct suite
+  proves repeated in-process capture, rendered states, focus return, semantic
+  controls, and 125% raster assertions.
 - Remaining gap or next action: none for this sprint. Execute Sprint 16
   preparation next. Sprint 17 blocks release promotion until the separate
   manual Windows evidence is recorded.
@@ -2516,12 +2524,17 @@ Sprint 15 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
+- Status: `Done`
 - Status history: `Planned` (2026-09-27 baseline); `Ready` (2026-09-27
   pressure test); `Blocked` (2026-09-27: Sprint 15 rendered/accessibility
   evidence is unavailable, so release gate cannot begin); `Ready` (2026-10-04:
   Sprint 15 deterministic acceptance is complete; external observation is a
-  separate Sprint 17 release gate).
+  separate Sprint 17 release gate); `Partial` (2026-10-06: traceability
+  matrix and stable Sprint 15 rendered suite are complete; full regression
+  exposes queue scheduling failures under suite load); `Done` (2026-10-06:
+  full core/integration and AppPlatform regressions, installer build, and
+  portable/MSI startup smoke passed; manual Windows OS accessibility remains
+  explicitly owned by Sprint 17).
 - User outcome: simplification has proof that user journeys,
   persistence, installer payload, installed startup, and docs agree; failures
   are visible and recoverable before release qualification.
@@ -2584,9 +2597,18 @@ Sprint 15 acceptance criteria:
   release, and smoke scripts plus release guidance exist. Current roadmap has
   no acceptance-to-evidence ledger, clean source/artifact provenance contract,
   synthetic full-journey smoke record, or failure handoff rules.
-- Remaining gap or next action: create the acceptance matrix and synthetic
-  fixture inventory before first implementation slice; attach every later Sprint
-  0-15 result to it, then run focused gates only after implementation lands.
+- Evidence and date: 2026-10-06 completed `Test-All.ps1` with 1,676 core and
+  8 integration tests passing; `AppPlatform.Tests` passed 7/7. The installer
+  build produced `MeetingRecorder-v0.3-win-x64.zip` (SHA-256
+  `640c3261ae46496b03ca3877ada383d7e11bacf26f8b385b0e04ae7be209686d`)
+  and `MeetingRecorderInstaller.msi` (SHA-256
+  `8cb15d1b7e2d113f921e7b83b4d732cfd80a66b5bb4a8d7ccb8177ac7cd140cb`).
+  Portable, MSI installation, installed-integrity, and installed-app smoke
+  passed. Candidate evidence is a scoped working-tree snapshot rooted at
+  `34d842a`; unrelated generated binaries and local artifacts were preserved
+  and not staged. No signing, publishing, or release-promotion claim is made.
+- Remaining gap or next action: Sprint 17 manual test-profile observation at
+  the operator's Windows DPI, High Contrast, and Narrator settings.
 
 Goal: prepare simplification for external qualification with verified product
 behavior, not just rearranged XAML.

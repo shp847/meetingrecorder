@@ -151,6 +151,24 @@ function Get-SafeTempResultPath {
     return Join-Path ([System.IO.Path]::GetTempPath()) ("meeting-recorder-fixture-{0}-{1}.json" -f $safeId, [Guid]::NewGuid().ToString("N"))
 }
 
+function Get-FileSha256 {
+    param([string]$PathValue)
+
+    $stream = [System.IO.File]::OpenRead($PathValue)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "")
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Get-ArtifactHashes {
     param([string[]]$Paths)
 
@@ -163,7 +181,7 @@ function Get-ArtifactHashes {
         $resolved = Resolve-CatalogPathValue -PathValue $path -Description "Protected artifact" -Required
         $hashes += [pscustomobject]@{
             path = $resolved
-            hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
+            hash = Get-FileSha256 -PathValue $resolved
         }
     }
 
@@ -465,7 +483,7 @@ function Invoke-Fixture {
 
         $artifactResults = @()
         foreach ($before in $artifactHashesBefore) {
-            $afterHash = (Get-FileHash -LiteralPath $before.path -Algorithm SHA256).Hash
+            $afterHash = Get-FileSha256 -PathValue $before.path
             $artifactResults += [ordered]@{
                 path = $before.path
                 beforeHash = $before.hash
@@ -568,6 +586,9 @@ foreach ($fixture in $fixtures) {
 
     $title = if ([string]::IsNullOrWhiteSpace($result.title)) { $result.fixtureId } else { $result.title }
     Write-Output ("{0}: {1} ({2})" -f $result.fixtureId, $result.status, $title)
+    if ($result.status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($result.message)) {
+        Write-Output ("  Failure: {0}" -f $result.message)
+    }
 }
 
 $runStopwatch.Stop()
