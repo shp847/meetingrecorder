@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 60.
-**Ready:** 37. **Partial:** 26. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 61.
+**Ready:** 37. **Partial:** 25. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -129,7 +129,7 @@ records an approved dependency change.
 | 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
 | 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
 | 12 — Summary And Derived Output Consistency | `Done` | 2026-10-10: persisted attribution provenance, guarded manual regeneration, historic action-item state, focused tests, docs, and installer build verified. |
-| 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
+| 13 — Profile Management And Privacy | `Done` | 2026-10-10: serialized local store, truthful recovery state, profile-payload exclusion evidence, focused tests, docs, and installer build verified. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Done` | 2026-10-10: product owner retires manual visual/assistive qualification; existing deterministic semantics remain and production feedback opens scoped fixes. |
 | 16 — Documentation, Installer, And Release Smoke | `Partial` | 2026-09-29: S1–S15 acceptance matrix added; package gates remain open and upstream Partial evidence is explicit. |
@@ -4104,8 +4104,8 @@ Sprint 12 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: local store, settings controls, disable/delete tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 lifecycle contract slice).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: local store, settings controls, disable/delete tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 lifecycle contract slice); `Done` (2026-10-10: serialized profile lifecycle, unavailable/recovery state, privacy exclusions, focused verification, docs, and package evidence complete).
 - User outcome: users see what voice memory is stored locally, control future matching safely, and understand exactly what disable/delete changes.
 - Scope / non-goals: complete local profile lifecycle and privacy UI/docs. Do not create cloud/shared profiles, export embeddings, expose raw vectors/samples by default, or erase published user corrections when a profile changes.
 - Dependencies and decisions: consume S1/S8 receipts/suppression and S9 matching. `VoiceProfileStore` persists local centroids, sample count, meeting ids and rejections; it is sensitive voice-derived data. Default UI projects only name, active/disabled state, maturity, sample count, last match, and local-storage explanation; file path is support/Advanced-only.
@@ -4119,7 +4119,8 @@ Sprint 12 acceptance criteria:
 - Evidence and date: 2026-09-27 audit found profile list/disable/delete controls and storage tests, but no full lifecycle consequence contract, matching race proof, corrupt-store UX, or privacy exclusion audit across shipped artifacts.
 - Evidence and date: 2026-09-29 added `VoiceProfileLifecycleResolver` tests for disable/enable/delete consequences, confirmation, active-mutation blocking, unavailable-store behavior, and historic-attribution preservation.
 - Evidence and date: 2026-10-10 added a cross-process-safe local store lease for read/write/delete transactions, so concurrent app/worker learning and profile lifecycle mutations serialize. Settings now clears stale rows/disables all profile mutations when storage is unavailable, and explicitly reports a corrupt-store recovery while preserving published meeting names. Focused profile/store/learning/correction/matcher/XAML contracts passed 95/95.
-- Remaining gap or next action: add profile-payload exclusion scans across published/exported artifacts and installer payload before marking this sprint Done.
+- Evidence and date: 2026-10-10 verified `TranscriptSchemaTests` excludes profile vectors/centroids/profile payloads from published transcript JSON, and the current portable folder/ZIP contain no voice-profile store paths. The focused profile/privacy/XAML/schema suite passed 96/96 on retry; a single broader-attempt undo warning was a Windows file-share flake and passed standalone and on retry. SETUP now documents local profile recovery/backups.
+- Remaining gap or next action: none. Reopen only for a scoped profile lifecycle or privacy regression from production feedback.
 
 Goal: make voice memory trustworthy and controllable.
 
