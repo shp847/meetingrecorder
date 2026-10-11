@@ -16,7 +16,7 @@
     "fixture": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "contentHash", "mode", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "enabled", "expectedOutcomeRef", "transcriptJsonPath", "protectedArtifactPaths"],
+      "required": ["id", "version", "contentHash", "mode", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "enabled", "expectedOutcomeRef", "inputRoot", "transcriptJsonPath", "protectedArtifactPaths"],
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
         "version": { "type": "string", "minLength": 1 },
@@ -30,6 +30,7 @@
         "enabled": { "type": "boolean" },
         "disabledReason": { "type": "string" },
         "expectedOutcomeRef": { "type": "string", "minLength": 1 },
+        "inputRoot": { "type": "string", "minLength": 1 },
         "manifestPath": { "type": "string" },
         "audioPath": { "type": "string" },
         "transcriptionSnapshotPath": { "type": "string" },

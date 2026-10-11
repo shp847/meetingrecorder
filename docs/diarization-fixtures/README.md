@@ -10,6 +10,9 @@ governance metadata in the private catalog; keep count/name expectations in a
 separate restricted truth-store file outside source control. Pass it only to
 the catalog runner with `-TruthStorePath`; runner reads truth after worker or
 replay output is immutable and never forwards it to those processes.
+Each v2 fixture declares one private `inputRoot`; every source/protected
+artifact must stay under it and cannot traverse a symlink/reparse point, use
+repo/report output, or Meeting Recorder app-data/profile paths.
 
 Run a metadata-only candidate comparison:
 

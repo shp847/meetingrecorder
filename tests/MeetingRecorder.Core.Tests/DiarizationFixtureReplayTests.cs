@@ -390,6 +390,7 @@ public sealed class DiarizationFixtureReplayTests
                                 expiresAtUtc = "2030-01-01T00:00:00Z",
                                 enabled = true,
                                 expectedOutcomeRef = "truth-synthetic-v2",
+                                inputRoot = tempRoot,
                                 manifestPath,
                                 transcriptJsonPath = transcriptPath,
                                 enableSpeakerNameMatching = true,
@@ -439,6 +440,50 @@ public sealed class DiarizationFixtureReplayTests
             var scriptContents = File.ReadAllText(scriptPath);
             Assert.DoesNotContain("$arguments.ExpectedSpeakerName", scriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("$arguments.ExpectedSpeakerCount", scriptContents, StringComparison.Ordinal);
+
+            var outsideInputRoot = Path.Combine(tempRoot, "allowlisted-inputs-only");
+            Directory.CreateDirectory(outsideInputRoot);
+            var catalog = JsonNode.Parse(File.ReadAllText(catalogPath))?.AsObject()
+                ?? throw new InvalidOperationException("Catalog JSON was empty.");
+            var fixtures = catalog["fixtures"]?.AsArray()
+                ?? throw new InvalidOperationException("Catalog fixtures were missing.");
+            var fixture = fixtures[0]?.AsObject()
+                ?? throw new InvalidOperationException("Catalog fixture was missing.");
+            fixture["inputRoot"] = outsideInputRoot;
+            File.WriteAllText(catalogPath, catalog.ToJsonString(JsonOptions));
+            var rejectedReportPath = Path.Combine(tempRoot, "rejected-report.json");
+
+            var rejected = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", rejectedReportPath);
+
+            Assert.Equal(0, rejected.ExitCode);
+            var rejectedReport = File.ReadAllText(rejectedReportPath);
+            Assert.Contains("must stay under fixture inputRoot", rejectedReport, StringComparison.Ordinal);
+            Assert.DoesNotContain(transcriptPath, rejectedReport, StringComparison.OrdinalIgnoreCase);
+            var rejectedReportNode = JsonNode.Parse(rejectedReport) ?? throw new InvalidOperationException("Rejected report JSON was empty.");
+            Assert.Equal("missing_data", (string?)rejectedReportNode["results"]?[0]?["status"]);
+
+            fixture["inputRoot"] = tempRoot;
+            fixture["expiresAtUtc"] = "2000-01-01T00:00:00Z";
+            File.WriteAllText(catalogPath, catalog.ToJsonString(JsonOptions));
+            var expiredReportPath = Path.Combine(tempRoot, "expired-report.json");
+            var expired = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", expiredReportPath);
+
+            Assert.Equal(0, expired.ExitCode);
+            var expiredReport = File.ReadAllText(expiredReportPath);
+            Assert.DoesNotContain(restrictedName, expiredReport, StringComparison.Ordinal);
+            var expiredReportNode = JsonNode.Parse(expiredReport) ?? throw new InvalidOperationException("Expired report JSON was empty.");
+            Assert.Equal("skipped", (string?)expiredReportNode["results"]?[0]?["status"]);
+            Assert.Equal("Fixture consent or retention approval expired.", (string?)expiredReportNode["results"]?[0]?["skipReason"]);
         }
         finally
         {

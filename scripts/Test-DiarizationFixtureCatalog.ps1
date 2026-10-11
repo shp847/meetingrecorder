@@ -58,6 +58,24 @@ function Resolve-OptionalFile {
     return Resolve-RequiredFile -PathValue $PathValue -Description $Description
 }
 
+function Resolve-RequiredDirectory {
+    param(
+        [string]$PathValue,
+        [string]$Description
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        throw "$Description path is required."
+    }
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($PathValue)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+        throw "$Description path is not a directory: $resolvedPath"
+    }
+
+    return $resolvedPath
+}
+
 function Resolve-CatalogPathValue {
     param(
         [string]$PathValue,
@@ -185,6 +203,55 @@ function Assert-AllowedOutputPath {
     throw "$Description must write under .artifacts or the system temp directory: $fullPath"
 }
 
+function Assert-AllowlistedFixtureInput {
+    param(
+        [string]$PathValue,
+        [string]$InputRoot,
+        [string]$Description
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $null
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
+    if ([string]::IsNullOrWhiteSpace($InputRoot)) {
+        return $fullPath
+    }
+
+    $fullInputRoot = Resolve-RequiredDirectory -PathValue $InputRoot -Description "Fixture inputRoot"
+    if (-not (Test-PathUnder -PathValue $fullPath -RootValue $fullInputRoot)) {
+        throw "$Description must stay under fixture inputRoot."
+    }
+
+    foreach ($forbiddenRoot in @($script:RepoRoot, $script:ResolvedReportsRoot, (Join-Path $env:LOCALAPPDATA "MeetingRecorder"))) {
+        if (-not [string]::IsNullOrWhiteSpace($forbiddenRoot) -and (Test-PathUnder -PathValue $fullPath -RootValue $forbiddenRoot)) {
+            throw "$Description cannot use source control, report output, or Meeting Recorder app data."
+        }
+    }
+
+    $currentPath = $fullPath
+    while (-not [string]::IsNullOrWhiteSpace($currentPath)) {
+        $item = Get-Item -LiteralPath $currentPath -Force
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Description cannot traverse a symlink or reparse point."
+        }
+
+        if ($currentPath.Equals($fullInputRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+
+        $parent = Split-Path -Path $currentPath -Parent
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent.Equals($currentPath, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+
+        $currentPath = $parent
+    }
+
+    return $fullPath
+}
+
 function Get-SafeTempResultPath {
     param([string]$FixtureId)
 
@@ -233,7 +300,10 @@ function Get-SafeReportMessage {
 }
 
 function Get-ArtifactHashes {
-    param([string[]]$Paths)
+    param(
+        [string[]]$Paths,
+        [string]$InputRoot
+    )
 
     $hashes = @()
     foreach ($path in $Paths) {
@@ -242,6 +312,7 @@ function Get-ArtifactHashes {
         }
 
         $resolved = Resolve-CatalogPathValue -PathValue $path -Description "Protected artifact" -Required
+        $resolved = Assert-AllowlistedFixtureInput -PathValue $resolved -InputRoot $InputRoot -Description "Protected artifact"
         $hashes += [pscustomobject]@{
             path = $resolved
             hash = Get-FileSha256 -PathValue $resolved
@@ -402,7 +473,7 @@ function Validate-Fixture {
     }
 
     if ($script:CatalogSchemaVersion -ge 2) {
-        foreach ($requiredProperty in @("version", "contentHash", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef")) {
+        foreach ($requiredProperty in @("version", "contentHash", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef", "inputRoot")) {
             if (-not (Test-PropertyPresent -Object $Fixture -Name $requiredProperty) -or [string]::IsNullOrWhiteSpace([string](Get-PropertyValue -Object $Fixture -Name $requiredProperty))) {
                 throw "Fixture '$id' requires $requiredProperty in catalog schema version 2."
             }
@@ -451,17 +522,26 @@ function Resolve-FixtureInputs {
     param($Fixture)
 
     $mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
+    $inputRoot = [string](Get-PropertyValue -Object $Fixture -Name "inputRoot")
     $transcriptJsonPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptJsonPath")) -Description "Fixture transcript JSON" -Required
     $manifestPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "manifestPath")) -Description "Fixture manifest" -Required:($mode -eq "stored-turn" -or $mode -eq "full-audio")
     $transcriptMarkdownPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptMarkdownPath")) -Description "Fixture transcript Markdown"
 
+    $transcriptJsonPath = Assert-AllowlistedFixtureInput -PathValue $transcriptJsonPath -InputRoot $inputRoot -Description "Fixture transcript JSON"
+    $manifestPath = Assert-AllowlistedFixtureInput -PathValue $manifestPath -InputRoot $inputRoot -Description "Fixture manifest"
+    $transcriptMarkdownPath = Assert-AllowlistedFixtureInput -PathValue $transcriptMarkdownPath -InputRoot $inputRoot -Description "Fixture transcript Markdown"
+    $audioPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "audioPath")) -Description "Fixture audio"
+    $transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot"
+    $configPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "configPath")) -Description "Fixture config"
+
     return [pscustomobject]@{
+        inputRoot = $inputRoot
         transcriptJsonPath = $transcriptJsonPath
         manifestPath = $manifestPath
         transcriptMarkdownPath = $transcriptMarkdownPath
-        audioPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "audioPath")) -Description "Fixture audio"
-        transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot"
-        configPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "configPath")) -Description "Fixture config"
+        audioPath = Assert-AllowlistedFixtureInput -PathValue $audioPath -InputRoot $inputRoot -Description "Fixture audio"
+        transcriptionSnapshotPath = Assert-AllowlistedFixtureInput -PathValue $transcriptionSnapshotPath -InputRoot $inputRoot -Description "Fixture transcription snapshot"
+        configPath = Assert-AllowlistedFixtureInput -PathValue $configPath -InputRoot $inputRoot -Description "Fixture config"
         diarizationAssetPath = [string](Get-PropertyValue -Object $Fixture -Name "diarizationAssetPath")
         probeRoot = [string](Get-PropertyValue -Object $Fixture -Name "probeRoot")
         protectedArtifactPaths = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "protectedArtifactPaths"))
@@ -479,6 +559,17 @@ function Invoke-Fixture {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         Validate-Fixture -Fixture $Fixture
+
+        if ($script:CatalogSchemaVersion -ge 2) {
+            $expiry = [DateTime]::Parse([string](Get-PropertyValue -Object $Fixture -Name "expiresAtUtc")).ToUniversalTime()
+            if ($expiry -le [DateTime]::UtcNow) {
+                $result.status = "skipped"
+                $result.skipReason = "Fixture consent or retention approval expired."
+                $result.speakerCountStatus = "skipped"
+                $result.speakerNameMetrics.status = "skipped"
+                return [pscustomobject]$result
+            }
+        }
 
         if (-not $result.enabled) {
             $result.status = "skipped"
@@ -500,7 +591,7 @@ function Invoke-Fixture {
             return [pscustomobject]$result
         }
 
-        $artifactHashesBefore = @(Get-ArtifactHashes -Paths $inputs.protectedArtifactPaths)
+        $artifactHashesBefore = @(Get-ArtifactHashes -Paths $inputs.protectedArtifactPaths -InputRoot $inputs.inputRoot)
         $transcriptMetrics = Get-TranscriptMetrics -TranscriptJsonPath $inputs.transcriptJsonPath
         $result.segmentCount = $transcriptMetrics.segmentCount
         $result.rawSpeakerLabelCount = $transcriptMetrics.rawSpeakerLabelCount

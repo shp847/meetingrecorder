@@ -14,6 +14,7 @@
       "enabled": false,
       "disabledReason": "Synthetic template; local consented source required.",
       "expectedOutcomeRef": "truth-two-speaker-synthetic",
+      "inputRoot": "C:/Private/MeetingRecorder/fixtures/fx-two-speaker",
       "manifestPath": "C:/Private/MeetingRecorder/fixtures/fx-two-speaker/manifest.json",
       "transcriptJsonPath": "C:/Private/MeetingRecorder/fixtures/fx-two-speaker/transcript.json",
       "enableSpeakerNameMatching": false,
