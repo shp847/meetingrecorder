@@ -7,7 +7,7 @@ dependency on another section.
 # Sprint Delivery Tracker
 
 **Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 62.
-**Ready:** 35. **Partial:** 24. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ready:** 34. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -122,7 +122,7 @@ records an approved dependency change.
 | 3 — Contextual Transcript Evidence | `Done` | 2026-10-11: bounded local in-memory cue selection, truthful evidence states, and Speaker Review disclosure/navigation verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 4 — Inline Audio Clip Playback | `Partial` | 2026-10-11: bounded read-only WAV extraction, opaque cache/leases, concurrent dedupe, playback progress, and refresh/maintenance/close disposal are covered; rendered/package qualification remains. |
 | 5 — Transcript-Label Click Editing | `Done` | 2026-10-11: stable speaker/segment IDs, accessible current-review focus, existing revision-checked global rename, and reserved no-op override compatibility verified. |
-| 6 — Segment-Level Attribution Overrides | `Ready` | 2026-10-11 source audit: prior Done record contradicted by source; override record/resolver/UI/writer remain unimplemented. |
+| 6 — Segment-Level Attribution Overrides | `Partial` | 2026-10-11: revision-scoped no-learning override contract, safe parser, and pure attribution resolver added; transactional writer and paragraph UI remain. |
 | 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Done` | 2026-10-11: artifact-first receipt, retry, scoped feedback, learning boundary, and undo completion verified below. |
 | 9 — Automatic Future Naming | `Done` | 2026-10-11: versioned conservative eligibility, post-publication local attribution, receipts, and no-hint boundary verified below. |
@@ -3753,8 +3753,8 @@ Sprint 5 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Ready`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 record); `Ready` (2026-10-11 source audit: no override record, resolver, UI, or artifact writer found).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 record); `Ready` (2026-10-11 source audit: no override record, resolver, UI, or artifact writer found); `Partial` (2026-10-11 contract, resolver, and safe parser).
 - User outcome: a reviewer can correct one wrongly attributed paragraph without relabelling an entire diarization cluster or unintentionally teaching the app a voice identity.
 - Scope / non-goals: activate the additive reservation from Sprint 5 for structured transcript segments. Do not rewrite diarization output/text/timestamps, merge clusters, improve model calibration, train profiles, or claim overrides survive a newly generated incompatible transcript without review.
 - Dependencies and decisions: consume S1 identity/revision, S2 review, S5 stable segment id/reserved schema, S8 undo/correction history, and S12 derived-output consistency. Original diarization attribution stays immutable. Each override is keyed by meeting/artifact revision + stable segment id and holds original speaker id plus exactly one target: an existing meeting speaker id or an explicit user display name; effective rendering resolves replacement speaker display dynamically, while the original remains inspectable.
@@ -3766,8 +3766,8 @@ Sprint 5 acceptance criteria:
   5. On re-transcribe/re-diarize/new artifact revision, retain overrides as prior-revision audit records but do not apply them to unmatched new segments. Surface a concise “review previous paragraph corrections” state; only explicit future matching/migration policy may propose carry-forward. Stale detail callbacks cannot apply/revert overrides against a new revision.
 - Tests and rendered checks: schema backwards/forwards/unknown values; resolver precedence/target rename/deleted target/no-op; explicit-display versus replacement target; scope confirmation/cancel; privacy/no-learning/no-calibration assertion; artifact transaction failure/rollback; stale/reprocess/orphan behavior; revert/history. Render normal/overridden/conflict/review-needed paragraph at 1280x800/125%, keyboard menu/scope distinction, original/effective screen-reader text, long target labels, and no visual suggestion that diarization was rewritten.
 - Documentation / installer / release work: document paragraph-only correction, original-versus-effective attribution, no profile training, reprocess review, and derived-output refresh semantics. No installer work until behavior changes; Sprint 16 owns diarization release gates.
-- Evidence and date: 2026-09-27 audit found only speaker-label text in transcript rows and no override record/resolver, scope UI, artifact transaction, or no-learning enforcement for paragraph correction. The 2026-10-11 source audit reconfirmed that this evidence still describes current code; the prior `Done` status was not supported.
-- Remaining gap or next action: implement the pure override schema/resolver and round-trip fixtures before changing transcript menus or writers.
+- Evidence and date: 2026-09-27 audit found only speaker-label text in transcript rows and no override record/resolver, scope UI, artifact transaction, or no-learning enforcement for paragraph correction. The 2026-10-11 source audit reconfirmed that this evidence still describes current code; the prior `Done` status was not supported. 2026-10-11 added a revision-scoped `SegmentAttributionOverride` contract, a no-mutation resolver for source/override/review-needed states, and a fail-safe JSON reader that ignores malformed entries. Focused resolver and reader tests pass.
+- Remaining gap or next action: persist overrides through a revision-checked JSON/Markdown transaction, project effective state into detail rows, then add the explicitly scoped paragraph-only UI and no-learning tests.
 
 Goal: let users correct one wrongly attributed paragraph without renaming an
 entire speaker cluster.
