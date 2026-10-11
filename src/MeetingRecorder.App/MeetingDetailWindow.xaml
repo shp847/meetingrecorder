@@ -260,6 +260,16 @@
                                           MinHeight="108"
                                           MaxHeight="260">
                                     <DataGrid.Columns>
+                                        <DataGridTemplateColumn Header="Merge"
+                                                                Width="56">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox IsChecked="{Binding IsSelectedForMerge, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              Click="SpeakerMergeSelectionChanged_OnClick"
+                                                              AutomationProperties.Name="Select speaker cluster for merge" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Diarization Label"
                                                             Binding="{Binding AnonymousLabel, Mode=OneWay}"
                                                             IsReadOnly="True"
@@ -387,6 +397,34 @@
                                             Click="UndoSpeakerNameRecognitionButton_OnClick"
                                             Content="Undo Profile Names" />
                                 </WrapPanel>
+                                <Border Margin="0,10,0,0"
+                                        Padding="10"
+                                        BorderBrush="{StaticResource AppOutlineBrush}"
+                                        BorderThickness="1"
+                                        Background="{StaticResource AppMutedCardBrush}">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="Merge duplicate speakers" />
+                                        <TextBlock x:Name="SpeakerMergeStatusTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   Style="{StaticResource DialogBodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Select two or more normal duplicate clusters. Repair remains safer for fragmented labels." />
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <ComboBox x:Name="SpeakerMergeCanonicalComboBox"
+                                                      Width="250"
+                                                      Height="28"
+                                                      SelectionChanged="SpeakerMergeCanonicalComboBox_OnSelectionChanged"
+                                                      AutomationProperties.Name="Canonical speaker for merge" />
+                                            <Button x:Name="MergeSelectedSpeakersButton"
+                                                    Margin="10,0,0,0"
+                                                    Style="{StaticResource SecondaryActionButtonStyle}"
+                                                    Click="MergeSelectedSpeakersButton_OnClick"
+                                                    AutomationProperties.Name="Merge selected speaker clusters"
+                                                    Content="Merge Selected Speakers" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
                                 <TextBlock Margin="0,8,0,0"
                                            Style="{StaticResource DialogBodyTextStyle}"
                                            TextWrapping="Wrap"

@@ -551,6 +551,10 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Repair Speaker Labels is a separate Fix action", xaml);
         Assert.Contains("SpeakerReviewStatusTextBlock", xaml);
         Assert.Contains("SpeakerQualityTextBlock", xaml);
+        Assert.Contains("Merge duplicate speakers", xaml);
+        Assert.Contains("x:Name=\"MergeSelectedSpeakersButton\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Select speaker cluster for merge\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Canonical speaker for merge\"", xaml);
         Assert.Contains("Binding=\"{Binding AnonymousLabel, Mode=OneWay}\"", xaml);
         Assert.Contains("<ComboBox IsEditable=\"True\"", xaml);
         Assert.Contains("ItemsSource=\"{Binding NameChoices, Mode=OneWay}\"", xaml);
@@ -563,6 +567,9 @@ public sealed class MainWindowXamlTests
         Assert.Contains("SpeakerEvidenceService", mainWindowSource);
         Assert.Contains("BuildSpeakerQualityStatus", mainWindowSource);
         Assert.Contains("SpeakerQualityDiagnosisResolver.Resolve", mainWindowSource);
+        Assert.Contains("MergeSpeakerClustersRequested", windowSource);
+        Assert.Contains("MergeOpenMeetingDetailSpeakerClustersAsync", mainWindowSource);
+        Assert.Contains("SpeakerClusterMergePreflightResolver.Resolve", mainWindowSource);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);

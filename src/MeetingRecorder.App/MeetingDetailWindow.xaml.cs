@@ -15,6 +15,19 @@ internal sealed class MeetingDetailSpeakerLabelsEventArgs(IReadOnlyList<MeetingD
     public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
 }
 
+internal sealed class MeetingDetailSpeakerMergeEventArgs(
+    IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows,
+    string? canonicalSpeakerId) : EventArgs
+{
+    public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
+    public string? CanonicalSpeakerId { get; } = canonicalSpeakerId;
+}
+
+internal sealed record MeetingDetailSpeakerMergeChoice(string SpeakerId, string Label)
+{
+    public override string ToString() => Label;
+}
+
 internal sealed class MeetingDetailSpeakerLabelEditorRow(
     string originalLabel,
     string provenance = "",
@@ -26,7 +39,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     SpeakerNameSource expectedNameSource = SpeakerNameSource.None,
     SpeakerReviewRow? reviewSnapshot = null,
     IReadOnlyList<string>? nameChoices = null,
-    SpeakerEvidenceSnapshot? evidenceSnapshot = null)
+    SpeakerEvidenceSnapshot? evidenceSnapshot = null,
+    int affectedTurnCount = 0)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -56,6 +70,10 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
 
     public bool IsEvidenceVisible { get; set; }
 
+    public bool IsSelectedForMerge { get; set; }
+
+    public int AffectedTurnCount { get; } = Math.Max(0, affectedTurnCount);
+
     public string EvidenceToggleText => HasEvidenceCues
         ? IsEvidenceVisible ? "Hide evidence" : $"View evidence ({EvidenceCues.Count})"
         : "Evidence unavailable";
@@ -69,6 +87,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public string ReviewStatus => reviewSnapshot is null
         ? string.Empty
         : $"Evidence: {reviewSnapshot.EvidenceAvailability}. Learning: {reviewSnapshot.LearningEligibility}.";
+
+    public SpeakerReviewConfidence ReviewConfidence => reviewSnapshot?.Confidence ?? SpeakerReviewConfidence.Unavailable;
 
     public bool HasSuggestion => !string.IsNullOrWhiteSpace(SuggestedDisplayName);
 
@@ -114,6 +134,7 @@ public partial class MeetingDetailWindow : Window
     private bool _canProcessAsap;
     private bool _canSplit;
     private bool _canApplySpeakerNames;
+    private bool _canMergeSpeakerClusters;
     private bool _canUndoSpeakerNameRecognition;
     private bool _canArchive;
     private bool _canDelete;
@@ -157,6 +178,8 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailTextEventArgs>? SplitRequested;
 
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
+
+    internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
 
     internal event EventHandler? RefreshSpeakerNamesRequested;
 
@@ -210,6 +233,7 @@ public partial class MeetingDetailWindow : Window
         _appliedProjectDraft = ProjectComboBox.Text;
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
+        _canMergeSpeakerClusters = speakerLabelRows.Count > 1;
         _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
         UpdateSpeakerReviewStatus(speakerLabelRows);
         UpdateMaintenanceButtonAvailability();
@@ -353,6 +377,10 @@ public partial class MeetingDetailWindow : Window
         ProcessAsapButton.IsEnabled = canUseMaintenance && _canProcessAsap;
         SplitButton.IsEnabled = canUseMaintenance && _canSplit;
         ApplySpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
+        MergeSelectedSpeakersButton.IsEnabled = canUseMaintenance && _canMergeSpeakerClusters &&
+            SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
+            rows.Count(row => row.IsSelectedForMerge) >= 2 &&
+            SpeakerMergeCanonicalComboBox.SelectedItem is MeetingDetailSpeakerMergeChoice;
         RefreshSpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
         UndoSpeakerNameRecognitionButton.IsEnabled = canUseMaintenance && _canUndoSpeakerNameRecognition;
         ArchiveButton.IsEnabled = canUseMaintenance && _canArchive;
@@ -461,9 +489,50 @@ public partial class MeetingDetailWindow : Window
             new MeetingDetailSpeakerLabelsEventArgs(rows?.ToArray() ?? Array.Empty<MeetingDetailSpeakerLabelEditorRow>()));
     }
 
+    private void MergeSelectedSpeakersButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var selected = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow> ?? [])
+            .Where(row => row.IsSelectedForMerge)
+            .ToArray();
+        MergeSpeakerClustersRequested?.Invoke(
+            this,
+            new MeetingDetailSpeakerMergeEventArgs(
+                selected,
+                (SpeakerMergeCanonicalComboBox.SelectedItem as MeetingDetailSpeakerMergeChoice)?.SpeakerId));
+    }
+
     private void SpeakerLabelsDataGrid_OnCellEditEnding(object sender, System.Windows.Controls.DataGridCellEditEndingEventArgs e)
     {
         Dispatcher.BeginInvoke(UpdateSpeakerReviewStatus);
+    }
+
+    private void SpeakerMergeSelectionChanged_OnClick(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(UpdateSpeakerMergeControls);
+    }
+
+    private void SpeakerMergeCanonicalComboBox_OnSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateMaintenanceButtonAvailability();
+    }
+
+    private void UpdateSpeakerMergeControls()
+    {
+        var selected = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow> ?? [])
+            .Where(row => row.IsSelectedForMerge && !string.IsNullOrWhiteSpace(row.SpeakerId))
+            .ToArray();
+        var previousCanonical = (SpeakerMergeCanonicalComboBox.SelectedItem as MeetingDetailSpeakerMergeChoice)?.SpeakerId;
+        var choices = selected
+            .OrderBy(row => row.ExpectedNameSource == SpeakerNameSource.None ? 0 : 1)
+            .ThenBy(row => row.AnonymousLabel, StringComparer.Ordinal)
+            .Select(row => new MeetingDetailSpeakerMergeChoice(row.SpeakerId!, $"{row.AnonymousLabel}: {row.EditedLabel}"))
+            .ToArray();
+        SpeakerMergeCanonicalComboBox.ItemsSource = choices;
+        SpeakerMergeCanonicalComboBox.SelectedItem = choices.FirstOrDefault(choice => choice.SpeakerId == previousCanonical) ?? choices.FirstOrDefault();
+        SpeakerMergeStatusTextBlock.Text = selected.Length < 2
+            ? "Select two or more normal duplicate clusters. Repair remains safer for fragmented labels."
+            : $"{selected.Length} speakers selected; {selected.Sum(row => row.AffectedTurnCount)} turn(s) affected. Choose canonical speaker; merge does not teach local profiles.";
+        UpdateMaintenanceButtonAvailability();
     }
 
     private void ToggleSpeakerEvidenceButton_OnClick(object sender, RoutedEventArgs e)

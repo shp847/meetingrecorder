@@ -6,6 +6,8 @@ its status and pending count visible when a draft is edited.
 
 Keyboard path: transcript speaker label → matching Speaker Review row → Meeting
 Display Name field → Use/Reject suggestion → Apply Names result → transcript
+label. Duplicate-cluster path: select two or more merge checkboxes → choose the
+canonical speaker → Merge Selected Speakers → confirmation → refreshed transcript
 label. Tab and Shift+Tab follow the visible order; Enter/Space activates buttons;
 Escape closes only an open disclosure or dialog and does not discard a draft.
 

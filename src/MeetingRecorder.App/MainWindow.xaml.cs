@@ -7084,6 +7084,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
+            _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
             _meetingDetailWindow.RefreshSpeakerNamesRequested += async (_, _) => await RefreshOpenMeetingDetailSpeakerNamesAsync();
             _meetingDetailWindow.UndoSpeakerNameRecognitionRequested += async (_, _) => await UndoOpenMeetingDetailSpeakerNameRecognitionAsync();
             _meetingDetailWindow.ArchiveRequested += async (_, _) => await ArchiveOpenMeetingDetailAsync();
@@ -7245,7 +7246,8 @@ public partial class MainWindow : Window
                     label.NameSource,
                     speakerReview.Rows[index],
                     nameChoices,
-                    speakerEvidence[index]))
+                    speakerEvidence[index],
+                    diagnosticTurns.Count(turn => string.Equals(turn.SpeakerId, label.SpeakerId, StringComparison.Ordinal))))
                 .ToArray();
             var detailTaskCenter = MeetingDetailTaskCenterResolver.Resolve(new MeetingDetailTaskCenterInput(
                 new MeetingDetailSnapshotRevision(
@@ -7806,6 +7808,104 @@ public partial class MainWindow : Window
                 UserActionIntent.ApplyMeetingDisplayNames,
                 UserActionBlockedReasonKind.OperationFailed).BlockedText);
             AppendActivity("Meeting display-name update did not finish for the focused meeting.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task MergeOpenMeetingDetailSpeakerClustersAsync(
+        IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows,
+        string? canonicalSpeakerId)
+    {
+        var row = GetOpenMeetingDetailRow();
+        var selected = rows
+            .Where(candidate => candidate.IsSelectedForMerge && !string.IsNullOrWhiteSpace(candidate.SpeakerId))
+            .ToArray();
+        if (row is null || string.IsNullOrWhiteSpace(canonicalSpeakerId))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Select a canonical speaker from the selected speaker clusters before merging.");
+            return;
+        }
+
+        var revisions = selected.Select(candidate => candidate.ArtifactRevision).Distinct(StringComparer.Ordinal).ToArray();
+        if (revisions.Length != 1 || string.IsNullOrWhiteSpace(revisions[0]))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Meeting speaker data changed. Reload before merging speakers.");
+            return;
+        }
+
+        var revision = revisions[0];
+        var preflight = SpeakerClusterMergePreflightResolver.Resolve(new SpeakerClusterMergePreflightInput(
+            revision,
+            selected.Select(candidate => new SpeakerClusterMergeCandidate(
+                candidate.SpeakerId!,
+                candidate.EditedLabel,
+                candidate.ExpectedNameSource,
+                candidate.ReviewConfidence == SpeakerReviewConfidence.High ? 0.90d : null,
+                candidate.HasEvidenceCues,
+                candidate.AffectedTurnCount)).ToArray(),
+            IsBusy: IsMeetingActionInProgress(),
+            IsRepairRecommended: row.Source.HasSuspiciousSpeakerLabels));
+        if (!preflight.CanMerge)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus(preflight.Summary);
+            return;
+        }
+
+        if (!selected.Any(candidate => string.Equals(candidate.SpeakerId, canonicalSpeakerId, StringComparison.Ordinal)))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Choose a canonical speaker from the selected speaker clusters before merging.");
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            this,
+            $"{preflight.Summary}\n\nThe transcript will keep original diarization IDs and text. Existing summaries are not rewritten. Continue?",
+            "Merge Duplicate Speakers",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus("Merging selected speaker clusters...");
+        try
+        {
+            var sourceIds = selected.Select(candidate => candidate.SpeakerId!.Trim()).OrderBy(id => id, StringComparer.Ordinal).ToArray();
+            var evidenceFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                $"{row.Source.Stem}\n{revision}\n{string.Join("\n", sourceIds)}\n{canonicalSpeakerId}")));
+            var result = await _meetingOutputCatalogService.AddSpeakerClusterMergeIfCurrentAsync(
+                row.Source,
+                revision,
+                new SpeakerClusterMergeMetadata(
+                    Guid.NewGuid().ToString("N"),
+                    revision,
+                    sourceIds,
+                    canonicalSpeakerId,
+                    evidenceFingerprint,
+                    DateTimeOffset.UtcNow),
+                _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "Speaker merge needs review before it can be applied.");
+                return;
+            }
+
+            await RefreshMeetingListAsync(row.Source.Stem);
+            RefreshOpenMeetingDetailWindow();
+            _meetingDetailWindow?.SetMaintenanceStatus("Speaker merge applied. Transcript labels now use the canonical speaker; existing summaries remain unchanged for review.");
+            AppendActivity($"Merged {sourceIds.Length} speaker clusters for '{row.Title}' without changing local voice profiles.");
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Speaker cluster merge failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("Speaker merge did not finish. Reload the meeting and try again.");
         }
         finally
         {
