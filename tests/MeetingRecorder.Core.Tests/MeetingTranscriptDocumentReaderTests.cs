@@ -142,6 +142,9 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
             jsonPath,
             """
             {
+              "speakerAttributionOverrides": [
+                { "segmentId": "seg_future", "unknownFutureField": "preserved by a future writer" }
+              ],
               "summarizationStatus": {
                 "stageName": "summarization",
                 "state": 3,
@@ -174,6 +177,7 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
                   "start": "00:00:04",
                   "end": "00:00:08",
                   "speakerId": "speaker_00",
+                  "segmentId": "seg_source_00",
                   "speakerLabel": "Speaker 1",
                   "text": "What are the objectives?"
                 }
@@ -201,6 +205,7 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.True(result.Summary.Provider.FallbackUsed);
         Assert.Equal("fingerprint-123", result.Summary.TranscriptFingerprint);
         Assert.Equal("speaker_00", result.StructuredSegments[0].SpeakerId);
+        Assert.Equal("seg_source_00", result.StructuredSegments[0].SegmentId);
         Assert.Equal("speaker_00", result.Segments[0].SpeakerId);
         Assert.True(result.Segments[0].CanOpenSpeakerReview);
     }

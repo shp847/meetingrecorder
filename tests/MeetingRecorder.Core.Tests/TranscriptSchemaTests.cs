@@ -90,6 +90,9 @@ public sealed class TranscriptSchemaTests
         Assert.Equal("Pranav Sharma", document["segments"]?[1]?["speakerLabel"]?.GetValue<string>());
         Assert.Equal("Pranav", document["segments"]?[1]?["displaySpeakerLabel"]?.GetValue<string>());
         Assert.Equal("speaker_01", document["segments"]?[1]?["speakerId"]?.GetValue<string>());
+        Assert.StartsWith("seg_", document["segments"]?[0]?["segmentId"]?.GetValue<string>());
+        Assert.StartsWith("seg_", document["segments"]?[1]?["segmentId"]?.GetValue<string>());
+        Assert.Null(document["speakerAttributionOverrides"]);
         Assert.Equal("speaker_00", document["speakerClusterMerges"]?[0]?["canonicalSpeakerId"]?.GetValue<string>());
     }
 

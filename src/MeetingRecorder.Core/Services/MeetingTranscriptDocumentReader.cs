@@ -135,6 +135,7 @@ internal static class MeetingTranscriptDocumentReader
                 var start = GetJsonTimeSpan(segmentObject, "start", "Start") ?? TimeSpan.Zero;
                 var end = GetJsonTimeSpan(segmentObject, "end", "End") ?? start;
                 var speakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
+                var segmentId = GetJsonString(segmentObject, "segmentId", "SegmentId");
                 var speakerLabel = GetJsonString(
                     segmentObject,
                     preferSourceLabels ? "displaySpeakerLabel" : "speakerLabel",
@@ -148,7 +149,8 @@ internal static class MeetingTranscriptDocumentReader
                     end,
                     string.IsNullOrWhiteSpace(speakerId) ? null : speakerId.Trim(),
                     string.IsNullOrWhiteSpace(speakerLabel) ? null : speakerLabel.Trim(),
-                    text.Trim()));
+                    text.Trim(),
+                    string.IsNullOrWhiteSpace(segmentId) ? null : segmentId.Trim()));
             }
 
             segments = BuildDisplayRows(structuredRows);

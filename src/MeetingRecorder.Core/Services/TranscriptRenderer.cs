@@ -1,4 +1,6 @@
 using MeetingRecorder.Core.Domain;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -86,13 +88,14 @@ public sealed class TranscriptRenderer
             manifest.ProcessingMetadata?.SpeakerTurns ?? Array.Empty<SpeakerTurn>(),
             manifest.ProcessingMetadata?.DiarizationMetadata,
             manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>(),
-            segments.Select(segment => new TranscriptDocumentSegment(
+            segments.Select((segment, index) => new TranscriptDocumentSegment(
                 segment.Start,
                 segment.End,
                 segment.SpeakerId,
                 ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId),
                 segment.SpeakerLabel,
-                segment.Text)).ToArray());
+                segment.Text,
+                ResolveSegmentId(segment, index))).ToArray());
 
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions
         {
@@ -129,7 +132,19 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("speakerId")] string? SpeakerId,
         [property: JsonPropertyName("speakerLabel")] string? SpeakerLabel,
         [property: JsonPropertyName("displaySpeakerLabel")] string? DisplaySpeakerLabel,
-        [property: JsonPropertyName("text")] string Text);
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("segmentId")] string SegmentId);
+
+    private static string ResolveSegmentId(TranscriptSegment segment, int index)
+    {
+        if (!string.IsNullOrWhiteSpace(segment.SegmentId))
+        {
+            return segment.SegmentId.Trim();
+        }
+
+        var identity = string.Join("\n", index, segment.Start.Ticks, segment.End.Ticks, segment.SpeakerId ?? string.Empty, segment.Text);
+        return "seg_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..16].ToLowerInvariant();
+    }
 
     private sealed record TranscriptDocumentSummary(
         [property: JsonPropertyName("overview")] string Overview,
