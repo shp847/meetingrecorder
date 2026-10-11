@@ -22,6 +22,10 @@ public sealed record SpeakerIdentityTransactionResult(
     bool IsApplied,
     string? ConflictReason = null);
 
+public sealed record SpeakerClusterMergeTransactionResult(
+    bool IsApplied,
+    string? ConflictReason = null);
+
 public sealed class MeetingOutputCatalogService
 {
     private const int MaxJsonTitlePreviewBytes = 64 * 1024;
@@ -480,6 +484,55 @@ public sealed class MeetingOutputCatalogService
                 TryDeleteArtifactTransactionFile(artifact.BackupPath);
             }
         }
+    }
+
+    /// <summary>
+    /// Persists a user-confirmed merge audit record only after the editor's artifact revision
+    /// still matches. This does not rewrite diarization output or voice-profile data.
+    /// </summary>
+    public async Task<SpeakerClusterMergeTransactionResult> AddSpeakerClusterMergeIfCurrentAsync(
+        MeetingOutputRecord record,
+        string expectedRevision,
+        SpeakerClusterMergeMetadata merge,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(expectedRevision) ||
+            !string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
+        }
+
+        if (string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting manifest is unavailable. Reload or reprocess this meeting before merging speakers.");
+        }
+
+        var manifestStore = new SessionManifestStore(_pathBuilder);
+        var manifest = await manifestStore.LoadAsync(record.ManifestPath, cancellationToken);
+        var existing = manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>();
+        if (existing.Any(item => string.Equals(item.OperationId, merge.OperationId, StringComparison.Ordinal)))
+        {
+            return new SpeakerClusterMergeTransactionResult(true);
+        }
+
+        if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
+        }
+
+        var metadata = manifest.ProcessingMetadata ?? new MeetingProcessingMetadata(null, false);
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                ProcessingMetadata = metadata with
+                {
+                    SpeakerClusterMerges = existing.Append(merge).ToArray(),
+                },
+            },
+            record.ManifestPath,
+            cancellationToken);
+        return new SpeakerClusterMergeTransactionResult(true);
     }
 
     public async Task ClearSpeakerProfileSuggestionsAsync(
