@@ -670,6 +670,8 @@ public sealed class SessionProcessorTests
             Assert.Contains("## Summary", markdown, StringComparison.Ordinal);
             Assert.Contains("The processed meeting has a generated summary.", markdown, StringComparison.Ordinal);
             Assert.Equal("The processed meeting has a generated summary.", document["summary"]?["overview"]?.GetValue<string>());
+            Assert.False(string.IsNullOrWhiteSpace(finalManifest.Summary?.AttributionFingerprint));
+            Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, finalManifest.Summary?.AttributionSchemaVersion);
             Assert.True(File.Exists(published.ReadyMarkerPath));
         }
         finally
@@ -790,6 +792,8 @@ public sealed class SessionProcessorTests
             Assert.Equal(0, summaryProvider.CallCount);
             Assert.Equal(StageExecutionState.Succeeded, finalManifest.SummarizationStatus.State);
             Assert.Equal("Loaded persisted summary.", finalManifest.Summary?.Overview);
+            Assert.False(string.IsNullOrWhiteSpace(finalManifest.Summary?.AttributionFingerprint));
+            Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, finalManifest.Summary?.AttributionSchemaVersion);
             Assert.Contains("Loaded persisted summary.", markdown, StringComparison.Ordinal);
         }
         finally

@@ -2504,6 +2504,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal("The team aligned on launch readiness.", state.Summary.Overview);
         Assert.Equal("Summary route recorded with this meeting.", state.Summary.ProviderText);
         Assert.Contains("configured fallback", state.Summary.WarningText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("predates", state.Summary.WarningText, StringComparison.OrdinalIgnoreCase);
         Assert.False(state.Summary.CanGenerate);
         Assert.False(state.Summary.CanRetry);
         Assert.Equal("IonQ", state.ProjectName);

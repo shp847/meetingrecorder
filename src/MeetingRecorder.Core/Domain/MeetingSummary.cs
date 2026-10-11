@@ -10,7 +10,9 @@ public sealed record MeetingSummary(
     IReadOnlyList<string> RisksAndOpenQuestions,
     MeetingSummaryProviderInfo Provider,
     DateTimeOffset GeneratedAtUtc,
-    string TranscriptFingerprint);
+    string TranscriptFingerprint,
+    string? AttributionFingerprint = null,
+    int AttributionSchemaVersion = 0);
 
 public sealed record MeetingSummaryActionItem(
     string Text,

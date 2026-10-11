@@ -263,7 +263,9 @@ public partial class MeetingDetailWindow : Window
     private void ApplySummaryState(MeetingDetailSummaryState summary)
     {
         ConfigureSummariesButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.ConfigureSummary).Label;
-        GenerateSummaryButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary).Label;
+        GenerateSummaryButton.Content = summary.ShowGeneratedContent && summary.CanGenerate
+            ? "Regenerate Summary"
+            : UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary).Label;
         RetrySummaryButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.RetrySummary).Label;
         AiSummaryStatusTextBlock.Text = summary.StatusText;
         AiSummaryGeneratedContentPanel.Visibility = summary.ShowGeneratedContent ? Visibility.Visible : Visibility.Collapsed;

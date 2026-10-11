@@ -4073,7 +4073,8 @@ Sprint 11 acceptance criteria:
 - Documentation / installer / release work: document stale-summary meaning, manual regeneration, transcript/diarization boundary, and provider/privacy conditions. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found summary transcript fingerprint reuse and speaker identity artifact updates, but no speaker-attribution fingerprint/stale resolver, repair preservation rule, or current-name regeneration proof.
 - Evidence and date: 2026-09-29 added attribution-fingerprint/state fixtures for effective label/source changes, transcript changes, and readable historic summary regeneration state. The model excludes profiles, vectors, and audio.
-- Remaining gap or next action: persist generation provenance and bind manual current-name regeneration to matching revision/fingerprint before marking this sprint Done.
+- Evidence and date: 2026-10-10 persisted attribution provenance (fingerprint plus schema) through automatic/manual summary generation, manifest, snapshot, and transcript JSON. Existing summaries remain readable but are marked historic when provenance is absent or speaker attribution changes; regeneration is manual and rechecks the transcript/attribution snapshot before publication. Focused resolver, publication, worker, detail, and XAML tests passed 211/211; installer build produced the portable ZIP and MSI.
+- Remaining gap or next action: define action-item ownership provenance/historic display and verify it across all derived-output readers before marking this sprint Done.
 
 Goal: make speaker edits flow into downstream meeting outputs.
 

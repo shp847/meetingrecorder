@@ -960,6 +960,9 @@ public sealed class SessionProcessor
         }
 
         var fingerprint = MeetingSummaryTranscriptFingerprint.Compute(transcriptSegments);
+        var attributionFingerprint = MeetingSummaryAttributionStateResolver.ComputeAttributionFingerprint(
+            fingerprint,
+            transcriptSegments);
         var summarySnapshotPath = BuildSummarySnapshotPath(processingRoot);
         var persistedSummary = await TryLoadPersistedSummaryAsync(
             summarySnapshotPath,
@@ -967,6 +970,13 @@ public sealed class SessionProcessor
             cancellationToken);
         if (persistedSummary is not null)
         {
+            persistedSummary = persistedSummary with
+            {
+                TranscriptFingerprint = fingerprint,
+                AttributionFingerprint = attributionFingerprint,
+                AttributionSchemaVersion = MeetingSummaryAttributionStateResolver.AttributionSchemaVersion,
+            };
+            await SavePersistedSummaryAsync(summarySnapshotPath, persistedSummary, cancellationToken);
             var loaded = manifest with
             {
                 SummarizationStatus = new ProcessingStageStatus(
@@ -1020,12 +1030,12 @@ public sealed class SessionProcessor
 
         if (status.State == StageExecutionState.Succeeded && summary is not null)
         {
-            summary = summary.TranscriptFingerprint == fingerprint
-                ? summary
-                : summary with
-                {
-                    TranscriptFingerprint = fingerprint,
-                };
+            summary = summary with
+            {
+                TranscriptFingerprint = fingerprint,
+                AttributionFingerprint = attributionFingerprint,
+                AttributionSchemaVersion = MeetingSummaryAttributionStateResolver.AttributionSchemaVersion,
+            };
             await SavePersistedSummaryAsync(summarySnapshotPath, summary, cancellationToken);
         }
 

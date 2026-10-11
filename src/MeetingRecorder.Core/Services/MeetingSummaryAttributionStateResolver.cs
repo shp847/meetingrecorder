@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,22 @@ public sealed record MeetingSummaryAttributionStateResult(MeetingSummaryAttribut
 public static class MeetingSummaryAttributionStateResolver
 {
     public const int AttributionSchemaVersion = 1;
+
+    public static string ComputeAttributionFingerprint(
+        string transcriptFingerprint,
+        IReadOnlyList<TranscriptSegment>? segments)
+    {
+        return ComputeAttributionFingerprint(
+            transcriptFingerprint,
+            (segments ?? [])
+                .Select((segment, index) => new SummaryAttributionSegment(
+                    $"{index}:{segment.Start.Ticks}:{segment.End.Ticks}",
+                    segment.SpeakerId ?? string.Empty,
+                    segment.SpeakerLabel ?? "Speaker",
+                    "PublishedTranscript"))
+                .ToArray());
+    }
+
     public static string ComputeAttributionFingerprint(string artifactRevision, IReadOnlyList<SummaryAttributionSegment>? segments, string? overrideOrMergeVersion = null)
     {
         var payload = new { artifactRevision = artifactRevision?.Trim() ?? string.Empty, overrideOrMergeVersion = overrideOrMergeVersion?.Trim() ?? string.Empty, segments = (segments ?? []).Select(s => new { id = s.StableSegmentId?.Trim(), speaker = s.EffectiveSpeakerId?.Trim(), label = s.DisplayLabel?.Trim(), source = s.Source?.Trim() }) };
@@ -24,7 +41,8 @@ public static class MeetingSummaryAttributionStateResolver
         ArgumentNullException.ThrowIfNull(input);
         if (input.IsGenerating) return new(MeetingSummaryAttributionState.Generating, "Generating a summary from the current meeting snapshot.", false);
         if (input.HasFailed) return new(MeetingSummaryAttributionState.Failed, "Summary generation did not finish. The prior summary remains unchanged.", true);
-        if (!input.HasSummary || input.GeneratedSnapshot is null) return new(MeetingSummaryAttributionState.Unavailable, "No generated summary is available for this meeting.", false);
+        if (!input.HasSummary) return new(MeetingSummaryAttributionState.Unavailable, "No generated summary is available for this meeting.", false);
+        if (input.GeneratedSnapshot is null || input.GeneratedSnapshot.SchemaVersion != AttributionSchemaVersion) return new(MeetingSummaryAttributionState.AttributionChanged, "This summary predates speaker-attribution tracking. It remains readable; regenerate it with current speaker names.", true);
         if (!string.Equals(input.GeneratedSnapshot.TranscriptFingerprint, input.CurrentTranscriptFingerprint, StringComparison.Ordinal)) return new(MeetingSummaryAttributionState.TranscriptChanged, "This summary is historic because the transcript changed. Regenerate it after review.", true);
         if (!string.Equals(input.GeneratedSnapshot.AttributionFingerprint, input.CurrentAttributionFingerprint, StringComparison.Ordinal)) return new(MeetingSummaryAttributionState.AttributionChanged, "This summary is historic because speaker attribution changed. Regenerate it with current speaker names.", true);
         return new(MeetingSummaryAttributionState.Current, "This summary uses the current transcript and speaker attribution.", false);

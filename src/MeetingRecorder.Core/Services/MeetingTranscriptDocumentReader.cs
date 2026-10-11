@@ -284,6 +284,8 @@ internal static class MeetingTranscriptDocumentReader
             var modelProxyRouting = GetModelProxyRouting(providerObject);
             var generatedAtUtc = GetJsonDateTimeOffset(node, "generatedAtUtc", "GeneratedAtUtc") ?? DateTimeOffset.UtcNow;
             var fingerprint = GetJsonString(node, "transcriptFingerprint", "TranscriptFingerprint") ?? string.Empty;
+            var attributionFingerprint = GetOptionalJsonString(node, "attributionFingerprint", "AttributionFingerprint");
+            var attributionSchemaVersion = GetJsonInt(node, "attributionSchemaVersion", "AttributionSchemaVersion") ?? 0;
             return new MeetingSummary(
                 overview.Trim(),
                 GetJsonStringArray(node, "keyPoints", "KeyPoints"),
@@ -292,7 +294,9 @@ internal static class MeetingTranscriptDocumentReader
                 GetJsonStringArray(node, "risksAndOpenQuestions", "RisksAndOpenQuestions"),
                 new MeetingSummaryProviderInfo(providerKind, providerName.Trim(), model.Trim(), fallbackUsed, modelProxyRouting),
                 generatedAtUtc,
-                fingerprint.Trim());
+                fingerprint.Trim(),
+                attributionFingerprint?.Trim(),
+                attributionSchemaVersion);
         }
         catch
         {
@@ -403,6 +407,19 @@ internal static class MeetingTranscriptDocumentReader
                 !string.IsNullOrWhiteSpace(text))
             {
                 return text;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? GetJsonInt(JsonObject node, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (node[propertyName] is JsonValue value && value.TryGetValue<int>(out var number))
+            {
+                return number;
             }
         }
 

@@ -97,7 +97,7 @@ If you are rebuilding from source locally, note the difference between artifacts
 
 Meeting summaries are optional and disabled by default. When enabled, the processing worker runs summary generation after transcription and optional speaker labeling. Successful summaries are written to `summary.snapshot.json`, the transcript JSON sidecar, and the Markdown transcript. If no provider is configured, meeting transcripts still publish normally and the detail window explains that summaries are off or need setup.
 
-For an already-published meeting, open the meeting detail window to view the structured summary or generate/retry one from the existing transcript JSON sidecar. This does not re-run transcription or speaker labeling. Markdown-only legacy transcripts remain readable, but manual summary generation requires the JSON sidecar so the app can update summary status and schema safely.
+For an already-published meeting, open the meeting detail window to view the structured summary or generate/retry one from the existing transcript JSON sidecar. A summary remains readable when transcript speaker attribution changes, but is marked historic and can be manually regenerated with current speaker names. This does not re-run transcription or speaker labeling. Markdown-only legacy transcripts remain readable, but manual summary generation requires the JSON sidecar so the app can update summary status and schema safely.
 
 Local-first setup uses ModelProxy:
 

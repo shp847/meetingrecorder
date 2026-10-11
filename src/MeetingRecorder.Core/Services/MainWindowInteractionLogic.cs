@@ -1593,10 +1593,38 @@ internal static class MainWindowInteractionLogic
         if (transcript.SummarizationStatus?.State == StageExecutionState.Succeeded &&
             transcript.Summary is { } summary)
         {
-            var copy = UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary);
+            var currentTranscriptFingerprint = MeetingSummaryTranscriptFingerprint.Compute(transcript.StructuredSegments);
+            var currentAttributionFingerprint = MeetingSummaryAttributionStateResolver.ComputeAttributionFingerprint(
+                currentTranscriptFingerprint,
+                transcript.StructuredSegments);
+            var generatedSnapshot = string.IsNullOrWhiteSpace(summary.AttributionFingerprint)
+                ? null
+                : new MeetingSummaryAttributionSnapshot(
+                    summary.TranscriptFingerprint,
+                    summary.AttributionFingerprint,
+                    summary.AttributionSchemaVersion);
+            var attributionState = MeetingSummaryAttributionStateResolver.Resolve(new(
+                HasSummary: true,
+                IsGenerating: false,
+                HasFailed: false,
+                CurrentTranscriptFingerprint: currentTranscriptFingerprint,
+                CurrentAttributionFingerprint: currentAttributionFingerprint,
+                GeneratedSnapshot: generatedSnapshot));
+            var generatedSummaryExperience = SummaryExperienceResolver.Resolve(new SummaryExperienceInput(
+                providerConfiguration.IsEnabled
+                    ? MeetingSummaryGenerationMode.Enabled
+                    : MeetingSummaryGenerationMode.Disabled,
+                providerConfiguration.Preference,
+                providerConfiguration.HasOpenAiKey,
+                providerConfiguration.HostedConsentVersion));
+            var warningParts = new[]
+            {
+                attributionState.State == MeetingSummaryAttributionState.Current ? null : attributionState.Explanation,
+                summary.Provider.FallbackUsed ? "A configured fallback route produced this summary." : null,
+            }.Where(part => !string.IsNullOrWhiteSpace(part));
             return new MeetingDetailSummaryState(
                 MeetingDetailSummaryStatus.Generated,
-                copy.SuccessText,
+                attributionState.Explanation,
                 summary.Overview,
                 summary.KeyPoints,
                 summary.Decisions,
@@ -1604,10 +1632,10 @@ internal static class MainWindowInteractionLogic
                 summary.RisksAndOpenQuestions,
                 "Summary route recorded with this meeting.",
                 FormatSummaryGeneratedAt(summary.GeneratedAtUtc, culture, localTimeZone),
-                summary.Provider.FallbackUsed ? "A configured fallback route produced this summary." : string.Empty,
+                string.Join(" ", warningParts),
                 ShowGeneratedContent: true,
                 CanConfigure: true,
-                CanGenerate: false,
+                CanGenerate: attributionState.CanRegenerate && generatedSummaryExperience.CanGenerate,
                 CanRetry: false);
         }
 
