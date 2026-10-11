@@ -3816,7 +3816,8 @@ Sprint 6 acceptance criteria:
 - Tests and rendered checks: mapping validation/composition/cycle, two/many merge, canonical choice, generic/weak/user/profile conflict gates, evidence/fragmentation repair route, stale revision/concurrent edit, source-id preservation, effective segment/override resolution, artifact atomic rollback, no profile learning/duplicate samples, inverse operation. Render merge selection/preview/conflict/repair/complete at 1280x800/125%, keyboard canonical selection and screen-reader affected-turn/conflict wording.
 - Documentation / installer / release work: document manual merge versus repair, source attribution retention, no automatic identity learning, and later undo/derived-output status. No installer work until behavior changes; Sprint 16 owns diarization release gates.
 - Evidence and date: 2026-09-27 audit found worker-side `SpeakerClusterMergeService` and oversegmentation recovery tests, but no user merge record/UI, artifact-layer canonical resolver, conflict gate, or proof merge avoids profile-learning duplication.
-- Remaining gap or next action: implement pure canonical-map resolver/validation and conflict fixtures before adding the multi-select review UI.
+- Evidence and date: 2026-10-11 added a metadata-only `SpeakerClusterMergeResolver` with deterministic canonical-map composition plus invalid, cyclic, redundant, and conflicting-existing-map checks. The slice has no artifact writer, profile, audio, or transcript-text input. Focused resolver/worker-merge/correction contracts passed 10/10; `Build-Installer.ps1` produced the portable ZIP and MSI.
+- Remaining gap or next action: persist the revision-checked merge record and apply its map transactionally to structured artifacts before adding the multi-select review UI.
 
 Goal: handle the common over-split case where one person appears as two or more
 generic speakers.
