@@ -17,4 +17,14 @@ public sealed class SegmentAttributionOverrideDocumentMutatorTests
         Assert.Equal("Alex", doc["segments"]![0]!["speakerLabel"]!.GetValue<string>());
         Assert.Single(doc["speakerAttributionOverrides"]!.AsArray());
     }
+
+    [Fact]
+    public void Apply_Rejects_Changed_Source_Speaker()
+    {
+        var doc = JsonNode.Parse("""{ "segments":[{"segmentId":"seg_1","speakerId":"speaker_new"}] }""")!.AsObject();
+        var item = new SegmentAttributionOverride("o1", "r1", "seg_1", "speaker_old", SegmentAttributionOverrideTargetKind.DisplayName, "Alex", "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        Assert.False(SegmentAttributionOverrideDocumentMutator.TryApply(doc, item, out var reason));
+        Assert.Equal("The transcript segment changed.", reason);
+        Assert.Null(doc["speakerAttributionOverrides"]);
+    }
 }
