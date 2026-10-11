@@ -345,6 +345,10 @@ function Get-SafeDiarizationFailureKind {
         return "not_failed"
     }
 
+    if ($Message -match 'helper failed \((audio_preparation|native_inference|runtime_status)_(file_not_found|directory_not_found|access_denied|not_supported|invalid_operation|com|io|cancelled|other|unknown)\)') {
+        return "helper_" + $Matches[1] + "_" + $Matches[2]
+    }
+
     # Classify in memory only.  Do not persist provider text: it may identify
     # a private path, a machine account, or an approved fixture.
     if ($Message -match '(?i)onnx|model|asset') { return "model_or_asset" }

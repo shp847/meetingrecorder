@@ -203,6 +203,7 @@ internal static class Program
             return 1;
         }
 
+        var helperPhase = "initializing";
         try
         {
             var request = JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(await File.ReadAllTextAsync(requestPath))
@@ -220,17 +221,46 @@ internal static class Program
                     config.SpeakerNameSuggestionConfidenceThreshold,
                     config.SpeakerNameMatchMarginThreshold),
                 AppDataPaths.GetVoiceProfileStorePath());
-            provider.ProgressChanged += progress => WriteHelperProgress(request.ProgressPath, progress);
+            provider.ProgressChanged += progress =>
+            {
+                helperPhase = GetSafeHelperPhase(progress.Phase);
+                WriteHelperProgress(request.ProgressPath, progress);
+            };
             var result = await provider.ApplySpeakerLabelsAsync(request.AudioPath, request.TranscriptSegments, CancellationToken.None);
             await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result));
             return 0;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(exception.Message);
+            Console.Error.WriteLine($"helper_failure phase={helperPhase} exception={GetSafeHelperExceptionKind(exception)}");
             return 2;
         }
     }
+
+    private static string GetSafeHelperPhase(string? phase) => phase switch
+    {
+        "Preparing normalized PCM" => "audio_preparation",
+        "Prepared audio" => "audio_prepared",
+        "Provider selected" => "provider_selection",
+        "Loading samples" => "sample_loading",
+        "Samples loaded" => "samples_loaded",
+        "Native inference" => "native_inference",
+        "Completed" => "completed",
+        _ => "initializing",
+    };
+
+    private static string GetSafeHelperExceptionKind(Exception exception) => exception switch
+    {
+        FileNotFoundException => "file_not_found",
+        DirectoryNotFoundException => "directory_not_found",
+        UnauthorizedAccessException => "access_denied",
+        NotSupportedException => "not_supported",
+        InvalidOperationException => "invalid_operation",
+        System.Runtime.InteropServices.COMException => "com",
+        IOException => "io",
+        OperationCanceledException => "cancelled",
+        _ => "other",
+    };
 
     private static void WriteHelperProgress(string progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
     {

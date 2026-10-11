@@ -111,6 +111,10 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
     [InlineData("Unable to load sherpa-onnx-c-api.dll", "native_runtime")]
     [InlineData("Diarization model bundle is unavailable", "model_or_asset")]
     [InlineData("Could not find part of path", "input_or_file")]
+    [InlineData("helper_failure phase=audio_preparation exception=file_not_found", "audio_preparation_file_not_found")]
+    [InlineData("helper_failure phase=audio_preparation exception=invalid_operation", "audio_preparation_invalid_operation")]
+    [InlineData("helper_failure phase=native_inference exception=other", "native_inference_other")]
+    [InlineData("helper_failure phase=completed exception=io", "runtime_status_io")]
     [InlineData("", "no_diagnostic")]
     public void BoundedWorker_Helper_Redacts_Diagnostic_To_Fixed_Class(string error, string expected)
     {

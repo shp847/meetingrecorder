@@ -135,6 +135,24 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             return "no_diagnostic";
         }
 
+        if (error.Contains("phase=audio_preparation", StringComparison.Ordinal))
+        {
+            return "audio_preparation_" + GetSafeHelperExceptionKind(error);
+        }
+
+        if (error.Contains("phase=provider_selection", StringComparison.Ordinal) ||
+            error.Contains("phase=sample_loading", StringComparison.Ordinal) ||
+            error.Contains("phase=samples_loaded", StringComparison.Ordinal) ||
+            error.Contains("phase=native_inference", StringComparison.Ordinal))
+        {
+            return "native_inference_" + GetSafeHelperExceptionKind(error);
+        }
+
+        if (error.Contains("phase=completed", StringComparison.Ordinal))
+        {
+            return "runtime_status_" + GetSafeHelperExceptionKind(error);
+        }
+
         if (error.Contains("sherpa", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("native", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("dll", StringComparison.OrdinalIgnoreCase))
@@ -153,6 +171,19 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             error.Contains("directory", StringComparison.OrdinalIgnoreCase))
         {
             return "input_or_file";
+        }
+
+        return "unknown";
+    }
+
+    private static string GetSafeHelperExceptionKind(string error)
+    {
+        foreach (var kind in new[] { "file_not_found", "directory_not_found", "access_denied", "not_supported", "invalid_operation", "com", "io", "cancelled", "other" })
+        {
+            if (error.Contains($"exception={kind}", StringComparison.Ordinal))
+            {
+                return kind;
+            }
         }
 
         return "unknown";
