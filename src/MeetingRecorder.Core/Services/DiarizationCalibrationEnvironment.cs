@@ -22,6 +22,7 @@ public sealed record SpeakerClusterMergeOptions(
 
 public static class DiarizationCalibrationEnvironment
 {
+    public const string CalibrationHarnessVariable = "MEETING_RECORDER_CALIBRATION_HARNESS";
     public const string DefaultClusteringThresholdVariable = "MEETING_RECORDER_DIARIZATION_DEFAULT_THRESHOLD";
     public const string CollapsedClusteringThresholdsVariable = "MEETING_RECORDER_DIARIZATION_COLLAPSED_THRESHOLDS";
     public const string OverSegmentedClusteringThresholdsVariable = "MEETING_RECORDER_DIARIZATION_OVERSEGMENTED_THRESHOLDS";
@@ -45,23 +46,23 @@ public static class DiarizationCalibrationEnvironment
 
     public static DiarizationThresholdOptions LoadDiarizationThresholdOptions()
     {
-        return LoadDiarizationThresholdOptions(Environment.GetEnvironmentVariable);
+        return LoadDiarizationThresholdOptions(GetRuntimeValue);
     }
 
     public static DiarizationClusterSelectionOptions LoadClusterSelectionOptions()
     {
-        return LoadClusterSelectionOptions(Environment.GetEnvironmentVariable);
+        return LoadClusterSelectionOptions(GetRuntimeValue);
     }
 
     public static SpeakerClusterMergeOptions LoadSpeakerClusterMergeOptions()
     {
-        return LoadSpeakerClusterMergeOptions(Environment.GetEnvironmentVariable);
+        return LoadSpeakerClusterMergeOptions(GetRuntimeValue);
     }
 
     public static SpeakerNameRecognitionOptions LoadSpeakerNameRecognitionOptions(
         SpeakerNameRecognitionOptions fallback)
     {
-        return LoadSpeakerNameRecognitionOptions(fallback, Environment.GetEnvironmentVariable);
+        return LoadSpeakerNameRecognitionOptions(fallback, GetRuntimeValue);
     }
 
     internal static DiarizationThresholdOptions LoadDiarizationThresholdOptions(Func<string, string?> getValue)
@@ -70,6 +71,16 @@ public static class DiarizationCalibrationEnvironment
             ReadFloat(getValue, DefaultClusteringThresholdVariable, 0.5f, minimum: 0.01f, maximum: 1f),
             ReadFloatArray(getValue, CollapsedClusteringThresholdsVariable, DefaultCollapsedSpeakerClusteringThresholds),
             ReadFloatArray(getValue, OverSegmentedClusteringThresholdsVariable, DefaultOverSegmentedSpeakerClusteringThresholds));
+    }
+
+    private static string? GetRuntimeValue(string variableName)
+    {
+        return string.Equals(
+            Environment.GetEnvironmentVariable(CalibrationHarnessVariable),
+            "1",
+            StringComparison.Ordinal)
+            ? Environment.GetEnvironmentVariable(variableName)
+            : null;
     }
 
     internal static DiarizationClusterSelectionOptions LoadClusterSelectionOptions(Func<string, string?> getValue)

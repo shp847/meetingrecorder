@@ -88,6 +88,36 @@ public sealed class DiarizationCalibrationScriptTests
     }
 
     [Fact]
+    public void Runtime_Calibration_Overrides_Are_Limited_To_The_Harness()
+    {
+        var repoRoot = GetRepoRoot();
+        var environmentSource = File.ReadAllText(Path.Combine(repoRoot, "src", "MeetingRecorder.Core", "Services", "DiarizationCalibrationEnvironment.cs"));
+        var calibrationScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Test-DiarizationCalibration.ps1"));
+
+        Assert.Contains("CalibrationHarnessVariable", environmentSource, StringComparison.Ordinal);
+        Assert.Contains("GetRuntimeValue", environmentSource, StringComparison.Ordinal);
+        Assert.Contains("MEETING_RECORDER_CALIBRATION_HARNESS", calibrationScript, StringComparison.Ordinal);
+        Assert.Contains("SetEnvironmentVariable($CalibrationHarnessVariable, \"1\", \"Process\")", calibrationScript, StringComparison.Ordinal);
+
+        var previousHarness = Environment.GetEnvironmentVariable(DiarizationCalibrationEnvironment.CalibrationHarnessVariable);
+        var previousThreshold = Environment.GetEnvironmentVariable(DiarizationCalibrationEnvironment.DefaultClusteringThresholdVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(DiarizationCalibrationEnvironment.DefaultClusteringThresholdVariable, "0.77");
+            Environment.SetEnvironmentVariable(DiarizationCalibrationEnvironment.CalibrationHarnessVariable, null);
+            Assert.Equal(0.5f, DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions().DefaultClusteringThreshold);
+
+            Environment.SetEnvironmentVariable(DiarizationCalibrationEnvironment.CalibrationHarnessVariable, "1");
+            Assert.Equal(0.77f, DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions().DefaultClusteringThreshold);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(DiarizationCalibrationEnvironment.CalibrationHarnessVariable, previousHarness);
+            Environment.SetEnvironmentVariable(DiarizationCalibrationEnvironment.DefaultClusteringThresholdVariable, previousThreshold);
+        }
+    }
+
+    [Fact]
     public void CalibrationCandidatesTemplate_Is_Synthetic_And_Uses_Only_Allowed_Overrides()
     {
         var repoRoot = GetRepoRoot();

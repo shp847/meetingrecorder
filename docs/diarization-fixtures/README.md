@@ -24,3 +24,6 @@ Changing production thresholds is outside this command. It requires a governed
 baseline/candidate run, protected-case review with no false automatic naming,
 recorded human sign-off, and rollback evidence. Until then the report must say
 `keep_current_defaults` and production defaults remain unchanged.
+
+Calibration variables are ignored by normal app and worker processes. The
+comparison script alone marks its child process as the calibration harness.

@@ -56,6 +56,8 @@ $ProtectedCategories = @(
     "hybrid-shared-mic",
     "no-speech")
 
+$CalibrationHarnessVariable = "MEETING_RECORDER_CALIBRATION_HARNESS"
+
 function ConvertTo-Array {
     param($Value)
 
@@ -225,10 +227,12 @@ function Set-CalibrationEnvironment {
         $previous[$variable] = [Environment]::GetEnvironmentVariable($variable, "Process")
         [Environment]::SetEnvironmentVariable($variable, $null, "Process")
     }
+    $previous[$CalibrationHarnessVariable] = [Environment]::GetEnvironmentVariable($CalibrationHarnessVariable, "Process")
 
     foreach ($entry in $EnvironmentMap.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
     }
+    [Environment]::SetEnvironmentVariable($CalibrationHarnessVariable, "1", "Process")
 
     return $previous
 }
