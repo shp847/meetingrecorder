@@ -3348,6 +3348,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        var preflight = BuildMeetingArchivePreflight(targetMeetings, MeetingArchiveOperation.PermanentDelete);
+        if (!preflight.CanProceed)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = preflight.Summary;
+            return;
+        }
+
         if (!TryConfirmPermanentDelete(targetMeetings))
         {
             MeetingCleanupRecommendationsStatusTextBlock.Text =
@@ -7900,7 +7907,19 @@ public partial class MainWindow : Window
     private async Task DeleteOpenMeetingDetailAsync()
     {
         var row = GetOpenMeetingDetailRow();
-        if (row is null || !TryConfirmPermanentDelete([row]))
+        if (row is null)
+        {
+            return;
+        }
+
+        var preflight = BuildMeetingArchivePreflight([row], MeetingArchiveOperation.PermanentDelete);
+        if (!preflight.CanProceed)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus(preflight.Summary);
+            return;
+        }
+
+        if (!TryConfirmPermanentDelete([row]))
         {
             _meetingDetailWindow?.SetMaintenanceStatus("Permanent delete cancelled.");
             return;
@@ -14720,6 +14739,13 @@ public partial class MainWindow : Window
         MeetingCleanupRecommendationsStatusTextBlock.Text = archiveCopy.ProgressText;
         try
         {
+            var preflight = BuildMeetingArchivePreflight(meetings, MeetingArchiveOperation.Archive);
+            if (!preflight.CanProceed)
+            {
+                MeetingCleanupRecommendationsStatusTextBlock.Text = preflight.Summary;
+                return false;
+            }
+
             var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(_liveConfig.Current.AudioOutputDir);
             var archiveDirectory = MeetingCleanupExecutionService.CreateExecutionArchiveDirectory(archiveRoot, archiveLabel);
             foreach (var meeting in meetings)
@@ -14775,6 +14801,13 @@ public partial class MainWindow : Window
             if (receipt.Receipt is null)
             {
                 MeetingCleanupRecommendationsStatusTextBlock.Text = "No complete manual archive receipt is available to restore.";
+                return;
+            }
+
+            var preflight = BuildReceiptRecoveryPreflight(receipt.ReceiptPath, receipt.Receipt);
+            if (!preflight.CanProceed)
+            {
+                MeetingCleanupRecommendationsStatusTextBlock.Text = preflight.Summary;
                 return;
             }
 
@@ -15239,6 +15272,69 @@ public partial class MainWindow : Window
         return selectionWindow.ShowDialog() == true
             ? result
             : null;
+    }
+
+    private static MeetingArchivePreflightResult BuildMeetingArchivePreflight(
+        IReadOnlyList<MeetingListRow> meetings,
+        MeetingArchiveOperation operation)
+    {
+        var artifacts = meetings
+            .SelectMany(meeting => GetPublishedArtifacts(meeting.Source))
+            .ToArray();
+        var hasLinkedSessionFolder = meetings.Any(meeting =>
+            !string.IsNullOrWhiteSpace(meeting.Source.ManifestPath) &&
+            Directory.Exists(Path.GetDirectoryName(meeting.Source.ManifestPath)!));
+        return MeetingArchivePreflight.Evaluate(new(
+            string.Join(",", meetings.Select(meeting => meeting.Source.Stem)),
+            operation,
+            artifacts,
+            IsBusy: false,
+            HasReceipt: operation != MeetingArchiveOperation.Recover,
+            IsReceiptValid: operation != MeetingArchiveOperation.Recover,
+            HasDestinationCollision: false,
+            LinkedSessionFolderExists: hasLinkedSessionFolder));
+    }
+
+    private static MeetingArchivePreflightResult BuildReceiptRecoveryPreflight(
+        string receiptPath,
+        MeetingArchiveReceipt receipt)
+    {
+        var archiveDirectory = Path.GetDirectoryName(receiptPath)!;
+        var artifacts = receipt.Artifacts
+            .Select(artifact => new MeetingArchiveArtifact(
+                artifact.ArtifactClass,
+                File.Exists(Path.Combine(archiveDirectory, artifact.ArchivedFileName)),
+                artifact.SizeBytes))
+            .ToArray();
+        var hasCollision = receipt.Artifacts.Any(artifact =>
+            File.Exists(artifact.OriginalPath) || Directory.Exists(artifact.OriginalPath));
+        return MeetingArchivePreflight.Evaluate(new(
+            receipt.MeetingStem,
+            MeetingArchiveOperation.Recover,
+            artifacts,
+            IsBusy: false,
+            HasReceipt: true,
+            IsReceiptValid: true,
+            HasDestinationCollision: hasCollision,
+            LinkedSessionFolderExists: false));
+    }
+
+    private static IEnumerable<MeetingArchiveArtifact> GetPublishedArtifacts(MeetingOutputRecord meeting)
+    {
+        return new[]
+        {
+            new MeetingArchiveArtifact("audio", !string.IsNullOrWhiteSpace(meeting.AudioPath) && File.Exists(meeting.AudioPath), GetFileSize(meeting.AudioPath)),
+            new MeetingArchiveArtifact("transcript", !string.IsNullOrWhiteSpace(meeting.MarkdownPath) && File.Exists(meeting.MarkdownPath), GetFileSize(meeting.MarkdownPath)),
+            new MeetingArchiveArtifact("metadata", !string.IsNullOrWhiteSpace(meeting.JsonPath) && File.Exists(meeting.JsonPath), GetFileSize(meeting.JsonPath)),
+            new MeetingArchiveArtifact("ready-marker", !string.IsNullOrWhiteSpace(meeting.ReadyMarkerPath) && File.Exists(meeting.ReadyMarkerPath), GetFileSize(meeting.ReadyMarkerPath)),
+        };
+    }
+
+    private static long GetFileSize(string? path)
+    {
+        return !string.IsNullOrWhiteSpace(path) && File.Exists(path)
+            ? new FileInfo(path).Length
+            : 0;
     }
 
     private bool TryConfirmPermanentDelete(IReadOnlyList<MeetingListRow> meetings)

@@ -1062,6 +1062,9 @@ public sealed class MainWindowXamlTests
         Assert.Contains("_meetingArchiveReceiptService.ArchiveAsync(", source);
         Assert.Contains("_meetingArchiveReceiptService.FindReceiptsAsync(", source);
         Assert.Contains("_meetingArchiveReceiptService.RestoreAsync(", source);
+        Assert.Contains("BuildMeetingArchivePreflight(meetings, MeetingArchiveOperation.Archive)", source);
+        Assert.Contains("BuildMeetingArchivePreflight(targetMeetings, MeetingArchiveOperation.PermanentDelete)", source);
+        Assert.Contains("BuildReceiptRecoveryPreflight(receipt.ReceiptPath, receipt.Receipt)", source);
         Assert.Contains("RestoreLatestArchiveButton.Visibility = recoveryReceipts.Count > 0", source);
         Assert.Contains("The work session was never archived.", source);
     }
