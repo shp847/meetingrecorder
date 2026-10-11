@@ -517,7 +517,10 @@ internal static class MainWindowInteractionLogic
 
     public static bool ShouldDeferMeetingRefresh(bool isRecording, bool isMeetingsTabSelected)
     {
-        return isRecording;
+        // A catalog refresh still applies an ItemsSource and workspace view on the
+        // WPF dispatcher. Keep that work out of Home and Settings, where it can
+        // otherwise stall foreground controls for large meeting histories.
+        return isRecording || !isMeetingsTabSelected;
     }
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(

@@ -598,10 +598,10 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void ShouldDeferMeetingRefresh_Returns_True_Only_While_Recording()
+    public void ShouldDeferMeetingRefresh_Returns_True_While_Recording_Or_Meetings_Are_Hidden()
     {
         Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: true, isMeetingsTabSelected: true));
-        Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
+        Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
         Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: true));
     }
 
