@@ -7150,6 +7150,20 @@ public partial class MainWindow : Window
             };
             var speakerArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
             var speakerLabels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
+            var localProfileNames = Array.Empty<string>();
+            var isLocalProfileStoreAvailable = true;
+            try
+            {
+                localProfileNames = (await _voiceProfileStore.LoadOrCreateAsync(_lifetimeCts.Token)).Profiles
+                    .Where(profile => profile.Status == VoiceProfileStatus.Active)
+                    .Select(profile => profile.DisplayName)
+                    .ToArray();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                isLocalProfileStoreAvailable = false;
+                _logger.Log($"Meeting speaker review profile choices could not be loaded: {exception}");
+            }
             var evidenceSpeakerIds = new HashSet<string>(StringComparer.Ordinal);
             if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
             {
@@ -7184,9 +7198,10 @@ public partial class MainWindow : Window
                     label.DecisionReason)).ToArray(),
                 evidenceSpeakerIds,
                 _liveConfig.Current.SpeakerNameLearningMode,
-                IsLocalProfileStoreAvailable: true,
+                IsLocalProfileStoreAvailable: isLocalProfileStoreAvailable,
                 IsStale: false,
                 HasRepairWarning: row.Source.HasSuspiciousSpeakerLabels));
+            var nameChoices = BuildSpeakerReviewNameChoices(row.Source, speakerReview.Rows, localProfileNames);
             var speakerRows = speakerLabels
                 .Select((label, index) => new MeetingDetailSpeakerLabelEditorRow(
                     label.DisplayName,
@@ -7197,7 +7212,8 @@ public partial class MainWindow : Window
                     HasProfileSpeakerNameAttribution(label),
                     speakerArtifactRevision,
                     label.NameSource,
-                    speakerReview.Rows[index]))
+                    speakerReview.Rows[index],
+                    nameChoices))
                 .ToArray();
             var detailTaskCenter = MeetingDetailTaskCenterResolver.Resolve(new MeetingDetailTaskCenterInput(
                 new MeetingDetailSnapshotRevision(
@@ -7286,6 +7302,35 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(projectName => projectName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    internal static IReadOnlyList<string> BuildSpeakerReviewNameChoices(
+        MeetingOutputRecord meeting,
+        IReadOnlyList<SpeakerReviewRow> reviewRows,
+        IEnumerable<string> activeProfileNames)
+    {
+        ArgumentNullException.ThrowIfNull(meeting);
+        ArgumentNullException.ThrowIfNull(reviewRows);
+        ArgumentNullException.ThrowIfNull(activeProfileNames);
+
+        return meeting.Attendees.Select(attendee => attendee.Name)
+            .Concat(meeting.KeyAttendees ?? Array.Empty<string>())
+            .Concat(reviewRows
+                .Where(review => review.NameSource is SpeakerReviewNameSource.UserEntered or SpeakerReviewNameSource.AutoApplied)
+                .Select(review => review.DisplayName))
+            .Concat(activeProfileNames)
+            .Select(name => name?.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name) && !IsGenericSpeakerDisplayName(name!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .ToArray()!;
+    }
+
+    private static bool IsGenericSpeakerDisplayName(string value)
+    {
+        return value.StartsWith("Speaker ", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(value["Speaker ".Length..], out _);
     }
 
     private void OpenMeetingDetailTranscript()

@@ -24,7 +24,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     bool hasProfileAttribution = false,
     string artifactRevision = "",
     SpeakerNameSource expectedNameSource = SpeakerNameSource.None,
-    SpeakerReviewRow? reviewSnapshot = null)
+    SpeakerReviewRow? reviewSnapshot = null,
+    IReadOnlyList<string>? nameChoices = null)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -43,6 +44,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public string ArtifactRevision { get; } = artifactRevision;
 
     public SpeakerNameSource ExpectedNameSource { get; } = expectedNameSource;
+
+    public IReadOnlyList<string> NameChoices { get; } = nameChoices ?? Array.Empty<string>();
 
     public string AnonymousLabel => reviewSnapshot?.AnonymousLabel ?? OriginalLabel;
 

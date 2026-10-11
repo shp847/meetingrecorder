@@ -547,7 +547,11 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Repair Speaker Labels is a separate Fix action", xaml);
         Assert.Contains("SpeakerReviewStatusTextBlock", xaml);
         Assert.Contains("Binding=\"{Binding AnonymousLabel, Mode=OneWay}\"", xaml);
+        Assert.Contains("<ComboBox IsEditable=\"True\"", xaml);
+        Assert.Contains("ItemsSource=\"{Binding NameChoices, Mode=OneWay}\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Meeting display name\"", xaml);
         Assert.Contains("SpeakerReviewSnapshotResolver.Resolve", mainWindowSource);
+        Assert.Contains("BuildSpeakerReviewNameChoices", mainWindowSource);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);

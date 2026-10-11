@@ -258,9 +258,17 @@
                                                             Binding="{Binding AnonymousLabel, Mode=OneWay}"
                                                             IsReadOnly="True"
                                                             Width="*" />
-                                        <DataGridTextColumn Header="Meeting Display Name"
-                                                            Binding="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                            Width="1.2*" />
+                                        <DataGridTemplateColumn Header="Meeting Display Name"
+                                                                Width="1.2*">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ComboBox IsEditable="True"
+                                                              ItemsSource="{Binding NameChoices, Mode=OneWay}"
+                                                              Text="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              AutomationProperties.Name="Meeting display name" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Name Provenance"
                                                             Binding="{Binding SourceExplanation, Mode=OneWay}"
                                                             IsReadOnly="True"
