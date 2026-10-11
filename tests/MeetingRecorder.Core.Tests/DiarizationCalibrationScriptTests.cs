@@ -232,6 +232,13 @@ public sealed class DiarizationCalibrationScriptTests
             Assert.Equal("keep_current_defaults", (string?)report["recommendation"]?["action"]);
             Assert.Equal(2, report["runs"]?.AsArray().Count);
             Assert.Single(report["comparisons"]?.AsArray() ?? []);
+            Assert.Equal(1, (int?)report["runs"]?[0]?["metrics"]?["aggregateEvidence"]?["sampleSize"]);
+            Assert.True((bool?)report["governance"]?["metadataOnly"]);
+            Assert.True((bool?)report["governance"]?["humanReviewRequired"]);
+            Assert.Equal("not-recorded", (string?)report["governance"]?["humanReviewStatus"]);
+            Assert.Null(report["catalogPath"]);
+            Assert.Null(report["candidatePath"]);
+            Assert.DoesNotContain(tempRoot, reportText, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 DiarizationCalibrationEnvironment.HighConfidenceMergeThresholdVariable,
                 reportText,

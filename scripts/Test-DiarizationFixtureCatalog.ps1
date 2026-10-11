@@ -169,6 +169,22 @@ function Get-FileSha256 {
     }
 }
 
+function Get-SafeReportMessage {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $Message
+    }
+
+    # Fixture paths often identify a private meeting or a local user.  Keep a
+    # stable diagnostic class, but never copy the original path to an artifact.
+    if ($Message -match '(?i)(?:[a-z]:\\|/)[^\r\n]*') {
+        return "Fixture input could not be resolved. See the local runner output."
+    }
+
+    return $Message
+}
+
 function Get-ArtifactHashes {
     param([string[]]$Paths)
 
@@ -268,7 +284,6 @@ function New-BaseResult {
     $expectedSpeakerCount = Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
     return [ordered]@{
         fixtureId = [string](Get-PropertyValue -Object $Fixture -Name "id")
-        title = [string](Get-PropertyValue -Object $Fixture -Name "title")
         category = [string](Get-PropertyValue -Object $Fixture -Name "category")
         mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
         enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enabled" -DefaultValue $true)
@@ -297,8 +312,6 @@ function New-BaseResult {
         artifactSafety = [ordered]@{
             protectedArtifactCount = 0
             allUnchanged = $true
-            tempOutputPath = $null
-            artifacts = @()
         }
         dispatch = [ordered]@{
             script = $null
@@ -456,7 +469,6 @@ function Invoke-Fixture {
                 $childResult = Get-Content -LiteralPath $childResultPath -Raw | ConvertFrom-Json
                 $result.detectedSpeakerCount = [int]$childResult.SpeakerCount
                 $result.voiceSampleCount = [int]$childResult.VoiceSampleCount
-                $result.artifactSafety.tempOutputPath = [string]$childResult.ProbeRoot
                 $detectedNames = @(ConvertTo-Array $childResult.SpeakerNames)
                 $expectedNames = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames"))
                 $result.speakerNameMetrics.detectedNameCount = $detectedNames.Count
@@ -484,15 +496,9 @@ function Invoke-Fixture {
         $artifactResults = @()
         foreach ($before in $artifactHashesBefore) {
             $afterHash = Get-FileSha256 -PathValue $before.path
-            $artifactResults += [ordered]@{
-                path = $before.path
-                beforeHash = $before.hash
-                afterHash = $afterHash
-                unchanged = $before.hash -eq $afterHash
-            }
+            $artifactResults += ($before.hash -eq $afterHash)
         }
-        $result.artifactSafety.artifacts = $artifactResults
-        $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_.unchanged }).Count -eq 0
+        $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_ }).Count -eq 0
 
         $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $result.detectedSpeakerCount -FallbackStatus "completed"
         $result.status = if ($result.speakerCountStatus -eq "pass" -or $result.speakerCountStatus -eq "not_asserted") { "completed" } else { $result.speakerCountStatus }
@@ -520,7 +526,7 @@ function Invoke-Fixture {
     }
     catch {
         $result.status = "failed"
-        $result.message = $_.Exception.Message
+        $result.message = Get-SafeReportMessage -Message $_.Exception.Message
         $result.speakerCountStatus = "failed"
         if ($result.speakerNameMetrics.status -eq "not_run") {
             $result.speakerNameMetrics.status = "failed"
@@ -584,10 +590,9 @@ foreach ($fixture in $fixtures) {
     $result = Invoke-Fixture -Fixture $fixture -StoredReplayScript $storedReplayScript -FullAudioScript $fullAudioScript
     $results += $result
 
-    $title = if ([string]::IsNullOrWhiteSpace($result.title)) { $result.fixtureId } else { $result.title }
-    Write-Output ("{0}: {1} ({2})" -f $result.fixtureId, $result.status, $title)
+    Write-Output ("{0}: {1}" -f $result.fixtureId, $result.status)
     if ($result.status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($result.message)) {
-        Write-Output ("  Failure: {0}" -f $result.message)
+        Write-Output "  Failure: metadata-only fixture execution failed."
     }
 }
 
@@ -606,9 +611,9 @@ $summary = [ordered]@{
 }
 
 $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    catalogPath = $resolvedCatalogPath
+    catalogSha256 = Get-FileSha256 -PathValue $resolvedCatalogPath
     dryRun = [bool]$DryRun
     calibration = [ordered]@{
         runName = if ([string]::IsNullOrWhiteSpace($CalibrationRunName)) { "current-defaults" } else { $CalibrationRunName }

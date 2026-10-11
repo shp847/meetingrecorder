@@ -269,6 +269,78 @@ function Get-Number {
     return [double]$Value
 }
 
+function Get-FileSha256 {
+    param([string]$PathValue)
+
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or -not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        return $null
+    }
+
+    $stream = [System.IO.File]::OpenRead($PathValue)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "")
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Get-WilsonConfidenceInterval {
+    param(
+        [int]$Successes,
+        [int]$SampleSize
+    )
+
+    if ($SampleSize -le 0) {
+        return $null
+    }
+
+    $z = 1.959963984540054
+    $proportion = [double]$Successes / $SampleSize
+    $denominator = 1 + (($z * $z) / $SampleSize)
+    $centre = $proportion + (($z * $z) / (2 * $SampleSize))
+    $margin = $z * [Math]::Sqrt(($proportion * (1 - $proportion) / $SampleSize) + (($z * $z) / (4 * $SampleSize * $SampleSize)))
+    return [ordered]@{
+        method = "wilson-95"
+        lower = [Math]::Round([Math]::Max(0, ($centre - $margin) / $denominator), 6)
+        upper = [Math]::Round([Math]::Min(1, ($centre + $margin) / $denominator), 6)
+    }
+}
+
+function Get-ObservedMetric {
+    param(
+        $Results,
+        [string]$PropertyName,
+        [string]$NestedPropertyName
+    )
+
+    $values = @()
+    foreach ($result in $Results) {
+        $source = if ([string]::IsNullOrWhiteSpace($NestedPropertyName)) {
+            $result
+        }
+        else {
+            Get-PropertyValue -Object $result -Name $NestedPropertyName
+        }
+        $value = Get-PropertyValue -Object $source -Name $PropertyName
+        if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+            $values += Get-Number $value
+        }
+    }
+
+    return [ordered]@{
+        observedSampleCount = $values.Count
+        unknownSampleCount = $Results.Count - $values.Count
+        total = if ($values.Count -eq 0) { $null } else { [int]($values | Measure-Object -Sum).Sum }
+    }
+}
+
 function Get-RunMetrics {
     param($Report)
 
@@ -283,6 +355,22 @@ function Get-RunMetrics {
         $unknownSpeakerCount += Get-Number (Get-PropertyValue -Object $metrics -Name "unknownSpeakerCount")
     }
 
+    $observedSpeakerCountResults = @($results | Where-Object {
+            $expected = Get-PropertyValue -Object $_ -Name "expectedSpeakerCount"
+            $detected = Get-PropertyValue -Object $_ -Name "detectedSpeakerCount"
+            $null -ne $expected -and $null -ne $detected
+        })
+    $correctSpeakerCount = @($observedSpeakerCountResults | Where-Object { $_.speakerCountStatus -eq "pass" }).Count
+    $unavailableMetrics = @(
+        "clusterMergeCount",
+        "repairCount",
+        "segmentOverrideCount",
+        "genericSpeakerCount",
+        "acceptedDecisionCount",
+        "rejectedDecisionCount",
+        "suppressedDecisionCount",
+        "clipAvailabilityCount")
+
     return [ordered]@{
         total = $results.Count
         completed = [int](Get-PropertyValue -Object $Report.summary -Name "completed" -DefaultValue 0)
@@ -296,6 +384,31 @@ function Get-RunMetrics {
         falseAutoApplyCount = [int]$falseAutoApplyCount
         missingExpectedNameCount = [int]$missingExpectedNameCount
         unknownSpeakerCount = [int]$unknownSpeakerCount
+        aggregateEvidence = [ordered]@{
+            sampleSize = $results.Count
+            speakerCount = [ordered]@{
+                observedSampleCount = $observedSpeakerCountResults.Count
+                unknownSampleCount = $results.Count - $observedSpeakerCountResults.Count
+                correctCount = $correctSpeakerCount
+                confidenceInterval = Get-WilsonConfidenceInterval -Successes $correctSpeakerCount -SampleSize $observedSpeakerCountResults.Count
+            }
+            clusters = [ordered]@{
+                detected = Get-ObservedMetric -Results $results -PropertyName "detectedSpeakerCount" -NestedPropertyName ""
+                voiceSampleSupport = Get-ObservedMetric -Results $results -PropertyName "voiceSampleCount" -NestedPropertyName ""
+            }
+            turns = [ordered]@{
+                segments = Get-ObservedMetric -Results $results -PropertyName "segmentCount" -NestedPropertyName ""
+                contiguousRuns = Get-ObservedMetric -Results $results -PropertyName "contiguousSpeakerRunCount" -NestedPropertyName ""
+            }
+            identity = [ordered]@{
+                detectedNames = Get-ObservedMetric -Results $results -PropertyName "detectedNameCount" -NestedPropertyName "speakerNameMetrics"
+                suggestions = Get-ObservedMetric -Results $results -PropertyName "suggestionCount" -NestedPropertyName "speakerNameMetrics"
+                autoApplies = Get-ObservedMetric -Results $results -PropertyName "autoApplyCount" -NestedPropertyName "speakerNameMetrics"
+                falseAutoApplies = [int]$falseAutoApplyCount
+                unknownSpeakerCount = [int]$unknownSpeakerCount
+            }
+            unavailableMetrics = $unavailableMetrics
+        }
     }
 }
 
@@ -438,7 +551,6 @@ function Invoke-CatalogRun {
             isBaseline = [bool]$Candidate.isBaseline
             status = $runStatus
             message = $message
-            reportPath = $runReportPath
             parameters = $environmentMap
             metrics = Get-RunMetrics -Report $report
             report = $report
@@ -490,7 +602,6 @@ foreach ($candidate in $candidates) {
             isBaseline = $false
             status = "skipped"
             message = [string]$candidate.disabledReason
-            reportPath = $null
             parameters = ConvertTo-EnvironmentMap -EnvironmentObject $candidate.environment
             metrics = $null
             report = $null
@@ -532,11 +643,23 @@ else {
 }
 
 $finalReport = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    catalogPath = $resolvedCatalogPath
-    candidatePath = $resolvedCandidatePath
     dryRun = [bool]$DryRun
+    provenance = [ordered]@{
+        catalogSha256 = Get-FileSha256 -PathValue $resolvedCatalogPath
+        candidateSha256 = Get-FileSha256 -PathValue $resolvedCandidatePath
+        calibrationScriptSha256 = Get-FileSha256 -PathValue $PSCommandPath
+        runtime = "PowerShell $($PSVersionTable.PSVersion)"
+        model = "not-recorded"
+    }
+    governance = [ordered]@{
+        metadataOnly = $true
+        humanReviewRequired = $true
+        humanReviewStatus = "not-recorded"
+        productionDefaultsChanged = $false
+        retention = "Retain this redacted metadata-only report with the reviewed release evidence."
+    }
     filters = [ordered]@{
         fixtureId = $FixtureId
         category = $Category
@@ -550,11 +673,8 @@ $finalReport = [ordered]@{
     runs = @($runs | ForEach-Object {
             [ordered]@{
                 name = $_.name
-                description = $_.description
                 isBaseline = $_.isBaseline
                 status = $_.status
-                message = $_.message
-                reportPath = $_.reportPath
                 parameters = $_.parameters
                 metrics = $_.metrics
             }

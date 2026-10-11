@@ -262,6 +262,11 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Equal(2, (int?)enabledResult["contiguousSpeakerRunCount"]);
             Assert.Equal(1, (int?)enabledResult["artifactSafety"]?["protectedArtifactCount"]);
             Assert.True((bool?)enabledResult["artifactSafety"]?["allUnchanged"]);
+            Assert.Null(report["catalogPath"]);
+            Assert.NotNull((string?)report["catalogSha256"]);
+            Assert.Null(enabledResult["title"]);
+            Assert.Null(enabledResult["artifactSafety"]?["artifacts"]);
+            Assert.DoesNotContain(tempRoot, reportText, StringComparison.OrdinalIgnoreCase);
 
             var scriptContents = File.ReadAllText(scriptPath);
             Assert.Contains("Test-DiarizationFixture.ps1", scriptContents, StringComparison.Ordinal);
