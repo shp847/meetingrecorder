@@ -27,6 +27,8 @@ public sealed record SpeakerClusterMergeTransactionResult(
     bool IsApplied,
     string? ConflictReason = null);
 
+public sealed record SegmentAttributionOverrideTransactionResult(bool IsApplied, string? ConflictReason = null);
+
 public sealed class MeetingOutputCatalogService
 {
     private const int MaxJsonTitlePreviewBytes = 64 * 1024;
@@ -47,6 +49,29 @@ public sealed class MeetingOutputCatalogService
     public MeetingOutputCatalogService(ArtifactPathBuilder pathBuilder)
     {
         _pathBuilder = pathBuilder;
+    }
+
+    public async Task<SegmentAttributionOverrideTransactionResult> ApplySegmentAttributionOverrideIfCurrentAsync(
+        MeetingOutputRecord record, string expectedRevision, SegmentAttributionOverride value, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(expectedRevision) || !string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+            return new(false, "Meeting speaker data changed. Reload before correcting this paragraph.");
+        if (!string.Equals(value.ArtifactRevision, expectedRevision, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(record.JsonPath) || !File.Exists(record.JsonPath))
+            return new(false, "Published transcript data is unavailable.");
+        var temp = record.JsonPath + ".segment-override-" + Guid.NewGuid().ToString("N") + ".tmp";
+        var backup = record.JsonPath + ".segment-override-" + Guid.NewGuid().ToString("N") + ".bak";
+        try
+        {
+            File.Copy(record.JsonPath, temp, false);
+            var root = JsonNode.Parse(await File.ReadAllTextAsync(temp, cancellationToken)) as JsonObject;
+            if (root is null) return new(false, "Published transcript data is unreadable.");
+            if (!SegmentAttributionOverrideDocumentMutator.TryApply(root, value, out var reason)) return new(false, reason ?? "Paragraph correction could not be applied.");
+            await File.WriteAllTextAsync(temp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+            if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal)) return new(false, "Meeting speaker data changed. Reload before correcting this paragraph.");
+            File.Replace(temp, record.JsonPath, backup, true);
+            return new(true);
+        }
+        finally { TryDeleteArtifactTransactionFile(temp); TryDeleteArtifactTransactionFile(backup); }
     }
 
     public IReadOnlyList<MeetingOutputRecord> ListMeetings(string audioOutputDir, string transcriptOutputDir)
