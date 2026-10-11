@@ -7289,6 +7289,9 @@ public partial class MainWindow : Window
                 {
                     Segments = overrideProjection.Rows,
                     StructuredSegments = overrideProjection.EffectiveSegments,
+                    StatusText = transcript.PriorAttributionOverrideCount == 0
+                        ? transcript.StatusText
+                        : $"{transcript.StatusText} {transcript.PriorAttributionOverrideCount} prior paragraph correction(s) need review after reprocessing.",
                 };
                 state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
                     row.Source,

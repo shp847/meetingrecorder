@@ -22,7 +22,8 @@ internal static class MeetingTranscriptDocumentReader
                 out var structuredSegments,
                 out var summarizationStatus,
                 out var summary,
-                out var overrides))
+                out var overrides,
+                out var priorOverrideCount))
         {
             return new MeetingTranscriptReaderResult(
                 jsonSegments.Count > 0,
@@ -32,7 +33,8 @@ internal static class MeetingTranscriptDocumentReader
                 summarizationStatus,
                 summary,
                 HasStructuredJson: true,
-                overrides);
+                overrides,
+                priorOverrideCount);
         }
 
         var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
@@ -76,6 +78,7 @@ internal static class MeetingTranscriptDocumentReader
                 out var jsonStructuredSegments,
                 out _,
                 out _,
+                out _,
                 out _) &&
             jsonStructuredSegments.Count > 0)
         {
@@ -97,7 +100,7 @@ internal static class MeetingTranscriptDocumentReader
     {
         segments = Array.Empty<TranscriptSegment>();
         return !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath) &&
-               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, preferSourceLabels: true) &&
+               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, out _, preferSourceLabels: true) &&
                segments.Count > 0;
     }
 
@@ -108,6 +111,7 @@ internal static class MeetingTranscriptDocumentReader
         out ProcessingStageStatus? summarizationStatus,
         out MeetingSummary? summary,
         out IReadOnlyList<SegmentAttributionOverride> overrides,
+        out int priorOverrideCount,
         bool preferSourceLabels = false)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
@@ -115,6 +119,7 @@ internal static class MeetingTranscriptDocumentReader
         summarizationStatus = null;
         summary = null;
         overrides = Array.Empty<SegmentAttributionOverride>();
+        priorOverrideCount = 0;
         try
         {
             var root = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
@@ -175,6 +180,9 @@ internal static class MeetingTranscriptDocumentReader
             summarizationStatus = TryReadSummarizationStatus(root);
             summary = TryReadSummary(root);
             overrides = root is null ? Array.Empty<SegmentAttributionOverride>() : ReadAttributionOverrides(root);
+            priorOverrideCount = root?["priorSegmentAttributionOverrides"] is JsonArray prior
+                ? prior.OfType<JsonObject>().Count()
+                : 0;
             return structuredRows.Count > 0;
         }
         catch

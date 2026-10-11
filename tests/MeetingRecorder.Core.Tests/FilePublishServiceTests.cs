@@ -133,6 +133,34 @@ public sealed class FilePublishServiceTests
         Assert.Equal("{\"revision\":\"enriched\"}", await File.ReadAllTextAsync(enriched.JsonPath));
     }
 
+    [Fact]
+    public async Task PublishAsync_Retains_Previous_Paragraph_Override_As_NonApplying_Audit()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var sourceDir = Path.Combine(root, "source");
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(sourceDir);
+        var audioPath = Path.Combine(sourceDir, "source.wav");
+        var markdownPath = Path.Combine(sourceDir, "source.md");
+        var jsonPath = Path.Combine(sourceDir, "source.json");
+        CreateFloatWave(audioPath, TimeSpan.FromSeconds(1), 16_000, 1);
+        await File.WriteAllTextAsync(markdownPath, "# First");
+        await File.WriteAllTextAsync(jsonPath, """{ "segments":[], "speakerAttributionOverrides":[{"id":"override-1"}] }""");
+        var service = new FilePublishService();
+        var first = await service.PublishAsync(audioPath, markdownPath, jsonPath, audioDir, transcriptDir, "2026-03-19_143250_teams_example");
+
+        await File.WriteAllTextAsync(markdownPath, "# Reprocessed");
+        await File.WriteAllTextAsync(jsonPath, """{ "segments":[] }""");
+        var reprocessed = await service.PublishAsync(audioPath, markdownPath, jsonPath, audioDir, transcriptDir, "2026-03-19_143250_teams_example");
+
+        var publishedJson = await File.ReadAllTextAsync(reprocessed.JsonPath);
+        Assert.Contains("priorSegmentAttributionOverrides", publishedJson, StringComparison.Ordinal);
+        Assert.Contains("override-1", publishedJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"speakerAttributionOverrides\"", publishedJson, StringComparison.Ordinal);
+        Assert.Equal(first.ReadyMarkerPath, reprocessed.ReadyMarkerPath);
+    }
+
     private static void CreateFloatWave(string path, TimeSpan duration, int sampleRate, int channels)
     {
         using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels));

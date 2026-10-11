@@ -1,5 +1,7 @@
 using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace MeetingRecorder.Core.Services;
 
@@ -51,6 +53,7 @@ public sealed class FilePublishService
         var readyDestination = Path.Combine(sidecarTranscriptDir, $"{stem}.ready");
 
         PublishFile(markdownPath, markdownDestination, cancellationToken);
+        PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
         PublishFile(jsonPath, jsonDestination, cancellationToken);
 
         if (!File.Exists(audioDestination) || !File.Exists(markdownDestination) || !File.Exists(jsonDestination))
@@ -120,6 +123,55 @@ public sealed class FilePublishService
 
         File.Copy(sourcePath, tempPath, overwrite: true);
         File.Move(tempPath, destinationPath, overwrite: true);
+    }
+
+    private static void PreservePriorSegmentAttributionOverrides(string existingJsonPath, string nextJsonPath)
+    {
+        if (!File.Exists(existingJsonPath) || !File.Exists(nextJsonPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(existingJsonPath)) as JsonObject;
+            var next = JsonNode.Parse(File.ReadAllText(nextJsonPath)) as JsonObject;
+            if (existing is null || next is null)
+            {
+                return;
+            }
+
+            var prior = new JsonArray();
+            foreach (var source in new[] { existing["priorSegmentAttributionOverrides"], existing["speakerAttributionOverrides"] })
+            {
+                if (source is not JsonArray records)
+                {
+                    continue;
+                }
+
+                foreach (var record in records.OfType<JsonObject>())
+                {
+                    var id = record["id"]?.GetValue<string>() ?? record["Id"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(id) && prior.OfType<JsonObject>().Any(item =>
+                            string.Equals(item["id"]?.GetValue<string>() ?? item["Id"]?.GetValue<string>(), id, StringComparison.Ordinal)))
+                    {
+                        continue;
+                    }
+
+                    prior.Add(record.DeepClone());
+                }
+            }
+
+            if (prior.Count > 0)
+            {
+                next["priorSegmentAttributionOverrides"] = prior;
+                File.WriteAllText(nextJsonPath, next.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            }
+        }
+        catch
+        {
+            // Publishing new source artifacts must not fail because an older optional audit cannot be read.
+        }
     }
 
     private static void PublishSidecarsWithRollback(
