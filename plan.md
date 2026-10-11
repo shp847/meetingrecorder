@@ -125,7 +125,7 @@ records an approved dependency change.
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
 | 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Done` | 2026-10-11: artifact-first receipt, retry, scoped feedback, learning boundary, and undo completion verified below. |
-| 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
+| 9 — Automatic Future Naming | `Done` | 2026-10-11: versioned conservative eligibility, post-publication local attribution, receipts, and no-hint boundary verified below. |
 | 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
 | 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
 | 12 — Summary And Derived Output Consistency | `Done` | 2026-10-10: persisted attribution provenance, guarded manual regeneration, historic action-item state, focused tests, docs, and installer build verified. |
