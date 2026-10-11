@@ -94,6 +94,49 @@ public sealed class SpeakerReviewClipServiceTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task GetOrCreateAsync_Returns_Canceled_Without_Leaving_A_Temporary_Clip()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.wav");
+            WriteSilence(source, seconds: 20);
+            var cache = Path.Combine(root, "speaker-review");
+            var service = new SpeakerReviewClipService(cache);
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            var result = await service.GetOrCreateAsync(Request(source, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(6)), cancellation.Token);
+
+            Assert.Equal(SpeakerReviewClipState.Canceled, result.State);
+            Assert.False(Directory.Exists(cache));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task GetOrCreateAsync_Concurrent_Equivalent_Requests_Share_One_Clip()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.wav");
+            WriteSilence(source, seconds: 20);
+            var cache = Path.Combine(root, "speaker-review");
+            var service = new SpeakerReviewClipService(cache);
+            var request = Request(source, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(6));
+
+            var results = await Task.WhenAll(service.GetOrCreateAsync(request), service.GetOrCreateAsync(request));
+
+            Assert.All(results, result => Assert.True(result.IsAvailable));
+            Assert.Equal(results[0].ClipPath, results[1].ClipPath);
+            Assert.Single(Directory.GetFiles(cache, "*.wav"));
+            Assert.Empty(Directory.GetFiles(cache, "*.tmp-*"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private static SpeakerReviewClipRequest Request(string path, TimeSpan start, TimeSpan end) =>
         new("meeting-stable-id", "revision", "speaker-id", start, end, path);
 

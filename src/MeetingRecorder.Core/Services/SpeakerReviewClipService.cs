@@ -42,7 +42,9 @@ public sealed class SpeakerReviewClipService
     private const int MaximumCacheFiles = 48;
     private const long MaximumCacheBytes = 100L * 1024 * 1024;
     private static readonly TimeSpan MaximumCacheAge = TimeSpan.FromDays(3);
+    private static readonly TimeSpan TemporaryClipMaximumAge = TimeSpan.FromMinutes(15);
     private static readonly ConcurrentDictionary<string, int> ActiveLeases = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _generationGates = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _cacheRoot;
 
     public SpeakerReviewClipService(string? cacheRoot = null)
@@ -55,7 +57,11 @@ public sealed class SpeakerReviewClipService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Canceled();
+        }
+
         if (string.IsNullOrWhiteSpace(request.MeetingStableIdentity) ||
             string.IsNullOrWhiteSpace(request.ArtifactRevision) ||
             string.IsNullOrWhiteSpace(request.SpeakerId) ||
@@ -66,7 +72,9 @@ public sealed class SpeakerReviewClipService
         }
 
         var source = new FileInfo(request.SourceAudioPath);
-        var fingerprint = $"{source.Length}:{source.LastWriteTimeUtc.Ticks}";
+        var sourceLength = source.Length;
+        var sourceLastWriteUtc = source.LastWriteTimeUtc;
+        var fingerprint = $"{sourceLength}:{sourceLastWriteUtc.Ticks}";
         try
         {
             using var durationReader = new AudioFileReader(source.FullName);
@@ -86,28 +94,44 @@ public sealed class SpeakerReviewClipService
                 return new(SpeakerReviewClipState.Available, "Local review clip ready.", cachePath, start, clipDuration);
             }
 
-            var tempPath = cachePath + ".tmp-" + Guid.NewGuid().ToString("N");
+            var gate = _generationGates.GetOrAdd(cachePath, static _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(cancellationToken);
             try
             {
-                await Task.Run(() => Extract(source.FullName, tempPath, start, clipDuration, cancellationToken), cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                var after = new FileInfo(source.FullName);
-                if (after.Length != source.Length || after.LastWriteTimeUtc != source.LastWriteTimeUtc)
+                if (TryReadValidClip(cachePath, clipDuration))
                 {
-                    return Unavailable("Audio changed while the review clip was prepared.");
+                    File.SetLastAccessTimeUtc(cachePath, DateTime.UtcNow);
+                    return new(SpeakerReviewClipState.Available, "Local review clip ready.", cachePath, start, clipDuration);
                 }
 
-                if (!TryReadValidClip(tempPath, clipDuration))
+                var tempPath = cachePath + ".tmp-" + Guid.NewGuid().ToString("N");
+                try
                 {
-                    return Unavailable("Audio clip could not be prepared safely.");
-                }
+                    await Task.Run(() => Extract(source.FullName, tempPath, start, clipDuration, cancellationToken), cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var after = new FileInfo(source.FullName);
+                    if (after.Length != sourceLength || after.LastWriteTimeUtc != sourceLastWriteUtc)
+                    {
+                        return Unavailable("Audio changed while the review clip was prepared.");
+                    }
 
-                File.Move(tempPath, cachePath, overwrite: true);
-                return new(SpeakerReviewClipState.Available, "Local review clip ready.", cachePath, start, clipDuration);
+                    if (!TryReadValidClip(tempPath, clipDuration))
+                    {
+                        return Unavailable("Audio clip could not be prepared safely.");
+                    }
+
+                    File.Move(tempPath, cachePath, overwrite: true);
+                    await CleanupAsync(cancellationToken);
+                    return new(SpeakerReviewClipState.Available, "Local review clip ready.", cachePath, start, clipDuration);
+                }
+                finally
+                {
+                    TryDelete(tempPath);
+                }
             }
             finally
             {
-                TryDelete(tempPath);
+                gate.Release();
             }
         }
         catch (OperationCanceledException)
@@ -140,7 +164,11 @@ public sealed class SpeakerReviewClipService
                 retainedBytes += file.Length;
             }
         }
-        foreach (var temporary in new DirectoryInfo(_cacheRoot).EnumerateFiles("*.tmp-*")) TryDelete(temporary.FullName);
+        foreach (var temporary in new DirectoryInfo(_cacheRoot).EnumerateFiles("*.tmp-*")
+                     .Where(file => DateTime.UtcNow - file.LastWriteTimeUtc > TemporaryClipMaximumAge))
+        {
+            TryDelete(temporary.FullName);
+        }
     }, cancellationToken);
 
     public IDisposable AcquireLease(string clipPath)
@@ -194,6 +222,7 @@ public sealed class SpeakerReviewClipService
     }
 
     private static SpeakerReviewClipResult Unavailable(string message) => new(SpeakerReviewClipState.Unavailable, message, null, TimeSpan.Zero, TimeSpan.Zero);
+    private static SpeakerReviewClipResult Canceled() => new(SpeakerReviewClipState.Canceled, "Audio clip preparation was canceled.", null, TimeSpan.Zero, TimeSpan.Zero);
     private static bool IsLeased(string path) => ActiveLeases.ContainsKey(path);
     private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
 

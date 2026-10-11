@@ -360,8 +360,11 @@
                                                                                 Style="{StaticResource SecondaryActionButtonStyle}"
                                                                                 Click="PlaySpeakerEvidenceCueButton_OnClick"
                                                                                 Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
-                                                                                AutomationProperties.Name="Play local evidence audio clip"
+                                                                                AutomationProperties.Name="{Binding DataContext.PlaybackText, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
                                                                                 Content="{Binding DataContext.PlaybackText, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                                                                        <TextBlock Margin="0,4,0,0"
+                                                                                   Text="{Binding DataContext.PlaybackProgressText, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                                                                                   AutomationProperties.Name="Evidence clip playback progress" />
                                                                         <Button Margin="0,6,0,0"
                                                                                 HorizontalAlignment="Left"
                                                                                 Style="{StaticResource SecondaryActionButtonStyle}"

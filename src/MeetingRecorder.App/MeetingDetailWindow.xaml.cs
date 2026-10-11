@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
+using System.Windows.Threading;
 
 namespace MeetingRecorder.App;
 
@@ -81,6 +82,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
 
     public string PlaybackText { get; set; } = "Play clip";
 
+    public string PlaybackProgressText { get; set; } = string.Empty;
+
     public bool IsSelectedForMerge { get; set; }
 
     public int AffectedTurnCount { get; } = Math.Max(0, affectedTurnCount);
@@ -157,10 +160,13 @@ public partial class MeetingDetailWindow : Window
     private AudioFileReader? _speakerReviewReader;
     private IDisposable? _speakerReviewLease;
     private MeetingDetailSpeakerLabelEditorRow? _playingSpeakerRow;
+    private readonly DispatcherTimer _speakerReviewProgressTimer;
 
     public MeetingDetailWindow()
     {
         InitializeComponent();
+        _speakerReviewProgressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _speakerReviewProgressTimer.Tick += (_, _) => UpdateSpeakerReviewProgress();
     }
 
     internal event EventHandler? OpenTranscriptRequested;
@@ -214,6 +220,7 @@ public partial class MeetingDetailWindow : Window
         IReadOnlyList<string> projectOptions,
         IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> speakerLabelRows)
     {
+        StopSpeakerReviewPlayback();
         Title = $"Meeting Details - {state.Title}";
         MeetingTitleTextBlock.Text = state.Title;
         MeetingSubtitleTextBlock.Text = state.Subtitle;
@@ -351,6 +358,11 @@ public partial class MeetingDetailWindow : Window
     internal void SetMaintenanceBusy(bool isBusy)
     {
         _isMaintenanceBusy = isBusy;
+        if (isBusy)
+        {
+            StopSpeakerReviewPlayback();
+        }
+
         UpdateMaintenanceButtonAvailability();
     }
 
@@ -598,7 +610,22 @@ public partial class MeetingDetailWindow : Window
 
         if (ReferenceEquals(_playingSpeakerRow, row))
         {
-            StopSpeakerReviewPlayback();
+            if (_speakerReviewOutput?.PlaybackState == PlaybackState.Playing)
+            {
+                _speakerReviewOutput.Pause();
+                row.PlaybackText = "Resume clip";
+                SpeakerLabelsDataGrid.Items.Refresh();
+            }
+            else if (_speakerReviewOutput?.PlaybackState == PlaybackState.Paused)
+            {
+                _speakerReviewOutput.Play();
+                row.PlaybackText = "Stop clip";
+                SpeakerLabelsDataGrid.Items.Refresh();
+            }
+            else
+            {
+                StopSpeakerReviewPlayback();
+            }
             return;
         }
 
@@ -618,6 +645,8 @@ public partial class MeetingDetailWindow : Window
             _speakerReviewOutput.Play();
             _playingSpeakerRow = row;
             row.PlaybackText = "Stop clip";
+            row.PlaybackProgressText = "Playing 00:00";
+            _speakerReviewProgressTimer.Start();
             SpeakerLabelsDataGrid.Items.Refresh();
         }
         catch
@@ -638,12 +667,30 @@ public partial class MeetingDetailWindow : Window
         _speakerReviewReader = null;
         _speakerReviewLease?.Dispose();
         _speakerReviewLease = null;
+        _speakerReviewProgressTimer.Stop();
         if (previous is not null)
         {
             previous.PlaybackText = "Play clip";
+            previous.PlaybackProgressText = string.Empty;
             SpeakerLabelsDataGrid.Items.Refresh();
         }
     }
+
+    private void UpdateSpeakerReviewProgress()
+    {
+        if (_playingSpeakerRow is null || _speakerReviewReader is null)
+        {
+            _speakerReviewProgressTimer.Stop();
+            return;
+        }
+
+        _playingSpeakerRow.PlaybackProgressText = $"{FormatPlaybackTime(_speakerReviewReader.CurrentTime)} / {FormatPlaybackTime(_speakerReviewReader.TotalTime)}";
+        SpeakerLabelsDataGrid.Items.Refresh();
+    }
+
+    private static string FormatPlaybackTime(TimeSpan value) => value.TotalHours >= 1d
+        ? value.ToString(@"hh\:mm\:ss")
+        : value.ToString(@"mm\:ss");
 
     private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)
     {
