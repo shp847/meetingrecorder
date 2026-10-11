@@ -63,6 +63,7 @@ public partial class MainWindow : Window
     private readonly VoiceProfileStore _voiceProfileStore;
     private readonly SpeakerNameCorrectionService _speakerNameCorrectionService;
     private readonly MeetingCleanupExecutionService _meetingCleanupExecutionService;
+    private readonly MeetingArchiveReceiptService _meetingArchiveReceiptService;
     private readonly AutoStartRegistrationService _autoStartRegistrationService;
     private readonly AppUpdateService _appUpdateService;
     private readonly AppUpdateSchedulePolicy _appUpdateSchedulePolicy;
@@ -278,6 +279,7 @@ public partial class MainWindow : Window
             new VoiceProfileMatcher(),
             _voiceProfileStore);
         _meetingCleanupExecutionService = new MeetingCleanupExecutionService(_pathBuilder, _meetingOutputCatalogService);
+        _meetingArchiveReceiptService = new MeetingArchiveReceiptService();
         _autoStartRegistrationService = new AutoStartRegistrationService();
         _appUpdateService = new AppUpdateService();
         _appUpdateSchedulePolicy = new AppUpdateSchedulePolicy();
@@ -14715,10 +14717,16 @@ public partial class MainWindow : Window
             var archiveDirectory = MeetingCleanupExecutionService.CreateExecutionArchiveDirectory(archiveRoot, archiveLabel);
             foreach (var meeting in meetings)
             {
-                await _meetingCleanupExecutionService.ArchiveMeetingAsync(
-                    meeting.Source,
-                    archiveDirectory,
+                await _meetingArchiveReceiptService.ArchiveAsync(
+                    meeting.Source.Stem,
                     "manual-archive",
+                    [
+                        ("audio", meeting.Source.AudioPath),
+                        ("transcript", meeting.Source.MarkdownPath),
+                        ("metadata", meeting.Source.JsonPath),
+                        ("ready-marker", meeting.Source.ReadyMarkerPath),
+                    ],
+                    archiveDirectory,
                     _lifetimeCts.Token);
             }
 
