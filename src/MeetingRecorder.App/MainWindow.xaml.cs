@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     private const string SpeakerLabelingSetupGuideFallbackUrl = "https://github.com/shp847/meetingrecorder/blob/main/SETUP.md#speaker-labeling-optional";
     private const string TeamsThirdPartyApiGuideUrl = "https://support.microsoft.com/en-au/office/connect-to-third-party-devices-in-microsoft-teams-aabca9f2-47bb-407f-9f9b-81a104a883d6";
     private static readonly TimeSpan ShutdownUpdateCheckTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ShutdownProcessingStopTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan RecordingStorageAutoStartBackoff = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan TeamsRecordingPlaybackAbsentBeforeMerge = TimeSpan.FromMinutes(2);
     private static readonly Brush HealthyModelStatusBrush = CreateBrush(0x2E, 0x7D, 0x32);
@@ -2932,7 +2933,17 @@ public partial class MainWindow : Window
                 }
             }
 
-            await _processingQueue.StopAsync(CancellationToken.None);
+            using var shutdownProcessingStopCts = new CancellationTokenSource(ShutdownProcessingStopTimeout);
+            try
+            {
+                await _processingQueue.StopAsync(shutdownProcessingStopCts.Token);
+            }
+            catch (OperationCanceledException) when (shutdownProcessingStopCts.IsCancellationRequested)
+            {
+                _logger.Log("Processing queue did not stop within the shutdown deadline; continuing application exit.");
+                AppendActivity("Background processing stop timed out; continuing application shutdown.");
+            }
+
             AppendActivity("Application shutdown completed.");
         }
         catch (Exception exception)
@@ -5882,7 +5893,9 @@ public partial class MainWindow : Window
                     config.WorkDir),
                 _lifetimeCts.Token);
             var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
-            var recoveryReceiptsTask = _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, _lifetimeCts.Token);
+            var recoveryReceiptsTask = Task.Run(
+                () => _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, _lifetimeCts.Token),
+                _lifetimeCts.Token);
             var records = await recordsTask;
             var recoveryReceipts = await recoveryReceiptsTask;
             if (refreshVersion != Volatile.Read(ref _meetingRefreshVersion) || _lifetimeCts.IsCancellationRequested)
@@ -5904,7 +5917,8 @@ public partial class MainWindow : Window
                 $"transcripts={_allMeetingRows.Count(row => !string.IsNullOrWhiteSpace(row.Source.MarkdownPath) || !string.IsNullOrWhiteSpace(row.Source.JsonPath))}, " +
                 $"manifests={_allMeetingRows.Count(row => !string.IsNullOrWhiteSpace(row.Source.ManifestPath))}.");
 
-            if (refreshMode == MeetingRefreshMode.Full)
+            if (refreshMode == MeetingRefreshMode.Full &&
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
             {
                 var backgroundToken = CreateMeetingBackgroundWorkToken();
                 StartMeetingCleanupRecommendationRefresh(

@@ -34,6 +34,16 @@ public sealed class AppLifecycleSourceTests
     }
 
     [Fact]
+    public void Callback_Trace_Save_Does_Not_Resume_On_A_Blocking_Wpf_Dispatcher()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.Core", "Services", "CallbackIntentDispatcher.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(trace), cancellationToken)", source);
+        Assert.Contains(".ConfigureAwait(false);", source);
+    }
+
+    [Fact]
     public void Dispatcher_Unhandled_Exception_Path_Requests_Fatal_Shutdown()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");

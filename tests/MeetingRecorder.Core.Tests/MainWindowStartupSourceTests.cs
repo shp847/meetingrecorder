@@ -47,6 +47,18 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Home_Refresh_Does_Not_Start_Automatic_Cleanup_And_Offloads_Archive_Receipt_Scanning()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("Task.Run(", source);
+        Assert.Contains("() => _meetingArchiveReceiptService.FindReceiptsAsync", source);
+        Assert.Contains("refreshMode == MeetingRefreshMode.Full &&", source);
+        Assert.Contains("ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", source);
+    }
+
+    [Fact]
     public void Full_Refresh_Publishes_Baseline_Rows_Before_Queueing_Background_Enrichment()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -514,6 +526,21 @@ public sealed class MainWindowStartupSourceTests
 
         Assert.Contains("CloseHeaderSurfaces();", shutdownBlock);
         Assert.Contains("application.Shutdown();", shutdownBlock);
+    }
+
+    [Fact]
+    public void Shutdown_Path_Bounds_Processing_Queue_Stop_Before_Closing_The_Application()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var shutdownStart = source.IndexOf("private async Task ShutdownAsync()", StringComparison.Ordinal);
+        var shutdownEnd = source.IndexOf("private async Task StopCurrentRecordingAsync(", shutdownStart, StringComparison.Ordinal);
+        var shutdownBlock = source[shutdownStart..shutdownEnd];
+
+        Assert.Contains("ShutdownProcessingStopTimeout", source);
+        Assert.Contains("new CancellationTokenSource(ShutdownProcessingStopTimeout)", shutdownBlock);
+        Assert.Contains("await _processingQueue.StopAsync(shutdownProcessingStopCts.Token);", shutdownBlock);
+        Assert.Contains("continuing application exit", shutdownBlock, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

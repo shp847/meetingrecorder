@@ -91,7 +91,8 @@ public sealed class CallbackIntentTraceStore
             throw new ArgumentException("Callback trace is invalid or exceeds its bounded capacity.", nameof(trace));
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var temporary = _path + ".tmp";
-        await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(trace), cancellationToken);
+        await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(trace), cancellationToken)
+            .ConfigureAwait(false);
         File.Move(temporary, _path, true);
     }
 

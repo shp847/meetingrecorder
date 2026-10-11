@@ -778,6 +778,10 @@ What the current app does:
 - when shutdown cleanup finishes, the app now explicitly tears down any header surfaces and requests full WPF application shutdown instead of relying only on the main window close path
 - automatic update handoff now requests a full application shutdown instead of only closing the main window, so modeless header surfaces cannot keep the process alive after the window disappears
 - app exit no longer blocks the UI thread waiting on the activation and installer-shutdown monitor tasks, which prevents a closed window from turning into a stuck headless background process
+- app shutdown now bounds processing-queue drain to 15 seconds; if a worker or drain task fails to stop, it records the timeout and completes normal WPF exit instead of leaving an unusable process alive
+- fresh and same-version MSI installs now always resolve `INSTALLFOLDER` to the per-user `MeetingRecorder` directory before costing, so upgrade repair cannot mistake its relative directory name for an unavailable network location
+- callback-intent trace writes no longer resume through the WPF dispatcher, preventing a synchronous crash-recovery trace checkpoint from deadlocking the main window during startup
+- startup defers automatic meeting-cleanup batches until the Meetings tab is open, and scans archive-recovery receipts in background work so the Home tab stays interactive with a large meeting history
 - same-version pending updates are only promoted to the installed state when their release identity matches the installed build, so refreshed packages with the same version still get a real install attempt when you launch them manually
 - background auto-install and passive pending-update retry only run for true version upgrades, while an explicitly queued manual same-version update can still install once background processing becomes idle
 - launch-on-login registration now resolves the installed `MeetingRecorder.App.exe` path from the running process instead of persisting a temporary `%TEMP%\\.net\\...` extraction path
