@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 58.
-**Ready:** 37. **Partial:** 28. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 59.
+**Ready:** 37. **Partial:** 27. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -127,7 +127,7 @@ records an approved dependency change.
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
-| 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
+| 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
 | 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
@@ -4007,8 +4007,8 @@ Sprint 10 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 structural diagnosis slice).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 structural diagnosis slice); `Done` (2026-10-10: implementation and focused verification complete; product owner accepts production feedback instead of a separate manual qualification step).
 - User outcome: a reviewer knows whether a speaker problem needs naming, paragraph correction, merge, rematch, or a true label repair—and repair does not silently erase their work.
 - Scope / non-goals: make existing suspicious-label/worker-repair capabilities explainable and safe. Do not silently tune clustering, turn repair into name refresh, guarantee quality improvement, or auto-transfer stale speaker identities to newly generated clusters.
 - Dependencies and decisions: consume S1–S10 identity/revision/receipt rules. Current catalog flags suspicious distributions and cleanup can queue `RepairSpeakerLabels`; worker has oversegmentation recovery. Replace boolean-only presentation with a pure `SpeakerQualityDiagnosis` from bounded structural metadata: cluster count, tiny-turn ratio, run churn, unsupported count, duplicate effective names, sample/turn coverage, and current processing state—never transcript/audio contents.
@@ -4024,7 +4024,7 @@ Sprint 10 acceptance criteria:
 - Evidence and date: 2026-10-10 added `SpeakerRepairPreflightResolver` and explicit repair confirmation. It blocks stale/busy/unready requests and states user/profile-name review consequences before requeueing local speaker-label work; focused diagnosis/preflight/UI contracts passed 70/70.
 - Evidence and date: 2026-10-10 Speaker Review now derives a local structural quality check from current manifest speaker/turn metadata and shows its single recommended route; focused diagnosis/XAML contracts passed 57/57.
 - Evidence and date: 2026-10-10 added a bounded local repair-intent audit with opaque meeting/revision and attribution counts before user-confirmed queueing. It stores no names, transcript text, audio, or paths; focused contracts passed 56/56 and the installer build passed.
-- Remaining gap or next action: reconcile repair audit state after worker publication before marking this sprint Done.
+- Remaining gap or next action: none. Production reports remain the feedback channel; reopen only for a scoped regression.
 
 Goal: prevent users from trying to rename their way through broken clustering.
 
