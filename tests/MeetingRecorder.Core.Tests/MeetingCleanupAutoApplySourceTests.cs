@@ -128,12 +128,16 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodStart = source.IndexOf("private async Task RefreshMeetingListAsync", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("private void StartMeetingCleanupRecommendationRefresh", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
-        var successStart = methodBlock.IndexOf("var records = await Task.Run(", StringComparison.Ordinal);
+        var successStart = methodBlock.IndexOf("var recordsTask = Task.Run(", StringComparison.Ordinal);
         var successEnd = methodBlock.IndexOf("catch (OperationCanceledException)", successStart, StringComparison.Ordinal);
         var successBlock = methodBlock[successStart..successEnd];
 
         Assert.DoesNotContain(
             "_meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();",
+            successBlock,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "var records = await recordsTask;",
             successBlock,
             StringComparison.Ordinal);
         Assert.Contains(
