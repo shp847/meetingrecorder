@@ -1067,6 +1067,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("It does not open or change audio, transcript words/timestamps, diarization, summaries, or worker processing.", source);
         Assert.Contains("ConfirmSpeakerLabelRepairAsync", source);
         Assert.Contains("SpeakerRepairPreflightResolver.Resolve", source);
+        Assert.Contains("_speakerRepairAuditStore.RecordQueuedAsync", source);
         Assert.DoesNotContain("ApplyMeetingRecommendationsAsync(selectedRecommendations, \"context-bulk\")", source);
     }
 

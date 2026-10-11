@@ -4023,7 +4023,8 @@ Sprint 10 acceptance criteria:
 - Evidence and date: 2026-09-29 added `SpeakerQualityDiagnosisResolver` tests for unknown/current/processing, fragmented labels, repair readiness, naming, and normal merge routing. It uses bounded structural metadata only and does not inspect transcript or audio contents.
 - Evidence and date: 2026-10-10 added `SpeakerRepairPreflightResolver` and explicit repair confirmation. It blocks stale/busy/unready requests and states user/profile-name review consequences before requeueing local speaker-label work; focused diagnosis/preflight/UI contracts passed 70/70.
 - Evidence and date: 2026-10-10 Speaker Review now derives a local structural quality check from current manifest speaker/turn metadata and shows its single recommended route; focused diagnosis/XAML contracts passed 57/57.
-- Remaining gap or next action: preserve/invalidate repair audit state across worker publication before marking this sprint Done.
+- Evidence and date: 2026-10-10 added a bounded local repair-intent audit with opaque meeting/revision and attribution counts before user-confirmed queueing. It stores no names, transcript text, audio, or paths; focused contracts passed 56/56 and the installer build passed.
+- Remaining gap or next action: reconcile repair audit state after worker publication before marking this sprint Done.
 
 Goal: prevent users from trying to rename their way through broken clustering.
 

@@ -63,6 +63,7 @@ public partial class MainWindow : Window
     private readonly VoiceProfileStore _voiceProfileStore;
     private readonly SpeakerNameCorrectionService _speakerNameCorrectionService;
     private readonly PastRematchService _pastRematchService;
+    private readonly SpeakerRepairAuditStore _speakerRepairAuditStore;
     private readonly MeetingCleanupExecutionService _meetingCleanupExecutionService;
     private readonly MeetingArchiveReceiptService _meetingArchiveReceiptService;
     private readonly AutoStartRegistrationService _autoStartRegistrationService;
@@ -284,6 +285,7 @@ public partial class MainWindow : Window
             _manifestStore,
             _voiceProfileStore,
             _speakerNameCorrectionService);
+        _speakerRepairAuditStore = new SpeakerRepairAuditStore();
         _meetingCleanupExecutionService = new MeetingCleanupExecutionService(_pathBuilder, _meetingOutputCatalogService);
         _meetingArchiveReceiptService = new MeetingArchiveReceiptService();
         _autoStartRegistrationService = new AutoStartRegistrationService();
@@ -15161,12 +15163,33 @@ public partial class MainWindow : Window
             return false;
         }
 
-        return MessageBox.Show(
+        var confirmed = MessageBox.Show(
             this,
             $"{preflight.Summary}\n\n{preflight.Consequence}\n\nContinue?",
             "Repair Speaker Labels",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _speakerRepairAuditStore.RecordQueuedAsync(new SpeakerRepairAuditEntry(
+                meeting.Source.Stem,
+                MeetingOutputCatalogService.GetSpeakerArtifactRevision(meeting.Source),
+                speakers.Count(speaker => speaker.IsUserEdited || speaker.NameSource == SpeakerNameSource.UserEdited),
+                speakers.Count(speaker => speaker.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile),
+                DateTimeOffset.UtcNow,
+                "queued"), _lifetimeCts.Token);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Could not record speaker-label repair audit: {exception}");
+        }
+
+        return true;
     }
 
     private bool CanQueueSpeakerLabelsForMeeting(MeetingListRow row)
