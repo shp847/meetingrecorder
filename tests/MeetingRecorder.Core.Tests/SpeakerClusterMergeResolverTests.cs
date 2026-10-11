@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.Core.Tests;
@@ -42,6 +43,19 @@ public sealed class SpeakerClusterMergeResolverTests
             new Dictionary<string, string> { ["speaker-a"] = "speaker-b" });
 
         Assert.Equal(SpeakerClusterMergeDisposition.Redundant, decision.Disposition);
+    }
+
+    [Fact]
+    public void BuildCanonicalMap_Composes_Persisted_Merge_Chains_Without_Changing_Source_Ids()
+    {
+        var map = SpeakerClusterMergeResolver.BuildCanonicalMap(
+        [
+            new SpeakerClusterMergeMetadata("merge-1", "revision-1", ["speaker-a", "speaker-b"], "speaker-a", "evidence-1", DateTimeOffset.UtcNow),
+            new SpeakerClusterMergeMetadata("merge-2", "revision-2", ["speaker-a", "speaker-c"], "speaker-c", "evidence-2", DateTimeOffset.UtcNow),
+        ]);
+
+        Assert.Equal("speaker-c", map["speaker-a"]);
+        Assert.Equal("speaker-c", map["speaker-b"]);
     }
 
     private static SpeakerClusterMergeRecord Request(IReadOnlyList<string> sourceIds, string canonicalId) =>

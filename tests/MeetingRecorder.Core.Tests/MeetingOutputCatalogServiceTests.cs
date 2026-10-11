@@ -1189,6 +1189,154 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Equal(new[] { "Speaker 1", "Speaker 2" }, service.ListSpeakerLabels(meeting));
     }
 
+    [Fact]
+    public async Task AddSpeakerClusterMergeIfCurrentAsync_Writes_Effective_Labels_Without_Rewriting_Source_Ids_Or_Profiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var workDir = Path.Combine(root, "work");
+        var jsonDir = Path.Combine(transcriptDir, "json");
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(jsonDir);
+
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var stem = "2026-03-15_235430_teams_merge-test";
+        var manifest = await manifestStore.CreateAsync(workDir, MeetingPlatform.Teams, "Merge test", Array.Empty<DetectionSignal>());
+        var manifestPath = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var speakers = new[]
+        {
+            new SpeakerIdentity("speaker-a", "Alex", false, "profile-alex", SpeakerNameSource.AutoAppliedVoiceProfile, 0.95d),
+            new SpeakerIdentity("speaker-b", "Speaker B", false, "profile-b", SpeakerNameSource.SuggestedVoiceProfile, 0.72d),
+        };
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                State = SessionState.Published,
+                ProcessingMetadata = new MeetingProcessingMetadata(
+                    "model.bin",
+                    true,
+                    speakers,
+                    [
+                        new SpeakerTurn("speaker-a", TimeSpan.Zero, TimeSpan.FromSeconds(3)),
+                        new SpeakerTurn("speaker-b", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6)),
+                    ],
+                    SpeakerVoiceSamples:
+                    [
+                        new SpeakerVoiceSample("speaker-a", "embed.bin", 2, [1f, 0f], TimeSpan.FromSeconds(3), DateTimeOffset.Parse("2026-03-15T23:54:30Z")),
+                    ]),
+            },
+            manifestPath);
+
+        var audioPath = Path.Combine(audioDir, $"{stem}.wav");
+        var markdownPath = Path.Combine(transcriptDir, $"{stem}.md");
+        var jsonPath = Path.Combine(jsonDir, $"{stem}.json");
+        await File.WriteAllTextAsync(audioPath, "audio");
+        await File.WriteAllTextAsync(
+            markdownPath,
+            "[00:00:00 - 00:00:03] **Alex:** First" + Environment.NewLine +
+            "[00:00:03 - 00:00:06] **Speaker B:** Second");
+        await File.WriteAllTextAsync(
+            jsonPath,
+            JsonSerializer.Serialize(new
+            {
+                speakers,
+                segments = new object[]
+                {
+                    new { speakerId = "speaker-a", speakerLabel = "Alex", displaySpeakerLabel = "Alex", text = "First" },
+                    new { speakerId = "speaker-b", speakerLabel = "Speaker B", displaySpeakerLabel = "Speaker B", text = "Second" },
+                },
+            }));
+
+        var record = new MeetingOutputRecord(
+            stem,
+            "Merge test",
+            manifest.StartedAtUtc,
+            MeetingPlatform.Teams,
+            null,
+            audioPath,
+            markdownPath,
+            jsonPath,
+            null,
+            manifestPath,
+            SessionState.Published,
+            Array.Empty<MeetingAttendee>(),
+            true,
+            "model.bin");
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var merge = new SpeakerClusterMergeMetadata(
+            "merge-1",
+            revision,
+            ["speaker-a", "speaker-b"],
+            "speaker-a",
+            "evidence-1",
+            DateTimeOffset.Parse("2026-03-16T00:00:00Z"));
+
+        var result = await service.AddSpeakerClusterMergeIfCurrentAsync(record, revision, merge);
+
+        Assert.True(result.IsApplied, result.ConflictReason);
+        var savedManifest = await manifestStore.LoadAsync(manifestPath);
+        var savedMerge = Assert.Single(savedManifest.ProcessingMetadata!.SpeakerClusterMerges!);
+        Assert.Equal("speaker-a", savedMerge.CanonicalSpeakerId);
+        Assert.Equal("profile-alex", savedManifest.ProcessingMetadata.Speakers![0].ProfileId);
+        Assert.Equal("profile-b", savedManifest.ProcessingMetadata.Speakers![1].ProfileId);
+        Assert.Single(savedManifest.ProcessingMetadata.SpeakerVoiceSamples!);
+
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!.AsObject();
+        Assert.Equal("speaker-b", document["segments"]![1]!["speakerId"]!.GetValue<string>());
+        Assert.Equal("Alex", document["segments"]![1]!["speakerLabel"]!.GetValue<string>());
+        Assert.Equal("Speaker B", document["segments"]![1]!["displaySpeakerLabel"]!.GetValue<string>());
+        Assert.Equal("speaker-a", document["speakerClusterMerges"]![0]!["canonicalSpeakerId"]!.GetValue<string>());
+
+        var markdown = await File.ReadAllTextAsync(markdownPath);
+        Assert.Contains("**Alex:** Second", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("**Speaker B:**", markdown, StringComparison.Ordinal);
+        var rendered = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.Contains(rendered.StructuredSegments, row => row.SpeakerLabel == "Alex" && row.Text == "Second");
+    }
+
+    [Fact]
+    public async Task AddSpeakerClusterMergeIfCurrentAsync_Rejects_A_Stale_Revision_Without_Writing_An_Audit_Record()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var manifestPath = Path.Combine(root, "work", "session-merge", "manifest.json");
+        var jsonPath = Path.Combine(root, "transcripts", "json", "merge.json");
+        var markdownPath = Path.Combine(root, "transcripts", "merge.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(markdownPath)!);
+
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        await manifestStore.SaveAsync(
+            new MeetingSessionManifest
+            {
+                SessionId = "session-merge",
+                Platform = MeetingPlatform.Teams,
+                DetectedTitle = "Merge test",
+                StartedAtUtc = DateTimeOffset.Parse("2026-03-15T23:54:30Z"),
+                State = SessionState.Published,
+                ProcessingMetadata = new MeetingProcessingMetadata(
+                    "model.bin",
+                    true,
+                    [new SpeakerIdentity("speaker-a", "Alex", false), new SpeakerIdentity("speaker-b", "Speaker B", false)]),
+            },
+            manifestPath);
+        await File.WriteAllTextAsync(jsonPath, "{\"segments\":[]}");
+        await File.WriteAllTextAsync(markdownPath, "# Merge test");
+        var record = new MeetingOutputRecord("merge", "Merge test", DateTimeOffset.UtcNow, MeetingPlatform.Teams, null, null, markdownPath, jsonPath, null, manifestPath, SessionState.Published, Array.Empty<MeetingAttendee>(), true, "model.bin");
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        await File.AppendAllTextAsync(markdownPath, Environment.NewLine + "changed");
+
+        var result = await new MeetingOutputCatalogService(new ArtifactPathBuilder()).AddSpeakerClusterMergeIfCurrentAsync(
+            record,
+            revision,
+            new SpeakerClusterMergeMetadata("merge-stale", revision, ["speaker-a", "speaker-b"], "speaker-a", "evidence", DateTimeOffset.UtcNow));
+
+        Assert.False(result.IsApplied);
+        var savedManifest = await manifestStore.LoadAsync(manifestPath);
+        Assert.Empty(savedManifest.ProcessingMetadata!.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>());
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         var format = new WaveFormat(16000, 16, 1);

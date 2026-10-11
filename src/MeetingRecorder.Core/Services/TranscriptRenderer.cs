@@ -9,6 +9,7 @@ public sealed class TranscriptRenderer
     public string RenderMarkdown(MeetingSessionManifest manifest, IReadOnlyList<TranscriptSegment> segments)
     {
         var speakerCatalog = BuildSpeakerCatalog(manifest.ProcessingMetadata?.Speakers);
+        var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges);
         var metadataLines = new List<string>
         {
             $"- Session ID: {manifest.SessionId}",
@@ -49,7 +50,7 @@ public sealed class TranscriptRenderer
 
         var paragraphs = TranscriptParagraphBuilder.Build(
             segments,
-            segment => ResolveSpeakerLabel(segment, speakerCatalog));
+            segment => ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId));
         foreach (var paragraph in paragraphs)
         {
             lines.Add($"[{paragraph.Start:hh\\:mm\\:ss} - {paragraph.End:hh\\:mm\\:ss}] **{paragraph.SpeakerLabel}:** {paragraph.Text}");
@@ -61,6 +62,7 @@ public sealed class TranscriptRenderer
     public string RenderJson(MeetingSessionManifest manifest, IReadOnlyList<TranscriptSegment> segments)
     {
         var speakerCatalog = BuildSpeakerCatalog(manifest.ProcessingMetadata?.Speakers);
+        var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges);
         var payload = new TranscriptDocument(
             manifest.SessionId,
             manifest.Platform.ToString(),
@@ -83,11 +85,12 @@ public sealed class TranscriptRenderer
             manifest.ProcessingMetadata?.Speakers ?? Array.Empty<SpeakerIdentity>(),
             manifest.ProcessingMetadata?.SpeakerTurns ?? Array.Empty<SpeakerTurn>(),
             manifest.ProcessingMetadata?.DiarizationMetadata,
+            manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>(),
             segments.Select(segment => new TranscriptDocumentSegment(
                 segment.Start,
                 segment.End,
                 segment.SpeakerId,
-                ResolveSpeakerLabel(segment, speakerCatalog),
+                ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId),
                 segment.SpeakerLabel,
                 segment.Text)).ToArray());
 
@@ -117,6 +120,7 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("speakers")] IReadOnlyList<SpeakerIdentity> Speakers,
         [property: JsonPropertyName("speakerTurns")] IReadOnlyList<SpeakerTurn> SpeakerTurns,
         [property: JsonPropertyName("diarizationMetadata")] DiarizationMetadata? DiarizationMetadata,
+        [property: JsonPropertyName("speakerClusterMerges")] IReadOnlyList<SpeakerClusterMergeMetadata> SpeakerClusterMerges,
         [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptDocumentSegment> Segments);
 
     private sealed record TranscriptDocumentSegment(
@@ -273,8 +277,23 @@ public sealed class TranscriptRenderer
                 .ToDictionary(group => group.Key, group => group.Last().DisplayName, StringComparer.Ordinal);
     }
 
-    private static string ResolveSpeakerLabel(TranscriptSegment segment, IReadOnlyDictionary<string, string> speakerCatalog)
+    private static string ResolveSpeakerLabel(
+        TranscriptSegment segment,
+        IReadOnlyDictionary<string, string> speakerCatalog,
+        IReadOnlyDictionary<string, string> canonicalBySpeakerId)
     {
+        if (!string.IsNullOrWhiteSpace(segment.SpeakerId))
+        {
+            var effectiveSpeakerId = canonicalBySpeakerId.TryGetValue(segment.SpeakerId, out var canonicalSpeakerId)
+                ? canonicalSpeakerId
+                : segment.SpeakerId;
+            if (speakerCatalog.TryGetValue(effectiveSpeakerId, out var effectiveDisplayName) &&
+                !string.IsNullOrWhiteSpace(effectiveDisplayName))
+            {
+                return effectiveDisplayName;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(segment.SpeakerLabel))
         {
             return segment.SpeakerLabel;

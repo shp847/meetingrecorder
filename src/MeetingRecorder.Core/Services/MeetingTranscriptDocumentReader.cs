@@ -128,10 +128,10 @@ internal static class MeetingTranscriptDocumentReader
                 var speakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
                 var speakerLabel = GetJsonString(
                     segmentObject,
-                    "displaySpeakerLabel",
-                    "DisplaySpeakerLabel",
                     "speakerLabel",
                     "SpeakerLabel",
+                    "displaySpeakerLabel",
+                    "DisplaySpeakerLabel",
                     "speakerId",
                     "SpeakerId");
                 structuredRows.Add(new TranscriptSegment(

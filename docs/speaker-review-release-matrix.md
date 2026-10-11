@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Identity/source precedence and stale edits | `SpeakerReviewSnapshotResolverTests`, `SpeakerCorrectionReceiptResolverTests` | Partial: receipt persistence/UI operation ids pending |
 | Review surface and accessibility | `MainWindowXamlTests`; `speaker-review-accessibility.md` | Partial: fixture render matrix pending |
-| Evidence, clips, overrides, merge | Existing focused service tests | Partial: remaining S3/S7 integration evidence pending |
+| Evidence, clips, overrides, canonical merge | `SpeakerClusterMergeResolverTests`, `MeetingOutputCatalogServiceTests`, `TranscriptSchemaTests` | Partial: revision-checked writer preserves raw speaker ids, text, timestamps, display overrides, and profiles while publishing only canonical view metadata; multi-select/conflict/repair UI and inverse remain pending |
 | Learning, automatic names, past rematch | correction/matcher, `PastRematchPlannerTests`, and `PastRematchService` focused tests | Partial: upstream speaker-release/package matrix remains open; rematch dispatch, receipt, cancellation, and selected-batch UI are covered |
 | Repair guidance | `SpeakerQualityDiagnosisResolverTests` | Partial: review binding/preflight pending |
 | Summary freshness | `MeetingSummaryAttributionStateResolverTests` | Partial: persisted provenance/manual regeneration pending |

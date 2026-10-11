@@ -49,6 +49,15 @@ public sealed class TranscriptSchemaTests
                         [1f, 0f, 0f],
                         TimeSpan.FromSeconds(9),
                         DateTimeOffset.Parse("2026-03-17T12:02:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind)),
+                ],
+                [
+                    new SpeakerClusterMergeMetadata(
+                        "merge-1",
+                        "revision-1",
+                        ["speaker_00", "speaker_01"],
+                        "speaker_00",
+                        "evidence-1",
+                        DateTimeOffset.Parse("2026-03-17T12:03:00Z", null, System.Globalization.DateTimeStyles.RoundtripKind)),
                 ])
         };
 
@@ -78,7 +87,10 @@ public sealed class TranscriptSchemaTests
         Assert.Equal("sherpa-onnx", document["diarizationMetadata"]?["provider"]?.GetValue<string>());
         Assert.Equal("directml probe failed.", document["diarizationMetadata"]?["diagnosticMessage"]?.GetValue<string>().ToLowerInvariant());
         Assert.Equal("Pranav Sharma", document["segments"]?[0]?["speakerLabel"]?.GetValue<string>());
-        Assert.Equal("Pranav", document["segments"]?[1]?["speakerLabel"]?.GetValue<string>());
+        Assert.Equal("Pranav Sharma", document["segments"]?[1]?["speakerLabel"]?.GetValue<string>());
+        Assert.Equal("Pranav", document["segments"]?[1]?["displaySpeakerLabel"]?.GetValue<string>());
+        Assert.Equal("speaker_01", document["segments"]?[1]?["speakerId"]?.GetValue<string>());
+        Assert.Equal("speaker_00", document["speakerClusterMerges"]?[0]?["canonicalSpeakerId"]?.GetValue<string>());
     }
 
     private static MeetingSessionManifest CreateManifest()

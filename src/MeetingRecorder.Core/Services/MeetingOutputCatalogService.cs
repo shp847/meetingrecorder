@@ -4,6 +4,7 @@ using NAudio.Wave;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -487,8 +488,9 @@ public sealed class MeetingOutputCatalogService
     }
 
     /// <summary>
-    /// Persists a user-confirmed merge audit record only after the editor's artifact revision
-    /// still matches. This does not rewrite diarization output or voice-profile data.
+    /// Applies a user-confirmed canonical speaker mapping to the manifest and published
+    /// transcript views as one revision-checked local transaction. Raw diarization ids,
+    /// transcript text, timestamps, and voice-profile data remain unchanged.
     /// </summary>
     public async Task<SpeakerClusterMergeTransactionResult> AddSpeakerClusterMergeIfCurrentAsync(
         MeetingOutputRecord record,
@@ -508,6 +510,12 @@ public sealed class MeetingOutputCatalogService
             return new SpeakerClusterMergeTransactionResult(false, "Meeting manifest is unavailable. Reload or reprocess this meeting before merging speakers.");
         }
 
+        if (string.IsNullOrWhiteSpace(record.JsonPath) || !File.Exists(record.JsonPath) ||
+            string.IsNullOrWhiteSpace(record.MarkdownPath) || !File.Exists(record.MarkdownPath))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Published transcript artifacts are unavailable. Reload or reprocess this meeting before merging speakers.");
+        }
+
         var manifestStore = new SessionManifestStore(_pathBuilder);
         var manifest = await manifestStore.LoadAsync(record.ManifestPath, cancellationToken);
         var existing = manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>();
@@ -516,23 +524,117 @@ public sealed class MeetingOutputCatalogService
             return new SpeakerClusterMergeTransactionResult(true);
         }
 
+        if (!string.Equals(merge.ArtifactRevision, expectedRevision, StringComparison.Ordinal) ||
+            manifest.ProcessingMetadata?.Speakers is not { Count: > 0 } speakers)
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
+        }
+
+        var currentSpeakerIds = speakers
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+            .Select(speaker => speaker.Id.Trim())
+            .ToHashSet(StringComparer.Ordinal);
+        if (merge.SourceSpeakerIds.Any(sourceId =>
+                string.IsNullOrWhiteSpace(sourceId) || !currentSpeakerIds.Contains(sourceId.Trim())))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Choose only current meeting speakers before merging.");
+        }
+
+        var mergeDecision = SpeakerClusterMergeResolver.Resolve(
+            new SpeakerClusterMergeRecord(
+                merge.OperationId,
+                manifest.SessionId,
+                merge.ArtifactRevision,
+                merge.SourceSpeakerIds,
+                merge.CanonicalSpeakerId,
+                merge.EvidenceFingerprint),
+            SpeakerClusterMergeResolver.BuildCanonicalMap(existing));
+        if (mergeDecision.Disposition == SpeakerClusterMergeDisposition.Redundant)
+        {
+            return new SpeakerClusterMergeTransactionResult(true);
+        }
+
+        if (mergeDecision.Disposition != SpeakerClusterMergeDisposition.Accepted)
+        {
+            return new SpeakerClusterMergeTransactionResult(false, mergeDecision.Explanation);
+        }
+
         if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
         {
             return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
         }
 
-        var metadata = manifest.ProcessingMetadata ?? new MeetingProcessingMetadata(null, false);
-        await manifestStore.SaveAsync(
-            manifest with
+        var artifacts = new[]
             {
-                ProcessingMetadata = metadata with
+                record.ManifestPath,
+                record.JsonPath,
+                record.MarkdownPath,
+            }
+            .Select(path => path!)
+            .Select(path => new SpeakerArtifactTransactionFile(
+                path,
+                path + ".speaker-merge-" + Guid.NewGuid().ToString("N") + ".tmp",
+                path + ".speaker-merge-" + Guid.NewGuid().ToString("N") + ".bak"))
+            .ToArray();
+        var tempByPath = artifacts.ToDictionary(item => item.SourcePath, item => item.TempPath, StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var artifact in artifacts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Copy(artifact.SourcePath, artifact.TempPath, overwrite: false);
+            }
+
+            var temporaryRecord = record with
+            {
+                ManifestPath = GetTemporaryPath(record.ManifestPath, tempByPath),
+                JsonPath = GetTemporaryPath(record.JsonPath, tempByPath),
+                MarkdownPath = GetTemporaryPath(record.MarkdownPath, tempByPath),
+            };
+            await ApplySpeakerClusterMergeToTemporaryArtifactsAsync(
+                temporaryRecord,
+                existing.Append(merge).ToArray(),
+                mergeDecision.CanonicalBySpeakerId,
+                cancellationToken);
+
+            if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+            {
+                return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
+            }
+
+            var committed = new List<SpeakerArtifactTransactionFile>(artifacts.Length);
+            try
+            {
+                foreach (var artifact in artifacts)
                 {
-                    SpeakerClusterMerges = existing.Append(merge).ToArray(),
-                },
-            },
-            record.ManifestPath,
-            cancellationToken);
-        return new SpeakerClusterMergeTransactionResult(true);
+                    File.Replace(artifact.TempPath, artifact.SourcePath, artifact.BackupPath, ignoreMetadataErrors: true);
+                    committed.Add(artifact);
+                }
+            }
+            catch
+            {
+                foreach (var artifact in committed.AsEnumerable().Reverse())
+                {
+                    if (File.Exists(artifact.BackupPath))
+                    {
+                        File.Copy(artifact.BackupPath, artifact.SourcePath, overwrite: true);
+                    }
+                }
+
+                throw;
+            }
+
+            return new SpeakerClusterMergeTransactionResult(true);
+        }
+        finally
+        {
+            foreach (var artifact in artifacts)
+            {
+                TryDeleteArtifactTransactionFile(artifact.TempPath);
+                TryDeleteArtifactTransactionFile(artifact.BackupPath);
+            }
+        }
     }
 
     public async Task ClearSpeakerProfileSuggestionsAsync(
@@ -2111,6 +2213,124 @@ public sealed class MeetingOutputCatalogService
                 }
             },
             cancellationToken);
+    }
+
+    private async Task ApplySpeakerClusterMergeToTemporaryArtifactsAsync(
+        MeetingOutputRecord temporaryRecord,
+        IReadOnlyList<SpeakerClusterMergeMetadata> allMerges,
+        IReadOnlyDictionary<string, string> canonicalBySpeakerId,
+        CancellationToken cancellationToken)
+    {
+        var manifestStore = new SessionManifestStore(_pathBuilder);
+        var manifest = await manifestStore.LoadAsync(temporaryRecord.ManifestPath!, cancellationToken);
+        var metadata = manifest.ProcessingMetadata ?? new MeetingProcessingMetadata(null, false);
+        var speakers = metadata.Speakers ?? Array.Empty<SpeakerIdentity>();
+        await manifestStore.SaveAsync(
+            manifest with
+            {
+                ProcessingMetadata = metadata with
+                {
+                    SpeakerClusterMerges = allMerges,
+                },
+            },
+            temporaryRecord.ManifestPath!,
+            cancellationToken);
+
+        await UpdateJsonSpeakerClusterMergesAsync(
+            temporaryRecord.JsonPath!,
+            allMerges,
+            canonicalBySpeakerId,
+            speakers,
+            cancellationToken);
+        await UpdateMarkdownSpeakerLabelsAsync(
+            temporaryRecord.MarkdownPath!,
+            BuildCanonicalSpeakerLabelMap(canonicalBySpeakerId, speakers),
+            cancellationToken);
+    }
+
+    private static async Task UpdateJsonSpeakerClusterMergesAsync(
+        string jsonPath,
+        IReadOnlyList<SpeakerClusterMergeMetadata> merges,
+        IReadOnlyDictionary<string, string> canonicalBySpeakerId,
+        IReadOnlyList<SpeakerIdentity> speakers,
+        CancellationToken cancellationToken)
+    {
+        var displayNameBySpeakerId = speakers
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id) && !string.IsNullOrWhiteSpace(speaker.DisplayName))
+            .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().DisplayName, StringComparer.Ordinal);
+
+        await UpdateJsonAsync(
+            jsonPath,
+            node =>
+            {
+                node["speakerClusterMerges"] = JsonSerializer.SerializeToNode(merges);
+                var segments = GetSegmentsArray(node);
+                if (segments is null)
+                {
+                    return;
+                }
+
+                foreach (var segmentNode in segments)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (segmentNode is not JsonObject segmentObject)
+                    {
+                        continue;
+                    }
+
+                    var sourceSpeakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
+                    if (string.IsNullOrWhiteSpace(sourceSpeakerId) ||
+                        !canonicalBySpeakerId.TryGetValue(sourceSpeakerId.Trim(), out var canonicalSpeakerId) ||
+                        !displayNameBySpeakerId.TryGetValue(canonicalSpeakerId, out var canonicalDisplayName))
+                    {
+                        continue;
+                    }
+
+                    var originalLabel = GetJsonString(
+                        segmentObject,
+                        "displaySpeakerLabel",
+                        "DisplaySpeakerLabel",
+                        "speakerLabel",
+                        "SpeakerLabel");
+                    if (!string.IsNullOrWhiteSpace(originalLabel) &&
+                        !segmentObject.ContainsKey("displaySpeakerLabel") &&
+                        !segmentObject.ContainsKey("DisplaySpeakerLabel"))
+                    {
+                        segmentObject["displaySpeakerLabel"] = originalLabel;
+                    }
+
+                    var effectiveLabelProperty = segmentObject.ContainsKey("speakerLabel")
+                        ? "speakerLabel"
+                        : segmentObject.ContainsKey("SpeakerLabel")
+                            ? "SpeakerLabel"
+                            : "speakerLabel";
+                    segmentObject[effectiveLabelProperty] = canonicalDisplayName;
+                }
+            },
+            cancellationToken);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildCanonicalSpeakerLabelMap(
+        IReadOnlyDictionary<string, string> canonicalBySpeakerId,
+        IReadOnlyList<SpeakerIdentity> speakers)
+    {
+        var displayNameBySpeakerId = speakers
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id) && !string.IsNullOrWhiteSpace(speaker.DisplayName))
+            .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().DisplayName, StringComparer.Ordinal);
+        var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var pair in canonicalBySpeakerId)
+        {
+            if (displayNameBySpeakerId.TryGetValue(pair.Key, out var sourceLabel) &&
+                displayNameBySpeakerId.TryGetValue(pair.Value, out var canonicalLabel) &&
+                !string.Equals(sourceLabel, canonicalLabel, StringComparison.Ordinal))
+            {
+                labels[sourceLabel] = canonicalLabel;
+            }
+        }
+
+        return labels;
     }
 
     private static void SetJsonSpeakerIdentity(JsonObject speakerObject, SpeakerIdentity speaker)

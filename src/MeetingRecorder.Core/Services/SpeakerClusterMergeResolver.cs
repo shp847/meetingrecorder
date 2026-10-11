@@ -1,3 +1,5 @@
+using MeetingRecorder.Core.Domain;
+
 namespace MeetingRecorder.Core.Services;
 
 public enum SpeakerClusterMergeDisposition
@@ -27,6 +29,45 @@ public sealed record SpeakerClusterMergeDecision(
 
 public static class SpeakerClusterMergeResolver
 {
+    /// <summary>
+    /// Composes persisted user merge records into effective canonical ids. Source ids remain
+    /// unchanged in the records and transcript artifacts; only this view follows merge chains.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> BuildCanonicalMap(
+        IReadOnlyList<SpeakerClusterMergeMetadata>? merges)
+    {
+        var directMappings = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var merge in merges ?? Array.Empty<SpeakerClusterMergeMetadata>())
+        {
+            var canonical = Normalize(merge.CanonicalSpeakerId);
+            if (canonical is null)
+            {
+                continue;
+            }
+
+            foreach (var sourceId in merge.SourceSpeakerIds ?? Array.Empty<string>())
+            {
+                var source = Normalize(sourceId);
+                if (source is not null && !string.Equals(source, canonical, StringComparison.Ordinal))
+                {
+                    directMappings[source] = canonical;
+                }
+            }
+        }
+
+        var effectiveMappings = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var source in directMappings.Keys)
+        {
+            var canonical = ResolveCanonical(source, directMappings);
+            if (canonical is not null && !string.Equals(source, canonical, StringComparison.Ordinal))
+            {
+                effectiveMappings[source] = canonical;
+            }
+        }
+
+        return effectiveMappings;
+    }
+
     public static SpeakerClusterMergeDecision Resolve(
         SpeakerClusterMergeRecord request,
         IReadOnlyDictionary<string, string>? existingCanonicalBySpeakerId = null)
