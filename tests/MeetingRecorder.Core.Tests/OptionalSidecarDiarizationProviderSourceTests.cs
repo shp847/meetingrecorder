@@ -1,4 +1,6 @@
 using System.IO;
+using System.Diagnostics;
+using MeetingRecorder.ProcessingWorker;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -85,6 +87,34 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.Contains("ProbeDirectMl", program, StringComparison.Ordinal);
         Assert.Contains("DirectML probe succeeded.", program, StringComparison.Ordinal);
         Assert.Contains("WriteDirectMlProbeStatusAsync", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedWorker_Helper_Preserves_Dotnet_Entry_Assembly()
+    {
+        var dotnetHost = new ProcessStartInfo("C:\\Program Files\\dotnet\\dotnet.exe");
+        BoundedLocalDiarizationProvider.ConfigureHelperHostArguments(
+            dotnetHost,
+            dotnetHost.FileName,
+            "C:\\fixtures\\MeetingRecorder.ProcessingWorker.dll");
+        Assert.Equal(new[] { "C:\\fixtures\\MeetingRecorder.ProcessingWorker.dll" }, dotnetHost.ArgumentList);
+
+        var appHost = new ProcessStartInfo("C:\\fixtures\\MeetingRecorder.ProcessingWorker.exe");
+        BoundedLocalDiarizationProvider.ConfigureHelperHostArguments(
+            appHost,
+            appHost.FileName,
+            "C:\\fixtures\\MeetingRecorder.ProcessingWorker.dll");
+        Assert.Empty(appHost.ArgumentList);
+    }
+
+    [Theory]
+    [InlineData("Unable to load sherpa-onnx-c-api.dll", "native_runtime")]
+    [InlineData("Diarization model bundle is unavailable", "model_or_asset")]
+    [InlineData("Could not find part of path", "input_or_file")]
+    [InlineData("", "no_diagnostic")]
+    public void BoundedWorker_Helper_Redacts_Diagnostic_To_Fixed_Class(string error, string expected)
+    {
+        Assert.Equal(expected, BoundedLocalDiarizationProvider.ClassifyHelperFailure(error));
     }
 
     private static string GetPath(params string[] segments)

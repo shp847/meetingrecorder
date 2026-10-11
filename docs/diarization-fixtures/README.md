@@ -14,6 +14,14 @@ Each v2 fixture declares one private `inputRoot`; every source/protected
 artifact must stay under it and cannot traverse a symlink/reparse point, use
 repo/report output, or Meeting Recorder app-data/profile paths.
 
+For Fireflies VTT-style transcripts, use `New-DiarizationVttFixture.ps1` to
+copy one approved audio input into a private fixture root and produce its
+manifest, transcript snapshot, restricted count-only truth record, and v2
+catalog. Speaker labels remain only in the private source transcript; count
+taxonomy is inferred and speaker-name matching stays disabled.
+The full-audio runner also supports a locally built worker launched through
+`dotnet Worker.dll`; bounded native labeling relaunches that same assembly.
+
 Run a metadata-only candidate comparison:
 
 ```powershell

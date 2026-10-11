@@ -5,6 +5,7 @@
       "id": "fx-two-speaker-synthetic",
       "version": "1",
       "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "category": "two-speaker",
       "mode": "stored-turn",
       "scenarioTags": ["two-speaker", "baseline"],
       "consentRecord": "CONSENT-REPLACE-LOCALLY",

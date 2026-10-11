@@ -44,6 +44,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         await File.WriteAllTextAsync(requestPath, JsonSerializer.Serialize(request, JsonOptions), cancellationToken);
 
         using var process = StartHelper(requestPath, resultPath);
+        var helperErrorTask = process.StandardError.ReadToEndAsync();
         using var pollingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pollingTask = PollProgressAsync(progressPath, process, pollingCts.Token);
         Publish("Launching helper", null, 0, null, null, null, "Starting bounded native speaker labeling.");
@@ -71,9 +72,10 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             }
 
             await exitTask;
+            var helperError = await helperErrorTask;
             if (process.ExitCode != 0 || !File.Exists(resultPath))
             {
-                throw new InvalidOperationException("Local speaker-labeling helper stopped before returning a result.");
+                throw new InvalidOperationException($"Local speaker-labeling helper failed ({ClassifyHelperFailure(helperError)}).");
             }
 
             var serializedResult = await File.ReadAllTextAsync(resultPath, cancellationToken);
@@ -110,7 +112,12 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardError = true,
         };
+        ConfigureHelperHostArguments(
+            startInfo,
+            executablePath,
+            System.Reflection.Assembly.GetEntryAssembly()?.Location);
         startInfo.ArgumentList.Add("--run-local-diarization");
         startInfo.ArgumentList.Add("--diarization-request");
         startInfo.ArgumentList.Add(requestPath);
@@ -119,6 +126,60 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         startInfo.ArgumentList.Add("--config");
         startInfo.ArgumentList.Add(_configPath);
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the local speaker-labeling helper.");
+    }
+
+    internal static string ClassifyHelperFailure(string? error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+        {
+            return "no_diagnostic";
+        }
+
+        if (error.Contains("sherpa", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("native", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return "native_runtime";
+        }
+
+        if (error.Contains("model", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("asset", StringComparison.OrdinalIgnoreCase))
+        {
+            return "model_or_asset";
+        }
+
+        if (error.Contains("file", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("path", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("directory", StringComparison.OrdinalIgnoreCase))
+        {
+            return "input_or_file";
+        }
+
+        return "unknown";
+    }
+
+    internal static void ConfigureHelperHostArguments(
+        ProcessStartInfo startInfo,
+        string executablePath,
+        string? entryAssemblyPath)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+
+        // Apphosts relaunch themselves directly.  When a fixture or a
+        // development host starts the worker as `dotnet Worker.dll`, though,
+        // the helper must receive that entry assembly before its worker args.
+        if (!string.Equals(Path.GetFileNameWithoutExtension(executablePath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(entryAssemblyPath) ||
+            !string.Equals(Path.GetExtension(entryAssemblyPath), ".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Unable to locate the processing worker assembly for bounded speaker labeling.");
+        }
+
+        startInfo.ArgumentList.Add(entryAssemblyPath);
     }
 
     private async Task PollProgressAsync(string progressPath, Process process, CancellationToken cancellationToken)

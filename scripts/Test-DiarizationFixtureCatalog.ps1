@@ -265,6 +265,19 @@ function Get-SafeTempResultPath {
     return Join-Path ([System.IO.Path]::GetTempPath()) ("meeting-recorder-fixture-{0}-{1}.json" -f $safeId, [Guid]::NewGuid().ToString("N"))
 }
 
+function Get-SafeTempProbeRoot {
+    param([string]$FixtureId)
+
+    $safeId = if ([string]::IsNullOrWhiteSpace($FixtureId)) {
+        [Guid]::NewGuid().ToString('N')
+    }
+    else {
+        ($FixtureId -replace '[^A-Za-z0-9_.-]', '-')
+    }
+
+    return Join-Path ([System.IO.Path]::GetTempPath()) ("meeting-recorder-fixture-probe-{0}-{1}" -f $safeId, [Guid]::NewGuid().ToString('N'))
+}
+
 function Get-FileSha256 {
     param([string]$PathValue)
 
@@ -297,6 +310,49 @@ function Get-SafeReportMessage {
     }
 
     return $Message
+}
+
+function Get-SafeDiarizationState {
+    param($State)
+
+    # Processing-worker JSON serializes StageExecutionState as either its
+    # numeric value or enum name.  Normalize only known values so reports keep
+    # a useful diagnostic without carrying free-form provider output.
+    switch ([string]$State) {
+        "0" { return "not_started" }
+        "NotStarted" { return "not_started" }
+        "1" { return "queued" }
+        "Queued" { return "queued" }
+        "2" { return "running" }
+        "Running" { return "running" }
+        "3" { return "succeeded" }
+        "Succeeded" { return "succeeded" }
+        "4" { return "failed" }
+        "Failed" { return "failed" }
+        "5" { return "skipped" }
+        "Skipped" { return "skipped" }
+        default { return "unknown" }
+    }
+}
+
+function Get-SafeDiarizationFailureKind {
+    param(
+        [string]$State,
+        [string]$Message
+    )
+
+    if ($State -ne "failed") {
+        return "not_failed"
+    }
+
+    # Classify in memory only.  Do not persist provider text: it may identify
+    # a private path, a machine account, or an approved fixture.
+    if ($Message -match '(?i)onnx|model|asset') { return "model_or_asset" }
+    if ($Message -match '(?i)directml|cuda|gpu|accelerat') { return "acceleration" }
+    if ($Message -match '(?i)timeout|cancel') { return "timeout_or_cancel" }
+    if ($Message -match '(?i)file|path|directory|not found|missing') { return "input_or_file" }
+    if ($Message -match '(?i)helper') { return "helper_execution" }
+    return "provider_or_processing"
 }
 
 function Get-ArtifactHashes {
@@ -415,6 +471,8 @@ function New-BaseResult {
         contiguousSpeakerRunCount = $null
         segmentCount = $null
         voiceSampleCount = $null
+        diarizationState = $null
+        diarizationFailureKind = $null
         speakerNameMetrics = [ordered]@{
             enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enableSpeakerNameMatching" -DefaultValue $false)
             expectedNameCount = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames")).Count
@@ -473,7 +531,7 @@ function Validate-Fixture {
     }
 
     if ($script:CatalogSchemaVersion -ge 2) {
-        foreach ($requiredProperty in @("version", "contentHash", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef", "inputRoot")) {
+        foreach ($requiredProperty in @("version", "contentHash", "category", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef", "inputRoot")) {
             if (-not (Test-PropertyPresent -Object $Fixture -Name $requiredProperty) -or [string]::IsNullOrWhiteSpace([string](Get-PropertyValue -Object $Fixture -Name $requiredProperty))) {
                 throw "Fixture '$id' requires $requiredProperty in catalog schema version 2."
             }
@@ -523,7 +581,11 @@ function Resolve-FixtureInputs {
 
     $mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
     $inputRoot = [string](Get-PropertyValue -Object $Fixture -Name "inputRoot")
-    $transcriptJsonPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptJsonPath")) -Description "Fixture transcript JSON" -Required
+    $transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot" -Required:($mode -eq "full-audio")
+    $transcriptJsonPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptJsonPath")) -Description "Fixture transcript JSON" -Required:($mode -eq "stored-turn")
+    if ([string]::IsNullOrWhiteSpace($transcriptJsonPath)) {
+        $transcriptJsonPath = $transcriptionSnapshotPath
+    }
     $manifestPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "manifestPath")) -Description "Fixture manifest" -Required:($mode -eq "stored-turn" -or $mode -eq "full-audio")
     $transcriptMarkdownPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptMarkdownPath")) -Description "Fixture transcript Markdown"
 
@@ -531,7 +593,6 @@ function Resolve-FixtureInputs {
     $manifestPath = Assert-AllowlistedFixtureInput -PathValue $manifestPath -InputRoot $inputRoot -Description "Fixture manifest"
     $transcriptMarkdownPath = Assert-AllowlistedFixtureInput -PathValue $transcriptMarkdownPath -InputRoot $inputRoot -Description "Fixture transcript Markdown"
     $audioPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "audioPath")) -Description "Fixture audio"
-    $transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot"
     $configPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "configPath")) -Description "Fixture config"
 
     return [pscustomobject]@{
@@ -618,6 +679,7 @@ function Invoke-Fixture {
         }
 
         $childResultPath = Get-SafeTempResultPath -FixtureId $result.fixtureId
+        $probeRootToCleanup = $null
         try {
             if ($result.mode -eq "stored-turn") {
                 $arguments = @{
@@ -644,7 +706,8 @@ function Invoke-Fixture {
                 if ($inputs.configPath) { $arguments.ConfigPath = $inputs.configPath }
                 if ($inputs.audioPath) { $arguments.AudioPath = $inputs.audioPath }
                 if ($inputs.transcriptionSnapshotPath) { $arguments.TranscriptionSnapshotPath = $inputs.transcriptionSnapshotPath }
-                if (-not [string]::IsNullOrWhiteSpace($inputs.probeRoot)) { $arguments.ProbeRoot = $inputs.probeRoot }
+                $probeRootToCleanup = Get-SafeTempProbeRoot -FixtureId $result.fixtureId
+                $arguments.ProbeRoot = $probeRootToCleanup
                 if (-not [string]::IsNullOrWhiteSpace($inputs.diarizationAssetPath)) { $arguments.DiarizationAssetPath = $inputs.diarizationAssetPath }
                 if ([bool](Get-PropertyValue -Object $Fixture -Name "enableSpeakerNameMatching" -DefaultValue $false)) {
                     $arguments.EnableSpeakerNameMatching = $true
@@ -658,6 +721,11 @@ function Invoke-Fixture {
                 $childResult = Get-Content -LiteralPath $childResultPath -Raw | ConvertFrom-Json
                 $result.detectedSpeakerCount = [int]$childResult.SpeakerCount
                 $result.voiceSampleCount = [int]$childResult.VoiceSampleCount
+                # State is a fixed stage enum.  Keep it, but never persist the
+                # accompanying free-form message because it can contain private
+                # local paths or provider diagnostics.
+                $result.diarizationState = Get-SafeDiarizationState -State $childResult.DiarizationState
+                $result.diarizationFailureKind = Get-SafeDiarizationFailureKind -State $result.diarizationState -Message ([string]$childResult.DiarizationMessage)
                 $detectedNames = @(ConvertTo-Array $childResult.SpeakerNames)
                 $result.speakerNameMetrics.detectedNameCount = $detectedNames.Count
                 $result.speakerNameMetrics.missingExpectedNameCount = @($expectedNames | Where-Object {
@@ -678,6 +746,11 @@ function Invoke-Fixture {
         finally {
             if (Test-Path -LiteralPath $childResultPath -PathType Leaf) {
                 Remove-Item -LiteralPath $childResultPath -Force
+            }
+            if (-not [string]::IsNullOrWhiteSpace($probeRootToCleanup) -and
+                (Test-Path -LiteralPath $probeRootToCleanup -PathType Container) -and
+                (Test-PathUnder -PathValue $probeRootToCleanup -RootValue ([System.IO.Path]::GetTempPath()))) {
+                Remove-Item -LiteralPath $probeRootToCleanup -Recurse -Force
             }
         }
 
