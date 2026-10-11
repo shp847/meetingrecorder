@@ -150,13 +150,24 @@ internal static class MeetingTranscriptDocumentReader
                     preferSourceLabels ? "SpeakerLabel" : "DisplaySpeakerLabel",
                     "speakerId",
                     "SpeakerId");
+                var sourceSpeakerLabel = GetJsonString(
+                    segmentObject,
+                    "displaySpeakerLabel",
+                    "DisplaySpeakerLabel",
+                    "speakerLabel",
+                    "SpeakerLabel",
+                    "speakerId",
+                    "SpeakerId");
                 structuredRows.Add(new TranscriptSegment(
                     start,
                     end,
                     string.IsNullOrWhiteSpace(speakerId) ? null : speakerId.Trim(),
                     string.IsNullOrWhiteSpace(speakerLabel) ? null : speakerLabel.Trim(),
                     text.Trim(),
-                    string.IsNullOrWhiteSpace(segmentId) ? null : segmentId.Trim()));
+                    string.IsNullOrWhiteSpace(segmentId) ? null : segmentId.Trim())
+                {
+                    SourceSpeakerLabel = string.IsNullOrWhiteSpace(sourceSpeakerLabel) ? null : sourceSpeakerLabel.Trim(),
+                });
             }
 
             segments = BuildDisplayRows(structuredRows);

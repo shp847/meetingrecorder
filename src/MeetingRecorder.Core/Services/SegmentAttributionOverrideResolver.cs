@@ -10,7 +10,9 @@ public static class SegmentAttributionOverrideResolver
         IReadOnlyDictionary<string, SpeakerIdentity> speakers,
         IReadOnlyList<SegmentAttributionOverride> overrides)
     {
-        var sourceLabel = string.IsNullOrWhiteSpace(segment.SpeakerLabel) ? "Speaker" : segment.SpeakerLabel.Trim();
+        var sourceLabel = string.IsNullOrWhiteSpace(segment.SourceSpeakerLabel)
+            ? string.IsNullOrWhiteSpace(segment.SpeakerLabel) ? "Speaker" : segment.SpeakerLabel.Trim()
+            : segment.SourceSpeakerLabel.Trim();
         var sourceId = string.IsNullOrWhiteSpace(segment.SpeakerId) ? null : segment.SpeakerId.Trim();
         if (string.IsNullOrWhiteSpace(segment.SegmentId) || string.IsNullOrWhiteSpace(artifactRevision))
             return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);

@@ -10,6 +10,9 @@ public sealed record TranscriptSegment(
     [property: JsonPropertyName("text")] string Text,
     [property: JsonPropertyName("segmentId")] string? SegmentId = null)
 {
+    [JsonIgnore]
+    public string? SourceSpeakerLabel { get; init; }
+
     public TranscriptSegment(TimeSpan Start, TimeSpan End, string? SpeakerLabel, string Text)
         : this(Start, End, null, SpeakerLabel, Text)
     {

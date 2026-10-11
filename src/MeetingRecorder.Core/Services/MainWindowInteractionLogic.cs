@@ -200,13 +200,30 @@ internal sealed record MeetingTranscriptSegmentRow(
     string Timestamp,
     string SpeakerLabel,
     string Text,
-    string? SpeakerId = null)
+    string? SpeakerId = null,
+    string? SegmentId = null,
+    string? OriginalSpeakerLabel = null,
+    EffectiveSegmentAttributionState AttributionState = EffectiveSegmentAttributionState.Source)
 {
     public bool CanOpenSpeakerReview => !string.IsNullOrWhiteSpace(SpeakerId);
 
     public string SpeakerReviewAutomationName => CanOpenSpeakerReview
         ? $"Open Speaker Review for {SpeakerLabel}"
         : $"Speaker label {SpeakerLabel}; speaker review is unavailable";
+
+    public bool CanApplyParagraphOverride =>
+        !string.IsNullOrWhiteSpace(SegmentId) &&
+        !string.IsNullOrWhiteSpace(SpeakerId) &&
+        AttributionState != EffectiveSegmentAttributionState.ReviewNeeded;
+
+    public bool HasManualAttributionOverride => AttributionState == EffectiveSegmentAttributionState.Override;
+
+    public string AttributionIndicator => AttributionState switch
+    {
+        EffectiveSegmentAttributionState.Override => "Manual override",
+        EffectiveSegmentAttributionState.ReviewNeeded => "Review needed",
+        _ => string.Empty,
+    };
 }
 
 internal enum MeetingDetailSummaryStatus

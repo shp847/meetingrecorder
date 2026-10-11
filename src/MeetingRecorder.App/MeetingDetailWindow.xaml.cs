@@ -34,6 +34,11 @@ internal sealed class MeetingDetailSpeakerEvidenceCueEventArgs(
     public SpeakerEvidenceCue Cue { get; } = cue;
 }
 
+internal sealed class MeetingDetailSegmentAttributionEventArgs(MeetingTranscriptSegmentRow segment) : EventArgs
+{
+    public MeetingTranscriptSegmentRow Segment { get; } = segment;
+}
+
 internal sealed record MeetingDetailSpeakerMergeChoice(string SpeakerId, string Label)
 {
     public override string ToString() => Label;
@@ -205,6 +210,8 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
 
     internal event EventHandler<MeetingDetailSpeakerEvidenceCueEventArgs>? PlaySpeakerEvidenceRequested;
+
+    internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? ApplyParagraphOverrideRequested;
 
     internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
@@ -628,6 +635,22 @@ public partial class MeetingDetailWindow : Window
 
         SpeakerLabelsDataGrid.Focus();
         SetMaintenanceStatus($"Speaker Review is ready for {target.AnonymousLabel}.");
+    }
+
+    private void ApplyParagraphOverrideButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow segment && segment.CanApplyParagraphOverride)
+        {
+            ApplyParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment));
+        }
+    }
+
+    private void ViewOriginalAttributionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow { HasManualAttributionOverride: true } segment)
+        {
+            SetMaintenanceStatus($"Original paragraph attribution: {segment.OriginalSpeakerLabel ?? segment.SpeakerId ?? "Speaker"}.");
+        }
     }
 
     private void PlaySpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)

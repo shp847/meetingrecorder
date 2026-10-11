@@ -1365,6 +1365,45 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Empty(savedManifest.ProcessingMetadata!.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>());
     }
 
+    [Fact]
+    public async Task ApplySegmentAttributionOverrideIfCurrentAsync_Updates_Json_And_Markdown_Without_Rewriting_Source_Id()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var manifestPath = Path.Combine(root, "work", "session-override", "manifest.json");
+        var jsonPath = Path.Combine(root, "transcripts", "json", "override.json");
+        var markdownPath = Path.Combine(root, "transcripts", "override.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(markdownPath)!);
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var manifest = new MeetingSessionManifest
+        {
+            SessionId = "session-override",
+            Platform = MeetingPlatform.Teams,
+            DetectedTitle = "Override test",
+            StartedAtUtc = DateTimeOffset.Parse("2026-03-16T00:00:00Z"),
+            State = SessionState.Published,
+            ProcessingMetadata = new MeetingProcessingMetadata("model.bin", true,
+                [new SpeakerIdentity("speaker-a", "Alex", false), new SpeakerIdentity("speaker-b", "Blair", false)]),
+        };
+        await manifestStore.SaveAsync(manifest, manifestPath);
+        await File.WriteAllTextAsync(jsonPath, """{ "segments":[{"segmentId":"seg-1","start":"00:00:00","end":"00:00:02","speakerId":"speaker-a","speakerLabel":"Alex","displaySpeakerLabel":"Alex","text":"Hello"}] }""");
+        await File.WriteAllTextAsync(markdownPath, "# old transcript");
+        var record = new MeetingOutputRecord("override", "Override test", manifest.StartedAtUtc, MeetingPlatform.Teams, null, null, markdownPath, jsonPath, null, manifestPath, SessionState.Published, Array.Empty<MeetingAttendee>(), true, "model.bin");
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var value = new SegmentAttributionOverride("override-1", revision, "seg-1", "speaker-a", SegmentAttributionOverrideTargetKind.Speaker, "speaker-b", "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+
+        var result = await new MeetingOutputCatalogService(pathBuilder).ApplySegmentAttributionOverrideIfCurrentAsync(record, revision, value);
+
+        Assert.True(result.IsApplied, result.ConflictReason);
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!.AsObject();
+        Assert.Equal("speaker-a", document["segments"]![0]!["speakerId"]!.GetValue<string>());
+        Assert.Equal("speaker-b", document["speakerAttributionOverrides"]![0]!["targetValue"]!.GetValue<string>());
+        Assert.Contains("**Blair:** Hello", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
+        var transcript = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.Single(transcript.SafeAttributionOverrides);
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         var format = new WaveFormat(16000, 16, 1);

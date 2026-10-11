@@ -28,6 +28,28 @@ public sealed class SegmentAttributionOverrideResolverTests
         Assert.Equal(EffectiveSegmentAttributionState.ReviewNeeded, SegmentAttributionOverrideResolver.Resolve(segment, "rev_1", Speakers(), [missing]).State);
     }
 
+    [Fact]
+    public void Project_Uses_Effective_Label_And_Preserves_Original_Attribution()
+    {
+        var segment = new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(2), "speaker_00", "Alex", "Hello", "seg_1")
+        {
+            SourceSpeakerLabel = "Speaker 1",
+        };
+
+        var result = SegmentAttributionOverrideProjectionService.Project(
+            [segment],
+            "rev_1",
+            Speakers(),
+            [Override("seg_1", SegmentAttributionOverrideTargetKind.Speaker, "speaker_01")]);
+
+        var row = Assert.Single(result.Rows);
+        Assert.Equal("Blair", row.SpeakerLabel);
+        Assert.Equal("Speaker 1", row.OriginalSpeakerLabel);
+        Assert.Equal("seg_1", row.SegmentId);
+        Assert.True(row.HasManualAttributionOverride);
+        Assert.Equal("speaker_00", Assert.Single(result.EffectiveSegments).SpeakerId);
+    }
+
     private static IReadOnlyDictionary<string, SpeakerIdentity> Speakers() => new Dictionary<string, SpeakerIdentity> { ["speaker_01"] = new("speaker_01", "Blair", true, NameSource: SpeakerNameSource.UserEdited) };
     private static SegmentAttributionOverride Override(string segmentId, SegmentAttributionOverrideTargetKind kind, string value) => new("override_1", "rev_1", segmentId, "speaker_00", kind, value, "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 }

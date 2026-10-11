@@ -717,25 +717,49 @@
                                 <Grid Margin="8,6">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="64" />
-                                        <ColumnDefinition Width="96" />
+                                        <ColumnDefinition Width="112" />
                                         <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock FontFamily="{StaticResource AppMonoFontFamily}"
                                                Foreground="{StaticResource AppSecondaryBrush}"
                                                Text="{Binding Timestamp}" />
-                                    <Button Grid.Column="1"
-                                            HorizontalAlignment="Left"
-                                            Padding="0"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            FontWeight="SemiBold"
-                                            IsEnabled="{Binding CanOpenSpeakerReview}"
-                                            Click="OpenSpeakerReviewFromTranscriptButton_OnClick"
-                                            AutomationProperties.Name="{Binding SpeakerReviewAutomationName}"
-                                            Content="{Binding SpeakerLabel}" />
+                                    <StackPanel Grid.Column="1">
+                                        <Button HorizontalAlignment="Left"
+                                                Padding="0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                FontWeight="SemiBold"
+                                                IsEnabled="{Binding CanOpenSpeakerReview}"
+                                                Click="OpenSpeakerReviewFromTranscriptButton_OnClick"
+                                                AutomationProperties.Name="{Binding SpeakerReviewAutomationName}"
+                                                Content="{Binding SpeakerLabel}" />
+                                        <TextBlock FontSize="11"
+                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                   Text="{Binding AttributionIndicator}" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="2"
                                                TextWrapping="Wrap"
                                                Text="{Binding Text}" />
+                                    <Button Grid.Column="3"
+                                            Margin="8,0,0,0"
+                                            Padding="7,2"
+                                            VerticalAlignment="Top"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            IsEnabled="{Binding CanApplyParagraphOverride}"
+                                            Click="ApplyParagraphOverrideButton_OnClick"
+                                            AutomationProperties.Name="Apply attribution to this paragraph only"
+                                            Content="Correct" />
+                                    <Button Grid.Column="4"
+                                            Margin="6,0,0,0"
+                                            Padding="7,2"
+                                            VerticalAlignment="Top"
+                                            Style="{StaticResource SecondaryActionButtonStyle}"
+                                            IsEnabled="{Binding HasManualAttributionOverride}"
+                                            Click="ViewOriginalAttributionButton_OnClick"
+                                            AutomationProperties.Name="View original paragraph attribution"
+                                            Content="Original" />
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

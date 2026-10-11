@@ -35,6 +35,15 @@ internal enum BacklogRushChoice
     ThisAndFutureMeetings = 1,
 }
 
+internal sealed record SegmentAttributionOverrideChoice(
+    SegmentAttributionOverrideTargetKind TargetKind,
+    string TargetValue);
+
+internal sealed record SegmentAttributionOverrideSpeakerChoice(string SpeakerId, string DisplayName)
+{
+    public override string ToString() => DisplayName;
+}
+
 public partial class MainWindow : Window
 {
     private const int AudioGraphPointCount = 120;
@@ -7100,6 +7109,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
+            _meetingDetailWindow.ApplyParagraphOverrideRequested += async (_, args) => await ApplyOpenMeetingDetailParagraphOverrideAsync(args.Segment);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
             _meetingDetailWindow.PlaySpeakerEvidenceRequested += async (_, args) => await PlayOpenMeetingDetailSpeakerEvidenceAsync(args);
             _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
@@ -7260,6 +7270,43 @@ public partial class MainWindow : Window
                 {
                     _logger.Log($"Meeting speaker review evidence state could not be loaded: {exception}");
                 }
+            }
+
+            if (transcript.HasStructuredJson)
+            {
+                var speakersById = diagnosticSpeakers
+                    .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+                    .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+                var overrideProjection = SegmentAttributionOverrideProjectionService.Project(
+                    transcript.StructuredSegments,
+                    speakerArtifactRevision,
+                    speakersById,
+                    transcript.SafeAttributionOverrides);
+                transcript = transcript with
+                {
+                    Segments = overrideProjection.Rows,
+                    StructuredSegments = overrideProjection.EffectiveSegments,
+                };
+                state = MainWindowInteractionLogic.BuildMeetingDetailWindowState(
+                    row.Source,
+                    row.Recommendations,
+                    transcript,
+                    row.CanOpenAudioArtifact,
+                    row.CanOpenTranscriptArtifact,
+                    row.CanRegenerateTranscript,
+                    canQueueSpeakerLabels,
+                    CanChangeRushProcessing(row),
+                    IsMeetingMarkedAsap(row),
+                    summaryProviderConfiguration: summaryProviderConfiguration,
+                    isGeneratingSummary: _isGeneratingMeetingSummary,
+                    primaryRecommendation: row.PrimaryRecommendation) with
+                {
+                    SpeakerLabelState = speakerExperience.Explanation,
+                    SpeakerLabelActionLabel = speakerExperience.Permits(SpeakerExperienceAction.RepairSpeakerLabels)
+                        ? "Repair Speaker Labels"
+                        : "Add Speaker Labels",
+                };
             }
 
             var speakerReview = SpeakerReviewSnapshotResolver.Resolve(new SpeakerReviewSnapshotInput(
@@ -7812,6 +7859,197 @@ public partial class MainWindow : Window
             _isSplittingMeeting = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async Task ApplyOpenMeetingDetailParagraphOverrideAsync(MeetingTranscriptSegmentRow selectedSegment)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || !selectedSegment.CanApplyParagraphOverride ||
+            string.IsNullOrWhiteSpace(selectedSegment.SegmentId) || string.IsNullOrWhiteSpace(selectedSegment.SpeakerId))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("This paragraph is no longer available for correction. Reload meeting details and try again.");
+            return;
+        }
+
+        if (IsMeetingActionInProgress())
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Wait for the current meeting action to finish before correcting this paragraph.");
+            return;
+        }
+
+        var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
+        var sourceSegment = transcript.StructuredSegments.FirstOrDefault(segment =>
+            string.Equals(segment.SegmentId, selectedSegment.SegmentId, StringComparison.Ordinal) &&
+            string.Equals(segment.SpeakerId, selectedSegment.SpeakerId, StringComparison.Ordinal));
+        if (sourceSegment is null)
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("The transcript changed. Reload meeting details before correcting this paragraph.");
+            return;
+        }
+
+        var speakers = Array.Empty<SpeakerIdentity>();
+        if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
+        {
+            try
+            {
+                speakers = (await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token))
+                    .ProcessingMetadata?.Speakers?.ToArray() ?? [];
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.Log($"Paragraph override speaker choices could not be loaded: {exception}");
+            }
+        }
+
+        var choice = ShowSegmentAttributionOverrideDialog(selectedSegment, speakers);
+        if (choice is null)
+        {
+            return;
+        }
+
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceBusy(true);
+        _meetingDetailWindow?.SetMaintenanceStatus("Applying paragraph-only attribution correction...");
+        try
+        {
+            var result = await _meetingOutputCatalogService.ApplySegmentAttributionOverrideIfCurrentAsync(
+                row.Source,
+                revision,
+                new SegmentAttributionOverride(
+                    Guid.NewGuid().ToString("N"),
+                    revision,
+                    sourceSegment.SegmentId!,
+                    sourceSegment.SpeakerId!,
+                    choice.TargetKind,
+                    choice.TargetValue,
+                    "UserOverride",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow),
+                _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "Paragraph correction could not be applied. Reload and try again.");
+                return;
+            }
+
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus("Paragraph attribution corrected. Speaker IDs, text, timestamps, and local voice profiles were not changed.");
+            AppendActivity($"Applied paragraph-only attribution correction for '{row.Title}'.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Paragraph attribution correction failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("Paragraph correction did not finish. Reload and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+            _meetingDetailWindow?.SetMaintenanceBusy(false);
+        }
+    }
+
+    private SegmentAttributionOverrideChoice? ShowSegmentAttributionOverrideDialog(
+        MeetingTranscriptSegmentRow segment,
+        IReadOnlyList<SpeakerIdentity> speakers)
+    {
+        SegmentAttributionOverrideChoice? result = null;
+        var speakerChoices = speakers
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id) &&
+                              !string.IsNullOrWhiteSpace(speaker.DisplayName) &&
+                              !string.Equals(speaker.Id, segment.SpeakerId, StringComparison.Ordinal))
+            .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+            .Select(group => group.Last())
+            .Select(speaker => new SegmentAttributionOverrideSpeakerChoice(speaker.Id, speaker.DisplayName))
+            .OrderBy(choice => choice.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = "Correct Paragraph Attribution",
+            Width = 500,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+        };
+        var body = new StackPanel { Margin = new Thickness(20) };
+        body.Children.Add(new TextBlock
+        {
+            Text = "This changes only this paragraph. Apply to all turns remains in Speaker Review.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        body.Children.Add(new TextBlock
+        {
+            Margin = new Thickness(0, 12, 0, 4),
+            Text = "Use another current-meeting speaker",
+            FontWeight = FontWeights.SemiBold,
+        });
+        var speakerComboBox = new ComboBox
+        {
+            ItemsSource = speakerChoices,
+            DisplayMemberPath = nameof(SegmentAttributionOverrideSpeakerChoice.DisplayName),
+            MinHeight = 30,
+        };
+        body.Children.Add(speakerComboBox);
+        body.Children.Add(new TextBlock
+        {
+            Margin = new Thickness(0, 12, 0, 4),
+            Text = "Or enter a paragraph-only display name",
+            FontWeight = FontWeights.SemiBold,
+        });
+        var displayNameTextBox = new TextBox { MinHeight = 30, VerticalContentAlignment = VerticalAlignment.Center };
+        body.Children.Add(displayNameTextBox);
+        var validationTextBlock = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Foreground = Brushes.Firebrick,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        body.Children.Add(validationTextBlock);
+        var actions = new StackPanel
+        {
+            Margin = new Thickness(0, 16, 0, 0),
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        var cancelButton = new Button { Content = "Cancel", MinWidth = 84, IsCancel = true };
+        var applyButton = new Button { Content = "Apply only this paragraph", MinWidth = 168, Margin = new Thickness(10, 0, 0, 0), IsDefault = true };
+        cancelButton.Click += (_, _) => dialog.DialogResult = false;
+        applyButton.Click += (_, _) =>
+        {
+            var name = displayNameTextBox.Text?.Trim() ?? string.Empty;
+            if (speakerComboBox.SelectedItem is SegmentAttributionOverrideSpeakerChoice speaker && string.IsNullOrWhiteSpace(name))
+            {
+                result = new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.Speaker, speaker.SpeakerId);
+                dialog.DialogResult = true;
+                return;
+            }
+
+            if (speakerComboBox.SelectedItem is not null && !string.IsNullOrWhiteSpace(name))
+            {
+                validationTextBlock.Text = "Choose a meeting speaker or enter a display name, not both.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(name) || name.StartsWith("Speaker", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, segment.OriginalSpeakerLabel, StringComparison.CurrentCultureIgnoreCase))
+            {
+                validationTextBlock.Text = "Enter a non-generic name different from the original attribution, or choose another meeting speaker.";
+                return;
+            }
+
+            result = new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.DisplayName, name);
+            dialog.DialogResult = true;
+        };
+        actions.Children.Add(cancelButton);
+        actions.Children.Add(applyButton);
+        body.Children.Add(actions);
+        dialog.Content = body;
+        AutomationProperties.SetName(dialog, "Correct paragraph attribution");
+        return dialog.ShowDialog() == true ? result : null;
     }
 
     private async Task ApplyOpenMeetingDetailSpeakerNamesAsync(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows)

@@ -10,6 +10,14 @@ public sealed class TranscriptRenderer
 {
     public string RenderMarkdown(MeetingSessionManifest manifest, IReadOnlyList<TranscriptSegment> segments)
     {
+        return RenderMarkdown(manifest, segments, speakerLabelResolver: null);
+    }
+
+    public string RenderMarkdown(
+        MeetingSessionManifest manifest,
+        IReadOnlyList<TranscriptSegment> segments,
+        Func<TranscriptSegment, string>? speakerLabelResolver)
+    {
         var speakerCatalog = BuildSpeakerCatalog(manifest.ProcessingMetadata?.Speakers);
         var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges);
         var metadataLines = new List<string>
@@ -52,7 +60,7 @@ public sealed class TranscriptRenderer
 
         var paragraphs = TranscriptParagraphBuilder.Build(
             segments,
-            segment => ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId));
+            segment => speakerLabelResolver?.Invoke(segment) ?? ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId));
         foreach (var paragraph in paragraphs)
         {
             lines.Add($"[{paragraph.Start:hh\\:mm\\:ss} - {paragraph.End:hh\\:mm\\:ss}] **{paragraph.SpeakerLabel}:** {paragraph.Text}");
