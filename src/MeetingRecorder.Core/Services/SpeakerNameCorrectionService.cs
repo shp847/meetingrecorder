@@ -24,7 +24,8 @@ public sealed record SpeakerNameCorrectionDraft(
 
 public sealed record SpeakerNameReviewRequest(
     string ExpectedArtifactRevision,
-    IReadOnlyList<SpeakerNameCorrectionDraft> Drafts);
+    IReadOnlyList<SpeakerNameCorrectionDraft> Drafts,
+    string? OperationId = null);
 
 public sealed record SpeakerNameRejectionResult(
     int RejectedCount,

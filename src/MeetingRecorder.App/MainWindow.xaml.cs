@@ -7917,7 +7917,8 @@ public partial class MainWindow : Window
                 row.ProfileId,
                 row.ExpectedNameSource,
                 row.RejectSuggestion,
-                row.ExpectedSuggestedDisplayName)).ToArray());
+                row.ExpectedSuggestedDisplayName)).ToArray(),
+            Guid.NewGuid().ToString("N"));
     }
 
     private static bool HasProfileSpeakerNameAttribution(SpeakerLabelInfo label)
