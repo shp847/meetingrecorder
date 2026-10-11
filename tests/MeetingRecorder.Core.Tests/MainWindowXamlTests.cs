@@ -1062,6 +1062,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("_pastRematchService.RematchBatchAsync(", source);
         Assert.Contains("Cancel Name Rematch", source);
         Assert.Contains("It does not open or change audio, transcript words/timestamps, diarization, summaries, or worker processing.", source);
+        Assert.Contains("ConfirmSpeakerLabelRepairAsync", source);
+        Assert.Contains("SpeakerRepairPreflightResolver.Resolve", source);
         Assert.DoesNotContain("ApplyMeetingRecommendationsAsync(selectedRecommendations, \"context-bulk\")", source);
     }
 

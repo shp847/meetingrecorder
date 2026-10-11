@@ -4021,7 +4021,8 @@ Sprint 10 acceptance criteria:
 - Documentation / installer / release work: document repair scope, expected wait, preservation/invalidations, no guarantee, and action-choice guide. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found suspicious distribution detection, repair cleanup recommendation/queueing, worker recovery, and tests, but no complete diagnosis/routing contract or correction-preservation/new-revision UX proof.
 - Evidence and date: 2026-09-29 added `SpeakerQualityDiagnosisResolver` tests for unknown/current/processing, fragmented labels, repair readiness, naming, and normal merge routing. It uses bounded structural metadata only and does not inspect transcript or audio contents.
-- Remaining gap or next action: surface the diagnosis in Speaker Review and add repair preflight receipt/invalidation behavior before marking this sprint Done.
+- Evidence and date: 2026-10-10 added `SpeakerRepairPreflightResolver` and explicit repair confirmation. It blocks stale/busy/unready requests and states user/profile-name review consequences before requeueing local speaker-label work; focused diagnosis/preflight/UI contracts passed 70/70.
+- Remaining gap or next action: surface the full structural diagnosis in Speaker Review and preserve/invalidate repair audit state across worker publication before marking this sprint Done.
 
 Goal: prevent users from trying to rename their way through broken clustering.
 

@@ -15084,6 +15084,10 @@ public partial class MainWindow : Window
                 }
                 else if (speakerState.Permits(SpeakerExperienceAction.RepairSpeakerLabels))
                 {
+                    if (!await ConfirmSpeakerLabelRepairAsync(meeting, speakerState))
+                    {
+                        continue;
+                    }
                     await QueueSpeakerLabelRepairAsync(meeting.Source, _lifetimeCts.Token);
                     requestedCount++;
                 }
@@ -15111,6 +15115,48 @@ public partial class MainWindow : Window
             _isApplyingSpeakerNames = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async Task<bool> ConfirmSpeakerLabelRepairAsync(
+        MeetingListRow meeting,
+        SpeakerExperienceStateResult speakerState)
+    {
+        var speakers = Array.Empty<SpeakerIdentity>();
+        if (!string.IsNullOrWhiteSpace(meeting.Source.ManifestPath) && File.Exists(meeting.Source.ManifestPath))
+        {
+            try
+            {
+                var manifest = await _manifestStore.LoadAsync(meeting.Source.ManifestPath, _lifetimeCts.Token);
+                speakers = manifest.ProcessingMetadata?.Speakers?.ToArray() ?? [];
+            }
+            catch (Exception exception)
+            {
+                _logger.Log($"Could not inspect speaker-label repair preflight: {exception}");
+                SpeakerNamesStatusTextBlock.Text = "Could not inspect current speaker labels. Reload the meeting list before repairing.";
+                return false;
+            }
+        }
+
+        var preflight = SpeakerRepairPreflightResolver.Resolve(new SpeakerRepairPreflightInput(
+            meeting.Source.Stem,
+            MeetingOutputCatalogService.GetSpeakerArtifactRevision(meeting.Source),
+            !string.IsNullOrWhiteSpace(meeting.Source.JsonPath) && File.Exists(meeting.Source.JsonPath),
+            IsBusy: speakerState.State is SpeakerExperienceState.LabelsQueued or SpeakerExperienceState.LabelsRunning,
+            IsRepairReady: speakerState.Permits(SpeakerExperienceAction.RepairSpeakerLabels),
+            UserEnteredNameCount: speakers.Count(speaker => speaker.IsUserEdited || speaker.NameSource == SpeakerNameSource.UserEdited),
+            ProfileAttributionCount: speakers.Count(speaker => speaker.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile)));
+        if (!preflight.CanQueue)
+        {
+            SpeakerNamesStatusTextBlock.Text = preflight.Summary;
+            return false;
+        }
+
+        return MessageBox.Show(
+            this,
+            $"{preflight.Summary}\n\n{preflight.Consequence}\n\nContinue?",
+            "Repair Speaker Labels",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
     }
 
     private bool CanQueueSpeakerLabelsForMeeting(MeetingListRow row)
