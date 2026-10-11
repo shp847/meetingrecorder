@@ -1079,6 +1079,22 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Meetings_Workspace_Uses_Technical_Studio_Data_Wells_Without_Oversize_Pills()
+    {
+        var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("x:Key=\"MeetingsDataWellBorderStyle\"", xaml);
+        Assert.Contains("<Setter Property=\"Background\" Value=\"{StaticResource AppMutedCardBrush}\" />", xaml);
+        Assert.Contains("x:Name=\"MeetingsListBorder\"", xaml);
+        Assert.Contains("Style=\"{StaticResource MeetingsDataWellBorderStyle}\"", xaml);
+        Assert.Contains("x:Name=\"MeetingsInspectorBorder\"", xaml);
+        Assert.Contains("x:Name=\"SelectedMeetingInspectorRecommendationItemsControl\"", xaml);
+        Assert.DoesNotContain("CornerRadius=\"999\"", xaml);
+        Assert.DoesNotContain("DropShadowEffect", xaml);
+    }
+
+    [Fact]
     public void Advanced_Settings_Replace_Raw_Model_Path_TextBoxes_With_ReadOnly_Model_Storage_Diagnostics()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");

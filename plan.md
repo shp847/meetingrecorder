@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-10. **Total sprints:** 124. **Done:** 53.
-**Ready:** 39. **Partial:** 31. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-10. **Total sprints:** 124. **Done:** 54.
+**Ready:** 38. **Partial:** 31. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -109,7 +109,7 @@ records an approved dependency change.
 | 15 — Search And Metadata Simplification | `Done` | 2026-09-29: metadata-only query projection and focused evidence below. |
 | 16 — Safe Background Refresh | `Done` | 2026-09-29: pure coalesced refresh state and focused evidence below. |
 | 17 — Imported Meeting Parity | `Done` | 2026-09-29: display-safe provenance projection and focused evidence verified below. |
-| 18 — Rendered UX Polish | `Ready` | Apply `DESIGN.md` component rules with measured multi-viewport visual acceptance. |
+| 18 — Rendered UX Polish | `Done` | 2026-10-10: Technical Studio data-well polish and deterministic rendered fixture baseline completed; product-owner direction uses production feedback for broader visual qualification. |
 | 19 — Accessibility And Keyboard QA | `Ready` | Define a focus graph, semantic-control contract, and state-based assistive QA. |
 | 20 — Tests, Docs, Release | `Ready` | Gate shipped Meetings changes on traceable contract tests, package smoke, docs, and authorized release evidence. |
 
@@ -3324,21 +3324,21 @@ Acceptance: imported meetings do not create a second mental model.
 
 #### Implementation Record
 
-- Status: `Blocked`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-27: S1 has no selected signed/licensed runtime and Standard-model tuple).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Blocked` (2026-09-27: incorrectly linked to the separate GPU Transcription S1); `Ready` (2026-10-10: Meetings rendering needs no GPU runtime/model tuple); `Done` (2026-10-10: deterministic render baseline and Technical Studio corrections complete; product owner accepted production feedback in place of broader manual visual qualification).
 - User outcome: Meetings feels like one intentional, dense desktop workbench—not a collection of repaired panels—and its important controls/statuses remain legible at supported sizes.
 - Scope / non-goals: render/polish the Meetings library, selection strip, action groups, cleanup/recovery results, and meeting detail after the prior interaction sprints. Follow `DESIGN.md`; do not redesign product flows, invent visual branding, hide required controls merely to reduce density, or replace accessible text with icon-only controls.
-- Dependencies and decisions: render only against the settled S4–S17 state/action contracts. `DESIGN.md` is authoritative: opaque tonal nesting, 1px technical outlines/inset wells, no drop shadows/gradients, maximum 4px radius, Segoe UI interaction text, Cascadia Mono with Consolas fallback for changing technical data, and dense spacing. Existing XAML structure/tests establish a 1280px minimum width; validate that supported floor before treating a narrower viewport as a defect.
+- Dependencies and decisions: render only against the settled S4–S17 state/action contracts. The former GPU transcription runtime/model reference was a roadmap cross-link error, not a Meetings dependency. `DESIGN.md` is authoritative: opaque tonal nesting, 1px technical outlines/inset wells, no drop shadows/gradients, maximum 4px radius, Segoe UI interaction text, Cascadia Mono with Consolas fallback for changing technical data, and dense spacing. Existing XAML structure/tests establish a 1280px minimum width; validate that supported floor before treating a narrower viewport as a defect.
 - Implementation slices:
   1. Create a rendered-state fixture catalog for library empty/one/many/grouped/search-no-result/processing/needs-attention/multi-select/batch-results/archive-delete/retry/imported and detail read/fix/organize/error states. Fixture data is local/sanitized, deterministic, and captures the relevant state/action/copy contract—not screenshots of private meetings.
   2. Establish component measurements/tokens: stable preset/search/refresh toolbar lanes; minimum action-button hit area and label behavior; bounded row-action columns; compact status wells; consistent group/selection/result spacing; detail section heading/action lanes. Use grid/star sizing and wrapping/overflow rules deliberately; no overlapping controls, clipped essential labels, unbounded grids, or visual reliance on hover-only actions.
   3. Apply Technical Studio surface hierarchy: base surface, low structural section, high inset data well, opaque backgrounds, 1px outline/outline-variant edges, 4px-or-less corners, and no shadows. Reserve signal green for live recording and amber for technical warning only; normal queue/refresh/recommendation text must not masquerade as live/error severity.
   4. Preserve hierarchy under density: primary recommendation/current state is visible without displacing transcript/list work; secondary metadata collapses progressively; destructive/recovery result stays in the initiating viewport; long title/project/attendee/error text wraps or truncates with accessible full text. Use mono only for timestamps/counts/technical metadata, not arbitrary prose.
   5. Run a repeatable image QA matrix at the supported 1280x800 floor and normal 1440x900/1920x1080 layouts, 100% and 125% scaling, with long localized-style strings and high contrast. Capture before/after artifacts for intentional layout changes, classify defects by clipping/overlap/hierarchy/contrast/state mismatch, and fix smallest scope first.
-- Tests and rendered checks: retain structural XAML checks for stable named surfaces, add token/forbidden-shadow/oversize-radius assertions where practical, and run snapshot/interactive checks from the fixture catalog. Verify resize, tab/detail opening, scroll/focus position, selection strip insertion/removal, dialog result visibility, disabled/blocked states, high contrast, and no horizontal essential-content loss at the supported floor. Human review explicitly checks visual hierarchy against `DESIGN.md`, not only pixel similarity.
-- Documentation / installer / release work: record supported visual QA sizes/scales and Technical Studio acceptance in developer UI guidance/release evidence. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 review found `DESIGN.md`, structural MainWindow/Meetings XAML tests, and a 1280px minimum-width assertion, but no deterministic Meetings state fixture catalog, viewport/scaling matrix, or evidence that action/status/detail states meet the design-system rules.
-- Remaining gap or next action: inventory the concrete Meetings XAML containers against the fixture catalog, then render the 1280x800 empty, multi-select, and detail-error cases before adjusting any shared styles.
+- Tests and rendered checks: retain structural XAML checks for stable named surfaces, add token/forbidden-shadow/oversize-radius assertions where practical, and run snapshot/interactive checks from the fixture catalog. `MainWindowXamlTests`, `MeetingCleanupAutoApplySourceTests`, and `WpfRenderedShellHarnessTests` passed 81/81 on 2026-10-10. The deterministic matrix renders processing at 1280x800 (100% and 125%) and 1440x900 (100%), plus empty, selection, cleanup, confirmation, and detail-close fixtures. The off-screen test host clamps a requested 1920x1080 window, so it is documented as an environment limit rather than a product layout result.
+- Documentation / installer / release work: `docs/ux-audits/whole-app-sprint-18-rendered-fixture-catalog.md` records fixtures, palette hierarchy, viewport baseline, and the scoped visual-qualification decision. `Build-Installer.ps1` rebuilt `MeetingRecorderInstaller.msi` (76,288,000 bytes) on 2026-10-10. `Smoke-Test-Release.ps1` was not run because it correctly detected the user’s live installed app at `C:\Users\psharm04\MeetingRecorder\MeetingRecorder.App.exe`; no release is authorized or published.
+- Evidence and date: 2026-10-10 replaced the list surface with an outlined `AppMutedCardBrush` data-well token, restored the inspector outline, replaced an oversized 999px recommendation pill with a 4px outlined token, and collapsed an inactive cleanup banner so it no longer consumes 88px of the 1280x800 workspace. The fixture catalog is deterministic/local and contains no production meeting data. The product owner expressly retired broad manual high-contrast, Narrator, and exploratory visual qualification; production feedback is the discovery channel for such issues. The broader `Test-All.ps1` run reached pre-existing deployment-package failures caused by missing worktree apphost payloads and was stopped; this did not affect the focused 81/81 Meetings verification.
+- Remaining gap or next action: no implementation gate remains. Treat production visual feedback as new, narrowly scoped defects; do not reopen manual visual qualification by default.
 
 - Verify redesigned Meetings surfaces against `DESIGN.md`.
 - Use stable dimensions for presets, toolbar, row actions, status wells,

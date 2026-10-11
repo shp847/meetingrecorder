@@ -46,6 +46,14 @@
             <Setter Property="BorderBrush" Value="{StaticResource AppOutlineBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
+        <Style x:Key="MeetingsDataWellBorderStyle" TargetType="Border">
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="MinHeight" Value="260" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Background" Value="{StaticResource AppMutedCardBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AppOutlineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
         <Style x:Key="ConfigSectionBorderStyle" TargetType="Border">
             <Setter Property="Margin" Value="0,16,0,0" />
             <Setter Property="Padding" Value="16" />
@@ -1061,7 +1069,7 @@
                                     Padding="14"
                                     CornerRadius="4"
                                     Background="#FFF6E5"
-                                    Visibility="Hidden">
+                                     Visibility="Collapsed">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -1326,12 +1334,7 @@
                                     Grid.Row="3"
                                     Grid.Column="0"
                                     Margin="0,16,0,0"
-                                    Padding="8"
-                                    MinHeight="260"
-                                    CornerRadius="4"
-                                    Background="{StaticResource AppCardBrush}"
-                                    BorderBrush="{StaticResource AppOutlineBrush}"
-                                    BorderThickness="1">
+                                     Style="{StaticResource MeetingsDataWellBorderStyle}">
                                 <ListView x:Name="MeetingsDataGrid"
                                           AutomationProperties.Name="Meetings list"
                                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -1500,6 +1503,8 @@
                                             Padding="16"
                                             CornerRadius="4"
                                             Background="{StaticResource AppCardBrush}"
+                                             BorderBrush="{StaticResource AppOutlineBrush}"
+                                             BorderThickness="1"
                                             Visibility="Collapsed">
                                         <StackPanel>
                                         <TextBlock FontWeight="SemiBold"
@@ -1594,8 +1599,10 @@
                                                 <DataTemplate>
                                                     <Border Margin="0,0,8,8"
                                                             Padding="8,4"
-                                                            CornerRadius="999"
-                                                            Background="#F4EFE6">
+                                                            CornerRadius="4"
+                                                            Background="{StaticResource AppMutedCardBrush}"
+                                                            BorderBrush="{StaticResource AppOutlineBrush}"
+                                                            BorderThickness="1">
                                                         <TextBlock Text="{Binding}" />
                                                     </Border>
                                                 </DataTemplate>

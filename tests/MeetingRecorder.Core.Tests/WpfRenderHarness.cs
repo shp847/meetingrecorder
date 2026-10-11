@@ -347,6 +347,8 @@ internal static class WpfRenderHarness
                     tabControl,
                     shellStatusDetail,
                     RequireElement<ListView>(window, "MeetingsDataGrid"),
+                    RequireElement<Border>(window, "MeetingsListBorder"),
+                    RequireElement<Border>(window, "MeetingSelectionCommandBarBorder"),
                     RequireElement<Border>(window, "MeetingsProcessingStatusBorder"),
                     RequireElement<TextBlock>(window, "SelectedMeetingInspectorTitleTextBlock"),
                     RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder"),

@@ -143,7 +143,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
-    public void Cleanup_Review_Banner_Reserves_Layout_Space_While_Background_Scan_Loads()
+    public void Cleanup_Review_Banner_Collapses_When_No_Recommendation_Is_Actionable()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -156,10 +156,10 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodEnd = source.IndexOf("private async Task TryAutoApplyMeetingCleanupSafeFixesAsync", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        Assert.Contains("Visibility=\"Hidden\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("Visibility=\"Collapsed\"", bannerBlock, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"88\"", bannerBlock, StringComparison.Ordinal);
-        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;", methodBlock, StringComparison.Ordinal);
-        Assert.DoesNotContain("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]

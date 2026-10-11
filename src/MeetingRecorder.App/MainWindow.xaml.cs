@@ -12412,7 +12412,7 @@ public partial class MainWindow : Window
     {
         if (HasCompletedMeetingCleanupHistoricalReview() || _meetingCleanupRecommendations.Length == 0)
         {
-            MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;
+            MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;
             MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
             return;
         }

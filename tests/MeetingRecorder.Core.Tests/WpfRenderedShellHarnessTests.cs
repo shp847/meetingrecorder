@@ -47,6 +47,8 @@ public sealed class WpfRenderedShellHarnessTests
         var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
 
         Assert.Contains("MeetingsDataGrid | DataGrid |", automationTrace);
+        Assert.Contains("MeetingsListBorder |", automationTrace);
+        Assert.Contains("MeetingSelectionCommandBarBorder |", automationTrace);
         Assert.Contains("MeetingsProcessingStatusBorder", automationTrace);
         Assert.Contains("Focus: Open Settings", keyboardTrace);
         Assert.DoesNotContain("<none>", keyboardTrace);
@@ -62,7 +64,36 @@ public sealed class WpfRenderedShellHarnessTests
         var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
 
         Assert.Contains("MeetingsDataGrid | DataGrid |", automationTrace);
+        Assert.Contains("MeetingsListBorder |", automationTrace);
+        Assert.Contains("MeetingSelectionCommandBarBorder |", automationTrace);
         Assert.Contains("SelectedMeetingInspectorTitleTextBlock | Text | Synthetic processing review", automationTrace);
+    }
+
+    [Theory]
+    [InlineData(1280, 800, 1d)]
+    [InlineData(1440, 900, 1d)]
+    [InlineData(1280, 800, 1.25d)]
+    public void Meetings_Processing_Viewport_Matrix_Preserves_The_Rendered_Workspace(int logicalWidth, int logicalHeight, double rasterScale)
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.Processing,
+            logicalWidth,
+            logicalHeight,
+            rasterScale);
+
+        using var stream = File.OpenRead(evidence.ScreenshotPath);
+        var decoder = new System.Windows.Media.Imaging.PngBitmapDecoder(
+            stream,
+            System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat,
+            System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+        var frame = decoder.Frames.Single();
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+
+        Assert.Equal((int)Math.Ceiling(logicalWidth * rasterScale), frame.PixelWidth);
+        Assert.Equal((int)Math.Ceiling(logicalHeight * rasterScale), frame.PixelHeight);
+        Assert.Contains("MeetingsDataGrid | DataGrid |", automationTrace);
+        Assert.Contains("MeetingsListBorder |", automationTrace);
+        Assert.Contains("MeetingSelectionCommandBarBorder |", automationTrace);
     }
 
     [Fact]
