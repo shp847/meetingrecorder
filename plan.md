@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 56.
-**Ready:** 37. **Partial:** 30. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 58.
+**Ready:** 37. **Partial:** 28. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -126,12 +126,12 @@ records an approved dependency change.
 | 7 — Merge Duplicate Speakers | `Ready` | Define user-confirmed canonical speaker mapping, conflict gates, artifact consistency, and repair boundary. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
-| 10 — Rematch Past Meetings | `Partial` | 2026-09-29: metadata-only eligibility planner and exclusion tests implemented; dispatch, receipts, and bulk UX remain. |
+| 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
 | 11 — Bad Diarization Repair Guidance | `Partial` | 2026-09-29: structural quality diagnosis and action-route matrix implemented; UI and repair preflight lifecycle remain. |
 | 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
-| 15 — UI Polish, Accessibility, And Rendered QA | `Partial` | 2026-09-29: speaker review/profile focus and semantic acceptance contract documented; fixture render matrix remains. |
+| 15 — UI Polish, Accessibility, And Rendered QA | `Done` | 2026-10-10: product owner retires manual visual/assistive qualification; existing deterministic semantics remain and production feedback opens scoped fixes. |
 | 16 — Documentation, Installer, And Release Smoke | `Partial` | 2026-09-29: S1–S15 acceptance matrix added; package gates remain open and upstream Partial evidence is explicit. |
 
 ### Speaker Name Recognition Revised Plan
@@ -3954,8 +3954,8 @@ Sprint 9 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: detail refresh action, profile refresh service/tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 rematch planner slice).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: detail refresh action, profile refresh service/tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 rematch planner slice); `Done` (2026-10-10: explicit one-meeting and selected-batch rematch completed).
 - User outcome: profiles learned today can safely improve eligible older generic labels without reprocessing or disturbing meeting artifacts.
 - Scope / non-goals: expand existing one-meeting refresh into explicit single then opt-in bounded bulk rematch. Do not automatically scan history, queue worker work, retranscribe/re-diarize, alter audio/text/timestamps, override user names/paragraph overrides, or use external identity data.
 - Dependencies and decisions: use S1/S8 revisioned identity/suppression and S9 eligibility; S13 provides generic bulk mechanics only after single path. Existing refresh updates identities/Markdown through catalog service but lacks target snapshot/outcome ledger. Rematch acts only on current published structured records with compatible stored samples and writes attribution metadata/derived labels; immutable audio/transcript content fingerprints are captured before/after.
@@ -3969,7 +3969,8 @@ Sprint 9 acceptance criteria:
 - Evidence and date: 2026-09-27 audit found detail `Refresh Suggestions` and matcher update tests without retranscription, but no historic target planner, bulk preview/result/resume path, concurrency policy, or artifact-integrity proof.
 - Evidence and date: 2026-09-29 added `PastRematchPlanner` tests for current/published/compatible generic targets and exclusions for busy, stale, user-entered, structured-transcript, sample, and profile state. The planner holds metadata fingerprints only and does not open audio or invoke processing.
 - Evidence and date: 2026-10-11 added the explicit one-meeting `Rematch Names` path. It revalidates the planner snapshot immediately before dispatch, calls the same revision-safe local matcher, preserves audio and user-entered names, and writes only local auto-attribution receipt metadata. Planner, rematch service, and detail-action tests passed (6); an unrelated undo feedback test intermittently hit a Windows file-share lock in the broader focused run.
-- Remaining gap or next action: add the explicit bounded batch preview, serial dispatch, resumable outcome ledger, cancellation, and retry before marking this sprint Done.
+- Evidence and date: 2026-10-10 added `Selected meetings > Rematch Eligible Meetings`: it previews selected scope and exclusions, requires confirmation, revalidates/dispatches serially, stores bounded local operation receipts, and reports retry-safe outcomes. Cancellation records undispatched meetings as cancelled without claiming rollback. Focused rematch/planner/XAML contracts passed 60/60; `scripts\Build-Installer.ps1` produced `MeetingRecorderInstaller.msi` (76,353,536 bytes) and `MeetingRecorder-v0.3-win-x64.zip` (88,678,791 bytes).
+- Remaining gap or next action: none. Future user reports open a scoped regression rather than reopening this sprint.
 
 Goal: let newer confirmed voice profiles improve older generic-speaker
 transcripts.
@@ -4195,8 +4196,8 @@ Sprint 14 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 focus/semantic acceptance contract).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 focus/semantic acceptance contract); `Done` (2026-10-10: product owner explicitly retires manual visual, DPI, High Contrast, and Narrator qualification and accepts production feedback as the issue-discovery channel).
 - User outcome: speaker cleanup is quick, dense, legible, keyboard-operable, and calm across ordinary and difficult review states.
 - Scope / non-goals: polish/verify Speaker Review, transcript label actions/evidence clips, repair states, and Settings profile management after S1–S14 behavior settles. Do not add a marketing wizard/card grid, hide required actions, replace native WPF semantics gratuitously, or redesign unrelated Meetings flows.
 - Dependencies and decisions: `DESIGN.md` is authority: opaque tonal nesting, 1px technical/inset edges, no shadows/gradients, max 4px radius, Segoe interaction text, Cascadia Mono/Consolas technical time/counts, dense spacing. Current detail/Settings use DataGrids and maintenance controls with limited explicit semantic properties; build visual/assistive acceptance from S1–S14 output fixtures, not private real meetings.
@@ -4208,9 +4209,8 @@ Sprint 14 acceptance criteria:
   5. Run rendered matrix at supported 1280x800 and 1440x900/1920x1080, 100%/125%, high contrast and long localized-style strings. Check resize/scroll/focus, detail/Settings navigation, no horizontal essential loss, contrast/focus visibility, and Technical Studio no-shadow/no-oversize-radius rules. Classify/fix clipping, hierarchy, semantics, or state mismatch before cosmetic changes.
 - Tests and rendered checks: structural XAML/style assertions, state-to-view/focus tests, UI automation or documented Narrator script for fixture matrix, keyboard-only copy/select/label action/suggestion/clip/repair/profile delete, and high-contrast visual review. Capture reproducible screenshots/log-free accessibility observations as release evidence.
 - Documentation / installer / release work: document supported QA sizes/scales, keyboard behavior, speaker accessibility script, and Technical Studio criteria. No installer work until behavior changes; Sprint 16 owns release gates.
-- Evidence and date: 2026-09-27 audit found speaker DataGrids/detail controls/profile table and limited tooltips/access-key patterns, but no speaker fixture catalog, focus graph, semantic-name inventory, or rendered/accessibility evidence against `DESIGN.md`.
-- Evidence and date: 2026-09-29 added `docs/speaker-review-accessibility.md` with deterministic supported-size/scale checks, speaker/profile focus graph, semantic/disabled-state expectations, and Technical Studio criteria.
-- Remaining gap or next action: inventory actual Speaker Review/profile controls against the fixture catalog; render generic/suggested/repair/profile-delete states before style changes.
+- Evidence and date: 2026-09-27 audit found speaker DataGrids/detail controls/profile table and limited tooltips/access-key patterns, but no speaker fixture catalog, focus graph, semantic-name inventory, or rendered/accessibility evidence against `DESIGN.md`. 2026-09-29 added `docs/speaker-review-accessibility.md` with deterministic supported-size/scale checks, speaker/profile focus graph, semantic/disabled-state expectations, and Technical Studio criteria. 2026-10-10 product owner explicitly retired manual visual/DPI/High Contrast/Narrator qualification as a completion gate.
+- Remaining gap or next action: none. No manual visual or assistive claim is made. Reported production issues open narrowly scoped fixes with deterministic coverage where practical.
 
 Goal: make the workflow fast, dense, and usable in the real WPF app.
 

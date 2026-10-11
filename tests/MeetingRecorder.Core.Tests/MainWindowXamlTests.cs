@@ -1053,10 +1053,15 @@ public sealed class MainWindowXamlTests
         Assert.Contains("x:Name=\"DangerMeetingActionsFamilyMenuItem\" Header=\"Danger Zone\"", xaml);
         Assert.Contains("x:Name=\"BulkMeetingActionsFamilyMenuItem\" Header=\"Selected meetings\"", xaml);
         Assert.Contains("Header=\"Review Recommendations\"", xaml);
+        Assert.Contains("x:Name=\"RematchSelectedMeetingsMenuItem\" Header=\"Rematch Eligible Meetings\"", xaml);
         Assert.Contains("_meetingActionCatalog.Resolve(new MeetingActionCatalogInput(", source);
         Assert.Contains("BuildMeetingActionSelectionAvailability", source);
         Assert.Contains("ApplyMeetingActionCatalogPresentation", source);
         Assert.Contains("Review the selected meetings' cleanup suggestions before applying any action.", source);
+        Assert.Contains("ConfirmPastRematchBatch", source);
+        Assert.Contains("_pastRematchService.RematchBatchAsync(", source);
+        Assert.Contains("Cancel Name Rematch", source);
+        Assert.Contains("It does not open or change audio, transcript words/timestamps, diarization, summaries, or worker processing.", source);
         Assert.DoesNotContain("ApplyMeetingRecommendationsAsync(selectedRecommendations, \"context-bulk\")", source);
     }
 

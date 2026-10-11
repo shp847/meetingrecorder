@@ -388,16 +388,26 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
         await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
         var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
         var correctionService = CreateService(profileStore, receiptStore);
-        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService);
+        var rematchStore = new PastRematchReceiptStore(Path.Combine(_root, "speaker-corrections", "past-rematches.json"));
+        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService, rematchStore);
 
         var result = await rematchService.RematchOneAsync(
             context.Record,
             SpeakerNameLearningMode.LocalAutoLearn,
             new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
-            _now);
+            _now,
+            "rematch-operation");
+        var retry = await rematchService.RematchOneAsync(
+            context.Record,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now.AddMinutes(1),
+            "rematch-operation");
 
         Assert.Equal(PastRematchDisposition.Eligible, result.PlanItem.Disposition);
         Assert.Equal(PastRematchOutcome.AutoApplied, result.Outcome);
+        Assert.Equal(PastRematchOutcome.AutoApplied, retry.Outcome);
+        Assert.Empty(retry.Predictions);
         Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
         var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, Assert.Single(manifest.ProcessingMetadata!.Speakers!).NameSource);
@@ -405,6 +415,34 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             await File.ReadAllTextAsync(Path.Combine(_root, "speaker-corrections", "receipts.json"))) ?? [])
             .Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
         Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+    }
+
+    [Fact]
+    public async Task PastRematchService_Batch_Cancellation_Records_Undispatched_Meeting()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var correctionService = CreateService(profileStore);
+        var rematchStore = new PastRematchReceiptStore(Path.Combine(_root, "speaker-corrections", "past-rematches.json"));
+        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService, rematchStore);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var results = await rematchService.RematchBatchAsync(
+            [context.Record],
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now,
+            "cancelled-rematch-operation",
+            cancellation.Token);
+
+        var result = Assert.Single(results);
+        Assert.Equal(PastRematchOutcome.Cancelled, result.Outcome);
+        Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var receipt = await rematchStore.FindAsync("cancelled-rematch-operation", result.PlanItem.MeetingStableIdentity);
+        Assert.NotNull(receipt);
+        Assert.Equal(PastRematchOutcome.Cancelled, receipt!.Outcome);
     }
 
     [Fact]

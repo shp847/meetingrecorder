@@ -122,6 +122,7 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _externalAudioImportGate = new(1, 1);
     private readonly SemaphoreSlim _teamsAttendeeCaptureGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private CancellationTokenSource? _pastRematchCts;
     private readonly Queue<string> _activityLogLines = new();
     private readonly CallbackIntentDispatcher _callbackIntentDispatcher = new();
     private readonly double[] _audioGraphLoopbackLevels = new double[AudioGraphPointCount];
@@ -14352,6 +14353,10 @@ public partial class MainWindow : Window
         MergeSelectedMeetingsContextMenuItem.IsEnabled = catalogState[MeetingActionId.MergeSelected].IsEligible;
         ReTranscribeSelectedMeetingsWithModelMenuItem.IsEnabled = catalogState[MeetingActionId.ReTranscribeSelectedWithModel].IsEligible;
         AddSpeakerLabelsToSelectedMeetingsMenuItem.IsEnabled = catalogState[MeetingActionId.AddSpeakerLabelsToSelected].IsEligible;
+        RematchSelectedMeetingsMenuItem.IsEnabled = _pastRematchCts is not null || (selectedMeetings.Length > 0 && !IsMeetingActionInProgress());
+        RematchSelectedMeetingsMenuItem.Header = _pastRematchCts is not null
+            ? "Cancel Name Rematch"
+            : "Rematch Eligible Meetings";
         ArchiveSelectedMeetingsMenuItem.IsEnabled = catalogState[MeetingActionId.ArchiveSelected].IsEligible;
         DeleteSelectedMeetingsPermanentlyMenuItem.IsEnabled = catalogState[MeetingActionId.DeleteSelectedPermanently].IsEligible;
         ApplyMeetingActionCatalogPresentation(OpenMeetingDetailsMenuItem, catalogState[MeetingActionId.OpenDetails]);
@@ -14378,12 +14383,15 @@ public partial class MainWindow : Window
         ApplyMeetingActionCatalogPresentation(AddSpeakerLabelsToSelectedMeetingsMenuItem, catalogState[MeetingActionId.AddSpeakerLabelsToSelected], includeCounts: true);
         ApplyMeetingActionCatalogPresentation(ArchiveSelectedMeetingsMenuItem, catalogState[MeetingActionId.ArchiveSelected], includeCounts: true);
         ApplyMeetingActionCatalogPresentation(DeleteSelectedMeetingsPermanentlyMenuItem, catalogState[MeetingActionId.DeleteSelectedPermanently], includeCounts: true);
-        BulkMeetingContextMenuSeparator.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
-        BulkMeetingActionsFamilyMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
+        BulkMeetingContextMenuSeparator.Visibility = contextState.ShowBulkMeetingActionGroup || _pastRematchCts is not null ? Visibility.Visible : Visibility.Collapsed;
+        BulkMeetingActionsFamilyMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup || _pastRematchCts is not null ? Visibility.Visible : Visibility.Collapsed;
         ApplyRecommendationsForSelectedMeetingsMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         MergeSelectedMeetingsContextMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         ReTranscribeSelectedMeetingsWithModelMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         AddSpeakerLabelsToSelectedMeetingsMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
+        RematchSelectedMeetingsMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup || _pastRematchCts is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         ArchiveSelectedMeetingsMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
         DeleteSelectedMeetingsPermanentlyMenuItem.Visibility = contextState.ShowBulkMeetingActionGroup ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -14668,6 +14676,78 @@ public partial class MainWindow : Window
         await QueueSpeakerLabelsForMeetingsAsync(selectedMeetings, "context-bulk-speaker-labels");
     }
 
+    private async void RematchSelectedMeetingsMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_pastRematchCts is not null)
+        {
+            _pastRematchCts.Cancel();
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Cancelling undispatched speaker-name rematches...";
+            return;
+        }
+
+        var selectedMeetings = GetSelectedMeetingRows();
+        if (selectedMeetings.Length == 0 || IsMeetingActionInProgress())
+        {
+            return;
+        }
+
+        var planItems = new List<(MeetingListRow Meeting, PastRematchPlanItem PlanItem)>();
+        try
+        {
+            foreach (var meeting in selectedMeetings)
+            {
+                var plan = await _pastRematchService.BuildPlanAsync(meeting.Source, isBusy: false, _lifetimeCts.Token);
+                planItems.Add((meeting, plan.Items.Single()));
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Could not prepare historic speaker-name rematch: {exception}");
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Could not prepare local speaker-name rematch. Reload the meeting list and retry.";
+            return;
+        }
+
+        if (!ConfirmPastRematchBatch(planItems))
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Speaker-name rematch cancelled before any meeting changed.";
+            return;
+        }
+
+        using var rematchCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        _pastRematchCts = rematchCts;
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        MeetingCleanupRecommendationsStatusTextBlock.Text = $"Rematching local speaker names for {planItems.Count} selected meeting(s)...";
+        try
+        {
+            var results = await _pastRematchService.RematchBatchAsync(
+                selectedMeetings.Select(meeting => meeting.Source).ToArray(),
+                _liveConfig.Current.SpeakerNameLearningMode,
+                BuildSpeakerNameRecognitionOptions(_liveConfig.Current),
+                DateTimeOffset.UtcNow,
+                Guid.NewGuid().ToString("N"),
+                rematchCts.Token);
+            var outcomes = results.Select((result, index) => new BulkOperationOutcome(
+                result.PlanItem.MeetingStableIdentity,
+                ToBulkRematchOutcome(result.Outcome),
+                $"{(index < selectedMeetings.Length ? selectedMeetings[index].Title : result.PlanItem.MeetingStableIdentity)}: {result.Warning ?? result.PlanItem.Reason}"));
+            await RefreshMeetingListAsync();
+            PresentMeetingMaintenanceResult("Speaker-name rematch", BulkOperationPlanner.Summarize(outcomes.ToArray()));
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Historic speaker-name rematch failed: {exception}");
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Local speaker-name rematch did not finish. No audio, transcript text, or diarization was reprocessed.";
+            AppendActivity("Speaker-name rematch did not finish.");
+        }
+        finally
+        {
+            _pastRematchCts = null;
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
     private async void ArchiveSelectedMeetingsMenuItem_OnClick(object sender, RoutedEventArgs e)
     {
         var selectedMeetings = GetSelectedMeetingRows();
@@ -14678,6 +14758,31 @@ public partial class MainWindow : Window
 
         await ArchiveMeetingsAsync(selectedMeetings, "context-bulk-archive");
     }
+
+    private bool ConfirmPastRematchBatch(IReadOnlyList<(MeetingListRow Meeting, PastRematchPlanItem PlanItem)> planItems)
+    {
+        var eligibleCount = planItems.Count(item => item.PlanItem.Disposition == PastRematchDisposition.Eligible);
+        var excluded = planItems.Where(item => item.PlanItem.Disposition != PastRematchDisposition.Eligible).ToArray();
+        var exclusionSummary = excluded.Length == 0
+            ? "No selected meetings are excluded."
+            : string.Join(" ", excluded
+                .GroupBy(item => item.PlanItem.Reason, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Count())
+                .Take(3)
+                .Select(group => $"{group.Count()} excluded: {group.Key}"));
+        var message = $"{planItems.Count} selected meeting(s): {eligibleCount} eligible for local speaker-name rematch; {excluded.Length} excluded.\n\n" +
+            $"{exclusionSummary}\n\n" +
+            "This uses stored local voice samples only. It does not open or change audio, transcript words/timestamps, diarization, summaries, or worker processing. Results are recorded locally. Continue?";
+        return MessageBox.Show(this, message, "Rematch Eligible Meetings", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes;
+    }
+
+    private static BulkOperationOutcomeKind ToBulkRematchOutcome(PastRematchOutcome outcome) => outcome switch
+    {
+        PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested or PastRematchOutcome.Unchanged => BulkOperationOutcomeKind.Succeeded,
+        PastRematchOutcome.Skipped => BulkOperationOutcomeKind.Skipped,
+        PastRematchOutcome.Cancelled => BulkOperationOutcomeKind.Cancelled,
+        _ => BulkOperationOutcomeKind.Failed,
+    };
 
     private void DeleteSelectedMeetingsPermanentlyMenuItem_OnClick(object sender, RoutedEventArgs e)
     {

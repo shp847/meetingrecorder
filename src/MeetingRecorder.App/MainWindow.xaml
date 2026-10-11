@@ -1423,6 +1423,7 @@
                                             <MenuItem x:Name="MergeSelectedMeetingsContextMenuItem" Header="Merge Selected" Click="MergeSelectedMeetingsContextMenuItem_OnClick" />
                                             <MenuItem x:Name="ReTranscribeSelectedMeetingsWithModelMenuItem" Header="Re-Transcribe Selected With Model" Click="ReTranscribeSelectedMeetingsWithModelMenuItem_OnClick" />
                                             <MenuItem x:Name="AddSpeakerLabelsToSelectedMeetingsMenuItem" Header="Add Speaker Labels To Selected" Click="AddSpeakerLabelsToSelectedMeetingsMenuItem_OnClick" />
+                                            <MenuItem x:Name="RematchSelectedMeetingsMenuItem" Header="Rematch Eligible Meetings" Click="RematchSelectedMeetingsMenuItem_OnClick" />
                                             <MenuItem x:Name="ArchiveSelectedMeetingsMenuItem" Header="Archive Selected" Click="ArchiveSelectedMeetingsMenuItem_OnClick" />
                                             <MenuItem x:Name="DeleteSelectedMeetingsPermanentlyMenuItem" Header="Delete Selected Permanently" Click="DeleteSelectedMeetingsPermanentlyMenuItem_OnClick" />
                                         </MenuItem>

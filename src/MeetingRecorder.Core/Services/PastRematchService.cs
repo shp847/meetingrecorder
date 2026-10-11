@@ -17,15 +17,18 @@ public sealed class PastRematchService
     private readonly SessionManifestStore _manifestStore;
     private readonly VoiceProfileStore _profileStore;
     private readonly SpeakerNameCorrectionService _correctionService;
+    private readonly PastRematchReceiptStore _receiptStore;
 
     public PastRematchService(
         SessionManifestStore manifestStore,
         VoiceProfileStore profileStore,
-        SpeakerNameCorrectionService correctionService)
+        SpeakerNameCorrectionService correctionService,
+        PastRematchReceiptStore? receiptStore = null)
     {
         _manifestStore = manifestStore;
         _profileStore = profileStore;
         _correctionService = correctionService;
+        _receiptStore = receiptStore ?? new PastRematchReceiptStore();
     }
 
     public async Task<PastRematchResult> RematchOneAsync(
@@ -35,37 +38,93 @@ public sealed class PastRematchService
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
+        return await RematchOneAsync(record, learningMode, options, now, operationId: null, cancellationToken);
+    }
+
+    public async Task<PastRematchResult> RematchOneAsync(
+        MeetingOutputRecord record,
+        SpeakerNameLearningMode learningMode,
+        SpeakerNameRecognitionOptions options,
+        DateTimeOffset now,
+        string? operationId,
+        CancellationToken cancellationToken = default)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         var plan = await BuildPlanAsync(record, isBusy: false, cancellationToken);
         var planItem = AssertSinglePlanItem(plan, record);
+        operationId = string.IsNullOrWhiteSpace(operationId) ? Guid.NewGuid().ToString("N") : operationId.Trim();
+        var existing = await _receiptStore.FindAsync(operationId, planItem.MeetingStableIdentity, cancellationToken);
+        if (existing is not null)
+        {
+            return new PastRematchResult(planItem, existing.Outcome, existing.Reason, Array.Empty<SpeakerNamePrediction>());
+        }
         if (learningMode == SpeakerNameLearningMode.Disabled)
         {
-            return new PastRematchResult(
+            return await RecordAsync(new PastRematchResult(
                 planItem with { Disposition = PastRematchDisposition.Skip, Reason = "Local speaker-name learning is disabled." },
                 PastRematchOutcome.Skipped,
                 "Local speaker-name learning is disabled.",
-                Array.Empty<SpeakerNamePrediction>());
+                Array.Empty<SpeakerNamePrediction>()), operationId, now, cancellationToken);
         }
         if (planItem.Disposition != PastRematchDisposition.Eligible)
         {
-            return new PastRematchResult(planItem, ToOutcome(planItem.Disposition), planItem.Reason, Array.Empty<SpeakerNamePrediction>());
+            return await RecordAsync(new PastRematchResult(planItem, ToOutcome(planItem.Disposition), planItem.Reason, Array.Empty<SpeakerNamePrediction>()), operationId, now, cancellationToken);
         }
 
-        var operationId = "past-rematch-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            planItem.MeetingStableIdentity + "\n" + planItem.ArtifactRevision)))[..24];
+        var attributionOperationId = "past-rematch-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            operationId + "\n" + planItem.MeetingStableIdentity + "\n" + planItem.ArtifactRevision)))[..24];
         var refresh = await _correctionService.RefreshSpeakerNameAttributionAsync(
             record,
             learningMode,
             options,
             now,
-            operationId,
+            attributionOperationId,
             cancellationToken);
         var outcome = refresh.Predictions.Any(prediction => prediction.Source == SpeakerNameSource.AutoAppliedVoiceProfile)
             ? PastRematchOutcome.AutoApplied
             : refresh.Predictions.Any(prediction => prediction.Source == SpeakerNameSource.SuggestedVoiceProfile)
                 ? PastRematchOutcome.Suggested
                 : PastRematchOutcome.Unchanged;
-        return new PastRematchResult(planItem, outcome, refresh.Warning, refresh.Predictions);
+        return await RecordAsync(new PastRematchResult(planItem, outcome, refresh.Warning, refresh.Predictions), operationId, now, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PastRematchResult>> RematchBatchAsync(
+        IReadOnlyList<MeetingOutputRecord> records,
+        SpeakerNameLearningMode learningMode,
+        SpeakerNameRecognitionOptions options,
+        DateTimeOffset now,
+        string? operationId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveOperationId = string.IsNullOrWhiteSpace(operationId) ? Guid.NewGuid().ToString("N") : operationId.Trim();
+        var results = new List<PastRematchResult>();
+        var pending = new List<(MeetingOutputRecord Record, PastRematchPlanItem PlanItem)>();
+        foreach (var record in records)
+        {
+            pending.Add((record, AssertSinglePlanItem(
+                await BuildPlanAsync(record, isBusy: false, CancellationToken.None),
+                record)));
+        }
+        for (var index = 0; index < pending.Count; index++)
+        {
+            var target = pending[index];
+            if (cancellationToken.IsCancellationRequested)
+            {
+                results.AddRange(await RecordCancelledAsync(pending.Skip(index), effectiveOperationId, now));
+                break;
+            }
+
+            try
+            {
+                results.Add(await RematchOneAsync(target.Record, learningMode, options, now, effectiveOperationId, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                results.AddRange(await RecordCancelledAsync(pending.Skip(index), effectiveOperationId, now));
+                break;
+            }
+        }
+        return results;
     }
 
     public async Task<PastRematchPlan> BuildPlanAsync(
@@ -120,5 +179,47 @@ public sealed class PastRematchService
         var metadata = speakers.Select(speaker => $"{speaker.Id}|{speaker.NameSource}|{speaker.ProfileId}|{speaker.IsUserEdited}")
             .Concat(samples.Select(sample => $"{sample.SpeakerId}|{sample.EmbeddingModelFileName}|{sample.EmbeddingDimension}|{sample.SpeechDuration}"));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", metadata))));
+    }
+
+    private async Task<PastRematchResult> RecordAsync(
+        PastRematchResult result,
+        string operationId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _receiptStore.AppendOrReplaceAsync(new PastRematchReceipt(
+                PastRematchReceipt.CurrentSchemaVersion,
+                operationId,
+                result.PlanItem.MeetingStableIdentity,
+                result.PlanItem.ArtifactRevision,
+                result.Outcome,
+                result.Warning ?? result.PlanItem.Reason,
+                now), cancellationToken);
+            return result;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return result with { Warning = string.Join(" ", new[] { result.Warning, "Local rematch outcome receipt could not be saved." }.Where(value => !string.IsNullOrWhiteSpace(value))) };
+        }
+    }
+
+    private async Task<IReadOnlyList<PastRematchResult>> RecordCancelledAsync(
+        IEnumerable<(MeetingOutputRecord Record, PastRematchPlanItem PlanItem)> pending,
+        string operationId,
+        DateTimeOffset now)
+    {
+        var results = new List<PastRematchResult>();
+        foreach (var target in pending)
+        {
+            results.Add(await RecordAsync(new PastRematchResult(
+                target.PlanItem,
+                PastRematchOutcome.Cancelled,
+                "Rematch cancelled before this meeting was dispatched; no work was rolled back.",
+                Array.Empty<SpeakerNamePrediction>()), operationId, now, CancellationToken.None));
+        }
+
+        return results;
     }
 }
