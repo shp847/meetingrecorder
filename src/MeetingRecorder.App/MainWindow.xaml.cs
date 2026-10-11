@@ -3348,52 +3348,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        var preflight = BuildMeetingArchivePreflight(targetMeetings, MeetingArchiveOperation.PermanentDelete);
-        if (!preflight.CanProceed)
+        var eligibleMeetings = targetMeetings
+            .Where(meeting => BuildMeetingArchivePreflight(meeting, MeetingArchiveOperation.PermanentDelete).CanProceed)
+            .ToArray();
+        if (eligibleMeetings.Length == 0)
         {
-            MeetingCleanupRecommendationsStatusTextBlock.Text = preflight.Summary;
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "No selected meeting has published artifacts that can be deleted safely.";
             return;
         }
 
-        if (!TryConfirmPermanentDelete(targetMeetings))
+        if (!TryConfirmPermanentDelete(eligibleMeetings))
         {
             MeetingCleanupRecommendationsStatusTextBlock.Text =
                 "Permanent delete cancelled. Type DELETE exactly to confirm an irreversible delete.";
             return;
         }
 
-        _isDeletingMeetings = true;
-        UpdateMeetingActionState();
-        var deleteCopy = UserActionCopyResolver.Resolve(UserActionIntent.DeleteMeetings);
-        MeetingCleanupRecommendationsStatusTextBlock.Text = deleteCopy.ProgressText;
-
-        try
-        {
-            foreach (var meeting in targetMeetings)
-            {
-                await _meetingCleanupExecutionService.DeleteMeetingPermanentlyAsync(meeting.Source, _lifetimeCts.Token);
-            }
-
-            MeetingCleanupRecommendationsStatusTextBlock.Text = deleteCopy.SuccessText;
-            AppendActivity(
-                targetMeetings.Length == 1
-                    ? $"Permanently deleted published meeting '{targetMeetings[0].Title}'."
-                    : $"Permanently deleted {targetMeetings.Length} published meetings.");
-            await RefreshMeetingListAsync();
-        }
-        catch (Exception exception)
-        {
-            _logger.Log($"Permanent meeting deletion failed: {exception}");
-            MeetingCleanupRecommendationsStatusTextBlock.Text = UserActionCopyResolver.Resolve(
-                UserActionIntent.DeleteMeetings,
-                UserActionBlockedReasonKind.OperationFailed).BlockedText;
-            AppendActivity("Permanent meeting deletion did not finish.");
-        }
-        finally
-        {
-            _isDeletingMeetings = false;
-            UpdateMeetingActionState();
-        }
+        await DeleteMeetingsAsync(targetMeetings);
     }
 
     private async void MeetingRecommendedActionButton_OnClick(object sender, RoutedEventArgs e)
@@ -7912,7 +7883,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var preflight = BuildMeetingArchivePreflight([row], MeetingArchiveOperation.PermanentDelete);
+        var preflight = BuildMeetingArchivePreflight(row, MeetingArchiveOperation.PermanentDelete);
         if (!preflight.CanProceed)
         {
             _meetingDetailWindow?.SetMaintenanceStatus(preflight.Summary);
@@ -7925,30 +7896,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        _isDeletingMeetings = true;
-        UpdateMeetingActionState();
-        _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-            UserActionIntent.DeleteMeetings).ProgressText);
-        try
+        var result = await DeleteMeetingsAsync([row]);
+        _meetingDetailWindow?.SetMaintenanceStatus(BuildMeetingMaintenanceResultText("Permanent delete", result));
+        if (result.SucceededCount > 0)
         {
-            await _meetingCleanupExecutionService.DeleteMeetingPermanentlyAsync(row.Source, _lifetimeCts.Token);
-            AppendActivity($"Permanently deleted published meeting '{row.Title}'.");
             _openMeetingDetailStem = null;
-            await RefreshMeetingListAsync();
             _meetingDetailWindow?.Close();
-        }
-        catch (Exception exception)
-        {
-            _logger.Log($"Permanent meeting deletion from detail failed: {exception}");
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.DeleteMeetings,
-                UserActionBlockedReasonKind.OperationFailed).BlockedText);
-            AppendActivity("Permanent meeting deletion did not finish.");
-        }
-        finally
-        {
-            _isDeletingMeetings = false;
-            UpdateMeetingActionState();
         }
     }
 
@@ -14739,34 +14692,61 @@ public partial class MainWindow : Window
         MeetingCleanupRecommendationsStatusTextBlock.Text = archiveCopy.ProgressText;
         try
         {
-            var preflight = BuildMeetingArchivePreflight(meetings, MeetingArchiveOperation.Archive);
-            if (!preflight.CanProceed)
-            {
-                MeetingCleanupRecommendationsStatusTextBlock.Text = preflight.Summary;
-                return false;
-            }
-
             var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(_liveConfig.Current.AudioOutputDir);
             var archiveDirectory = MeetingCleanupExecutionService.CreateExecutionArchiveDirectory(archiveRoot, archiveLabel);
+            var outcomes = new List<BulkOperationOutcome>();
+            var dispatchableMeetings = new List<MeetingListRow>();
             foreach (var meeting in meetings)
             {
-                await _meetingArchiveReceiptService.ArchiveAsync(
-                    meeting.Source.Stem,
-                    "manual-archive",
-                    [
-                        ("audio", meeting.Source.AudioPath),
-                        ("transcript", meeting.Source.MarkdownPath),
-                        ("metadata", meeting.Source.JsonPath),
-                        ("ready-marker", meeting.Source.ReadyMarkerPath),
-                    ],
-                    archiveDirectory,
-                    _lifetimeCts.Token);
+                var preflight = BuildMeetingArchivePreflight(meeting, MeetingArchiveOperation.Archive);
+                if (preflight.CanProceed)
+                {
+                    dispatchableMeetings.Add(meeting);
+                }
+                else
+                {
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Skipped, $"{meeting.Title}: {preflight.Summary}"));
+                }
             }
 
-            MeetingCleanupRecommendationsStatusTextBlock.Text = archiveCopy.SuccessText;
-            RestoreLatestArchiveButton.Visibility = Visibility.Visible;
+            foreach (var meeting in dispatchableMeetings)
+            {
+                try
+                {
+                    await _meetingArchiveReceiptService.ArchiveAsync(
+                        meeting.Source.Stem,
+                        "manual-archive",
+                        [
+                            ("audio", meeting.Source.AudioPath),
+                            ("transcript", meeting.Source.MarkdownPath),
+                            ("metadata", meeting.Source.JsonPath),
+                            ("ready-marker", meeting.Source.ReadyMarkerPath),
+                        ],
+                        archiveDirectory,
+                        _lifetimeCts.Token);
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Succeeded, $"{meeting.Title}: archived published artifacts."));
+                }
+                catch (OperationCanceledException)
+                {
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Cancelled, $"{meeting.Title}: archive cancelled."));
+                    outcomes.AddRange(dispatchableMeetings
+                        .SkipWhile(candidate => !ReferenceEquals(candidate, meeting))
+                        .Skip(1)
+                        .Select(candidate => new BulkOperationOutcome(candidate.Source.Stem, BulkOperationOutcomeKind.Cancelled, $"{candidate.Title}: not dispatched after cancellation.")));
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    _logger.Log($"Meeting archive failed for '{meeting.Source.Stem}': {exception}");
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Failed, $"{meeting.Title}: archive did not finish."));
+                }
+            }
+
+            var result = BulkOperationPlanner.Summarize(outcomes);
+            RestoreLatestArchiveButton.Visibility = result.SucceededCount > 0 ? Visibility.Visible : Visibility.Collapsed;
             await RefreshMeetingListAsync();
-            return true;
+            PresentMeetingMaintenanceResult("Archive", result);
+            return result.SucceededCount > 0;
         }
         catch (Exception exception)
         {
@@ -14828,6 +14808,79 @@ public partial class MainWindow : Window
             _isArchivingMeetings = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async Task<BulkOperationResult> DeleteMeetingsAsync(IReadOnlyList<MeetingListRow> meetings)
+    {
+        _isDeletingMeetings = true;
+        UpdateMeetingActionState();
+        MeetingCleanupRecommendationsStatusTextBlock.Text = UserActionCopyResolver.Resolve(UserActionIntent.DeleteMeetings).ProgressText;
+        var outcomes = new List<BulkOperationOutcome>();
+        try
+        {
+            foreach (var meeting in meetings)
+            {
+                var preflight = BuildMeetingArchivePreflight(meeting, MeetingArchiveOperation.PermanentDelete);
+                if (!preflight.CanProceed)
+                {
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Skipped, $"{meeting.Title}: {preflight.Summary}"));
+                    continue;
+                }
+
+                try
+                {
+                    await _meetingCleanupExecutionService.DeleteMeetingPermanentlyAsync(meeting.Source, _lifetimeCts.Token);
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Succeeded, $"{meeting.Title}: permanently deleted."));
+                }
+                catch (OperationCanceledException)
+                {
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Cancelled, $"{meeting.Title}: delete cancelled."));
+                    outcomes.AddRange(meetings
+                        .SkipWhile(candidate => !ReferenceEquals(candidate, meeting))
+                        .Skip(1)
+                        .Select(candidate => new BulkOperationOutcome(candidate.Source.Stem, BulkOperationOutcomeKind.Cancelled, $"{candidate.Title}: not dispatched after cancellation.")));
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    _logger.Log($"Permanent meeting deletion failed for '{meeting.Source.Stem}': {exception}");
+                    outcomes.Add(new(meeting.Source.Stem, BulkOperationOutcomeKind.Failed, $"{meeting.Title}: permanent delete did not finish."));
+                }
+            }
+
+            var result = BulkOperationPlanner.Summarize(outcomes);
+            await RefreshMeetingListAsync();
+            PresentMeetingMaintenanceResult("Permanent delete", result);
+            return result;
+        }
+        finally
+        {
+            _isDeletingMeetings = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private void PresentMeetingMaintenanceResult(string operation, BulkOperationResult result)
+    {
+        var text = BuildMeetingMaintenanceResultText(operation, result);
+        MeetingMaintenanceResultTextBlock.Text = text;
+        MeetingMaintenanceResultDataGrid.ItemsSource = result.Outcomes
+            .Select(outcome => new MeetingMaintenanceResultRow(
+                outcome.MeetingId,
+                outcome.Kind.ToString(),
+                outcome.Detail))
+            .ToArray();
+        MeetingMaintenanceResultBorder.Visibility = Visibility.Visible;
+        MeetingCleanupRecommendationsStatusTextBlock.Text = text;
+        AppendActivity($"{operation}: {result.SucceededCount} succeeded, {result.SkippedCount} skipped, {result.FailedCount} failed, {result.CancelledCount} cancelled.");
+    }
+
+    private static string BuildMeetingMaintenanceResultText(string operation, BulkOperationResult result)
+    {
+        var summary = $"{operation}: {result.SucceededCount} succeeded, {result.SkippedCount} skipped, {result.FailedCount} failed, {result.CancelledCount} cancelled.";
+        return result.SkippedCount + result.FailedCount + result.CancelledCount == 0
+            ? summary
+            : $"{summary} Review each affected meeting below.";
     }
 
     private async Task QueueSpeakerLabelsForMeetingsAsync(IReadOnlyList<MeetingListRow> meetings, string activityLabel)
@@ -15275,19 +15328,15 @@ public partial class MainWindow : Window
     }
 
     private static MeetingArchivePreflightResult BuildMeetingArchivePreflight(
-        IReadOnlyList<MeetingListRow> meetings,
+        MeetingListRow meeting,
         MeetingArchiveOperation operation)
     {
-        var artifacts = meetings
-            .SelectMany(meeting => GetPublishedArtifacts(meeting.Source))
-            .ToArray();
-        var hasLinkedSessionFolder = meetings.Any(meeting =>
-            !string.IsNullOrWhiteSpace(meeting.Source.ManifestPath) &&
-            Directory.Exists(Path.GetDirectoryName(meeting.Source.ManifestPath)!));
+        var hasLinkedSessionFolder = !string.IsNullOrWhiteSpace(meeting.Source.ManifestPath) &&
+            Directory.Exists(Path.GetDirectoryName(meeting.Source.ManifestPath)!);
         return MeetingArchivePreflight.Evaluate(new(
-            string.Join(",", meetings.Select(meeting => meeting.Source.Stem)),
+            meeting.Source.Stem,
             operation,
-            artifacts,
+            GetPublishedArtifacts(meeting.Source).ToArray(),
             IsBusy: false,
             HasReceipt: operation != MeetingArchiveOperation.Recover,
             IsReceiptValid: operation != MeetingArchiveOperation.Recover,
@@ -15990,6 +16039,8 @@ public partial class MainWindow : Window
     }
 
     private sealed record SelectionOption<TValue>(TValue Value, string Label, bool IsEnabled = true);
+
+    private sealed record MeetingMaintenanceResultRow(string MeetingId, string Outcome, string Detail);
 
     private sealed record SpeakerNameReviewRow(
         string? SpeakerId,

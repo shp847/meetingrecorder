@@ -440,11 +440,11 @@ internal static class WpfRenderHarness
         };
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         new SessionManifestStore(pathBuilder).SaveAsync(manifest, manifestPath).GetAwaiter().GetResult();
-        if (state == SyntheticShellState.CleanupRecommendation)
+        if (state is SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled)
         {
             var artifactPath = Path.Combine(
                 processingConfig.AudioOutputDir,
-                pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc.AddHours(-1), "Teams") + ".wav");
+                pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, manifest.DetectedTitle) + ".wav");
             Directory.CreateDirectory(Path.GetDirectoryName(artifactPath)!);
             File.WriteAllBytes(artifactPath, Array.Empty<byte>());
         }

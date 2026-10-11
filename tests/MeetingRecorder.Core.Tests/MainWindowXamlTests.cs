@@ -1059,12 +1059,18 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"RestoreLatestArchiveButton\"", xaml);
         Assert.Contains("Click=\"RestoreLatestArchiveButton_OnClick\"", xaml);
+        Assert.Contains("x:Name=\"MeetingMaintenanceResultBorder\"", xaml);
+        Assert.Contains("x:Name=\"MeetingMaintenanceResultTextBlock\"", xaml);
+        Assert.Contains("x:Name=\"MeetingMaintenanceResultDataGrid\"", xaml);
         Assert.Contains("_meetingArchiveReceiptService.ArchiveAsync(", source);
         Assert.Contains("_meetingArchiveReceiptService.FindReceiptsAsync(", source);
         Assert.Contains("_meetingArchiveReceiptService.RestoreAsync(", source);
-        Assert.Contains("BuildMeetingArchivePreflight(meetings, MeetingArchiveOperation.Archive)", source);
-        Assert.Contains("BuildMeetingArchivePreflight(targetMeetings, MeetingArchiveOperation.PermanentDelete)", source);
+        Assert.Contains("BuildMeetingArchivePreflight(meeting, MeetingArchiveOperation.Archive)", source);
+        Assert.Contains("BuildMeetingArchivePreflight(meeting, MeetingArchiveOperation.PermanentDelete)", source);
         Assert.Contains("BuildReceiptRecoveryPreflight(receipt.ReceiptPath, receipt.Receipt)", source);
+        Assert.Contains("BulkOperationPlanner.Summarize(outcomes)", source);
+        Assert.Contains("PresentMeetingMaintenanceResult", source);
+        Assert.Contains("MeetingMaintenanceResultBorder.Visibility = Visibility.Visible", source);
         Assert.Contains("RestoreLatestArchiveButton.Visibility = recoveryReceipts.Count > 0", source);
         Assert.Contains("The work session was never archived.", source);
     }
