@@ -7,7 +7,7 @@ dependency on another section.
 # Sprint Delivery Tracker
 
 **Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 61.
-**Ready:** 37. **Partial:** 24. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ready:** 37. **Partial:** 23. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -132,7 +132,7 @@ records an approved dependency change.
 | 13 — Profile Management And Privacy | `Done` | 2026-10-10: serialized local store, truthful recovery state, profile-payload exclusion evidence, focused tests, docs, and installer build verified. |
 | 14 — Calibration And Experience Harness | `Blocked` | 2026-10-11: redacted aggregate report and runtime isolation are complete; an authorized non-synthetic corpus and human reviewer sign-off are external prerequisites. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Done` | 2026-10-10: product owner retires manual visual/assistive qualification; existing deterministic semantics remain and production feedback opens scoped fixes. |
-| 16 — Documentation, Installer, And Release Smoke | `Partial` | 2026-09-29: S1–S15 acceptance matrix added; package gates remain open and upstream Partial evidence is explicit. |
+| 16 — Documentation, Installer, And Release Smoke | `Blocked` | 2026-10-11: installer build passed, but six deployment tests require pre-existing missing generated apphosts and installed smoke cannot run while the live app remains open. |
 
 ### Speaker Name Recognition Revised Plan
 
@@ -4255,8 +4255,8 @@ Sprint 15 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 acceptance-matrix slice).
+- Status: `Blocked`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 acceptance-matrix slice); `Blocked` (2026-10-11: clean release gate and installed smoke depend on unavailable workspace/runtime state).
 - User outcome: shipped speaker cleanup, local voice-memory, and recovery behavior is traceable, privacy-safe, and demonstrably works from installed product—not only source checkout.
 - Scope / non-goals: turn accepted S1–S15 behavior into release evidence, docs, package validation, and support-ready recovery guidance. Do not claim unbuilt roadmap behavior, publish any release, upload assets, include private meetings/profiles/audio in evidence, or treat a developer deployment as installer/update validation.
 - Dependencies and decisions: S1–S15 define contracts; `README.md`, `SETUP.md`, `ARCHITECTURE.md`, `PRODUCT_REQUIREMENTS.md`, `RELEASING.md`, `DESIGN.md`, fixture docs, and package scripts are authority. Existing docs already describe local diarization and MSI path, but no release matrix proves expanded review/profile behavior. Only versioned `MeetingRecorder-v<version>-win-x64.zip` is a valid in-app-update asset; installer/MSI/bundle and installed startup must separately pass.
@@ -4271,7 +4271,9 @@ Sprint 15 acceptance criteria:
 - Evidence and date: 2026-09-27 audit found local-diarization/readme, MSI/setup, release-script, and fixture-template coverage, but no S1–S15 traceability matrix, installed speaker-review smoke, profile-payload artifact scan, or package provenance tying expanded behavior to a shipped build.
 - Evidence and date: 2026-09-29 added `docs/speaker-review-release-matrix.md`, which maps S1–S15 contracts to current test/doc evidence and explicitly marks missing persistence, UI, fixture, and package proof as open.
 - Evidence and date: 2026-10-11 focused S14 isolation/calibration evidence passed 26/26 and `Build-Installer.ps1` completed successfully. `Test-All.ps1` first exposed a stale source assertion (repaired without changing product behavior) and one queue timing flake that passed on focused repro; the repeated full run hung in the Core testhost well beyond normal duration and its exact test-only process tree was terminated without touching the live installed app.
-- Remaining gap or next action: diagnose the Core testhost hang and obtain a no-live-app window for `Smoke-Test-Release.ps1`; then rerun the full gate and installed smoke from a clean committed revision before declaring any speaker sprint Done.
+- Evidence and date: 2026-10-11 a diagnostic Core run completed 1,704/1,710 tests. The six repeatable failures are `PortableInstallServiceTests.ApplyStagedBundleToExistingInstall_Replaces_App_Files_Without_Moving_Locked_Data_Files`, `PortableInstallServiceTests.EnsureInstalledExecutablePayload_Restores_Missing_Worker_Payload_Files_From_Source_Bundle`, and four `AppPlatformDeploymentTests` portable-bundle migration/update/payload checks. They run against pre-existing missing or modified generated apphost files; the source change set did not alter those artifacts.
+- Blocker and owner: release validation needs a clean generated-apphost workspace state and a no-live-app window. The workspace/app owner must choose whether to preserve or refresh those user-generated files and close the installed app before smoke; the agent must not overwrite them or stop the live app unilaterally.
+- Remaining gap or next action: after those prerequisites, rerun `Test-All.ps1` and `Smoke-Test-Release.ps1 -Runtime win-x64` from the clean committed revision before declaring any speaker sprint Done.
 
 Goal: ship the behavior as a documented product path.
 
