@@ -138,7 +138,7 @@ records an approved dependency change.
 
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
-| 1 — Stabilize The Current Feature Baseline | `Partial` | 2026-09-29: authoritative review-state projection and focused baseline checks added; live receipt/rejection wiring remains. |
+| 1 — Stabilize The Current Feature Baseline | `Done` | 2026-10-11: later receipt/rejection/refresh wiring verified against 44 focused contracts; release smoke remains S16-owned. |
 | 2 — Build Fixture Evidence And Metrics | `Partial` | 2026-09-29: redacted count/recognition metric arithmetic added; private catalog/truth governance and runner integration remain. |
 | 3 — Calibrate Recognition And Diarization Thresholds | `Partial` | 2026-09-29: coverage/regression/manual-promotion comparison gate added; pinned corpus/holdout receipts remain. |
 | 4 — Repair, Undo, And Release Readiness | `Partial` | 2026-09-29: revision-safe undo preflight added; receipt persistence, release evidence, and package smoke remain. |
@@ -4375,8 +4375,8 @@ The next work should stop treating this as a greenfield feature and instead stab
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: correction, matcher, store, and basic editor paths exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 review-state projection slice).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: correction, matcher, store, and basic editor paths exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 review-state projection slice); `Done` (2026-10-11 later receipt/rejection/refresh wiring source-audited and focused-tested).
 - User outcome: conservative local speaker-name corrections remain trustworthy when learning/profile operations fail, while review controls accurately show what can happen before the user commits a name.
 - Scope / non-goals: stabilize existing manual correction, local learning, suggestion/rejection, provenance, and refresh behavior. Do not add recognition sources, train from arbitrary text, change thresholds, re-run diarization/transcription during refresh, introduce cloud/shared profiles, or imply automatic identity certainty.
 - Dependencies and decisions: `SpeakerNameCorrectionService` already writes meeting artifacts before best-effort learning; `VoiceProfileMatcher` supplies conservative suggestion/auto decisions; `VoiceProfileStore` is local. Existing detail row exposes `HasSuggestion`, Use, Reject, and Voice Profile; inspect library and detail separately before sharing state. Define correction idempotency with immutable `meetingId + stable speakerId + normalized target name + voice-sample/profile-model fingerprint`; profile persistence owns duplicate prevention, while artifact writes stay replayable. Define rejection key exactly `meetingId + stable speakerId + profileId + source artifact revision`, never visible label/text alone; revision mismatch invalidates stale row state and requires fresh decision.
@@ -4390,7 +4390,7 @@ The next work should stop treating this as a greenfield feature and instead stab
 - Documentation / installer / release work: document local-only recognition, conservative suggestions versus auto apply, rejection scope, Refresh boundary, learning failure behavior, and artifact privacy. Runtime/UI changes later require focused tests, `Test-All.ps1`, installer rebuild, and installed smoke; no build/package action for this plan-only refinement.
 - Evidence and date: 2026-09-27 audit found existing row state with Use/Reject handlers, provenance fields, artifact update tests, matcher guardrail tests, profile controls, and transcript schema embedding exclusion. Missing proof includes a single authoritative cross-surface state projection, stable-id/idempotency receipt, source-revision rejection scope, refresh side-effect fence, and end-to-end privacy/logging matrix.
 - Evidence and date: 2026-09-29 added `SpeakerRecognitionReviewStateResolver` with unavailable/stale/busy/rejected/no-suggestion/suggested/auto states and focused correction/matcher/schema verification.
-- Remaining gap or next action: wire revisioned receipt/rejection scope to the live handler and verify installed manual smoke once the package gate is unblocked.
+- Remaining gap or next action: none. Installed package smoke is S16-owned and remains blocked by documented live-app/generated-apphost conditions.
 
 Goal: make the current speaker-name recognition implementation reliable enough to ship as a conservative, auditable local feature.
 
