@@ -140,6 +140,14 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             return "audio_preparation_" + GetSafeHelperExceptionKind(error);
         }
 
+        if (error.Contains("phase=request_read", StringComparison.Ordinal) ||
+            error.Contains("phase=request_deserialize", StringComparison.Ordinal) ||
+            error.Contains("phase=config", StringComparison.Ordinal) ||
+            error.Contains("phase=provider", StringComparison.Ordinal))
+        {
+            return "helper_startup_" + GetSafeHelperExceptionKind(error);
+        }
+
         if (error.Contains("phase=provider_selection", StringComparison.Ordinal) ||
             error.Contains("phase=sample_loading", StringComparison.Ordinal) ||
             error.Contains("phase=samples_loaded", StringComparison.Ordinal) ||
@@ -178,7 +186,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
 
     private static string GetSafeHelperExceptionKind(string error)
     {
-        foreach (var kind in new[] { "file_not_found", "directory_not_found", "access_denied", "not_supported", "invalid_operation", "com", "io", "cancelled", "other" })
+        foreach (var kind in new[] { "file_not_found", "directory_not_found", "access_denied", "not_supported", "audio_prepare_output", "audio_inspect", "audio_normalize_input", "audio_open_decoder", "audio_convert", "invalid_operation", "invalid_data", "invalid_argument", "format", "type_load", "naudio", "com", "external", "io", "cancelled", "other" })
         {
             if (error.Contains($"exception={kind}", StringComparison.Ordinal))
             {

@@ -1,6 +1,9 @@
 using System.IO;
 using System.Diagnostics;
+using System.Text.Json;
 using MeetingRecorder.ProcessingWorker;
+using MeetingRecorder.Core.Processing;
+using MeetingRecorder.Core.Domain;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -113,12 +116,50 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
     [InlineData("Could not find part of path", "input_or_file")]
     [InlineData("helper_failure phase=audio_preparation exception=file_not_found", "audio_preparation_file_not_found")]
     [InlineData("helper_failure phase=audio_preparation exception=invalid_operation", "audio_preparation_invalid_operation")]
+    [InlineData("helper_failure phase=audio_preparation exception=audio_open_decoder", "audio_preparation_audio_open_decoder")]
+    [InlineData("helper_failure phase=audio_preparation exception=naudio", "audio_preparation_naudio")]
+    [InlineData("helper_failure phase=config exception=not_supported", "helper_startup_not_supported")]
     [InlineData("helper_failure phase=native_inference exception=other", "native_inference_other")]
     [InlineData("helper_failure phase=completed exception=io", "runtime_status_io")]
     [InlineData("", "no_diagnostic")]
     public void BoundedWorker_Helper_Redacts_Diagnostic_To_Fixed_Class(string error, string expected)
     {
         Assert.Equal(expected, BoundedLocalDiarizationProvider.ClassifyHelperFailure(error));
+    }
+
+    [Fact]
+    public void Worker_Progress_Snapshot_Failure_Does_Not_Abort_Processing()
+    {
+        var progress = new DiarizationProgress("Native inference", "CPU", 1, null, null, null, null, null, DateTimeOffset.UtcNow);
+
+        Assert.False(Program.TryWriteHelperProgress("\0", progress));
+    }
+
+    [Fact]
+    public void Worker_Helper_Reads_Web_Json_Request_Properties()
+    {
+        var segment = new TranscriptSegment(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), "speaker_01", "sample");
+        var serialized = JsonSerializer.Serialize(
+            new LocalDiarizationHelperRequest("C:\\fixtures\\input.m4a", new[] { segment }, "C:\\fixtures\\progress.json"),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        var request = Program.DeserializeLocalDiarizationHelperRequest(serialized);
+
+        Assert.NotNull(request);
+        Assert.Equal("C:\\fixtures\\input.m4a", request.AudioPath);
+        Assert.Equal("C:\\fixtures\\progress.json", request.ProgressPath);
+        Assert.Single(request.TranscriptSegments);
+        Assert.Equal(segment, request.TranscriptSegments[0]);
+    }
+
+    [Fact]
+    public void Worker_Prepared_Audio_Path_Excludes_Source_File_Name()
+    {
+        var path = LocalSpeakerDiarizationProvider.BuildPreparedAudioPath("C:\\fixtures\\private-meeting-title.m4a");
+
+        Assert.Equal(".wav", Path.GetExtension(path));
+        Assert.Contains("diarization-", Path.GetFileName(path), StringComparison.Ordinal);
+        Assert.DoesNotContain("private-meeting-title", path, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetPath(params string[] segments)

@@ -25,6 +25,16 @@ public sealed class TranscriptionAudioPreparerTests
         Assert.Equal(16, reader.WaveFormat.BitsPerSample);
     }
 
+    [Fact]
+    public void AudioPreparationException_Exposes_Only_Fixed_Stage()
+    {
+        var exception = new AudioPreparationException("open_decoder", new ArgumentException("private input", "path"));
+
+        Assert.Equal("open_decoder", exception.Stage);
+        Assert.Equal("Audio preparation failed during open_decoder.", exception.Message);
+        Assert.IsType<ArgumentException>(exception.InnerException);
+    }
+
     private static void CreateFloatStereoWave(string path, TimeSpan duration)
     {
         using var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2));

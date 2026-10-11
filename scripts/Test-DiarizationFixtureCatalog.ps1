@@ -345,7 +345,7 @@ function Get-SafeDiarizationFailureKind {
         return "not_failed"
     }
 
-    if ($Message -match 'helper failed \((audio_preparation|native_inference|runtime_status)_(file_not_found|directory_not_found|access_denied|not_supported|invalid_operation|com|io|cancelled|other|unknown)\)') {
+    if ($Message -match 'helper failed \((audio_preparation|helper_startup|native_inference|runtime_status)_(file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown)\)') {
         return "helper_" + $Matches[1] + "_" + $Matches[2]
     }
 

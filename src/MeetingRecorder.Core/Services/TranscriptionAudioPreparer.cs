@@ -42,29 +42,36 @@ public sealed class TranscriptionAudioPreparer
             throw new FileNotFoundException("The source audio file does not exist.", sourceAudioPath);
         }
 
-        var outputDirectory = Path.GetDirectoryName(preparedAudioPath)
-            ?? throw new InvalidOperationException("Prepared audio path must include a directory.");
-        Directory.CreateDirectory(outputDirectory);
-
-        var inspection = _wavInputInspector.Inspect(sourceAudioPath);
-        var normalizedSourcePath = preparedAudioPath + ".normalized-source.wav";
+        var preparationStage = "prepare_output";
+        WavInputInspection inspection;
+        var normalizedSourcePath = string.Empty;
         var decoderSourcePath = sourceAudioPath;
         try
         {
+            var outputDirectory = Path.GetDirectoryName(preparedAudioPath)
+                ?? throw new InvalidOperationException("Prepared audio path must include a directory.");
+            Directory.CreateDirectory(outputDirectory);
+            normalizedSourcePath = preparedAudioPath + ".normalized-source.wav";
+
+            preparationStage = "inspect";
+            inspection = _wavInputInspector.Inspect(sourceAudioPath);
+            preparationStage = "normalize_input";
             decoderSourcePath = await _wavInputInspector.CreateNormalizedTemporaryCopyAsync(
                 sourceAudioPath,
                 normalizedSourcePath,
                 inspection,
                 cancellationToken);
 
+            preparationStage = "open_decoder";
             using var reader = new AudioFileReader(decoderSourcePath);
-        ISampleProvider sampleProvider = reader;
+            ISampleProvider sampleProvider = reader;
 
-        sampleProvider = MatchChannelCount(sampleProvider, WhisperChannelCount);
-        if (sampleProvider.WaveFormat.SampleRate != WhisperSampleRate)
-        {
-            sampleProvider = new WdlResamplingSampleProvider(sampleProvider, WhisperSampleRate);
-        }
+            preparationStage = "convert";
+            sampleProvider = MatchChannelCount(sampleProvider, WhisperChannelCount);
+            if (sampleProvider.WaveFormat.SampleRate != WhisperSampleRate)
+            {
+                sampleProvider = new WdlResamplingSampleProvider(sampleProvider, WhisperSampleRate);
+            }
 
             using var writer = new WaveFileWriter(
                 preparedAudioPath,
@@ -80,9 +87,15 @@ public sealed class TranscriptionAudioPreparer
 
             return new PreparedAudioResult(preparedAudioPath, inspection);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException and not WavInputManualReviewException)
+        {
+            throw new AudioPreparationException(preparationStage, exception);
+        }
         finally
         {
-            if (!string.Equals(decoderSourcePath, sourceAudioPath, StringComparison.OrdinalIgnoreCase) && File.Exists(normalizedSourcePath))
+            if (!string.IsNullOrWhiteSpace(normalizedSourcePath) &&
+                !string.Equals(decoderSourcePath, sourceAudioPath, StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(normalizedSourcePath))
             {
                 File.Delete(normalizedSourcePath);
             }
@@ -109,6 +122,17 @@ public sealed class TranscriptionAudioPreparer
         throw new InvalidOperationException(
             $"Unable to convert audio from {provider.WaveFormat.Channels} channels to {targetChannelCount} channels.");
     }
+}
+
+public sealed class AudioPreparationException : IOException
+{
+    public AudioPreparationException(string stage, Exception innerException)
+        : base($"Audio preparation failed during {stage}.", innerException)
+    {
+        Stage = stage;
+    }
+
+    public string Stage { get; }
 }
 
 public sealed record PreparedAudioResult(string PreparedAudioPath, WavInputInspection InputInspection);

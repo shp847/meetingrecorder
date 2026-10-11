@@ -728,13 +728,14 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             : string.Join(" ", combinedMessages);
     }
 
-    private static string BuildPreparedAudioPath(string audioPath)
+    internal static string BuildPreparedAudioPath(string audioPath)
     {
+        _ = audioPath;
         var tempDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderDiarization");
         Directory.CreateDirectory(tempDirectory);
         return Path.Combine(
             tempDirectory,
-            $"{Path.GetFileNameWithoutExtension(audioPath)}-{Guid.NewGuid():N}.wav");
+            $"diarization-{Guid.NewGuid():N}.wav");
     }
 
 }

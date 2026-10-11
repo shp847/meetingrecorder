@@ -5,6 +5,8 @@ namespace MeetingRecorder.ProcessingWorker;
 
 internal static class Program
 {
+    private static readonly JsonSerializerOptions LocalDiarizationJsonOptions = new(JsonSerializerDefaults.Web);
+
     public static async Task<int> Main(string[] args)
     {
         if (HasArgument(args, "--run-local-diarization"))
@@ -203,12 +205,16 @@ internal static class Program
             return 1;
         }
 
-        var helperPhase = "initializing";
+        var helperPhase = "request_read";
         try
         {
-            var request = JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(await File.ReadAllTextAsync(requestPath))
+            var serializedRequest = await File.ReadAllTextAsync(requestPath);
+            helperPhase = "request_deserialize";
+            var request = DeserializeLocalDiarizationHelperRequest(serializedRequest)
                 ?? throw new InvalidOperationException("Local diarization helper request was empty.");
+            helperPhase = "config";
             var config = await new AppConfigStore(configPath).LoadOrCreateAsync();
+            helperPhase = "provider";
             var logger = new FileLogWriter(Path.Combine(Path.GetDirectoryName(requestPath)!, "helper.log"));
             var provider = new LocalSpeakerDiarizationProvider(
                 config.DiarizationAssetPath,
@@ -221,10 +227,11 @@ internal static class Program
                     config.SpeakerNameSuggestionConfidenceThreshold,
                     config.SpeakerNameMatchMarginThreshold),
                 AppDataPaths.GetVoiceProfileStorePath());
+            helperPhase = "audio_preparation";
             provider.ProgressChanged += progress =>
             {
                 helperPhase = GetSafeHelperPhase(progress.Phase);
-                WriteHelperProgress(request.ProgressPath, progress);
+                _ = TryWriteHelperProgress(request.ProgressPath, progress);
             };
             var result = await provider.ApplySpeakerLabelsAsync(request.AudioPath, request.TranscriptSegments, CancellationToken.None);
             await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result));
@@ -255,19 +262,50 @@ internal static class Program
         DirectoryNotFoundException => "directory_not_found",
         UnauthorizedAccessException => "access_denied",
         NotSupportedException => "not_supported",
+        AudioPreparationException preparationException => "audio_" + preparationException.Stage,
         InvalidOperationException => "invalid_operation",
+        InvalidDataException => "invalid_data",
+        ArgumentException => "invalid_argument",
+        FormatException => "format",
+        TypeLoadException => "type_load",
+        NAudio.MmException => "naudio",
         System.Runtime.InteropServices.COMException => "com",
+        System.Runtime.InteropServices.ExternalException => "external",
         IOException => "io",
         OperationCanceledException => "cancelled",
         _ => "other",
     };
 
-    private static void WriteHelperProgress(string progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
+    internal static bool TryWriteHelperProgress(string? progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
     {
-        var temporaryPath = progressPath + ".tmp";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(progress));
-        File.Move(temporaryPath, progressPath, overwrite: true);
+        if (string.IsNullOrWhiteSpace(progressPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var temporaryPath = progressPath + ".tmp";
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(progress));
+            File.Move(temporaryPath, progressPath, overwrite: true);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
+
+    internal static LocalDiarizationHelperRequest? DeserializeLocalDiarizationHelperRequest(string serializedRequest) =>
+        JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(serializedRequest, LocalDiarizationJsonOptions);
 
     private static async Task<int> RunExternalProviderProbeAsync(
         IReadOnlyList<string> args,
