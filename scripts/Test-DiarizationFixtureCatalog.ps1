@@ -1,6 +1,8 @@
 param(
     [string]$CatalogPath,
 
+    [string]$TruthStorePath,
+
     [string[]]$FixtureId = @(),
 
     [string[]]$Category = @(),
@@ -105,6 +107,30 @@ function Get-PropertyValue {
     }
 
     return $Object.$Name
+}
+
+function Test-PropertyPresent {
+    param(
+        $Object,
+        [string]$Name
+    )
+
+    return $null -ne $Object -and ($Object.PSObject.Properties.Name -contains $Name)
+}
+
+function Get-TruthOutcome {
+    param($Fixture)
+
+    if ($script:CatalogSchemaVersion -lt 2) {
+        return $null
+    }
+
+    $reference = [string](Get-PropertyValue -Object $Fixture -Name "expectedOutcomeRef")
+    if ([string]::IsNullOrWhiteSpace($reference) -or -not $script:TruthOutcomes.ContainsKey($reference)) {
+        throw "Fixture '$([string](Get-PropertyValue -Object $Fixture -Name "id"))' has no approved expected outcome."
+    }
+
+    return $script:TruthOutcomes[$reference]
 }
 
 function Test-PathUnder {
@@ -321,12 +347,58 @@ function New-BaseResult {
     }
 }
 
+function Apply-ExpectedOutcome {
+    param(
+        [System.Collections.IDictionary]$Result,
+        $Fixture,
+        $Outcome
+    )
+
+    $expectedSpeakerCount = if ($null -eq $Outcome) {
+        Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
+    }
+    else {
+        Get-PropertyValue -Object $Outcome -Name "expectedSpeakerCount"
+    }
+    $expectedNames = if ($null -eq $Outcome) {
+        @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames"))
+    }
+    else {
+        @(ConvertTo-Array (Get-PropertyValue -Object $Outcome -Name "expectedSpeakerNames"))
+    }
+
+    $Result.expectedSpeakerCount = if ($null -eq $expectedSpeakerCount -or [string]::IsNullOrWhiteSpace([string]$expectedSpeakerCount)) { $null } else { [int]$expectedSpeakerCount }
+    $Result.speakerNameMetrics.expectedNameCount = $expectedNames.Count
+    return $expectedNames
+}
+
 function Validate-Fixture {
     param($Fixture)
 
     $id = [string](Get-PropertyValue -Object $Fixture -Name "id")
     if ([string]::IsNullOrWhiteSpace($id)) {
         throw "Fixture id is required."
+    }
+
+    if ($script:CatalogSchemaVersion -ge 2) {
+        foreach ($requiredProperty in @("version", "contentHash", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef")) {
+            if (-not (Test-PropertyPresent -Object $Fixture -Name $requiredProperty) -or [string]::IsNullOrWhiteSpace([string](Get-PropertyValue -Object $Fixture -Name $requiredProperty))) {
+                throw "Fixture '$id' requires $requiredProperty in catalog schema version 2."
+            }
+        }
+
+        if ((Test-PropertyPresent -Object $Fixture -Name "expectedSpeakerCount") -or (Test-PropertyPresent -Object $Fixture -Name "expectedSpeakerNames")) {
+            throw "Fixture '$id' must keep expected outcomes in the restricted truth store, not catalog schema version 2."
+        }
+
+        if ([string](Get-PropertyValue -Object $Fixture -Name "contentHash") -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw "Fixture '$id' contentHash must be a SHA-256 hex value."
+        }
+
+        $expiry = [DateTime]::MinValue
+        if (-not [DateTime]::TryParse([string](Get-PropertyValue -Object $Fixture -Name "expiresAtUtc"), [ref]$expiry)) {
+            throw "Fixture '$id' expiresAtUtc must be a valid date."
+        }
     }
 
     $mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
@@ -393,6 +465,12 @@ function Invoke-Fixture {
             $result.speakerCountStatus = "skipped"
             $result.speakerNameMetrics.status = "skipped"
             return [pscustomobject]$result
+        }
+
+        $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
+        $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+        if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
+            throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
         }
 
         $inputs = $null
@@ -470,7 +548,6 @@ function Invoke-Fixture {
                 $result.detectedSpeakerCount = [int]$childResult.SpeakerCount
                 $result.voiceSampleCount = [int]$childResult.VoiceSampleCount
                 $detectedNames = @(ConvertTo-Array $childResult.SpeakerNames)
-                $expectedNames = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames"))
                 $result.speakerNameMetrics.detectedNameCount = $detectedNames.Count
                 $result.speakerNameMetrics.missingExpectedNameCount = @($expectedNames | Where-Object {
                         $expectedName = $_
@@ -559,6 +636,44 @@ $resolvedReportPath = Assert-AllowedOutputPath -PathValue $ReportPath -Descripti
 New-Item -ItemType Directory -Path (Split-Path -Path $resolvedReportPath -Parent) -Force | Out-Null
 
 $catalog = Get-Content -LiteralPath $resolvedCatalogPath -Raw | ConvertFrom-Json
+$script:CatalogSchemaVersion = [int](Get-PropertyValue -Object $catalog -Name "schemaVersion" -DefaultValue 1)
+if ($script:CatalogSchemaVersion -notin @(1, 2)) {
+    throw "Fixture catalog schemaVersion must be 1 or 2."
+}
+
+$script:TruthOutcomes = @{}
+$resolvedTruthStorePath = $null
+if ($script:CatalogSchemaVersion -ge 2) {
+    if ([string]::IsNullOrWhiteSpace($TruthStorePath)) {
+        throw "Catalog schema version 2 requires -TruthStorePath outside source control and report output."
+    }
+
+    $resolvedTruthStorePath = Resolve-RequiredFile -PathValue $TruthStorePath -Description "Restricted fixture truth store"
+    if (Test-PathUnder -PathValue $resolvedTruthStorePath -RootValue $script:RepoRoot) {
+        throw "Restricted fixture truth store must stay outside source control."
+    }
+
+    $truthStore = Get-Content -LiteralPath $resolvedTruthStorePath -Raw | ConvertFrom-Json
+    if ([int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0) -ne 1) {
+        throw "Restricted fixture truth store schemaVersion must be 1."
+    }
+
+    foreach ($outcome in @(ConvertTo-Array (Get-PropertyValue -Object $truthStore -Name "outcomes"))) {
+        $reference = [string](Get-PropertyValue -Object $outcome -Name "reference")
+        if ([string]::IsNullOrWhiteSpace($reference) -or $script:TruthOutcomes.ContainsKey($reference)) {
+            throw "Restricted fixture truth store has a missing or duplicate outcome reference."
+        }
+
+        $expectedCount = Get-PropertyValue -Object $outcome -Name "expectedSpeakerCount"
+        $parsedCount = 0
+        if ($null -eq $expectedCount -or -not [int]::TryParse([string]$expectedCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
+            throw "Restricted fixture truth store outcome '$reference' expectedSpeakerCount must be an integer from 0 through 16."
+        }
+
+        $script:TruthOutcomes[$reference] = $outcome
+    }
+}
+
 $fixtures = if ($catalog.PSObject.Properties.Name -contains "fixtures") {
     @(ConvertTo-Array $catalog.fixtures)
 }
@@ -624,6 +739,7 @@ $report = [ordered]@{
         category = $Category
         includeDisabled = [bool]$IncludeDisabled
     }
+    truthStoreSha256 = if ($resolvedTruthStorePath) { Get-FileSha256 -PathValue $resolvedTruthStorePath } else { $null }
     summary = $summary
     results = $results
 }

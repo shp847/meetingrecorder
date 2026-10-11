@@ -5,6 +5,12 @@ synthetic templates. A consented local corpus belongs under the ignored
 `.artifacts/diarization-fixtures` folder and must use opaque fixture IDs.
 It never ships with the application.
 
+New governed catalogs use `fixture-catalog-v2.schema.json`. Keep inputs and
+governance metadata in the private catalog; keep count/name expectations in a
+separate restricted truth-store file outside source control. Pass it only to
+the catalog runner with `-TruthStorePath`; runner reads truth after worker or
+replay output is immutable and never forwards it to those processes.
+
 Run a metadata-only candidate comparison:
 
 ```powershell

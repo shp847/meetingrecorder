@@ -352,6 +352,104 @@ public sealed class DiarizationFixtureReplayTests
     }
 
     [Fact]
+    public void TestDiarizationFixtureCatalogScript_Uses_V2_Truth_Only_After_DryRun_Dispatch()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Test-DiarizationFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-catalog-v2-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var transcriptPath = Path.Combine(tempRoot, "transcript.json");
+            var manifestPath = Path.Combine(tempRoot, "manifest.json");
+            var catalogPath = Path.Combine(tempRoot, "catalog.json");
+            var truthPath = Path.Combine(tempRoot, "truth.json");
+            var reportPath = Path.Combine(tempRoot, "report.json");
+            const string restrictedName = "RESTRICTED_TRUTH_NAME_DO_NOT_REPORT";
+            File.WriteAllText(transcriptPath, JsonSerializer.Serialize(new { segments = Array.Empty<object>() }, JsonOptions));
+            File.WriteAllText(manifestPath, JsonSerializer.Serialize(new { processingMetadata = new { speakerTurns = Array.Empty<object>() } }, JsonOptions));
+            File.WriteAllText(
+                catalogPath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 2,
+                        fixtures = new[]
+                        {
+                            new
+                            {
+                                id = "fx-synthetic-v2",
+                                version = "1",
+                                contentHash = new string('a', 64),
+                                mode = "stored-turn",
+                                scenarioTags = new[] { "two-speaker" },
+                                consentRecord = "CONSENT-SYNTHETIC",
+                                classification = "restricted-test",
+                                owner = "test-owner",
+                                expiresAtUtc = "2030-01-01T00:00:00Z",
+                                enabled = true,
+                                expectedOutcomeRef = "truth-synthetic-v2",
+                                manifestPath,
+                                transcriptJsonPath = transcriptPath,
+                                enableSpeakerNameMatching = true,
+                                protectedArtifactPaths = Array.Empty<string>(),
+                            },
+                        },
+                    },
+                    JsonOptions));
+            File.WriteAllText(
+                truthPath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 1,
+                        outcomes = new[]
+                        {
+                            new
+                            {
+                                reference = "truth-synthetic-v2",
+                                expectedSpeakerCount = 2,
+                                expectedSpeakerNames = new[] { restrictedName },
+                            },
+                        },
+                    },
+                    JsonOptions));
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", reportPath);
+
+            Assert.True(
+                result.ExitCode == 0,
+                $"V2 catalog runner failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}{Environment.NewLine}report:{Environment.NewLine}{(File.Exists(reportPath) ? File.ReadAllText(reportPath) : "(missing)")}");
+            var reportText = File.ReadAllText(reportPath);
+            Assert.DoesNotContain(restrictedName, reportText, StringComparison.Ordinal);
+            Assert.DoesNotContain(restrictedName, result.StandardOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(truthPath, reportText, StringComparison.OrdinalIgnoreCase);
+
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Report JSON was empty.");
+            Assert.NotNull((string?)report["truthStoreSha256"]);
+            Assert.Equal(2, (int?)report["results"]?[0]?["expectedSpeakerCount"]);
+            Assert.Equal(1, (int?)report["results"]?[0]?["speakerNameMetrics"]?["expectedNameCount"]);
+
+            var scriptContents = File.ReadAllText(scriptPath);
+            Assert.DoesNotContain("$arguments.ExpectedSpeakerName", scriptContents, StringComparison.Ordinal);
+            Assert.DoesNotContain("$arguments.ExpectedSpeakerCount", scriptContents, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void TestDiarizationFixtureCatalogScript_Rejects_Unsafe_Report_Paths_And_Invalid_Counts()
     {
         var repoRoot = GetRepoRoot();

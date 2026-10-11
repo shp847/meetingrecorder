@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "fixtures": [
+    {
+      "id": "fx-two-speaker-synthetic",
+      "version": "1",
+      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "mode": "stored-turn",
+      "scenarioTags": ["two-speaker", "baseline"],
+      "consentRecord": "CONSENT-REPLACE-LOCALLY",
+      "classification": "restricted-local-test",
+      "owner": "fixture-governance-owner",
+      "expiresAtUtc": "2030-01-01T00:00:00Z",
+      "enabled": false,
+      "disabledReason": "Synthetic template; local consented source required.",
+      "expectedOutcomeRef": "truth-two-speaker-synthetic",
+      "manifestPath": "C:/Private/MeetingRecorder/fixtures/fx-two-speaker/manifest.json",
+      "transcriptJsonPath": "C:/Private/MeetingRecorder/fixtures/fx-two-speaker/transcript.json",
+      "enableSpeakerNameMatching": false,
+      "protectedArtifactPaths": []
+    }
+  ]
+}
