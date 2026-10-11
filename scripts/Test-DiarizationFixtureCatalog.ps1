@@ -125,12 +125,33 @@ function Get-TruthOutcome {
         return $null
     }
 
+    $truthStore = Get-Content -LiteralPath $script:ResolvedTruthStorePath -Raw | ConvertFrom-Json
+    if ([int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0) -ne 1) {
+        throw "Restricted fixture truth store schemaVersion must be 1."
+    }
+
+    $outcomes = @{}
+    foreach ($outcome in @(ConvertTo-Array (Get-PropertyValue -Object $truthStore -Name "outcomes"))) {
+        $outcomeReference = [string](Get-PropertyValue -Object $outcome -Name "reference")
+        if ([string]::IsNullOrWhiteSpace($outcomeReference) -or $outcomes.ContainsKey($outcomeReference)) {
+            throw "Restricted fixture truth store has a missing or duplicate outcome reference."
+        }
+
+        $expectedCount = Get-PropertyValue -Object $outcome -Name "expectedSpeakerCount"
+        $parsedCount = 0
+        if ($null -eq $expectedCount -or -not [int]::TryParse([string]$expectedCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
+            throw "Restricted fixture truth store outcome '$outcomeReference' expectedSpeakerCount must be an integer from 0 through 16."
+        }
+
+        $outcomes[$outcomeReference] = $outcome
+    }
+
     $reference = [string](Get-PropertyValue -Object $Fixture -Name "expectedOutcomeRef")
-    if ([string]::IsNullOrWhiteSpace($reference) -or -not $script:TruthOutcomes.ContainsKey($reference)) {
+    if ([string]::IsNullOrWhiteSpace($reference) -or -not $outcomes.ContainsKey($reference)) {
         throw "Fixture '$([string](Get-PropertyValue -Object $Fixture -Name "id"))' has no approved expected outcome."
     }
 
-    return $script:TruthOutcomes[$reference]
+    return $outcomes[$reference]
 }
 
 function Test-PathUnder {
@@ -467,12 +488,6 @@ function Invoke-Fixture {
             return [pscustomobject]$result
         }
 
-        $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
-        $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
-        if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
-            throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
-        }
-
         $inputs = $null
         try {
             $inputs = Resolve-FixtureInputs -Fixture $Fixture
@@ -500,6 +515,11 @@ function Invoke-Fixture {
         }
 
         if ($DryRun) {
+            $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
+            $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+            if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
+                throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
+            }
             $result.status = "dry_run"
             $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $null -FallbackStatus "dry_run"
             $result.speakerNameMetrics.status = "dry_run"
@@ -577,6 +597,12 @@ function Invoke-Fixture {
         }
         $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_ }).Count -eq 0
 
+        $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
+        $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+        if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
+            throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
+        }
+
         $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $result.detectedSpeakerCount -FallbackStatus "completed"
         $result.status = if ($result.speakerCountStatus -eq "pass" -or $result.speakerCountStatus -eq "not_asserted") { "completed" } else { $result.speakerCountStatus }
         if (-not $result.artifactSafety.allUnchanged) {
@@ -641,36 +667,15 @@ if ($script:CatalogSchemaVersion -notin @(1, 2)) {
     throw "Fixture catalog schemaVersion must be 1 or 2."
 }
 
-$script:TruthOutcomes = @{}
-$resolvedTruthStorePath = $null
+$script:ResolvedTruthStorePath = $null
 if ($script:CatalogSchemaVersion -ge 2) {
     if ([string]::IsNullOrWhiteSpace($TruthStorePath)) {
         throw "Catalog schema version 2 requires -TruthStorePath outside source control and report output."
     }
 
-    $resolvedTruthStorePath = Resolve-RequiredFile -PathValue $TruthStorePath -Description "Restricted fixture truth store"
-    if (Test-PathUnder -PathValue $resolvedTruthStorePath -RootValue $script:RepoRoot) {
+    $script:ResolvedTruthStorePath = Resolve-RequiredFile -PathValue $TruthStorePath -Description "Restricted fixture truth store"
+    if (Test-PathUnder -PathValue $script:ResolvedTruthStorePath -RootValue $script:RepoRoot) {
         throw "Restricted fixture truth store must stay outside source control."
-    }
-
-    $truthStore = Get-Content -LiteralPath $resolvedTruthStorePath -Raw | ConvertFrom-Json
-    if ([int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0) -ne 1) {
-        throw "Restricted fixture truth store schemaVersion must be 1."
-    }
-
-    foreach ($outcome in @(ConvertTo-Array (Get-PropertyValue -Object $truthStore -Name "outcomes"))) {
-        $reference = [string](Get-PropertyValue -Object $outcome -Name "reference")
-        if ([string]::IsNullOrWhiteSpace($reference) -or $script:TruthOutcomes.ContainsKey($reference)) {
-            throw "Restricted fixture truth store has a missing or duplicate outcome reference."
-        }
-
-        $expectedCount = Get-PropertyValue -Object $outcome -Name "expectedSpeakerCount"
-        $parsedCount = 0
-        if ($null -eq $expectedCount -or -not [int]::TryParse([string]$expectedCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
-            throw "Restricted fixture truth store outcome '$reference' expectedSpeakerCount must be an integer from 0 through 16."
-        }
-
-        $script:TruthOutcomes[$reference] = $outcome
     }
 }
 
@@ -739,7 +744,7 @@ $report = [ordered]@{
         category = $Category
         includeDisabled = [bool]$IncludeDisabled
     }
-    truthStoreSha256 = if ($resolvedTruthStorePath) { Get-FileSha256 -PathValue $resolvedTruthStorePath } else { $null }
+    truthStoreSha256 = if ($script:ResolvedTruthStorePath) { Get-FileSha256 -PathValue $script:ResolvedTruthStorePath } else { $null }
     summary = $summary
     results = $results
 }
