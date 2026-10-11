@@ -241,8 +241,30 @@ else {
     Resolve-RequiredFile -PathValue $ConfigPath -Description "App config"
 }
 
-$workerPath = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\bin\$Configuration\net8.0-windows\MeetingRecorder.ProcessingWorker.exe"
-$resolvedWorkerPath = Resolve-RequiredFile -PathValue $workerPath -Description "Processing worker"
+$frameworkWorkerDirectory = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\bin\$Configuration\net8.0-windows"
+$runtimeWorkerDirectory = Join-Path $frameworkWorkerDirectory "win-x64"
+$workerDirectory = if (Test-Path -LiteralPath (Join-Path $runtimeWorkerDirectory "MeetingRecorder.ProcessingWorker.dll") -PathType Leaf) {
+    # The runtime-specific worker carries native Sherpa dependencies that are
+    # intentionally absent from a framework-only build.
+    $runtimeWorkerDirectory
+}
+else {
+    $frameworkWorkerDirectory
+}
+$workerAppHostPath = Join-Path $workerDirectory "MeetingRecorder.ProcessingWorker.exe"
+$workerDllPath = Join-Path $workerDirectory "MeetingRecorder.ProcessingWorker.dll"
+$workerArguments = @()
+if (Test-Path -LiteralPath $workerAppHostPath -PathType Leaf) {
+    $workerCommandPath = Resolve-RequiredFile -PathValue $workerAppHostPath -Description "Processing worker apphost"
+}
+elseif (Test-Path -LiteralPath $workerDllPath -PathType Leaf) {
+    $dotnetCommand = Get-Command dotnet -ErrorAction Stop
+    $workerCommandPath = $dotnetCommand.Source
+    $workerArguments += (Resolve-RequiredFile -PathValue $workerDllPath -Description "Processing worker assembly")
+}
+else {
+    throw "Processing worker apphost and assembly are both missing under '$workerDirectory'."
+}
 $protectedArtifactHashesBefore = Get-ResolvedArtifactHashes -Paths $PublishedArtifactPath
 
 if ([string]::IsNullOrWhiteSpace($ProbeRoot)) {
@@ -286,7 +308,7 @@ $probeConfigPath = Join-Path $probeConfigRoot "appsettings.json"
 $config | ConvertTo-Json -Depth 80 | Set-Content -LiteralPath $probeConfigPath -Encoding UTF8
 
 Write-Output "Running full-audio diarization fixture:"
-Write-Output "  Worker: $resolvedWorkerPath"
+Write-Output "  Worker: $workerCommandPath"
 Write-Output "  Source manifest: $resolvedManifestPath"
 Write-Output "  Source audio: $sourceAudioPath"
 Write-Output "  Transcription snapshot: $sourceSnapshotPath"
@@ -298,7 +320,7 @@ Write-Output "  Acceleration: $AccelerationPreference"
 Write-Output "  Speaker-name matching: $([bool]$EnableSpeakerNameMatching)"
 
 $started = Get-Date
-& $resolvedWorkerPath --manifest $probeManifestPath --config $probeConfigPath
+& $workerCommandPath @workerArguments --manifest $probeManifestPath --config $probeConfigPath
 $exitCode = $LASTEXITCODE
 $elapsed = (Get-Date) - $started
 Write-Output "Worker exit code: $exitCode"

@@ -61,6 +61,11 @@ public sealed class PublishedMeetingSummaryService
                 UpdatedSnapshot: false);
         }
 
+        var transcriptFingerprint = MeetingSummaryTranscriptFingerprint.Compute(transcript.StructuredSegments);
+        var attributionFingerprint = MeetingSummaryAttributionStateResolver.ComputeAttributionFingerprint(
+            transcriptFingerprint,
+            transcript.StructuredSegments);
+
         var manifest = await LoadOrCreateManifestAsync(meeting, cancellationToken);
         MeetingSummaryResult providerResult;
         try
@@ -89,6 +94,38 @@ public sealed class PublishedMeetingSummaryService
                 StageExecutionState.Failed,
                 DateTimeOffset.UtcNow,
                 "Summary provider reported success without summary content.");
+        }
+
+        if (status.State == StageExecutionState.Succeeded && summary is not null)
+        {
+            var currentTranscript = MeetingTranscriptDocumentReader.Read(meeting.JsonPath, meeting.MarkdownPath);
+            var currentTranscriptFingerprint = currentTranscript.HasStructuredJson
+                ? MeetingSummaryTranscriptFingerprint.Compute(currentTranscript.StructuredSegments)
+                : string.Empty;
+            var currentAttributionFingerprint = currentTranscript.HasStructuredJson
+                ? MeetingSummaryAttributionStateResolver.ComputeAttributionFingerprint(
+                    currentTranscriptFingerprint,
+                    currentTranscript.StructuredSegments)
+                : string.Empty;
+            if (!string.Equals(transcriptFingerprint, currentTranscriptFingerprint, StringComparison.Ordinal) ||
+                !string.Equals(attributionFingerprint, currentAttributionFingerprint, StringComparison.Ordinal))
+            {
+                status = new ProcessingStageStatus(
+                    "summarization",
+                    StageExecutionState.Skipped,
+                    DateTimeOffset.UtcNow,
+                    "Summary generation was not applied because the published transcript changed during generation.");
+                summary = null;
+            }
+            else
+            {
+                summary = summary with
+                {
+                    TranscriptFingerprint = transcriptFingerprint,
+                    AttributionFingerprint = attributionFingerprint,
+                    AttributionSchemaVersion = MeetingSummaryAttributionStateResolver.AttributionSchemaVersion,
+                };
+            }
         }
 
         var updatedJson = await TryUpdateJsonAsync(
@@ -223,6 +260,8 @@ public sealed class PublishedMeetingSummaryService
             ["provider"] = BuildProviderJson(summary.Provider),
             ["generatedAtUtc"] = summary.GeneratedAtUtc,
             ["transcriptFingerprint"] = summary.TranscriptFingerprint,
+            ["attributionFingerprint"] = summary.AttributionFingerprint,
+            ["attributionSchemaVersion"] = summary.AttributionSchemaVersion,
         };
     }
 
@@ -337,6 +376,7 @@ public sealed class PublishedMeetingSummaryService
 
         AddBulletSection(lines, "Risks And Open Questions", summary.RisksAndOpenQuestions);
         lines.Add($"- Provider: {summary.Provider.ProviderName} ({summary.Provider.Model})");
+        lines.Add("- Speaker attribution: current when this summary was generated; reopen the meeting in Meeting Recorder before relying on names after speaker edits.");
         if (summary.Provider.FallbackUsed)
         {
             lines.Add("- Fallback used: Yes");

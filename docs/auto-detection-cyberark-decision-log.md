@@ -107,6 +107,13 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Timeline
 
+### 2026-10-11: Single-instance activation recovery
+
+- Trigger: installed Meeting Recorder process `25648` was responsive with a valid visible window handle, but the window was minimized and a `Local\\MeetingRecorder.Activate` signal did not acknowledge within three seconds. The foreground request therefore could not restore the user-visible app through normal single-instance activation.
+- Live-machine recovery: restored the existing handle with `ShowWindowAsync(SW_RESTORE)` and foregrounded it. The window was no longer minimized and became the foreground window. No Meeting Recorder process was stopped, restarted, or modified.
+- Source change: activation restores its native window handle before WPF `Activate`/`Focus`; remove the temporary WPF `Topmost` toggle. This narrows the activation path and avoids the WPF window-setting path implicated by prior logged `Win32Exception (1816)` quota failures.
+- Tests: focused activation/startup contracts passed 49/49. Package: `Build-Installer.ps1` produced `MeetingRecorder-v0.3-win-x64.zip` (88,716,644 bytes) and `MeetingRecorderInstaller.msi` (76,378,112 bytes). Installed: app remains the pre-change binary because replacing a live recording application is intentionally deferred. This live recovery does not prove the shipped fix.
+
 ### 2026-03-23: Detection foundation
 
 - Commit: `60f6d45`
@@ -821,7 +828,81 @@ As of 2026-07-20, executable-policy facts are:
 - Outcome: retained in source; pending package/install/live validation.
 - Follow-up / removal condition: remove this delayed fallback only if Teams audio attribution becomes reliable enough to identify the active specific Teams window without endpoint ambiguity.
 
+### 2026-09-01: User-profile installer-root migration
+- Trigger / observed symptom: CyberArk EPM blocked the same unsigned Meeting Recorder apphost from `%LOCALAPPDATA%\Programs\Meeting Recorder`, while full-bundle launches from `%USERPROFILE%\MeetingRecorder`, a Documents root, and a source-drive test root succeeded.
+- Exact runtime or CyberArk evidence: the EPM dialog identified `MeetingRecorder.App.exe` under the LocalAppData Programs root; direct and PowerShell launches were denied there, while the identical full-bundle payload launched from `%USERPROFILE%\MeetingRecorder`.
+- Hypothesis: the effective EPM predicate includes the former LocalAppData Programs location; Authenticode absence alone does not explain the observed decisions.
+- APIs or signals added/removed: `AppDataPaths`, the product manifest, MSI default, bootstrapper, command installer, portable installer, and auto-update migration now use `%USERPROFILE%\MeetingRecorder` as the canonical binary root. Runtime data remains under `%LOCALAPPDATA%\MeetingRecorder`.
+- Positive behavior expected: default installs and legacy-root auto-updates stage and validate the bundle, migrate user-managed bundle data without overwriting the new root, then launch from the user-profile root.
+- False-positive/security boundary retained: no endpoint policy, signature, execution-control, or broad location allow rule is changed; explicit custom install roots remain explicit.
+- Tests added and results: source tests cover the canonical path, manifest, MSI authoring, legacy migration, conflict precedence, and auto-update relocation. Focused path/migration tests passed; the full suite had one unrelated diarization fixture dry-run failure.
+- Package status: rebuilt `MeetingRecorderInstaller.msi` and portable ZIP on 2026-09-02.
+- Installed hash/version/signature status: the locally deployed portable bundle remains unsigned and now resides at `%USERPROFILE%\MeetingRecorder`; the former `%LOCALAPPDATA%\Programs\Meeting Recorder` root was removed after successful migration.
+- Live-machine result: direct launch on 2026-09-04 started `C:\Users\psharm04\MeetingRecorder\MeetingRecorder.App.exe` successfully.
+- Outcome: retained with local package/install/live validation; broader release verification remains pending the unrelated fixture failure.
+- Follow-up / removal condition: retain the migration until EPM audit evidence identifies a different durable predicate or a signed/managed deployment supersedes this path decision.
+
+### 2026-09-02: Named Google Meet continuity across Teams navigation
+- Trigger / observed symptom: one named Google Meet call published as four fragments after the detector alternated between the Meet browser title and Teams chat or pinned-shell windows.
+- Exact runtime or CyberArk evidence: `app.log` recorded auto-stops at 14:30:18Z, 14:36:51Z, and 14:57:37Z after the last strong Meet signal expired; the corresponding manifests show the same normalized Meet title with starts at 14:08:33Z, 14:32:37Z, 14:38:48Z, and 14:57:59Z. No execution-control or CyberArk event was involved.
+- Hypothesis: confirmed lifecycle gap. A named Meet hidden by a Teams chat received only a three-minute grace, and a later generic Teams pinned shell recomputed the timeout back to the base 30 seconds.
+- APIs or signals added/removed: no external or audio-probe APIs changed. Named Google Meet sessions now retain a bounded five-minute continuity grace while the detector sees only Teams chat/navigation or the generic pinned shell; same-day named Google Meet fragment chains within that gap are eligible for a high-confidence merge.
+- Positive behavior expected: brief work in Teams chat during a named Meet no longer creates separate published recordings, and already-published chains from this pattern consolidate without artificial pause padding.
+- False-positive/security boundary retained: generic Google Meet shells retain the configured stop timeout; an attributable or startable Teams meeting remains a takeover candidate; the new grace is bounded to five minutes and merge candidates require a named same-day Meet title, readable artifacts, a short fragment, and no gap over five minutes.
+- Tests added and results: focused lifecycle and cleanup recommendation tests passed 101/101; integration tests passed 8/8. Full core verification reached 1,122 passing tests but has seven existing failures in the separate installer-root migration and diarization fixture worktree changes.
+- Package status: not built in this investigation entry.
+- Installed hash/version/signature status: unchanged during investigation.
+- Live-machine result: source fix pending local verification and deployment.
+- Outcome: retained in source; pending verification.
+- Follow-up / removal condition: reduce or remove the grace if reliable per-tab browser audio attribution can prove the original Meet has ended while Teams navigation remains visible.
+
 ## Open Work
+
+### 2026-09-29: Identity-gated continuity cutover (package validated)
+- Trigger / observed symptom: the legacy continuity policy still derives continuation and recent auto-stop recovery from platform/title heuristics, despite the completed privacy-safe identity and shadow contracts.
+- Exact runtime or CyberArk evidence: source audit found `AutoRecordingContinuityPolicy.ShouldRecoverFromRecentAutoStop` accepts a matching platform inside two minutes, and `ShouldRefreshLastPositiveSignal` owns title/shell-based continuation. No CyberArk or executable-path evidence is implicated.
+- Hypothesis: a disabled-by-default matcher gate can make only verified `SameMeeting` continue/recover while retaining bounded `Unknown` grace and explicit manual-stop authority.
+- APIs or signals added/removed: no external signal, audio probe, executable naming, signing, or install-location change. Versioned local matcher and heal rollout modes now gate future decision snapshots; matcher owns continuation, recovery, reclassification, and rollover verdicts when selected. Review-only heal emits an expiring metadata-only local recommendation and cannot reach lease, transaction receipt, archive, or merge code.
+- Positive behavior expected: compatible strong identity can prevent a false split; generic/missing/key-rotated evidence remains `Unknown` and cannot start, merge, or resurrect an explicitly stopped recording.
+- False-positive/security boundary retained: manual stop, consent, capture readiness, storage safeguards, and bounded stop deadlines remain authoritative; no endpoint execution-control policy changes are authorized.
+- Tests added and results: focused configuration, cutover, source-contract, lifecycle policy, matcher, and healer tests passed 186/186. The full script built all product and test projects before the runner lost its aggregate tail; no continuity failure was emitted.
+- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `83E6D6818189DB7808688F2F969F452DF37AEADF6EE754DC6E4306E4A56F3CED` and MSI SHA-256 `0928FB1CF00A548C7E47DA2D8A0F47F7F5EE35578CC736A25D8D8F4D808EF45E`.
+- Installed hash/version/signature status: stable apphosts from `C:\Users\psharm04\MeetingRecorder` were hash-verified for packaging; no signing or location policy changed.
+- Live-machine result: PowerShell 7 smoke passed portable startup, MSI install, installed bundle integrity, and installed-app startup. The temporary app ran from `C:\Users\psharm04\MeetingRecorder\MeetingRecorder.App.exe` and was cleaned up; no live meeting was exercised.
+- Outcome: retained with package/install/startup validation. Matcher defaults for new configurations; migration preserves existing users' local choice.
+- Follow-up / removal condition: retain review-only as immediate circuit-breaker response until S8 protected-negative, recovery, rollback, and installed synthetic-journey gates authorize live healing expansion.
+
+### 2026-09-29: Continuity S8 package validation
+- Trigger / observed symptom: source-only continuity tests and ordinary startup smoke did not prove that the exact packaged Core implementation was exercised or that trace diagnostics were excluded from the shipped bundle.
+- Exact runtime or CyberArk evidence: no CyberArk or execution-control event occurred. Portable/MSI smoke launched only from `C:\Users\psharm04\MeetingRecorder`; the app was closed before and after each smoke window.
+- Hypothesis: an isolated release test harness can load the portable `MeetingRecorder.Core.dll`, run the public synthetic continuity journey, then require that DLL to match the MSI-installed copy without inspecting a user meeting.
+- APIs or signals added/removed: no detector, audio probe, process inspection, executable naming, signing, or install-location behavior changed. `Test-Continuity-Release.ps1` is a local validation wrapper only; it rejects packaged continuity trace sidecars and refuses to run while the user app is active.
+- Positive behavior expected: protected false-merge, manual-stop, Unknown-grace, recovery/cutover, review-only, and trace-redaction cases run against the exact package Core DLL; package/install mismatch or a trace payload fails closed.
+- False-positive/security boundary retained: no live meeting, transcript, audio, title, attendee, endpoint, protected process, or policy change is used. Native accessibility and consented live-meeting checks remain separate operational evidence.
+- Tests added and results: installer-script source guard passed 55/55; exact bundled-Core continuity journey passed 187/187. Full Core reached 1,561/1,568 with seven pre-existing debug-apphost/diarization fixture failures; integration passed 8/8 and AppPlatform passed 7/7.
+- Package status: `Build-Installer.ps1` completed with ZIP SHA-256 `4B05A671028595D44B535014432ACAA6BD8398868AC32B4DDEDADCC521C0F2CF` and MSI SHA-256 `AE67A1312859EAFECCAE05BD416F61561FC167C212FB4A5CE9CF3CE6451C506D`.
+- Installed hash/version/signature status: stable WPF/CLI/worker apphosts were used only after byte-identical validation; the portable and installed `MeetingRecorder.Core.dll` hashes match. No signing or install-location policy changed.
+- Live-machine result: PowerShell 7 smoke passed portable startup, MSI install, installed integrity, and installed-app startup. No live call behavior was exercised.
+- Outcome: retained as packaged synthetic validation; it is not a production meeting proof.
+- Follow-up / removal condition: keep the wrapper until a controlled native high-contrast/keyboard check and consented live synthetic meeting journey add their own evidence.
+
+### 2026-09-28: Generated apphost disappears during local package verification
+- Trigger / observed symptom: Sprint 3 installer rebuild stopped because the portable publish output did not contain `MeetingRecorder.App.exe`.
+- Exact runtime or CyberArk evidence: `dotnet publish` resolved the 193,024-byte intermediate apphost at `%TEMP%\MeetingRecorderBuild\obj\MeetingRecorder.App\Release\net8.0-windows\win-x64\apphost.exe` as `ResolvedFileToPublish` with relative path `MeetingRecorder.App.exe`, but neither the publish directory nor a direct `Copy-Item` destination retained the file. The copy command returned without an error and the destination was immediately absent. Defender, Code Integrity, AppLocker, and Application logs from the preceding three hours contained no matching event.
+- Hypothesis: an external host control or cleanup process removes the generated unsigned executable. This is unclassified; no current evidence identifies CyberArk/EPM as the cause.
+- APIs or signals added/removed: packaging can now accept explicit stable WPF/CLI/worker apphost fallbacks only after SHA-256 equality with each current intermediate apphost; missing or mismatched fallbacks fail closed.
+- Packaging path decision: source now permits dedicated absolute publish and installer artifact roots. Rebuilds into a fresh `%USERPROFILE%` sibling, the previously proven Documents root, and an isolated child of `%USERPROFILE%\MeetingRecorder` all still lost the generated apphost. No staging root is currently proven for generated-apphost retention; no run targeted or modified the live executable.
+- Positive behavior expected: package builds retain the apphost so portable integrity, installer, and smoke checks can run.
+- False-positive/security boundary retained: no executable rename, signing change, policy bypass, allow-list change, or running-install modification was attempted. The fallback is a byte-identical apphost-only package recovery path, not an endpoint-control workaround.
+- Tests added and results: Sprint 3 focused policy/config/UI/staged-queue checks passed 225 cases; absolute-artifact-root and impacted source-guard checks passed 64 cases; integration passed 8. The full run built all projects but retained unrelated installer and fixture failures before stalling.
+- Package status: package gate cleared on 2026-09-28. Generated WPF/CLI/worker publish apphosts were each absent, but the installed stable counterparts had byte-identical SHA-256 values to their current intermediate apphosts and survived copying. `Build-Installer.ps1` therefore completed with the explicit hash-verified fallbacks: ZIP `MeetingRecorder-v0.3-win-x64.zip` (90,957,231 bytes, SHA-256 `43FCD4432C36415EB1A7A5325B807C66A6410D5C82A5672C574438D9C378AC27`) and MSI `MeetingRecorderInstaller.msi` (76,132,352 bytes, SHA-256 `B8E6AAF31B519B222F9090C06A8E1A2DC8EE5015338AB799578D6FC83EAB1C44`). Bundle integrity and ZIP entries contain all three stable apphosts.
+- Installed hash/version/signature status: the cached legacy MSI could not resolve `[UserProfileFolder]` in quiet service context, so its guarded `SetINSTALLFOLDER` action produced the relative `MeetingRecorder` and Error 1606/1603. With explicit authority, its exact uninstall/product registry keys were exported to a local recovery backup, then `msiexec /x` removed only product `{FB4F4B61-6026-4BB6-9F3D-980905ACC89C}` with explicit `INSTALLFOLDER=C:\Users\psharm04\MeetingRecorder\`. `AppPlatform.Deployment.Cli install-bundle` restored the verified live bundle. The final clean MSI install refreshed same-version payload through `REINSTALLMODE=amus`; every required installed file matches `bundle-integrity.json`.
+- Live-machine result: final release smoke passed portable startup, clean MSI install, installed integrity, and installed-app startup with an 8-second survival window. No Meeting Recorder process remains running after smoke.
+- Outcome: retained. Package, legacy-registration recovery, install, integrity, and startup gates passed.
+- Follow-up / removal condition: retain/review explicit hash-verified apphost fallback until ordinary generated-apphost retention returns; do not alter endpoint policy, signing, or execution-control configuration without independent evidence and authority.
+- 2026-09-28 Sprint 4 package follow-up: a second cached legacy product (`{E7315291-1AD8-4447-B212-82A09999B5D8}`) reproduced the same nested-upgrade Error 1606 because its quiet uninstall expanded `[UserProfileFolder]` to a relative path. Its exact uninstall registry key was exported to the same local recovery directory and it was removed only with explicit `INSTALLFOLDER=C:\Users\psharm04\MeetingRecorder`. Current WiX authoring now skips the default-folder action when `UPGRADINGPRODUCTCODE` is present; source guard tests pass 18/18. A retained prior MSI was used only to restore byte-identical stable hosts for rebuild, then removed before final smoke. Final current package: ZIP 90,963,216 bytes, SHA-256 `3137B1E2A06F7DA5932EB98026CF87E61FE97C74E50C6D9CAA1D695CB30463B7`; MSI 76,148,736 bytes, SHA-256 `177DF736FC6EE68ECEF5BFEB148524DDA93CB4100F488809A7C2684130398B12`. Fresh portable smoke, clean MSI install, installed bundle-integrity check, and installed-app 8-second smoke passed. No app process remained running after smoke.
+- 2026-09-29 Sprint 5 package follow-up: the GPU-capacity queue change used the same explicit byte-identical stable WPF/CLI/worker apphost recovery path; no endpoint-control, signing, executable-location, or launch-policy change was attempted. `Build-Installer.ps1` completed with ZIP 90,968,204 bytes, SHA-256 `1CB93399CE82584DC062922F1064A0EDAAB38A79F423AF87F1975E931743EB2A`; MSI 76,156,928 bytes, SHA-256 `4AC6075119440C4F66CDBDF93F02557D6E197C1BD1848CE3519F9716DEDB9C75`. Portable startup, clean MSI install, installed bundle-integrity validation, and installed-app 8-second smoke passed. No Meeting Recorder process remained after smoke.
+- 2026-09-29 Sprint 6 package follow-up: backlog-profile UI/documentation/runtime changes used the same explicit byte-identical stable WPF/CLI/worker apphost recovery path from `C:\Users\psharm04\MeetingRecorder`; no executable relocation, endpoint-control, signing, or launch-policy change was attempted. `Build-Installer.ps1` completed with ZIP 90,971,668 bytes, SHA-256 `75800D8F01BC45B35B17E2BE2A4FD3FD80156FAB90B2E4EC18C8BA35FDD51D4E`; MSI 76,165,120 bytes, SHA-256 `42419C6DE0A0256976E2EF8E68C956B0331C650F6028F96C7903B5D51B0FDF41`. Portable startup, MSI install, and MSI-installed app 8-second smoke passed. No Meeting Recorder process remained after smoke.
 
 1. Validate one scheduled Zoom Web call with matching calendar/title evidence and
    active audio; record whether the installed build auto-starts.

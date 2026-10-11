@@ -32,7 +32,7 @@
                        Text="Settings" />
             <TextBlock Margin="0,8,0,0"
                        Style="{StaticResource DialogBodyTextStyle}"
-                       Text="Use Settings to manage setup, recording behavior, file locations, updates, and troubleshooting." />
+                       Text="Use Settings to manage readiness, recording, processing, summaries, files, updates, and troubleshooting." />
         </StackPanel>
 
         <Border Grid.Row="1"
@@ -40,7 +40,7 @@
                 BorderBrush="{StaticResource AppOutlineBrush}"
                 BorderThickness="0,0,0,1">
             <UniformGrid x:Name="SettingsSectionButtonStrip"
-                         Columns="5"
+                         Columns="6"
                          Rows="1">
                 <Button x:Name="SettingsSetupSectionButton"
                         Uid="setup"
@@ -48,21 +48,26 @@
                         Style="{StaticResource DialogSectionNavButtonStyle}"
                         Click="SettingsSectionButton_OnClick"
                         Content="Setup" />
-                <Button x:Name="SettingsGeneralSectionButton"
-                        Uid="general"
+                <Button x:Name="SettingsRecordingSectionButton"
+                        Uid="recording"
                         Style="{StaticResource DialogSectionNavButtonStyle}"
                         Click="SettingsSectionButton_OnClick"
-                        Content="General" />
-                <Button x:Name="SettingsFilesSectionButton"
-                        Uid="files"
+                        Content="Recording" />
+                <Button x:Name="SettingsProcessingSectionButton"
+                        Uid="processing"
                         Style="{StaticResource DialogSectionNavButtonStyle}"
                         Click="SettingsSectionButton_OnClick"
-                        Content="Files" />
-                <Button x:Name="SettingsUpdatesSectionButton"
-                        Uid="updates"
+                        Content="Processing" />
+                <Button x:Name="SettingsSummariesSectionButton"
+                        Uid="summaries"
                         Style="{StaticResource DialogSectionNavButtonStyle}"
                         Click="SettingsSectionButton_OnClick"
-                        Content="Updates" />
+                        Content="Summaries" />
+                <Button x:Name="SettingsFilesAndUpdatesSectionButton"
+                        Uid="files-and-updates"
+                        Style="{StaticResource DialogSectionNavButtonStyle}"
+                        Click="SettingsSectionButton_OnClick"
+                        Content="Files &amp; Updates" />
                 <Button x:Name="SettingsAdvancedSectionButton"
                         Uid="advanced"
                         Style="{StaticResource DialogSectionNavButtonStyle}"
@@ -86,16 +91,19 @@
             </Grid.ColumnDefinitions>
 
             <TextBlock x:Name="FooterStatusTextBlock"
+                       AutomationProperties.LiveSetting="Polite"
                        VerticalAlignment="Center"
                        Style="{StaticResource DialogBodyTextStyle}" />
 
             <Button x:Name="SaveChangesButton"
+                    AutomationProperties.Name="Save Settings"
                     Grid.Column="1"
                     Margin="12,0,12,0"
                     Style="{StaticResource PrimaryActionButtonStyle}"
                     Click="SaveChangesButton_OnClick"
                     Content="Save Changes" />
             <Button Grid.Column="2"
+                    AutomationProperties.Name="Close Settings"
                     Style="{StaticResource SecondaryActionButtonStyle}"
                     Click="CloseButton_OnClick"
                     Content="Close" />

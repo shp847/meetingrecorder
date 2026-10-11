@@ -32,13 +32,62 @@ public sealed class SpeakerNameLearningService
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var corrections = manifest.ProcessingMetadata?.Speakers?
+            .Where(speaker =>
+                !string.IsNullOrWhiteSpace(speaker.Id) &&
+                !string.IsNullOrWhiteSpace(speaker.DisplayName) &&
+                speakerLabelMap.TryGetValue(speaker.DisplayName.Trim(), out var updatedDisplayName) &&
+                !string.IsNullOrWhiteSpace(updatedDisplayName) &&
+                !string.Equals(speaker.DisplayName.Trim(), updatedDisplayName.Trim(), StringComparison.Ordinal))
+            .Select(speaker => new SpeakerNameCorrectionDraft(
+                speaker.Id,
+                speaker.DisplayName,
+                speakerLabelMap[speaker.DisplayName.Trim()],
+                speaker.ProfileId,
+                speaker.NameSource))
+            .ToArray() ?? Array.Empty<SpeakerNameCorrectionDraft>();
+        var result = await LearnFromConfirmedCorrectionsAsync(
+            manifest,
+            corrections,
+            learningMode,
+            now,
+            cancellationToken);
+        return result with
+        {
+            SkippedCount = Math.Max(result.SkippedCount, Math.Max(0, speakerLabelMap.Count - result.CreatedCount - result.UpdatedCount)),
+        };
+    }
 
+    /// <summary>
+    /// Learns only from explicit, revision-validated Meeting Display Name corrections. Matching,
+    /// refreshing, and label repair call no learning path.
+    /// </summary>
+    public async Task<SpeakerNameLearningResult> LearnFromConfirmedCorrectionsAsync(
+        MeetingSessionManifest manifest,
+        IReadOnlyList<SpeakerNameCorrectionDraft> corrections,
+        SpeakerNameLearningMode learningMode,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (learningMode == SpeakerNameLearningMode.Disabled ||
-            speakerLabelMap.Count == 0 ||
+            corrections.Count == 0 ||
             manifest.ProcessingMetadata?.Speakers is not { Count: > 0 } speakers ||
             manifest.ProcessingMetadata.SpeakerVoiceSamples is not { Count: > 0 } samples)
         {
-            return new SpeakerNameLearningResult(0, 0, speakerLabelMap.Count);
+            return new SpeakerNameLearningResult(0, 0, corrections.Count);
+        }
+
+        var correctionsBySpeakerId = corrections
+            .Where(correction =>
+                !string.IsNullOrWhiteSpace(correction.SpeakerId) &&
+                !string.IsNullOrWhiteSpace(correction.UpdatedDisplayName) &&
+                !string.Equals(correction.ExpectedDisplayName.Trim(), correction.UpdatedDisplayName.Trim(), StringComparison.Ordinal))
+            .GroupBy(correction => correction.SpeakerId.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        if (correctionsBySpeakerId.Count == 0)
+        {
+            return new SpeakerNameLearningResult(0, 0, corrections.Count);
         }
 
         var samplesBySpeakerId = samples
@@ -54,18 +103,16 @@ public sealed class SpeakerNameLearningService
         foreach (var speaker in speakers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(speaker.DisplayName) ||
-                !speakerLabelMap.TryGetValue(speaker.DisplayName.Trim(), out var correctedName) ||
-                string.IsNullOrWhiteSpace(correctedName) ||
-                string.Equals(speaker.DisplayName.Trim(), correctedName.Trim(), StringComparison.Ordinal) ||
+            if (!correctionsBySpeakerId.TryGetValue(speaker.Id, out var correction) ||
                 !samplesBySpeakerId.TryGetValue(speaker.Id, out var sample))
             {
                 continue;
             }
 
-            confirmedSamples.Add((NormalizeDisplayName(correctedName), sample));
+            confirmedSamples.Add((NormalizeDisplayName(correction.UpdatedDisplayName), sample));
             if (!string.IsNullOrWhiteSpace(speaker.ProfileId) &&
-                speaker.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile)
+                (speaker.NameSource is SpeakerNameSource.AutoAppliedVoiceProfile or SpeakerNameSource.SuggestedVoiceProfile) &&
+                ShouldRejectPriorProfileAttribution(speaker, correction))
             {
                 rejectedMatches.Add(new SpeakerNameRejectedMatch(
                     speaker.ProfileId,
@@ -76,7 +123,7 @@ public sealed class SpeakerNameLearningService
 
         if (confirmedSamples.Count == 0 && rejectedMatches.Count == 0)
         {
-            return new SpeakerNameLearningResult(0, 0, speakerLabelMap.Count);
+            return new SpeakerNameLearningResult(0, 0, corrections.Count);
         }
 
         var createdCount = 0;
@@ -120,7 +167,6 @@ public sealed class SpeakerNameLearningService
                 }
 
                 ApplyRejectedMatches(profiles, normalizedRejectedMatches);
-
                 return document with
                 {
                     UpdatedAtUtc = now,
@@ -132,7 +178,7 @@ public sealed class SpeakerNameLearningService
         return new SpeakerNameLearningResult(
             createdCount,
             updatedCount,
-            Math.Max(0, speakerLabelMap.Count - createdCount - updatedCount));
+            Math.Max(0, corrections.Count - createdCount - updatedCount));
     }
 
     private static bool HasAlreadyLearnedFromMeeting(VoiceProfile profile, string sessionId)
@@ -319,5 +365,19 @@ public sealed class SpeakerNameLearningService
         return string.Join(
             " ",
             displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private static bool ShouldRejectPriorProfileAttribution(
+        SpeakerIdentity speaker,
+        SpeakerNameCorrectionDraft correction)
+    {
+        // Choosing a displayed suggestion is an explicit confirmation of that local profile, not
+        // a rejection merely because the anonymous label changes to a person name.
+        return speaker.NameSource != SpeakerNameSource.SuggestedVoiceProfile ||
+            string.IsNullOrWhiteSpace(correction.ExpectedSuggestedDisplayName) ||
+            !string.Equals(
+                NormalizeDisplayName(correction.ExpectedSuggestedDisplayName),
+                NormalizeDisplayName(correction.UpdatedDisplayName),
+                StringComparison.OrdinalIgnoreCase);
     }
 }

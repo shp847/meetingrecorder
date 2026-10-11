@@ -1,4 +1,5 @@
 using MeetingRecorder.App.Services;
+using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.Core.Tests;
 
@@ -54,6 +55,44 @@ public sealed class MeetingCleanupWorkLedgerServiceTests : IDisposable
         ledger.Record("labels-1", CleanupWorkState.Failed, detail: "Worker failed");
 
         Assert.False(ledger.IsEligibleForAutomaticApply("labels-1"));
+    }
+
+    [Fact]
+    public void Record_Persists_Metadata_Required_To_Reconcile_Automated_Work_After_Restart()
+    {
+        var ledgerPath = Path.Combine(_root, "ledger.json");
+        var ledger = new MeetingCleanupWorkLedgerService(ledgerPath);
+        ledger.Record(
+            "labels-1",
+            CleanupWorkState.Queued,
+            manifestPath: "C:\\work\\one\\manifest.json",
+            action: MeetingCleanupAction.GenerateSpeakerLabels,
+            affectedStems: ["one"],
+            inputRevision: "input-revision-1");
+
+        var reloaded = new MeetingCleanupWorkLedgerService(ledgerPath);
+        var entry = Assert.Single(reloaded.GetEntries());
+
+        Assert.Equal(MeetingCleanupAction.GenerateSpeakerLabels, entry.Action);
+        Assert.Equal(["one"], entry.AffectedStems);
+        Assert.Equal("input-revision-1", entry.InputRevision);
+    }
+
+    [Fact]
+    public void RecordContainmentHold_Persists_One_PathFree_ManualReview_Receipt()
+    {
+        var ledger = CreateLedger();
+        const string reason = "Automatic archive is paused. Review and apply this action manually if appropriate.";
+
+        ledger.RecordContainmentHold("opaque-fingerprint", MeetingCleanupAction.Archive, reason);
+        ledger.RecordContainmentHold("opaque-fingerprint", MeetingCleanupAction.Archive, reason);
+
+        var entry = Assert.Single(ledger.GetEntries());
+        Assert.Equal(CleanupWorkState.ManualReview, entry.State);
+        Assert.Equal(MeetingCleanupAction.Archive, entry.Action);
+        Assert.Equal(reason, entry.Detail);
+        Assert.Null(entry.ManifestPath);
+        Assert.Null(entry.AffectedStems);
     }
 
     public void Dispose()

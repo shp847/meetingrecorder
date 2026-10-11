@@ -104,6 +104,172 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyReviewAsync_RejectsStaleDiarizationRevision_AndPreservesDraftTarget()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        var service = CreateService(profileStore);
+        var originalManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record);
+        var request = new SpeakerNameReviewRequest(
+            revision,
+            [new SpeakerNameCorrectionDraft(
+                "speaker_00",
+                "Speaker 1",
+                "Pranav Sharma",
+                null,
+                SpeakerNameSource.None)]);
+
+        await context.ManifestStore.SaveAsync(
+            originalManifest with
+            {
+                ProcessingMetadata = originalManifest.ProcessingMetadata! with
+                {
+                    Speakers = [new SpeakerIdentity("speaker_00", "Worker regenerated label", false)],
+                },
+            },
+            context.ManifestPath);
+
+        var result = await service.ApplyReviewAsync(
+            context.Record,
+            request,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            _now);
+
+        Assert.True(result.RequiresReload);
+        Assert.Contains("Reload", result.LearningWarning, StringComparison.Ordinal);
+        var markdown = await File.ReadAllTextAsync(context.MarkdownPath);
+        Assert.Contains("**Speaker 1:** Hello there", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("Pranav Sharma", markdown, StringComparison.Ordinal);
+        Assert.Empty((await profileStore.LoadOrCreateAsync()).Profiles);
+    }
+
+    [Fact]
+    public async Task ApplyReviewAsync_AppliesExplicitNameAndSuggestionRejectionInOneArtifactTransaction()
+    {
+        var context = await CreatePublishedMeetingAsync(
+            speakers:
+            [
+                new SpeakerIdentity("speaker_00", "Speaker 1", false),
+                new SpeakerIdentity(
+                    "speaker_01",
+                    "Speaker 2",
+                    false,
+                    "voice_alex",
+                    SpeakerNameSource.SuggestedVoiceProfile,
+                    0.81d,
+                    "Alex Lee",
+                    SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold),
+            ]);
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            _now,
+            [Profile("voice_alex", "Alex Lee")]));
+        var service = CreateService(profileStore);
+        var request = new SpeakerNameReviewRequest(
+            MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record),
+            [
+                new SpeakerNameCorrectionDraft("speaker_00", "Speaker 1", "Pranav Sharma", null, SpeakerNameSource.None),
+                new SpeakerNameCorrectionDraft(
+                    "speaker_01",
+                    "Speaker 2",
+                    "Speaker 2",
+                    "voice_alex",
+                    SpeakerNameSource.SuggestedVoiceProfile,
+                    RejectSuggestion: true),
+            ]);
+
+        var result = await service.ApplyReviewAsync(
+            context.Record,
+            request,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            _now);
+
+        Assert.False(result.RequiresReload);
+        Assert.Equal(1, result.RejectedCount);
+        var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+        Assert.Equal("Pranav Sharma", manifest.ProcessingMetadata!.Speakers![0].DisplayName);
+        Assert.Equal(SpeakerNameSource.UserEdited, manifest.ProcessingMetadata.Speakers[0].NameSource);
+        Assert.Equal(SpeakerNameSource.None, manifest.ProcessingMetadata.Speakers[1].NameSource);
+        var markdown = await File.ReadAllTextAsync(context.MarkdownPath);
+        Assert.Contains("**Pranav Sharma:** Hello there", markdown, StringComparison.Ordinal);
+        Assert.Contains("**Speaker 2:** Thanks everyone", markdown, StringComparison.Ordinal);
+        var json = await File.ReadAllTextAsync(context.JsonPath);
+        Assert.DoesNotContain("embedding", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ApplyReviewAsync_UsingSuggestedName_ConfirmsRatherThanRejectsProfile()
+    {
+        var context = await CreatePublishedMeetingAsync(
+            speaker: new SpeakerIdentity(
+                "speaker_00",
+                "Speaker 1",
+                false,
+                "voice_pranav",
+                SpeakerNameSource.SuggestedVoiceProfile,
+                0.81d,
+                "Pranav Sharma",
+                SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold));
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            _now,
+            [Profile("voice_pranav", "Pranav Sharma")]));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
+        var request = new SpeakerNameReviewRequest(
+            MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record),
+            [new SpeakerNameCorrectionDraft(
+                "speaker_00",
+                "Speaker 1",
+                "Pranav Sharma",
+                "voice_pranav",
+                SpeakerNameSource.SuggestedVoiceProfile,
+                ExpectedSuggestedDisplayName: "Pranav Sharma")]);
+
+        var result = await service.ApplyReviewAsync(
+            context.Record,
+            request,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            _now);
+
+        Assert.False(result.RequiresReload);
+        var profile = Assert.Single((await profileStore.LoadOrCreateAsync()).Profiles);
+        Assert.Empty(profile.RejectedMatches ?? []);
+        var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+        Assert.Equal(SpeakerNameSource.UserEdited, manifest.ProcessingMetadata!.Speakers![0].NameSource);
+    }
+
+    [Fact]
+    public async Task ApplyReviewAsync_Persists_Completed_Receipt_And_Deduplicates_A_Retry()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
+        var request = new SpeakerNameReviewRequest(
+            MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record),
+            [new SpeakerNameCorrectionDraft("speaker_00", "Speaker 1", "Pranav Sharma", null, SpeakerNameSource.None)],
+            "review-operation");
+
+        var first = await service.ApplyReviewAsync(context.Record, request, SpeakerNameLearningMode.LocalAutoLearn, _now);
+        var receipt = await receiptStore.FindAsync("review-operation:speaker_00");
+        var retry = await service.ApplyReviewAsync(context.Record, request, SpeakerNameLearningMode.LocalAutoLearn, _now.AddMinutes(1));
+
+        Assert.Null(first.LearningWarning);
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.ConfirmName, receipt.Action);
+        Assert.Equal(SpeakerNameSource.None, receipt.PriorNameSource);
+        Assert.Equal(SpeakerNameSource.UserEdited, receipt.NextNameSource);
+        Assert.Equal(SpeakerCorrectionLearningDisposition.Completed, receipt.LearningDisposition);
+        Assert.NotEqual(request.ExpectedArtifactRevision, receipt.PriorFingerprint);
+        Assert.False(retry.RequiresReload);
+        Assert.Equal(0, retry.LearningResult.CreatedCount + retry.LearningResult.UpdatedCount + retry.LearningResult.SkippedCount);
+    }
+
+    [Fact]
     public async Task RejectMatchesAsync_Clears_Suggestion_And_Stores_Profile_Rejection()
     {
         var context = await CreatePublishedMeetingAsync(
@@ -185,13 +351,15 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             1,
             _now,
             [Profile("voice_pranav", "Pranav Sharma")]));
-        var service = CreateService(profileStore);
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
 
         var result = await service.RefreshSpeakerNameAttributionAsync(
             context.Record,
             SpeakerNameLearningMode.LocalAutoLearn,
             new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
-            _now);
+            _now,
+            operationId: "post-publish-operation");
 
         var prediction = Assert.Single(result.Predictions);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, prediction.Source);
@@ -205,6 +373,76 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
         Assert.Equal("Pranav Sharma", updatedSpeaker.DisplayName);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, updatedSpeaker.NameSource);
         Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var receipt = await receiptStore.FindAsync("post-publish-operation:speaker_00");
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.AutoApplyRecognition, receipt.Action);
+        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+        Assert.Equal(FutureNamingEligibility.AutoApplied, Assert.Single(result.EligibilitySnapshots!).Eligibility);
+    }
+
+    [Fact]
+    public async Task PastRematchService_Rematches_One_Current_Meeting_Without_Changing_Audio()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var correctionService = CreateService(profileStore, receiptStore);
+        var rematchStore = new PastRematchReceiptStore(Path.Combine(_root, "speaker-corrections", "past-rematches.json"));
+        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService, rematchStore);
+
+        var result = await rematchService.RematchOneAsync(
+            context.Record,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now,
+            "rematch-operation");
+        var retry = await rematchService.RematchOneAsync(
+            context.Record,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now.AddMinutes(1),
+            "rematch-operation");
+
+        Assert.Equal(PastRematchDisposition.Eligible, result.PlanItem.Disposition);
+        Assert.Equal(PastRematchOutcome.AutoApplied, result.Outcome);
+        Assert.Equal(PastRematchOutcome.AutoApplied, retry.Outcome);
+        Assert.Empty(retry.Predictions);
+        Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, Assert.Single(manifest.ProcessingMetadata!.Speakers!).NameSource);
+        var receipt = Assert.Single((JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(
+            await File.ReadAllTextAsync(Path.Combine(_root, "speaker-corrections", "receipts.json"))) ?? [])
+            .Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
+        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+    }
+
+    [Fact]
+    public async Task PastRematchService_Batch_Cancellation_Records_Undispatched_Meeting()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var correctionService = CreateService(profileStore);
+        var rematchStore = new PastRematchReceiptStore(Path.Combine(_root, "speaker-corrections", "past-rematches.json"));
+        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService, rematchStore);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var results = await rematchService.RematchBatchAsync(
+            [context.Record],
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now,
+            "cancelled-rematch-operation",
+            cancellation.Token);
+
+        var result = Assert.Single(results);
+        Assert.Equal(PastRematchOutcome.Cancelled, result.Outcome);
+        Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var receipt = await rematchStore.FindAsync("cancelled-rematch-operation", result.PlanItem.MeetingStableIdentity);
+        Assert.NotNull(receipt);
+        Assert.Equal(PastRematchOutcome.Cancelled, receipt!.Outcome);
     }
 
     [Fact]
@@ -335,6 +573,37 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UndoProfileSpeakerNameRecognitionAsync_Persists_Receipt_And_Deduplicates_A_Retry()
+    {
+        var context = await CreatePublishedMeetingAsync(
+            speaker: new SpeakerIdentity(
+                "speaker_00",
+                "Pranav Sharma",
+                false,
+                "voice_pranav",
+                SpeakerNameSource.AutoAppliedVoiceProfile,
+                0.93d,
+                null,
+                SpeakerNameDecisionReason.AutoAppliedHighConfidence));
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
+
+        var first = await service.UndoProfileSpeakerNameRecognitionAsync(context.Record, _now, "undo-operation");
+        var receipt = await receiptStore.FindAsync("undo-operation:speaker_00");
+        var retry = await service.UndoProfileSpeakerNameRecognitionAsync(context.Record, _now.AddMinutes(1), "undo-operation");
+
+        Assert.Equal(1, first.UpdatedSpeakerCount);
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.UndoRecognition, receipt.Action);
+        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, receipt.PriorNameSource);
+        Assert.Equal(SpeakerNameSource.None, receipt.NextNameSource);
+        Assert.Equal(0, retry.UpdatedSpeakerCount);
+        Assert.Null(retry.Warning);
+    }
+
+    [Fact]
     public async Task UndoProfileSpeakerNameRecognitionAsync_Preserves_Artifact_Update_When_Feedback_Store_Fails()
     {
         var context = await CreatePublishedMeetingAsync(
@@ -361,7 +630,9 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
         Assert.Contains("**Speaker 1:** Hello there", markdown, StringComparison.Ordinal);
     }
 
-    private SpeakerNameCorrectionService CreateService(VoiceProfileStore profileStore)
+    private SpeakerNameCorrectionService CreateService(
+        VoiceProfileStore profileStore,
+        SpeakerCorrectionReceiptStore? receiptStore = null)
     {
         var pathBuilder = new ArtifactPathBuilder();
         return new SpeakerNameCorrectionService(
@@ -369,7 +640,8 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             new SessionManifestStore(pathBuilder),
             new SpeakerNameLearningService(profileStore),
             new VoiceProfileMatcher(),
-            profileStore);
+            profileStore,
+            receiptStore);
     }
 
     private async Task<TestMeetingContext> CreatePublishedMeetingAsync(

@@ -8,6 +8,8 @@ public sealed record MeetingSessionManifest
 
     public string DetectedTitle { get; init; } = string.Empty;
 
+    public MeetingIdentitySnapshot? IdentitySnapshot { get; init; }
+
     public DateTimeOffset StartedAtUtc { get; init; }
 
     public DateTimeOffset? EndedAtUtc { get; init; }
@@ -78,6 +80,7 @@ public enum ExternalAudioImportMethod
     WatchedFolder = 0,
     FilePicker = 1,
     DragDrop = 2,
+    ImportInbox = 3,
 }
 
 public sealed record ImportedSourceAudioInfo
@@ -132,6 +135,13 @@ public sealed record ImportedSourceAudioInfo
     public TimeSpan? ProbedDuration { get; init; }
 
     public bool SourceRetained { get; init; } = true;
+
+    /// <summary>
+    /// The app-owned published stem selected for this imported session. Legacy
+    /// manifests omit it and continue to use their read-only source-stem
+    /// catalog projection until they are processed again.
+    /// </summary>
+    public string? OutputStem { get; init; }
 }
 
 public sealed record MicrophoneCaptureSegment(

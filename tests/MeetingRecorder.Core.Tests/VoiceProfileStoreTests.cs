@@ -77,6 +77,23 @@ public sealed class VoiceProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task EnableProfileAsync_Reenables_Selected_Profile_ForFutureMatching()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var store = new VoiceProfileStore(path);
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        await store.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            now,
+            [Profile("voice_1", "Pranav Sharma", now) with { Status = VoiceProfileStatus.Disabled }]));
+
+        await store.EnableProfileAsync("voice_1");
+
+        var profile = Assert.Single((await store.LoadOrCreateAsync()).Profiles);
+        Assert.Equal(VoiceProfileStatus.Active, profile.Status);
+    }
+
+    [Fact]
     public async Task DeleteProfileAsync_Removes_Selected_Profile()
     {
         var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
@@ -107,8 +124,30 @@ public sealed class VoiceProfileStoreTests : IDisposable
         var document = await store.LoadOrCreateAsync();
 
         Assert.Empty(document.Profiles);
+        Assert.True(document.WasRecoveredFromCorruption);
         Assert.True(File.Exists(path));
         Assert.NotEmpty(Directory.GetFiles(Path.GetDirectoryName(path)!, "voice-profiles.json.corrupt-*"));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Serializes_Concurrent_Mutations_Across_Store_Instances()
+    {
+        var path = Path.Combine(_root, "speaker-profiles", "voice-profiles.json");
+        var now = DateTimeOffset.Parse("2026-04-30T12:00:00Z");
+        var first = new VoiceProfileStore(path);
+        var second = new VoiceProfileStore(path);
+        await first.SaveAsync(new VoiceProfileStoreDocument(
+            1,
+            now,
+            [Profile("voice_1", "Pranav Sharma", now), Profile("voice_2", "Terry Jones", now)]));
+
+        await Task.WhenAll(
+            first.DisableProfileAsync("voice_1"),
+            second.DisableProfileAsync("voice_2"));
+
+        var profiles = (await first.LoadOrCreateAsync()).Profiles.ToDictionary(profile => profile.ProfileId);
+        Assert.Equal(VoiceProfileStatus.Disabled, profiles["voice_1"].Status);
+        Assert.Equal(VoiceProfileStatus.Disabled, profiles["voice_2"].Status);
     }
 
     private static VoiceProfile Profile(string profileId, string displayName, DateTimeOffset now)

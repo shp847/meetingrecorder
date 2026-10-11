@@ -5,6 +5,16 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class AppDataPathsTests
 {
     [Fact]
+    public void GetManagedInstallRoot_Uses_UserProfile_Root()
+    {
+        var userProfileRoot = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+
+        var installRoot = AppDataPaths.GetManagedInstallRoot(userProfileRoot);
+
+        Assert.Equal(Path.Combine(userProfileRoot, "MeetingRecorder"), installRoot);
+    }
+
+    [Fact]
     public void GetAppRoot_Uses_Portable_Data_Folder_When_PortableMarker_Is_Present()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -29,5 +39,21 @@ public sealed class AppDataPathsTests
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MeetingRecorder"),
             appRoot);
         Assert.False(AppDataPaths.IsPortableMode(root));
+    }
+
+    [Fact]
+    public void PushTestAppRoot_Is_Scoped_And_Does_Not_Override_Explicit_Base_Directory()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var explicitBaseDirectory = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var defaultRoot = AppDataPaths.GetAppRoot();
+
+        using (AppDataPaths.PushTestAppRoot(testRoot))
+        {
+            Assert.Equal(Path.GetFullPath(testRoot), AppDataPaths.GetAppRoot());
+            Assert.Equal(AppDataPaths.GetManagedAppRoot(), AppDataPaths.GetAppRoot(explicitBaseDirectory));
+        }
+
+        Assert.Equal(defaultRoot, AppDataPaths.GetAppRoot());
     }
 }

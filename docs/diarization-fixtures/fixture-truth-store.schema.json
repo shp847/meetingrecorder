@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meeting-recorder.local/schemas/diarization-fixture-truth-store.schema.json",
+  "title": "Meeting Recorder Restricted Fixture Truth Store",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "outcomes"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reference", "expectedSpeakerCount"],
+        "properties": {
+          "reference": { "type": "string", "minLength": 1 },
+          "expectedSpeakerCount": { "type": "integer", "minimum": 0, "maximum": 16 },
+          "expectedSpeakerNames": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    }
+  }
+}

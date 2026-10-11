@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Whole-App UX Sprint 0 Control Inventory",
+  "type": "object",
+  "required": ["schemaVersion", "scope", "sources", "controls"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "scope": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "controls": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "surface", "visibleCopy", "controlType", "sourceAnchor",
+          "commandOrHandler", "visibilityOrEnabledCondition", "actionClassification",
+          "duplicateAliases", "currentUserPurpose", "targetLayer", "targetSurface",
+          "futureOwnerSprint", "safetyRationale", "disposition", "replacementContract"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "surface": { "type": "string", "minLength": 1 },
+          "visibleCopy": { "type": "string" },
+          "controlType": { "type": "string", "minLength": 1 },
+          "sourceAnchor": { "type": "string", "pattern": ".+:[0-9]+$" },
+          "commandOrHandler": { "type": "string" },
+          "visibilityOrEnabledCondition": { "type": "string", "minLength": 1 },
+          "actionClassification": { "type": "string", "minLength": 1 },
+          "duplicateAliases": { "type": "array", "items": { "type": "string" } },
+          "currentUserPurpose": { "type": "string", "minLength": 1 },
+          "targetLayer": { "enum": ["assistant", "guided", "power"] },
+          "targetSurface": { "type": "string", "minLength": 1 },
+          "futureOwnerSprint": { "type": "string", "pattern": "^Sprint (?:[0-9]+|10A)$" },
+          "safetyRationale": { "type": "string", "minLength": 1 },
+          "disposition": { "enum": ["retain", "combine", "automate", "move-to-advanced", "move-contextually", "retire"] },
+          "replacementContract": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -5,6 +5,8 @@ namespace MeetingRecorder.ProcessingWorker;
 
 internal static class Program
 {
+    private static readonly JsonSerializerOptions LocalDiarizationJsonOptions = new(JsonSerializerDefaults.Web);
+
     public static async Task<int> Main(string[] args)
     {
         if (HasArgument(args, "--run-local-diarization"))
@@ -27,7 +29,7 @@ internal static class Program
             return await RunExternalProviderProbeAsync(args, ProviderProbeKind.Diarization);
         }
 
-        if (!TryParseArguments(args, out var manifestPath, out var configPath, out var parseError))
+        if (!TryParseArguments(args, out var manifestPath, out var configPath, out var stage, out var workLease, out var parseError))
         {
             Console.Error.WriteLine(parseError);
             return 1;
@@ -40,7 +42,9 @@ internal static class Program
             ?? throw new InvalidOperationException("Manifest path must include a session directory.");
         var logger = new FileLogWriter(Path.Combine(sessionRoot, "logs", "processing.log"));
 
-        logger.Log($"Worker starting for manifest '{manifestPath}'.");
+        logger.Log(workLease is null
+            ? $"Worker starting for manifest '{manifestPath}'."
+            : $"Worker starting staged {stage} work '{workLease.WorkId:D}' for manifest '{manifestPath}'.");
 
         try
         {
@@ -56,6 +60,13 @@ internal static class Program
                 FileSummarySecretStore.CreateDefault(),
                 new SummaryChatClient(summaryHttpClient),
                 modelProxyClient);
+            var voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+            var speakerNameCorrectionService = new SpeakerNameCorrectionService(
+                new MeetingOutputCatalogService(pathBuilder),
+                manifestStore,
+                new SpeakerNameLearningService(voiceProfileStore),
+                new VoiceProfileMatcher(),
+                voiceProfileStore);
             var processor = new SessionProcessor(
                 manifestStore,
                 pathBuilder,
@@ -64,11 +75,19 @@ internal static class Program
                 CreateDiarizationProvider(config, diarizationThreadCount, logger, resolvedConfigPath),
                 new TranscriptRenderer(),
                 new FilePublishService(),
-                summarizationProvider);
+                summarizationProvider,
+                speakerNameCorrectionService: speakerNameCorrectionService);
 
-            var published = await processor.ProcessAsync(manifestPath, config);
+            var published = await processor.ProcessAsync(manifestPath, config, stage);
             logger.Log($"Processing completed successfully. Ready marker: '{published.ReadyMarkerPath}'.");
-            Console.WriteLine(published.ReadyMarkerPath);
+            Console.WriteLine(workLease is null
+                ? published.ReadyMarkerPath
+                : JsonSerializer.Serialize(new SessionProcessingWorkReceipt(
+                    SessionProcessingWorkReceipt.CurrentSchemaVersion,
+                    workLease.WorkId,
+                    workLease.WorkRevision,
+                    workLease.LeaseToken,
+                    stage)));
             return 0;
         }
         catch (Exception exception)
@@ -186,11 +205,16 @@ internal static class Program
             return 1;
         }
 
+        var helperPhase = "request_read";
         try
         {
-            var request = JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(await File.ReadAllTextAsync(requestPath))
+            var serializedRequest = await File.ReadAllTextAsync(requestPath);
+            helperPhase = "request_deserialize";
+            var request = DeserializeLocalDiarizationHelperRequest(serializedRequest)
                 ?? throw new InvalidOperationException("Local diarization helper request was empty.");
+            helperPhase = "config";
             var config = await new AppConfigStore(configPath).LoadOrCreateAsync();
+            helperPhase = "provider";
             var logger = new FileLogWriter(Path.Combine(Path.GetDirectoryName(requestPath)!, "helper.log"));
             var provider = new LocalSpeakerDiarizationProvider(
                 config.DiarizationAssetPath,
@@ -203,24 +227,85 @@ internal static class Program
                     config.SpeakerNameSuggestionConfidenceThreshold,
                     config.SpeakerNameMatchMarginThreshold),
                 AppDataPaths.GetVoiceProfileStorePath());
-            provider.ProgressChanged += progress => WriteHelperProgress(request.ProgressPath, progress);
+            helperPhase = "audio_preparation";
+            provider.ProgressChanged += progress =>
+            {
+                helperPhase = GetSafeHelperPhase(progress.Phase);
+                _ = TryWriteHelperProgress(request.ProgressPath, progress);
+            };
             var result = await provider.ApplySpeakerLabelsAsync(request.AudioPath, request.TranscriptSegments, CancellationToken.None);
             await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result));
             return 0;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(exception.Message);
+            Console.Error.WriteLine($"helper_failure phase={helperPhase} exception={GetSafeHelperExceptionKind(exception)}");
             return 2;
         }
     }
 
-    private static void WriteHelperProgress(string progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
+    private static string GetSafeHelperPhase(string? phase) => phase switch
     {
-        var temporaryPath = progressPath + ".tmp";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(progress));
-        File.Move(temporaryPath, progressPath, overwrite: true);
+        "Preparing normalized PCM" => "audio_preparation",
+        "Prepared audio" => "audio_prepared",
+        "Provider selected" => "provider_selection",
+        "Loading samples" => "sample_loading",
+        "Samples loaded" => "samples_loaded",
+        "Native inference" => "native_inference",
+        "Completed" => "completed",
+        _ => "initializing",
+    };
+
+    private static string GetSafeHelperExceptionKind(Exception exception) => exception switch
+    {
+        FileNotFoundException => "file_not_found",
+        DirectoryNotFoundException => "directory_not_found",
+        UnauthorizedAccessException => "access_denied",
+        NotSupportedException => "not_supported",
+        AudioPreparationException preparationException => "audio_" + preparationException.Stage,
+        InvalidOperationException => "invalid_operation",
+        InvalidDataException => "invalid_data",
+        ArgumentException => "invalid_argument",
+        FormatException => "format",
+        TypeLoadException => "type_load",
+        NAudio.MmException => "naudio",
+        System.Runtime.InteropServices.COMException => "com",
+        System.Runtime.InteropServices.ExternalException => "external",
+        IOException => "io",
+        OperationCanceledException => "cancelled",
+        _ => "other",
+    };
+
+    internal static bool TryWriteHelperProgress(string? progressPath, MeetingRecorder.Core.Processing.DiarizationProgress progress)
+    {
+        if (string.IsNullOrWhiteSpace(progressPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var temporaryPath = progressPath + ".tmp";
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(progress));
+            File.Move(temporaryPath, progressPath, overwrite: true);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
+
+    internal static LocalDiarizationHelperRequest? DeserializeLocalDiarizationHelperRequest(string serializedRequest) =>
+        JsonSerializer.Deserialize<LocalDiarizationHelperRequest>(serializedRequest, LocalDiarizationJsonOptions);
 
     private static async Task<int> RunExternalProviderProbeAsync(
         IReadOnlyList<string> args,
@@ -272,15 +357,23 @@ internal static class Program
         }
     }
 
-    private static bool TryParseArguments(
+    internal static bool TryParseArguments(
         IReadOnlyList<string> args,
         out string manifestPath,
         out string? configPath,
+        out SessionProcessingStage stage,
+        out SessionProcessingWorkLease? workLease,
         out string? error)
     {
         manifestPath = string.Empty;
         configPath = null;
+        stage = SessionProcessingStage.FullPass;
+        workLease = null;
         error = null;
+        Guid? workId = null;
+        string? workRevision = null;
+        string? leaseToken = null;
+        var hasWorkLeaseArgument = false;
 
         for (var index = 0; index < args.Count; index++)
         {
@@ -294,6 +387,56 @@ internal static class Program
             if (string.Equals(current, "--config", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
             {
                 configPath = args[++index];
+                continue;
+            }
+
+            if (string.Equals(current, "--stage", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= args.Count || !SessionProcessingStageParser.TryParse(args[++index], out stage))
+                {
+                    error = "Invalid --stage value. Expected transcript, diarization, summary, or full-pass.";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(current, "--work-id", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || !Guid.TryParse(args[++index], out var parsedWorkId) || parsedWorkId == Guid.Empty)
+                {
+                    error = "Invalid --work-id value. Expected a non-empty GUID.";
+                    return false;
+                }
+
+                workId = parsedWorkId;
+                continue;
+            }
+
+            if (string.Equals(current, "--work-revision", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[++index]))
+                {
+                    error = "Invalid --work-revision value. Expected a non-empty opaque revision.";
+                    return false;
+                }
+
+                workRevision = args[index];
+                continue;
+            }
+
+            if (string.Equals(current, "--lease-token", StringComparison.OrdinalIgnoreCase))
+            {
+                hasWorkLeaseArgument = true;
+                if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[++index]))
+                {
+                    error = "Invalid --lease-token value. Expected a non-empty opaque token.";
+                    return false;
+                }
+
+                leaseToken = args[index];
             }
         }
 
@@ -301,6 +444,17 @@ internal static class Program
         {
             error = "Missing required argument: --manifest <path>";
             return false;
+        }
+
+        if (hasWorkLeaseArgument)
+        {
+            if (workId is null || string.IsNullOrWhiteSpace(workRevision) || string.IsNullOrWhiteSpace(leaseToken))
+            {
+                error = "Staged work requires --work-id, --work-revision, and --lease-token together.";
+                return false;
+            }
+
+            workLease = new SessionProcessingWorkLease(workId.Value, workRevision, leaseToken);
         }
 
         return true;

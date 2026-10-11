@@ -56,7 +56,10 @@
             "one-speaker",
             "three-plus-speaker",
             "short-call",
-            "noisy-similar-voices"
+            "noisy-similar-voices",
+            "overlap",
+            "hybrid-shared-mic",
+            "no-speech"
           ]
         },
         "mode": {
@@ -110,7 +113,7 @@
         },
         "expectedSpeakerCount": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 16
         },
         "expectedSpeakerNames": {

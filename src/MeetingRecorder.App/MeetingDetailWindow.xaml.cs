@@ -1,6 +1,10 @@
 using MeetingRecorder.Core.Services;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using MeetingRecorder.Core.Domain;
+using NAudio.Wave;
+using System.Windows.Threading;
 
 namespace MeetingRecorder.App;
 
@@ -14,13 +18,45 @@ internal sealed class MeetingDetailSpeakerLabelsEventArgs(IReadOnlyList<MeetingD
     public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
 }
 
+internal sealed class MeetingDetailSpeakerMergeEventArgs(
+    IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows,
+    string? canonicalSpeakerId) : EventArgs
+{
+    public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
+    public string? CanonicalSpeakerId { get; } = canonicalSpeakerId;
+}
+
+internal sealed class MeetingDetailSpeakerEvidenceCueEventArgs(
+    MeetingDetailSpeakerLabelEditorRow row,
+    SpeakerEvidenceCue cue) : EventArgs
+{
+    public MeetingDetailSpeakerLabelEditorRow Row { get; } = row;
+    public SpeakerEvidenceCue Cue { get; } = cue;
+}
+
+internal sealed class MeetingDetailSegmentAttributionEventArgs(MeetingTranscriptSegmentRow segment) : EventArgs
+{
+    public MeetingTranscriptSegmentRow Segment { get; } = segment;
+}
+
+internal sealed record MeetingDetailSpeakerMergeChoice(string SpeakerId, string Label)
+{
+    public override string ToString() => Label;
+}
+
 internal sealed class MeetingDetailSpeakerLabelEditorRow(
     string originalLabel,
     string provenance = "",
     string? suggestedDisplayName = null,
     string? speakerId = null,
     string? profileId = null,
-    bool hasProfileAttribution = false)
+    bool hasProfileAttribution = false,
+    string artifactRevision = "",
+    SpeakerNameSource expectedNameSource = SpeakerNameSource.None,
+    SpeakerReviewRow? reviewSnapshot = null,
+    IReadOnlyList<string>? nameChoices = null,
+    SpeakerEvidenceSnapshot? evidenceSnapshot = null,
+    int affectedTurnCount = 0)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -35,6 +71,44 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public string? ProfileId { get; } = profileId;
 
     public bool HasProfileAttribution { get; } = hasProfileAttribution;
+
+    public string ArtifactRevision { get; } = artifactRevision;
+
+    public SpeakerNameSource ExpectedNameSource { get; } = expectedNameSource;
+
+    public IReadOnlyList<string> NameChoices { get; } = nameChoices ?? Array.Empty<string>();
+
+    public SpeakerEvidenceSnapshot? EvidenceSnapshot { get; } = evidenceSnapshot;
+
+    public IReadOnlyList<SpeakerEvidenceCue> EvidenceCues => EvidenceSnapshot?.Cues ?? Array.Empty<SpeakerEvidenceCue>();
+
+    public bool HasEvidenceCues => EvidenceCues.Count > 0;
+
+    public bool IsEvidenceVisible { get; set; }
+
+    public string PlaybackText { get; set; } = "Play clip";
+
+    public string PlaybackProgressText { get; set; } = string.Empty;
+
+    public bool IsSelectedForMerge { get; set; }
+
+    public int AffectedTurnCount { get; } = Math.Max(0, affectedTurnCount);
+
+    public string EvidenceToggleText => HasEvidenceCues
+        ? IsEvidenceVisible ? "Hide evidence" : $"View evidence ({EvidenceCues.Count})"
+        : "Evidence unavailable";
+
+    public string EvidenceSummary => EvidenceSnapshot?.Summary ?? "Local transcript evidence is unavailable.";
+
+    public string AnonymousLabel => reviewSnapshot?.AnonymousLabel ?? OriginalLabel;
+
+    public string SourceExplanation => reviewSnapshot?.Explanation ?? Provenance;
+
+    public string ReviewStatus => reviewSnapshot is null
+        ? string.Empty
+        : $"Evidence: {reviewSnapshot.EvidenceAvailability}. Learning: {reviewSnapshot.LearningEligibility}.";
+
+    public SpeakerReviewConfidence ReviewConfidence => reviewSnapshot?.Confidence ?? SpeakerReviewConfidence.Unavailable;
 
     public bool HasSuggestion => !string.IsNullOrWhiteSpace(SuggestedDisplayName);
 
@@ -80,13 +154,25 @@ public partial class MeetingDetailWindow : Window
     private bool _canProcessAsap;
     private bool _canSplit;
     private bool _canApplySpeakerNames;
+    private bool _canMergeSpeakerClusters;
+    private string? _latestSpeakerMergeOperationId;
     private bool _canUndoSpeakerNameRecognition;
     private bool _canArchive;
     private bool _canDelete;
+    private MeetingDetailSnapshotRevision? _appliedTaskCenterRevision;
+    private string _appliedTitleDraft = string.Empty;
+    private string _appliedProjectDraft = string.Empty;
+    private WaveOutEvent? _speakerReviewOutput;
+    private AudioFileReader? _speakerReviewReader;
+    private IDisposable? _speakerReviewLease;
+    private MeetingDetailSpeakerLabelEditorRow? _playingSpeakerRow;
+    private readonly DispatcherTimer _speakerReviewProgressTimer;
 
     public MeetingDetailWindow()
     {
         InitializeComponent();
+        _speakerReviewProgressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _speakerReviewProgressTimer.Tick += (_, _) => UpdateSpeakerReviewProgress();
     }
 
     internal event EventHandler? OpenTranscriptRequested;
@@ -121,6 +207,16 @@ public partial class MeetingDetailWindow : Window
 
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
 
+    internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
+
+    internal event EventHandler<MeetingDetailSpeakerEvidenceCueEventArgs>? PlaySpeakerEvidenceRequested;
+
+    internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? ApplyParagraphOverrideRequested;
+
+    internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? RevertParagraphOverrideRequested;
+
+    internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
+
     internal event EventHandler? RefreshSpeakerNamesRequested;
 
     internal event EventHandler? UndoSpeakerNameRecognitionRequested;
@@ -134,6 +230,7 @@ public partial class MeetingDetailWindow : Window
         IReadOnlyList<string> projectOptions,
         IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> speakerLabelRows)
     {
+        StopSpeakerReviewPlayback();
         Title = $"Meeting Details - {state.Title}";
         MeetingTitleTextBlock.Text = state.Title;
         MeetingSubtitleTextBlock.Text = state.Subtitle;
@@ -169,12 +266,13 @@ public partial class MeetingDetailWindow : Window
         TitleDraftTextBox.Text = state.Title;
         ProjectComboBox.ItemsSource = projectOptions;
         ProjectComboBox.Text = state.ProjectName == "None" ? string.Empty : state.ProjectName;
+        _appliedTitleDraft = TitleDraftTextBox.Text;
+        _appliedProjectDraft = ProjectComboBox.Text;
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
+        _canMergeSpeakerClusters = speakerLabelRows.Count > 1;
         _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
-        MaintenanceStatusTextBlock.Text = speakerLabelRows.Count == 0
-            ? "No editable speaker labels are available for this transcript yet."
-            : "Edit speaker display names, then apply changes.";
+        UpdateSpeakerReviewStatus(speakerLabelRows);
         UpdateMaintenanceButtonAvailability();
 
         _allTranscriptSegments = state.Transcript.Segments.ToArray();
@@ -182,8 +280,60 @@ public partial class MeetingDetailWindow : Window
         ApplyTranscriptFilter();
     }
 
+    internal void SetSpeakerQualityStatus(string text)
+    {
+        SpeakerQualityTextBlock.Text = text;
+    }
+
+    internal void SetSpeakerMergeUndoState(string? operationId)
+    {
+        _latestSpeakerMergeOperationId = string.IsNullOrWhiteSpace(operationId) ? null : operationId.Trim();
+        UpdateMaintenanceButtonAvailability();
+    }
+
+    internal MeetingDetailRefreshDisposition GetRefreshDisposition(MeetingDetailTaskCenterState incoming)
+    {
+        if (_appliedTaskCenterRevision is null)
+        {
+            return MeetingDetailRefreshDisposition.ApplyReadOnlyRefresh;
+        }
+
+        var speakerDraft = SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
+            rows.Any(row => !string.Equals(row.OriginalLabel, row.EditedLabel, StringComparison.Ordinal));
+        return MeetingDetailTaskCenterResolver.ResolveRefresh(
+            _appliedTaskCenterRevision,
+            incoming.Revision,
+            new MeetingDetailDraftState(
+                !string.Equals(_appliedTitleDraft, TitleDraftTextBox.Text, StringComparison.Ordinal),
+                !string.Equals(_appliedProjectDraft, ProjectComboBox.Text, StringComparison.Ordinal),
+                speakerDraft,
+                HasSplitDraft()),
+            isArchivedOrDeleted: false);
+    }
+
+    internal void ApplyTaskCenterState(MeetingDetailTaskCenterState state, bool markAsApplied = true)
+    {
+        DetailTaskCenterHeadlineTextBlock.Text = state.Headline;
+        DetailTaskCenterReasonTextBlock.Text = state.PrimaryReason;
+        DetailTaskCenterFreshnessTextBlock.Text = state.FreshnessText;
+        DetailTaskCenterBorder.Visibility = Visibility.Visible;
+        if (markAsApplied)
+        {
+            _appliedTaskCenterRevision = state.Revision;
+        }
+    }
+
+    private bool HasSplitDraft() =>
+        !string.IsNullOrWhiteSpace(SplitPointTextBox.Text) &&
+        !string.Equals(SplitPointTextBox.Text, "00:00", StringComparison.Ordinal);
+
     private void ApplySummaryState(MeetingDetailSummaryState summary)
     {
+        ConfigureSummariesButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.ConfigureSummary).Label;
+        GenerateSummaryButton.Content = summary.ShowGeneratedContent && summary.CanGenerate
+            ? "Regenerate Summary"
+            : UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary).Label;
+        RetrySummaryButton.Content = UserActionCopyResolver.Resolve(UserActionIntent.RetrySummary).Label;
         AiSummaryStatusTextBlock.Text = summary.StatusText;
         AiSummaryGeneratedContentPanel.Visibility = summary.ShowGeneratedContent ? Visibility.Visible : Visibility.Collapsed;
         AiSummaryOverviewTextBlock.Text = summary.Overview ?? string.Empty;
@@ -205,6 +355,7 @@ public partial class MeetingDetailWindow : Window
         AiSummaryKeyPointsItemsControl.Visibility = summary.KeyPoints.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryDecisionsHeaderTextBlock.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryDecisionsItemsControl.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryActionItemsHeaderTextBlock.Text = summary.IsHistoric ? "Historic Action Items" : "Action Items";
         AiSummaryActionItemsHeaderTextBlock.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryActionItemsControl.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryRisksHeaderTextBlock.Visibility = summary.RisksAndOpenQuestions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -217,6 +368,11 @@ public partial class MeetingDetailWindow : Window
     internal void SetMaintenanceBusy(bool isBusy)
     {
         _isMaintenanceBusy = isBusy;
+        if (isBusy)
+        {
+            StopSpeakerReviewPlayback();
+        }
+
         UpdateMaintenanceButtonAvailability();
     }
 
@@ -269,10 +425,29 @@ public partial class MeetingDetailWindow : Window
         ProcessAsapButton.IsEnabled = canUseMaintenance && _canProcessAsap;
         SplitButton.IsEnabled = canUseMaintenance && _canSplit;
         ApplySpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
+        MergeSelectedSpeakersButton.IsEnabled = canUseMaintenance && _canMergeSpeakerClusters &&
+            SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
+            rows.Count(row => row.IsSelectedForMerge) >= 2 &&
+            SpeakerMergeCanonicalComboBox.SelectedItem is MeetingDetailSpeakerMergeChoice;
+        UndoSpeakerMergeButton.IsEnabled = canUseMaintenance && !string.IsNullOrWhiteSpace(_latestSpeakerMergeOperationId);
         RefreshSpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
         UndoSpeakerNameRecognitionButton.IsEnabled = canUseMaintenance && _canUndoSpeakerNameRecognition;
         ArchiveButton.IsEnabled = canUseMaintenance && _canArchive;
         DeleteButton.IsEnabled = canUseMaintenance && _canDelete;
+    }
+
+    private void UpdateSpeakerReviewStatus(IEnumerable<MeetingDetailSpeakerLabelEditorRow>? rows = null)
+    {
+        var reviewRows = rows ?? SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>;
+        var pendingCount = reviewRows?.Count(row =>
+            row.IsSuggestionRejected ||
+            !string.Equals(row.OriginalLabel.Trim(), row.EditedLabel.Trim(), StringComparison.Ordinal)) ?? 0;
+        SpeakerReviewStatusTextBlock.Text = _canApplySpeakerNames
+            ? pendingCount == 0
+                ? "Name a speaker here. Suggestions are local and need confirmation."
+                : $"{pendingCount} name change(s) pending. Apply names updates every turn for each speaker in this revision."
+            : "Labels are unavailable until this meeting has a published transcript and diarization labels.";
+        SpeakerReviewPendingTextBlock.Text = pendingCount == 0 ? string.Empty : $"{pendingCount} pending";
     }
 
     private void TranscriptSearchTextBox_OnTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -363,6 +538,223 @@ public partial class MeetingDetailWindow : Window
             new MeetingDetailSpeakerLabelsEventArgs(rows?.ToArray() ?? Array.Empty<MeetingDetailSpeakerLabelEditorRow>()));
     }
 
+    private void MergeSelectedSpeakersButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var selected = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow> ?? [])
+            .Where(row => row.IsSelectedForMerge)
+            .ToArray();
+        MergeSpeakerClustersRequested?.Invoke(
+            this,
+            new MeetingDetailSpeakerMergeEventArgs(
+                selected,
+                (SpeakerMergeCanonicalComboBox.SelectedItem as MeetingDetailSpeakerMergeChoice)?.SpeakerId));
+    }
+
+    private void UndoSpeakerMergeButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_latestSpeakerMergeOperationId))
+        {
+            UndoSpeakerMergeRequested?.Invoke(this, new MeetingDetailTextEventArgs(_latestSpeakerMergeOperationId));
+        }
+    }
+
+    private void SpeakerLabelsDataGrid_OnCellEditEnding(object sender, System.Windows.Controls.DataGridCellEditEndingEventArgs e)
+    {
+        Dispatcher.BeginInvoke(UpdateSpeakerReviewStatus);
+    }
+
+    private void SpeakerMergeSelectionChanged_OnClick(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(UpdateSpeakerMergeControls);
+    }
+
+    private void SpeakerMergeCanonicalComboBox_OnSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateMaintenanceButtonAvailability();
+    }
+
+    private void UpdateSpeakerMergeControls()
+    {
+        var selected = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow> ?? [])
+            .Where(row => row.IsSelectedForMerge && !string.IsNullOrWhiteSpace(row.SpeakerId))
+            .ToArray();
+        var previousCanonical = (SpeakerMergeCanonicalComboBox.SelectedItem as MeetingDetailSpeakerMergeChoice)?.SpeakerId;
+        var choices = selected
+            .OrderBy(row => row.ExpectedNameSource == SpeakerNameSource.None ? 0 : 1)
+            .ThenBy(row => row.AnonymousLabel, StringComparer.Ordinal)
+            .Select(row => new MeetingDetailSpeakerMergeChoice(row.SpeakerId!, $"{row.AnonymousLabel}: {row.EditedLabel}"))
+            .ToArray();
+        SpeakerMergeCanonicalComboBox.ItemsSource = choices;
+        SpeakerMergeCanonicalComboBox.SelectedItem = choices.FirstOrDefault(choice => choice.SpeakerId == previousCanonical) ?? choices.FirstOrDefault();
+        SpeakerMergeStatusTextBlock.Text = selected.Length < 2
+            ? "Select two or more normal duplicate clusters. Repair remains safer for fragmented labels."
+            : $"{selected.Length} speakers selected; {selected.Sum(row => row.AffectedTurnCount)} turn(s) affected. Choose canonical speaker; merge does not teach local profiles.";
+        UpdateMaintenanceButtonAvailability();
+    }
+
+    private void ToggleSpeakerEvidenceButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingDetailSpeakerLabelEditorRow row && row.HasEvidenceCues)
+        {
+            row.IsEvidenceVisible = !row.IsEvidenceVisible;
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+    }
+
+    private void ShowSpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is SpeakerEvidenceCue cue)
+        {
+            TranscriptSearchTextBox.Text = cue.TranscriptTimestamp;
+            TranscriptSegmentsListBox.ScrollIntoView(TranscriptSegmentsListBox.Items.Cast<object>().FirstOrDefault());
+        }
+    }
+
+    private void OpenSpeakerReviewFromTranscriptButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not MeetingTranscriptSegmentRow segment ||
+            string.IsNullOrWhiteSpace(segment.SpeakerId))
+        {
+            SetMaintenanceStatus("Speaker review is unavailable for this transcript label.");
+            return;
+        }
+
+        var rows = SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>;
+        var target = rows?.FirstOrDefault(row => string.Equals(row.SpeakerId, segment.SpeakerId, StringComparison.Ordinal));
+        if (target is null)
+        {
+            SetMaintenanceStatus("This transcript label is no longer current. Refresh meeting details and try again.");
+            return;
+        }
+
+        SpeakerReviewExpander.IsExpanded = true;
+        SpeakerLabelsDataGrid.SelectedItem = target;
+        SpeakerLabelsDataGrid.ScrollIntoView(target);
+        if (SpeakerLabelsDataGrid.Columns.Count > 2)
+        {
+            SpeakerLabelsDataGrid.CurrentCell = new DataGridCellInfo(target, SpeakerLabelsDataGrid.Columns[2]);
+        }
+
+        SpeakerLabelsDataGrid.Focus();
+        SetMaintenanceStatus($"Speaker Review is ready for {target.AnonymousLabel}.");
+    }
+
+    private void ApplyParagraphOverrideButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow segment && segment.CanApplyParagraphOverride)
+        {
+            ApplyParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment));
+        }
+    }
+
+    private void ViewOriginalAttributionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow { HasManualAttributionOverride: true } segment)
+        {
+            SetMaintenanceStatus($"Original paragraph attribution: {segment.OriginalSpeakerLabel ?? segment.SpeakerId ?? "Speaker"}.");
+        }
+    }
+
+    private void RevertParagraphOverrideButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow segment && segment.CanRevertParagraphOverride)
+        {
+            RevertParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment));
+        }
+    }
+
+    private void PlaySpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SpeakerEvidenceCue cue ||
+            (sender as FrameworkElement)?.Tag is not MeetingDetailSpeakerLabelEditorRow row)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_playingSpeakerRow, row))
+        {
+            if (_speakerReviewOutput?.PlaybackState == PlaybackState.Playing)
+            {
+                _speakerReviewOutput.Pause();
+                row.PlaybackText = "Resume clip";
+                SpeakerLabelsDataGrid.Items.Refresh();
+            }
+            else if (_speakerReviewOutput?.PlaybackState == PlaybackState.Paused)
+            {
+                _speakerReviewOutput.Play();
+                row.PlaybackText = "Stop clip";
+                SpeakerLabelsDataGrid.Items.Refresh();
+            }
+            else
+            {
+                StopSpeakerReviewPlayback();
+            }
+            return;
+        }
+
+        PlaySpeakerEvidenceRequested?.Invoke(this, new MeetingDetailSpeakerEvidenceCueEventArgs(row, cue));
+    }
+
+    internal void PlaySpeakerReviewClip(MeetingDetailSpeakerLabelEditorRow row, string clipPath, IDisposable lease)
+    {
+        StopSpeakerReviewPlayback();
+        try
+        {
+            _speakerReviewReader = new AudioFileReader(clipPath);
+            _speakerReviewLease = lease;
+            _speakerReviewOutput = new WaveOutEvent();
+            _speakerReviewOutput.PlaybackStopped += (_, _) => Dispatcher.BeginInvoke(StopSpeakerReviewPlayback);
+            _speakerReviewOutput.Init(_speakerReviewReader);
+            _speakerReviewOutput.Play();
+            _playingSpeakerRow = row;
+            row.PlaybackText = "Stop clip";
+            row.PlaybackProgressText = "Playing 00:00";
+            _speakerReviewProgressTimer.Start();
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+        catch
+        {
+            StopSpeakerReviewPlayback();
+            SetMaintenanceStatus("Audio clip could not be played.");
+        }
+    }
+
+    private void StopSpeakerReviewPlayback()
+    {
+        var previous = _playingSpeakerRow;
+        _playingSpeakerRow = null;
+        _speakerReviewOutput?.Stop();
+        _speakerReviewOutput?.Dispose();
+        _speakerReviewOutput = null;
+        _speakerReviewReader?.Dispose();
+        _speakerReviewReader = null;
+        _speakerReviewLease?.Dispose();
+        _speakerReviewLease = null;
+        _speakerReviewProgressTimer.Stop();
+        if (previous is not null)
+        {
+            previous.PlaybackText = "Play clip";
+            previous.PlaybackProgressText = string.Empty;
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+    }
+
+    private void UpdateSpeakerReviewProgress()
+    {
+        if (_playingSpeakerRow is null || _speakerReviewReader is null)
+        {
+            _speakerReviewProgressTimer.Stop();
+            return;
+        }
+
+        _playingSpeakerRow.PlaybackProgressText = $"{FormatPlaybackTime(_speakerReviewReader.CurrentTime)} / {FormatPlaybackTime(_speakerReviewReader.TotalTime)}";
+        SpeakerLabelsDataGrid.Items.Refresh();
+    }
+
+    private static string FormatPlaybackTime(TimeSpan value) => value.TotalHours >= 1d
+        ? value.ToString(@"hh\:mm\:ss")
+        : value.ToString(@"mm\:ss");
+
     private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)
     {
         RefreshSpeakerNamesRequested?.Invoke(this, EventArgs.Empty);
@@ -379,6 +771,7 @@ public partial class MeetingDetailWindow : Window
         {
             row.AcceptSuggestion();
             SpeakerLabelsDataGrid.Items.Refresh();
+            UpdateSpeakerReviewStatus();
         }
     }
 
@@ -388,6 +781,7 @@ public partial class MeetingDetailWindow : Window
         {
             row.RejectSuggestion();
             SpeakerLabelsDataGrid.Items.Refresh();
+            UpdateSpeakerReviewStatus();
         }
     }
 
@@ -404,6 +798,12 @@ public partial class MeetingDetailWindow : Window
     private void CloseButton_OnClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        StopSpeakerReviewPlayback();
+        base.OnClosed(e);
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)

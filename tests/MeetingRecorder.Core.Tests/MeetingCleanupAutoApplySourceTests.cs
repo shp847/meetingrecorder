@@ -21,6 +21,8 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.DoesNotContain("Dispatcher.InvokeAsync", methodBlock, StringComparison.Ordinal);
         Assert.DoesNotContain("SeedMeetingCleanupAutoApplySuppressionFromPriorAttempts", methodBlock, StringComparison.Ordinal);
         Assert.Contains("RequestPendingMeetingCleanupWorkDispatch(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("AutomationCatalogSnapshot.Create(", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ToAutomationCatalogRefreshMode(refreshMode)", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -56,6 +58,18 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
+    public void Automatic_Cleanup_Respects_The_Production_Containment_Fence()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var methodStart = source.IndexOf("private bool IsScheduledIncrementalRecommendation", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private bool CanExecuteAutomaticCleanupRecommendation", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("AutomaticMutationContainmentPolicy.CanDispatch", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("RecordContainmentHold", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Automatic_Queue_Style_Work_Is_Persisted_In_Ledger_Until_Worker_Completion()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -83,7 +97,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("ProcessingQueue_OnWorkCompleted", mainWindow, StringComparison.Ordinal);
         Assert.Contains("ProcessingWorkPriority.Cleanup", mainWindow, StringComparison.Ordinal);
         Assert.Contains("SelectFairQueueIndexLocked", queue, StringComparison.Ordinal);
-        Assert.Contains("IsOvernightDrainWindowActive", queue, StringComparison.Ordinal);
+        Assert.Contains("OvernightAccelerationPolicyResolver.Resolve", queue, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -100,6 +114,10 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.DoesNotContain("_meetingOutputCatalogService.ListMeetings(", methodBlock, StringComparison.Ordinal);
         Assert.Contains("outstandingCleanupCount >= maximumOutstanding", methodBlock, StringComparison.Ordinal);
         Assert.Contains("worker allowance", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("AutomationSchedulerCoordinator.Resolve", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("IsAutomationCatalogSnapshotCurrent", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("CanExecuteAutomaticCleanupRecommendation", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationDispatchSkippedException", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -110,12 +128,16 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodStart = source.IndexOf("private async Task RefreshMeetingListAsync", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("private void StartMeetingCleanupRecommendationRefresh", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
-        var successStart = methodBlock.IndexOf("var records = await Task.Run(", StringComparison.Ordinal);
+        var successStart = methodBlock.IndexOf("var recordsTask = Task.Run(", StringComparison.Ordinal);
         var successEnd = methodBlock.IndexOf("catch (OperationCanceledException)", successStart, StringComparison.Ordinal);
         var successBlock = methodBlock[successStart..successEnd];
 
         Assert.DoesNotContain(
             "_meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();",
+            successBlock,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "var records = await recordsTask;",
             successBlock,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -125,7 +147,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
     }
 
     [Fact]
-    public void Cleanup_Review_Banner_Reserves_Layout_Space_While_Background_Scan_Loads()
+    public void Cleanup_Review_Banner_Collapses_When_No_Recommendation_Is_Actionable()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -138,10 +160,10 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodEnd = source.IndexOf("private async Task TryAutoApplyMeetingCleanupSafeFixesAsync", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        Assert.Contains("Visibility=\"Hidden\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("Visibility=\"Collapsed\"", bannerBlock, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"88\"", bannerBlock, StringComparison.Ordinal);
-        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Hidden;", methodBlock, StringComparison.Ordinal);
-        Assert.DoesNotContain("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -44,9 +44,10 @@ public sealed class MeetingWorkspaceRefreshXamlTests
         Assert.True(
             mainWindowXaml.IndexOf("Header=\"Project\"", StringComparison.Ordinal) <
             mainWindowXaml.IndexOf("Header=\"Started\"", StringComparison.Ordinal));
+        Assert.Contains("Header=\"Next step\"", mainWindowXaml);
         Assert.True(
             mainWindowXaml.IndexOf("Header=\"Transcript\"", StringComparison.Ordinal) <
-            mainWindowXaml.LastIndexOf("Header=\"Recommended\"", StringComparison.Ordinal));
+            mainWindowXaml.LastIndexOf("Header=\"Next step\"", StringComparison.Ordinal));
     }
 
     [Fact]

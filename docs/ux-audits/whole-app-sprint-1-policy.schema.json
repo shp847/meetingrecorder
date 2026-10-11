@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Whole-App UX Sprint 1 Control Policy",
+  "type": "object",
+  "required": ["schemaVersion", "inventorySchemaVersion", "scope", "automationMatrix", "validationFixtures", "controls"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "inventorySchemaVersion": { "const": "1.0" },
+    "scope": { "type": "string", "minLength": 1 },
+    "automationMatrix": { "type": "array", "minItems": 4 },
+    "validationFixtures": { "type": "array", "minItems": 5 },
+    "controls": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "controlId", "primaryOwnerControlId", "primaryOwnerSurface", "layer",
+          "aliasBehavior", "aliasTargetControlId", "defaultBehavior",
+          "userVisibleStatusLocation", "futureOwnerSprint", "automationDisposition",
+          "riskCategories", "consent"
+        ],
+        "properties": {
+          "controlId": { "type": "string", "minLength": 1 },
+          "primaryOwnerControlId": { "type": "string", "minLength": 1 },
+          "primaryOwnerSurface": { "type": "string", "minLength": 1 },
+          "layer": { "enum": ["assistant", "guided", "power"] },
+          "aliasBehavior": { "enum": ["primary", "navigate", "contextual-duplicate"] },
+          "aliasTargetControlId": { "type": "string", "minLength": 1 },
+          "defaultBehavior": { "type": "string", "minLength": 1 },
+          "userVisibleStatusLocation": { "type": "string", "minLength": 1 },
+          "futureOwnerSprint": { "type": "string", "pattern": "^Sprint (?:[0-9]+|10A)$" },
+          "automationDisposition": { "enum": ["automatic", "automatic-after-persisted-opt-in", "recommend-only", "explicit-per-action"] },
+          "riskCategories": { "type": "array", "items": { "type": "string" } },
+          "consent": {
+            "type": "object",
+            "required": ["kind", "scope", "dataBoundary", "reversalPath", "reconfirmWhen"],
+            "properties": {
+              "kind": { "enum": ["not-required", "persisted-opt-in", "explicit-per-action"] },
+              "scope": { "type": "string", "minLength": 1 },
+              "dataBoundary": { "type": "string", "minLength": 1 },
+              "reversalPath": { "type": "string", "minLength": 1 },
+              "reconfirmWhen": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

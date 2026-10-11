@@ -1,6 +1,8 @@
 param(
     [string]$CatalogPath,
 
+    [string]$TruthStorePath,
+
     [string[]]$FixtureId = @(),
 
     [string[]]$Category = @(),
@@ -56,6 +58,24 @@ function Resolve-OptionalFile {
     return Resolve-RequiredFile -PathValue $PathValue -Description $Description
 }
 
+function Resolve-RequiredDirectory {
+    param(
+        [string]$PathValue,
+        [string]$Description
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        throw "$Description path is required."
+    }
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($PathValue)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+        throw "$Description path is not a directory: $resolvedPath"
+    }
+
+    return $resolvedPath
+}
+
 function Resolve-CatalogPathValue {
     param(
         [string]$PathValue,
@@ -107,6 +127,51 @@ function Get-PropertyValue {
     return $Object.$Name
 }
 
+function Test-PropertyPresent {
+    param(
+        $Object,
+        [string]$Name
+    )
+
+    return $null -ne $Object -and ($Object.PSObject.Properties.Name -contains $Name)
+}
+
+function Get-TruthOutcome {
+    param($Fixture)
+
+    if ($script:CatalogSchemaVersion -lt 2) {
+        return $null
+    }
+
+    $truthStore = Get-Content -LiteralPath $script:ResolvedTruthStorePath -Raw | ConvertFrom-Json
+    if ([int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0) -ne 1) {
+        throw "Restricted fixture truth store schemaVersion must be 1."
+    }
+
+    $outcomes = @{}
+    foreach ($outcome in @(ConvertTo-Array (Get-PropertyValue -Object $truthStore -Name "outcomes"))) {
+        $outcomeReference = [string](Get-PropertyValue -Object $outcome -Name "reference")
+        if ([string]::IsNullOrWhiteSpace($outcomeReference) -or $outcomes.ContainsKey($outcomeReference)) {
+            throw "Restricted fixture truth store has a missing or duplicate outcome reference."
+        }
+
+        $expectedCount = Get-PropertyValue -Object $outcome -Name "expectedSpeakerCount"
+        $parsedCount = 0
+        if ($null -eq $expectedCount -or -not [int]::TryParse([string]$expectedCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
+            throw "Restricted fixture truth store outcome '$outcomeReference' expectedSpeakerCount must be an integer from 0 through 16."
+        }
+
+        $outcomes[$outcomeReference] = $outcome
+    }
+
+    $reference = [string](Get-PropertyValue -Object $Fixture -Name "expectedOutcomeRef")
+    if ([string]::IsNullOrWhiteSpace($reference) -or -not $outcomes.ContainsKey($reference)) {
+        throw "Fixture '$([string](Get-PropertyValue -Object $Fixture -Name "id"))' has no approved expected outcome."
+    }
+
+    return $outcomes[$reference]
+}
+
 function Test-PathUnder {
     param(
         [string]$PathValue,
@@ -138,6 +203,55 @@ function Assert-AllowedOutputPath {
     throw "$Description must write under .artifacts or the system temp directory: $fullPath"
 }
 
+function Assert-AllowlistedFixtureInput {
+    param(
+        [string]$PathValue,
+        [string]$InputRoot,
+        [string]$Description
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $null
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($PathValue)
+    if ([string]::IsNullOrWhiteSpace($InputRoot)) {
+        return $fullPath
+    }
+
+    $fullInputRoot = Resolve-RequiredDirectory -PathValue $InputRoot -Description "Fixture inputRoot"
+    if (-not (Test-PathUnder -PathValue $fullPath -RootValue $fullInputRoot)) {
+        throw "$Description must stay under fixture inputRoot."
+    }
+
+    foreach ($forbiddenRoot in @($script:RepoRoot, $script:ResolvedReportsRoot, (Join-Path $env:LOCALAPPDATA "MeetingRecorder"))) {
+        if (-not [string]::IsNullOrWhiteSpace($forbiddenRoot) -and (Test-PathUnder -PathValue $fullPath -RootValue $forbiddenRoot)) {
+            throw "$Description cannot use source control, report output, or Meeting Recorder app data."
+        }
+    }
+
+    $currentPath = $fullPath
+    while (-not [string]::IsNullOrWhiteSpace($currentPath)) {
+        $item = Get-Item -LiteralPath $currentPath -Force
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Description cannot traverse a symlink or reparse point."
+        }
+
+        if ($currentPath.Equals($fullInputRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+
+        $parent = Split-Path -Path $currentPath -Parent
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent.Equals($currentPath, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+
+        $currentPath = $parent
+    }
+
+    return $fullPath
+}
+
 function Get-SafeTempResultPath {
     param([string]$FixtureId)
 
@@ -151,8 +265,105 @@ function Get-SafeTempResultPath {
     return Join-Path ([System.IO.Path]::GetTempPath()) ("meeting-recorder-fixture-{0}-{1}.json" -f $safeId, [Guid]::NewGuid().ToString("N"))
 }
 
+function Get-SafeTempProbeRoot {
+    param([string]$FixtureId)
+
+    $safeId = if ([string]::IsNullOrWhiteSpace($FixtureId)) {
+        [Guid]::NewGuid().ToString('N')
+    }
+    else {
+        ($FixtureId -replace '[^A-Za-z0-9_.-]', '-')
+    }
+
+    return Join-Path ([System.IO.Path]::GetTempPath()) ("meeting-recorder-fixture-probe-{0}-{1}" -f $safeId, [Guid]::NewGuid().ToString('N'))
+}
+
+function Get-FileSha256 {
+    param([string]$PathValue)
+
+    $stream = [System.IO.File]::OpenRead($PathValue)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace("-", "")
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Get-SafeReportMessage {
+    param([string]$Message)
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $Message
+    }
+
+    # Fixture paths often identify a private meeting or a local user.  Keep a
+    # stable diagnostic class, but never copy the original path to an artifact.
+    if ($Message -match '(?i)(?:[a-z]:\\|/)[^\r\n]*') {
+        return "Fixture input could not be resolved. See the local runner output."
+    }
+
+    return $Message
+}
+
+function Get-SafeDiarizationState {
+    param($State)
+
+    # Processing-worker JSON serializes StageExecutionState as either its
+    # numeric value or enum name.  Normalize only known values so reports keep
+    # a useful diagnostic without carrying free-form provider output.
+    switch ([string]$State) {
+        "0" { return "not_started" }
+        "NotStarted" { return "not_started" }
+        "1" { return "queued" }
+        "Queued" { return "queued" }
+        "2" { return "running" }
+        "Running" { return "running" }
+        "3" { return "succeeded" }
+        "Succeeded" { return "succeeded" }
+        "4" { return "failed" }
+        "Failed" { return "failed" }
+        "5" { return "skipped" }
+        "Skipped" { return "skipped" }
+        default { return "unknown" }
+    }
+}
+
+function Get-SafeDiarizationFailureKind {
+    param(
+        [string]$State,
+        [string]$Message
+    )
+
+    if ($State -ne "failed") {
+        return "not_failed"
+    }
+
+    if ($Message -match 'helper failed \((audio_preparation|helper_startup|native_inference|runtime_status)_(file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown)\)') {
+        return "helper_" + $Matches[1] + "_" + $Matches[2]
+    }
+
+    # Classify in memory only.  Do not persist provider text: it may identify
+    # a private path, a machine account, or an approved fixture.
+    if ($Message -match '(?i)onnx|model|asset') { return "model_or_asset" }
+    if ($Message -match '(?i)directml|cuda|gpu|accelerat') { return "acceleration" }
+    if ($Message -match '(?i)timeout|cancel') { return "timeout_or_cancel" }
+    if ($Message -match '(?i)file|path|directory|not found|missing') { return "input_or_file" }
+    if ($Message -match '(?i)helper') { return "helper_execution" }
+    return "provider_or_processing"
+}
+
 function Get-ArtifactHashes {
-    param([string[]]$Paths)
+    param(
+        [string[]]$Paths,
+        [string]$InputRoot
+    )
 
     $hashes = @()
     foreach ($path in $Paths) {
@@ -161,9 +372,10 @@ function Get-ArtifactHashes {
         }
 
         $resolved = Resolve-CatalogPathValue -PathValue $path -Description "Protected artifact" -Required
+        $resolved = Assert-AllowlistedFixtureInput -PathValue $resolved -InputRoot $InputRoot -Description "Protected artifact"
         $hashes += [pscustomobject]@{
             path = $resolved
-            hash = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
+            hash = Get-FileSha256 -PathValue $resolved
         }
     }
 
@@ -250,7 +462,6 @@ function New-BaseResult {
     $expectedSpeakerCount = Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
     return [ordered]@{
         fixtureId = [string](Get-PropertyValue -Object $Fixture -Name "id")
-        title = [string](Get-PropertyValue -Object $Fixture -Name "title")
         category = [string](Get-PropertyValue -Object $Fixture -Name "category")
         mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
         enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enabled" -DefaultValue $true)
@@ -264,6 +475,8 @@ function New-BaseResult {
         contiguousSpeakerRunCount = $null
         segmentCount = $null
         voiceSampleCount = $null
+        diarizationState = $null
+        diarizationFailureKind = $null
         speakerNameMetrics = [ordered]@{
             enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enableSpeakerNameMatching" -DefaultValue $false)
             expectedNameCount = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames")).Count
@@ -279,8 +492,6 @@ function New-BaseResult {
         artifactSafety = [ordered]@{
             protectedArtifactCount = 0
             allUnchanged = $true
-            tempOutputPath = $null
-            artifacts = @()
         }
         dispatch = [ordered]@{
             script = $null
@@ -288,6 +499,31 @@ function New-BaseResult {
         }
         message = $null
     }
+}
+
+function Apply-ExpectedOutcome {
+    param(
+        [System.Collections.IDictionary]$Result,
+        $Fixture,
+        $Outcome
+    )
+
+    $expectedSpeakerCount = if ($null -eq $Outcome) {
+        Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
+    }
+    else {
+        Get-PropertyValue -Object $Outcome -Name "expectedSpeakerCount"
+    }
+    $expectedNames = if ($null -eq $Outcome) {
+        @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames"))
+    }
+    else {
+        @(ConvertTo-Array (Get-PropertyValue -Object $Outcome -Name "expectedSpeakerNames"))
+    }
+
+    $Result.expectedSpeakerCount = if ($null -eq $expectedSpeakerCount -or [string]::IsNullOrWhiteSpace([string]$expectedSpeakerCount)) { $null } else { [int]$expectedSpeakerCount }
+    $Result.speakerNameMetrics.expectedNameCount = $expectedNames.Count
+    return $expectedNames
 }
 
 function Validate-Fixture {
@@ -298,6 +534,27 @@ function Validate-Fixture {
         throw "Fixture id is required."
     }
 
+    if ($script:CatalogSchemaVersion -ge 2) {
+        foreach ($requiredProperty in @("version", "contentHash", "category", "scenarioTags", "consentRecord", "classification", "owner", "expiresAtUtc", "expectedOutcomeRef", "inputRoot")) {
+            if (-not (Test-PropertyPresent -Object $Fixture -Name $requiredProperty) -or [string]::IsNullOrWhiteSpace([string](Get-PropertyValue -Object $Fixture -Name $requiredProperty))) {
+                throw "Fixture '$id' requires $requiredProperty in catalog schema version 2."
+            }
+        }
+
+        if ((Test-PropertyPresent -Object $Fixture -Name "expectedSpeakerCount") -or (Test-PropertyPresent -Object $Fixture -Name "expectedSpeakerNames")) {
+            throw "Fixture '$id' must keep expected outcomes in the restricted truth store, not catalog schema version 2."
+        }
+
+        if ([string](Get-PropertyValue -Object $Fixture -Name "contentHash") -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw "Fixture '$id' contentHash must be a SHA-256 hex value."
+        }
+
+        $expiry = [DateTime]::MinValue
+        if (-not [DateTime]::TryParse([string](Get-PropertyValue -Object $Fixture -Name "expiresAtUtc"), [ref]$expiry)) {
+            throw "Fixture '$id' expiresAtUtc must be a valid date."
+        }
+    }
+
     $mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
     if ($mode -notin @("stored-turn", "full-audio")) {
         throw "Fixture '$id' has invalid mode '$mode'. Use 'stored-turn' or 'full-audio'."
@@ -306,8 +563,8 @@ function Validate-Fixture {
     $expectedSpeakerCount = Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
     if ($null -ne $expectedSpeakerCount -and -not [string]::IsNullOrWhiteSpace([string]$expectedSpeakerCount)) {
         $parsedCount = 0
-        if (-not [int]::TryParse([string]$expectedSpeakerCount, [ref]$parsedCount) -or $parsedCount -lt 1 -or $parsedCount -gt 16) {
-            throw "Fixture '$id' expectedSpeakerCount must be an integer from 1 through 16."
+        if (-not [int]::TryParse([string]$expectedSpeakerCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
+            throw "Fixture '$id' expectedSpeakerCount must be an integer from 0 through 16."
         }
     }
 
@@ -327,17 +584,29 @@ function Resolve-FixtureInputs {
     param($Fixture)
 
     $mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
-    $transcriptJsonPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptJsonPath")) -Description "Fixture transcript JSON" -Required
+    $inputRoot = [string](Get-PropertyValue -Object $Fixture -Name "inputRoot")
+    $transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot" -Required:($mode -eq "full-audio")
+    $transcriptJsonPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptJsonPath")) -Description "Fixture transcript JSON" -Required:($mode -eq "stored-turn")
+    if ([string]::IsNullOrWhiteSpace($transcriptJsonPath)) {
+        $transcriptJsonPath = $transcriptionSnapshotPath
+    }
     $manifestPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "manifestPath")) -Description "Fixture manifest" -Required:($mode -eq "stored-turn" -or $mode -eq "full-audio")
     $transcriptMarkdownPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptMarkdownPath")) -Description "Fixture transcript Markdown"
 
+    $transcriptJsonPath = Assert-AllowlistedFixtureInput -PathValue $transcriptJsonPath -InputRoot $inputRoot -Description "Fixture transcript JSON"
+    $manifestPath = Assert-AllowlistedFixtureInput -PathValue $manifestPath -InputRoot $inputRoot -Description "Fixture manifest"
+    $transcriptMarkdownPath = Assert-AllowlistedFixtureInput -PathValue $transcriptMarkdownPath -InputRoot $inputRoot -Description "Fixture transcript Markdown"
+    $audioPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "audioPath")) -Description "Fixture audio"
+    $configPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "configPath")) -Description "Fixture config"
+
     return [pscustomobject]@{
+        inputRoot = $inputRoot
         transcriptJsonPath = $transcriptJsonPath
         manifestPath = $manifestPath
         transcriptMarkdownPath = $transcriptMarkdownPath
-        audioPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "audioPath")) -Description "Fixture audio"
-        transcriptionSnapshotPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "transcriptionSnapshotPath")) -Description "Fixture transcription snapshot"
-        configPath = Resolve-CatalogPathValue -PathValue ([string](Get-PropertyValue -Object $Fixture -Name "configPath")) -Description "Fixture config"
+        audioPath = Assert-AllowlistedFixtureInput -PathValue $audioPath -InputRoot $inputRoot -Description "Fixture audio"
+        transcriptionSnapshotPath = Assert-AllowlistedFixtureInput -PathValue $transcriptionSnapshotPath -InputRoot $inputRoot -Description "Fixture transcription snapshot"
+        configPath = Assert-AllowlistedFixtureInput -PathValue $configPath -InputRoot $inputRoot -Description "Fixture config"
         diarizationAssetPath = [string](Get-PropertyValue -Object $Fixture -Name "diarizationAssetPath")
         probeRoot = [string](Get-PropertyValue -Object $Fixture -Name "probeRoot")
         protectedArtifactPaths = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "protectedArtifactPaths"))
@@ -355,6 +624,17 @@ function Invoke-Fixture {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         Validate-Fixture -Fixture $Fixture
+
+        if ($script:CatalogSchemaVersion -ge 2) {
+            $expiry = [DateTime]::Parse([string](Get-PropertyValue -Object $Fixture -Name "expiresAtUtc")).ToUniversalTime()
+            if ($expiry -le [DateTime]::UtcNow) {
+                $result.status = "skipped"
+                $result.skipReason = "Fixture consent or retention approval expired."
+                $result.speakerCountStatus = "skipped"
+                $result.speakerNameMetrics.status = "skipped"
+                return [pscustomobject]$result
+            }
+        }
 
         if (-not $result.enabled) {
             $result.status = "skipped"
@@ -376,7 +656,7 @@ function Invoke-Fixture {
             return [pscustomobject]$result
         }
 
-        $artifactHashesBefore = @(Get-ArtifactHashes -Paths $inputs.protectedArtifactPaths)
+        $artifactHashesBefore = @(Get-ArtifactHashes -Paths $inputs.protectedArtifactPaths -InputRoot $inputs.inputRoot)
         $transcriptMetrics = Get-TranscriptMetrics -TranscriptJsonPath $inputs.transcriptJsonPath
         $result.segmentCount = $transcriptMetrics.segmentCount
         $result.rawSpeakerLabelCount = $transcriptMetrics.rawSpeakerLabelCount
@@ -391,6 +671,11 @@ function Invoke-Fixture {
         }
 
         if ($DryRun) {
+            $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
+            $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+            if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
+                throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
+            }
             $result.status = "dry_run"
             $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $null -FallbackStatus "dry_run"
             $result.speakerNameMetrics.status = "dry_run"
@@ -398,6 +683,7 @@ function Invoke-Fixture {
         }
 
         $childResultPath = Get-SafeTempResultPath -FixtureId $result.fixtureId
+        $probeRootToCleanup = $null
         try {
             if ($result.mode -eq "stored-turn") {
                 $arguments = @{
@@ -424,7 +710,8 @@ function Invoke-Fixture {
                 if ($inputs.configPath) { $arguments.ConfigPath = $inputs.configPath }
                 if ($inputs.audioPath) { $arguments.AudioPath = $inputs.audioPath }
                 if ($inputs.transcriptionSnapshotPath) { $arguments.TranscriptionSnapshotPath = $inputs.transcriptionSnapshotPath }
-                if (-not [string]::IsNullOrWhiteSpace($inputs.probeRoot)) { $arguments.ProbeRoot = $inputs.probeRoot }
+                $probeRootToCleanup = Get-SafeTempProbeRoot -FixtureId $result.fixtureId
+                $arguments.ProbeRoot = $probeRootToCleanup
                 if (-not [string]::IsNullOrWhiteSpace($inputs.diarizationAssetPath)) { $arguments.DiarizationAssetPath = $inputs.diarizationAssetPath }
                 if ([bool](Get-PropertyValue -Object $Fixture -Name "enableSpeakerNameMatching" -DefaultValue $false)) {
                     $arguments.EnableSpeakerNameMatching = $true
@@ -438,9 +725,12 @@ function Invoke-Fixture {
                 $childResult = Get-Content -LiteralPath $childResultPath -Raw | ConvertFrom-Json
                 $result.detectedSpeakerCount = [int]$childResult.SpeakerCount
                 $result.voiceSampleCount = [int]$childResult.VoiceSampleCount
-                $result.artifactSafety.tempOutputPath = [string]$childResult.ProbeRoot
+                # State is a fixed stage enum.  Keep it, but never persist the
+                # accompanying free-form message because it can contain private
+                # local paths or provider diagnostics.
+                $result.diarizationState = Get-SafeDiarizationState -State $childResult.DiarizationState
+                $result.diarizationFailureKind = Get-SafeDiarizationFailureKind -State $result.diarizationState -Message ([string]$childResult.DiarizationMessage)
                 $detectedNames = @(ConvertTo-Array $childResult.SpeakerNames)
-                $expectedNames = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames"))
                 $result.speakerNameMetrics.detectedNameCount = $detectedNames.Count
                 $result.speakerNameMetrics.missingExpectedNameCount = @($expectedNames | Where-Object {
                         $expectedName = $_
@@ -461,20 +751,25 @@ function Invoke-Fixture {
             if (Test-Path -LiteralPath $childResultPath -PathType Leaf) {
                 Remove-Item -LiteralPath $childResultPath -Force
             }
+            if (-not [string]::IsNullOrWhiteSpace($probeRootToCleanup) -and
+                (Test-Path -LiteralPath $probeRootToCleanup -PathType Container) -and
+                (Test-PathUnder -PathValue $probeRootToCleanup -RootValue ([System.IO.Path]::GetTempPath()))) {
+                Remove-Item -LiteralPath $probeRootToCleanup -Recurse -Force
+            }
         }
 
         $artifactResults = @()
         foreach ($before in $artifactHashesBefore) {
-            $afterHash = (Get-FileHash -LiteralPath $before.path -Algorithm SHA256).Hash
-            $artifactResults += [ordered]@{
-                path = $before.path
-                beforeHash = $before.hash
-                afterHash = $afterHash
-                unchanged = $before.hash -eq $afterHash
-            }
+            $afterHash = Get-FileSha256 -PathValue $before.path
+            $artifactResults += ($before.hash -eq $afterHash)
         }
-        $result.artifactSafety.artifacts = $artifactResults
-        $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_.unchanged }).Count -eq 0
+        $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_ }).Count -eq 0
+
+        $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
+        $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+        if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
+            throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
+        }
 
         $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $result.detectedSpeakerCount -FallbackStatus "completed"
         $result.status = if ($result.speakerCountStatus -eq "pass" -or $result.speakerCountStatus -eq "not_asserted") { "completed" } else { $result.speakerCountStatus }
@@ -502,7 +797,7 @@ function Invoke-Fixture {
     }
     catch {
         $result.status = "failed"
-        $result.message = $_.Exception.Message
+        $result.message = Get-SafeReportMessage -Message $_.Exception.Message
         $result.speakerCountStatus = "failed"
         if ($result.speakerNameMetrics.status -eq "not_run") {
             $result.speakerNameMetrics.status = "failed"
@@ -535,6 +830,23 @@ $resolvedReportPath = Assert-AllowedOutputPath -PathValue $ReportPath -Descripti
 New-Item -ItemType Directory -Path (Split-Path -Path $resolvedReportPath -Parent) -Force | Out-Null
 
 $catalog = Get-Content -LiteralPath $resolvedCatalogPath -Raw | ConvertFrom-Json
+$script:CatalogSchemaVersion = [int](Get-PropertyValue -Object $catalog -Name "schemaVersion" -DefaultValue 1)
+if ($script:CatalogSchemaVersion -notin @(1, 2)) {
+    throw "Fixture catalog schemaVersion must be 1 or 2."
+}
+
+$script:ResolvedTruthStorePath = $null
+if ($script:CatalogSchemaVersion -ge 2) {
+    if ([string]::IsNullOrWhiteSpace($TruthStorePath)) {
+        throw "Catalog schema version 2 requires -TruthStorePath outside source control and report output."
+    }
+
+    $script:ResolvedTruthStorePath = Resolve-RequiredFile -PathValue $TruthStorePath -Description "Restricted fixture truth store"
+    if (Test-PathUnder -PathValue $script:ResolvedTruthStorePath -RootValue $script:RepoRoot) {
+        throw "Restricted fixture truth store must stay outside source control."
+    }
+}
+
 $fixtures = if ($catalog.PSObject.Properties.Name -contains "fixtures") {
     @(ConvertTo-Array $catalog.fixtures)
 }
@@ -566,8 +878,10 @@ foreach ($fixture in $fixtures) {
     $result = Invoke-Fixture -Fixture $fixture -StoredReplayScript $storedReplayScript -FullAudioScript $fullAudioScript
     $results += $result
 
-    $title = if ([string]::IsNullOrWhiteSpace($result.title)) { $result.fixtureId } else { $result.title }
-    Write-Output ("{0}: {1} ({2})" -f $result.fixtureId, $result.status, $title)
+    Write-Output ("{0}: {1}" -f $result.fixtureId, $result.status)
+    if ($result.status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($result.message)) {
+        Write-Output "  Failure: metadata-only fixture execution failed."
+    }
 }
 
 $runStopwatch.Stop()
@@ -585,9 +899,9 @@ $summary = [ordered]@{
 }
 
 $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    catalogPath = $resolvedCatalogPath
+    catalogSha256 = Get-FileSha256 -PathValue $resolvedCatalogPath
     dryRun = [bool]$DryRun
     calibration = [ordered]@{
         runName = if ([string]::IsNullOrWhiteSpace($CalibrationRunName)) { "current-defaults" } else { $CalibrationRunName }
@@ -598,6 +912,7 @@ $report = [ordered]@{
         category = $Category
         includeDisabled = [bool]$IncludeDisabled
     }
+    truthStoreSha256 = if ($script:ResolvedTruthStorePath) { Get-FileSha256 -PathValue $script:ResolvedTruthStorePath } else { $null }
     summary = $summary
     results = $results
 }

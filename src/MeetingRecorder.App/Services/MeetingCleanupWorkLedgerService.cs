@@ -18,7 +18,10 @@ internal sealed record CleanupWorkLedgerEntry(
     CleanupWorkState State,
     DateTimeOffset UpdatedAtUtc,
     string? ManifestPath = null,
-    string? Detail = null);
+    string? Detail = null,
+    MeetingCleanupAction? Action = null,
+    IReadOnlyList<string>? AffectedStems = null,
+    string? InputRevision = null);
 
 internal sealed record CleanupWorkLedgerDocument(IReadOnlyList<CleanupWorkLedgerEntry> Entries);
 
@@ -76,7 +79,14 @@ internal sealed class MeetingCleanupWorkLedgerService
         }
     }
 
-    public void Record(string fingerprint, CleanupWorkState state, string? manifestPath = null, string? detail = null)
+    public void Record(
+        string fingerprint,
+        CleanupWorkState state,
+        string? manifestPath = null,
+        string? detail = null,
+        MeetingCleanupAction? action = null,
+        IReadOnlyList<string>? affectedStems = null,
+        string? inputRevision = null)
     {
         if (string.IsNullOrWhiteSpace(fingerprint))
         {
@@ -92,7 +102,38 @@ internal sealed class MeetingCleanupWorkLedgerService
                 state,
                 DateTimeOffset.UtcNow,
                 manifestPath ?? previous?.ManifestPath,
-                string.IsNullOrWhiteSpace(detail) ? previous?.Detail : detail.Trim());
+                string.IsNullOrWhiteSpace(detail) ? previous?.Detail : detail.Trim(),
+                action ?? previous?.Action,
+                affectedStems ?? previous?.AffectedStems,
+                string.IsNullOrWhiteSpace(inputRevision) ? previous?.InputRevision : inputRevision.Trim());
+            Save();
+        }
+    }
+
+    public void RecordContainmentHold(string fingerprint, MeetingCleanupAction action, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint) || string.IsNullOrWhiteSpace(reason))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var key = fingerprint.Trim();
+            if (Load().TryGetValue(key, out var existing) &&
+                existing.State == CleanupWorkState.ManualReview &&
+                existing.Action == action &&
+                string.Equals(existing.Detail, reason.Trim(), StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _entries![key] = new CleanupWorkLedgerEntry(
+                key,
+                CleanupWorkState.ManualReview,
+                DateTimeOffset.UtcNow,
+                Action: action,
+                Detail: reason.Trim());
             Save();
         }
     }
@@ -223,15 +264,42 @@ internal sealed class MeetingCleanupWorkLedgerService
     {
         var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("Ledger path must include a parent directory.");
         Directory.CreateDirectory(directory);
-        var tempPath = _path + ".tmp";
+        var tempPath = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tempPath, JsonSerializer.Serialize(new CleanupWorkLedgerDocument(_entries!.Values.OrderBy(entry => entry.Fingerprint, StringComparer.Ordinal).ToArray()), SerializerOptions));
-        if (File.Exists(_path))
+        try
         {
-            File.Replace(tempPath, _path, null, ignoreMetadataErrors: true);
+            if (File.Exists(_path))
+            {
+                ReplaceWithRetry(tempPath);
+            }
+            else
+            {
+                File.Move(tempPath, _path);
+            }
         }
-        else
+        finally
         {
-            File.Move(tempPath, _path);
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+    }
+
+    private void ReplaceWithRetry(string tempPath)
+    {
+        const int maximumAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Replace(tempPath, _path, null, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (IOException) when (attempt < maximumAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
+            }
         }
     }
 }

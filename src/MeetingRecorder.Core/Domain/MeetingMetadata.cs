@@ -95,6 +95,16 @@ public sealed record SpeakerTurn(
     [property: JsonPropertyName("start")] TimeSpan Start,
     [property: JsonPropertyName("end")] TimeSpan End);
 
+/// <summary>Auditable, user-confirmed canonical mapping; it contains no audio or identity profile data.</summary>
+public sealed record SpeakerClusterMergeMetadata(
+    [property: JsonPropertyName("operationId")] string OperationId,
+    [property: JsonPropertyName("artifactRevision")] string ArtifactRevision,
+    [property: JsonPropertyName("sourceSpeakerIds")] IReadOnlyList<string> SourceSpeakerIds,
+    [property: JsonPropertyName("canonicalSpeakerId")] string CanonicalSpeakerId,
+    [property: JsonPropertyName("evidenceFingerprint")] string EvidenceFingerprint,
+    [property: JsonPropertyName("createdAtUtc")] DateTimeOffset CreatedAtUtc,
+    [property: JsonPropertyName("actorSource")] string ActorSource = "user");
+
 public sealed record SpeakerVoiceSample(
     [property: JsonPropertyName("speakerId")] string SpeakerId,
     [property: JsonPropertyName("embeddingModelFileName")] string EmbeddingModelFileName,
@@ -162,4 +172,5 @@ public sealed record MeetingProcessingMetadata(
     IReadOnlyList<SpeakerIdentity>? Speakers = null,
     IReadOnlyList<SpeakerTurn>? SpeakerTurns = null,
     DiarizationMetadata? DiarizationMetadata = null,
-    IReadOnlyList<SpeakerVoiceSample>? SpeakerVoiceSamples = null);
+    IReadOnlyList<SpeakerVoiceSample>? SpeakerVoiceSamples = null,
+    IReadOnlyList<SpeakerClusterMergeMetadata>? SpeakerClusterMerges = null);

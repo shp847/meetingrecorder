@@ -670,6 +670,8 @@ public sealed class SessionProcessorTests
             Assert.Contains("## Summary", markdown, StringComparison.Ordinal);
             Assert.Contains("The processed meeting has a generated summary.", markdown, StringComparison.Ordinal);
             Assert.Equal("The processed meeting has a generated summary.", document["summary"]?["overview"]?.GetValue<string>());
+            Assert.False(string.IsNullOrWhiteSpace(finalManifest.Summary?.AttributionFingerprint));
+            Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, finalManifest.Summary?.AttributionSchemaVersion);
             Assert.True(File.Exists(published.ReadyMarkerPath));
         }
         finally
@@ -790,6 +792,8 @@ public sealed class SessionProcessorTests
             Assert.Equal(0, summaryProvider.CallCount);
             Assert.Equal(StageExecutionState.Succeeded, finalManifest.SummarizationStatus.State);
             Assert.Equal("Loaded persisted summary.", finalManifest.Summary?.Overview);
+            Assert.False(string.IsNullOrWhiteSpace(finalManifest.Summary?.AttributionFingerprint));
+            Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, finalManifest.Summary?.AttributionSchemaVersion);
             Assert.Contains("Loaded persisted summary.", markdown, StringComparison.Ordinal);
         }
         finally
@@ -847,6 +851,274 @@ public sealed class SessionProcessorTests
         }
 
         return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TranscriptStage_Publishes_Without_Invoking_Optional_Enrichment_Providers()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                diarizationProvider,
+                summaryProvider);
+
+            var published = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled },
+                SessionProcessingStage.Transcript);
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(1, transcriptionProvider.CallCount);
+            Assert.Equal(0, diarizationProvider.CallCount);
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, manifest.TranscriptionStatus.State);
+            Assert.Equal(StageExecutionState.Skipped, manifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.Skipped, manifest.SummarizationStatus.State);
+            Assert.True(File.Exists(published.ReadyMarkerPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_DiarizationStage_Reuses_Published_Transcript_Without_Rerunning_Transcription_Or_Summary()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var firstDiarizationProvider = new TrackingDiarizationProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var initialProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                firstDiarizationProvider,
+                summaryProvider);
+            await initialProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain });
+
+            var labelingProvider = new LabelingDiarizationProvider();
+            var stagedProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                labelingProvider,
+                summaryProvider);
+            var published = await stagedProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig(),
+                SessionProcessingStage.Diarization);
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(1, transcriptionProvider.CallCount);
+            Assert.Equal(0, firstDiarizationProvider.CallCount);
+            Assert.Equal(1, labelingProvider.CallCount);
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, manifest.DiarizationStatus.State);
+            Assert.True(manifest.ProcessingMetadata?.HasSpeakerLabels);
+            Assert.True(File.Exists(published.JsonPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SummaryStage_Reuses_Published_Transcript_Without_Rerunning_Transcription_Or_Diarization()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var initialProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                diarizationProvider,
+                summaryProvider);
+            await initialProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain });
+
+            var stagedProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                diarizationProvider,
+                summaryProvider);
+            var published = await stagedProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled },
+                SessionProcessingStage.Summary);
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(1, transcriptionProvider.CallCount);
+            Assert.Equal(0, diarizationProvider.CallCount);
+            Assert.Equal(1, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, manifest.SummarizationStatus.State);
+            Assert.NotNull(manifest.Summary);
+            Assert.True(File.Exists(published.MarkdownPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SummaryStage_Leaves_Prior_Transcript_Readable_When_Summary_Is_Disabled()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+
+        try
+        {
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var diarizationProvider = new TrackingDiarizationProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var processor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                diarizationProvider,
+                summaryProvider);
+            var initial = await processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain });
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => processor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig(),
+                SessionProcessingStage.Summary));
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Contains("summary stage is blocked", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Skipped, manifest.SummarizationStatus.State);
+            Assert.True(File.Exists(initial.MarkdownPath));
+            Assert.True(File.Exists(initial.JsonPath));
+            Assert.True(File.Exists(initial.ReadyMarkerPath));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_DiarizationStage_Marks_A_Previous_Summary_Stale_Without_Regenerating_It()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync(skipSpeakerLabeling: true);
+
+        try
+        {
+            var transcriptionProvider = new TrackingTranscriptionProvider();
+            var summaryProvider = new TrackingSummaryProvider();
+            var initialProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                new TrackingDiarizationProvider(),
+                summaryProvider);
+            await initialProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled });
+            var initialManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            await context.ManifestStore.SaveAsync(
+                initialManifest with
+                {
+                    ProcessingOverrides = new MeetingProcessingOverrides(null, null, SkipSpeakerLabeling: false),
+                },
+                context.ManifestPath);
+
+            var stagedProcessor = CreateProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                transcriptionProvider,
+                new LabelingDiarizationProvider(),
+                summaryProvider);
+            await stagedProcessor.ProcessAsync(
+                context.ManifestPath,
+                context.CreateConfig() with { SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled },
+                SessionProcessingStage.Diarization);
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+
+            Assert.Equal(1, summaryProvider.CallCount);
+            Assert.Equal(StageExecutionState.Succeeded, manifest.DiarizationStatus.State);
+            Assert.Equal(StageExecutionState.NotStarted, manifest.SummarizationStatus.State);
+            Assert.Null(manifest.Summary);
+            Assert.Contains("refresh", manifest.SummarizationStatus.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessAsync_AutoNames_Only_After_Publication_And_Writes_A_Receipt()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+        try
+        {
+            var profileStore = new VoiceProfileStore(Path.Combine(context.Root, "speaker-profiles", "voice-profiles.json"));
+            await profileStore.SaveAsync(new VoiceProfileStoreDocument(
+                1,
+                DateTimeOffset.UtcNow,
+                [new VoiceProfile(
+                    "voice_pranav", "Pranav Sharma", "embedding.onnx", 3, [1f, 0f, 0f], 2,
+                    ["older-session"], null, VoiceProfileStatus.Active, [])]));
+            var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(context.Root, "speaker-corrections", "receipts.json"));
+            var namingService = new SpeakerNameCorrectionService(
+                new MeetingOutputCatalogService(context.PathBuilder),
+                context.ManifestStore,
+                new SpeakerNameLearningService(profileStore),
+                new VoiceProfileMatcher(),
+                profileStore,
+                receiptStore);
+            var processor = new SessionProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new WaveChunkMerger(),
+                new TrackingTranscriptionProvider(),
+                new AutoNamingDiarizationProvider(),
+                new TranscriptRenderer(),
+                new FilePublishService(),
+                speakerNameCorrectionService: namingService);
+
+            var published = await processor.ProcessAsync(context.ManifestPath, context.CreateConfig());
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var speaker = Assert.Single(manifest.ProcessingMetadata!.Speakers!);
+
+            Assert.Equal(SessionState.Published, manifest.State);
+            Assert.Equal("Pranav Sharma", speaker.DisplayName);
+            Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, speaker.NameSource);
+            Assert.Contains("**Pranav Sharma:**", await File.ReadAllTextAsync(published.MarkdownPath), StringComparison.Ordinal);
+            var receiptPath = Path.Combine(context.Root, "speaker-corrections", "receipts.json");
+            var receipts = JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(await File.ReadAllTextAsync(receiptPath)) ?? [];
+            var receipt = Assert.Single(receipts.Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
+            Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
     }
 
     private static SessionProcessor CreateProcessor(
@@ -980,11 +1252,14 @@ public sealed class SessionProcessorTests
 
     private sealed class LabelingDiarizationProvider : IDiarizationProvider
     {
+        public int CallCount { get; private set; }
+
         public Task<DiarizationResult> ApplySpeakerLabelsAsync(
             string audioPath,
             IReadOnlyList<TranscriptSegment> transcriptSegments,
             CancellationToken cancellationToken)
         {
+            CallCount++;
             IReadOnlyList<TranscriptSegment> labeledSegments = transcriptSegments
                 .Select(segment => segment with
                 {
@@ -999,6 +1274,21 @@ public sealed class SessionProcessorTests
                 [new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(1))],
                 null));
         }
+    }
+
+    private sealed class AutoNamingDiarizationProvider : IDiarizationProvider
+    {
+        public Task<DiarizationResult> ApplySpeakerLabelsAsync(
+            string audioPath,
+            IReadOnlyList<TranscriptSegment> transcriptSegments,
+            CancellationToken cancellationToken) => Task.FromResult(new DiarizationResult(
+                transcriptSegments.Select(segment => segment with { SpeakerId = "speaker_00" }).ToArray(),
+                true,
+                "speaker labels applied",
+                [new SpeakerIdentity("speaker_00", "Speaker 1", false)],
+                [new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(9))],
+                null,
+                [new SpeakerVoiceSample("speaker_00", "embedding.onnx", 3, [1f, 0f, 0f], TimeSpan.FromSeconds(9), DateTimeOffset.UtcNow)]));
     }
 
     private sealed class ThrowingDiarizationProvider : IDiarizationProvider

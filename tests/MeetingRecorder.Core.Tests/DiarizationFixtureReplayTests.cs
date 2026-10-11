@@ -90,6 +90,10 @@ public sealed class DiarizationFixtureReplayTests
         Assert.Contains("-split \",\"", scriptContents, StringComparison.Ordinal);
         Assert.Contains("skipSpeakerLabeling", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.ProcessingWorker.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MeetingRecorder.ProcessingWorker.dll", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Get-Command dotnet", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("runtimeWorkerDirectory", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("native Sherpa dependencies", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Build-Installer.ps1", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);
@@ -113,13 +117,17 @@ public sealed class DiarizationFixtureReplayTests
         var fixtures = root.GetProperty("fixtures").EnumerateArray().ToArray();
 
         Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
-        Assert.True(fixtures.Length >= 6);
+        Assert.True(fixtures.Length >= 9);
         Assert.All(fixtures, fixture => Assert.False(fixture.GetProperty("enabled").GetBoolean()));
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "two-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "one-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "three-plus-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "short-call");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "noisy-similar-voices");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "overlap");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "hybrid-shared-mic");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "no-speech");
+        Assert.Contains("\"minimum\": 0", schemaText, StringComparison.Ordinal);
         Assert.Contains("Expected values are assertions only, not runtime hints", exampleText, StringComparison.Ordinal);
         Assert.Contains("\"expectedSpeakerCount\"", schemaText, StringComparison.Ordinal);
         Assert.Contains("\"expectedSpeakerNames\"", schemaText, StringComparison.Ordinal);
@@ -228,7 +236,9 @@ public sealed class DiarizationFixtureReplayTests
                 "-DryRun",
                 "-ReportPath", reportPath);
 
-            Assert.Equal(0, result.ExitCode);
+            Assert.True(
+                result.ExitCode == 0,
+                $"Fixture catalog script failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
             Assert.True(File.Exists(reportPath), "Expected catalog report to be written.");
             Assert.Equal(privateMarker + " protected artifact", File.ReadAllText(markdownPath));
 
@@ -256,12 +266,24 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Equal(2, (int?)enabledResult["contiguousSpeakerRunCount"]);
             Assert.Equal(1, (int?)enabledResult["artifactSafety"]?["protectedArtifactCount"]);
             Assert.True((bool?)enabledResult["artifactSafety"]?["allUnchanged"]);
+            Assert.Null(report["catalogPath"]);
+            Assert.NotNull((string?)report["catalogSha256"]);
+            Assert.Null(enabledResult["title"]);
+            Assert.Null(enabledResult["artifactSafety"]?["artifacts"]);
+            Assert.DoesNotContain(tempRoot, reportText, StringComparison.OrdinalIgnoreCase);
 
             var scriptContents = File.ReadAllText(scriptPath);
             Assert.Contains("Test-DiarizationFixture.ps1", scriptContents, StringComparison.Ordinal);
             Assert.Contains("Test-DiarizationFullAudioFixture.ps1", scriptContents, StringComparison.Ordinal);
             Assert.Contains("protectedArtifactPaths", scriptContents, StringComparison.Ordinal);
-            Assert.Contains("Get-FileHash", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Get-FileSha256", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Get-SafeTempProbeRoot", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Remove-Item -LiteralPath $probeRootToCleanup -Recurse -Force", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("function Get-SafeDiarizationState", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("function Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("$result.diarizationState = Get-SafeDiarizationState -State $childResult.DiarizationState", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("$result.diarizationFailureKind = Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
+            Assert.DoesNotContain("$result.diarizationMessage", scriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);
         }
@@ -341,6 +363,150 @@ public sealed class DiarizationFixtureReplayTests
     }
 
     [Fact]
+    public void TestDiarizationFixtureCatalogScript_Uses_V2_Truth_Only_After_DryRun_Dispatch()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "Test-DiarizationFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-catalog-v2-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var transcriptPath = Path.Combine(tempRoot, "transcript.json");
+            var manifestPath = Path.Combine(tempRoot, "manifest.json");
+            var catalogPath = Path.Combine(tempRoot, "catalog.json");
+            var truthPath = Path.Combine(tempRoot, "truth.json");
+            var reportPath = Path.Combine(tempRoot, "report.json");
+            const string restrictedName = "RESTRICTED_TRUTH_NAME_DO_NOT_REPORT";
+            File.WriteAllText(transcriptPath, JsonSerializer.Serialize(new { segments = Array.Empty<object>() }, JsonOptions));
+            File.WriteAllText(manifestPath, JsonSerializer.Serialize(new { processingMetadata = new { speakerTurns = Array.Empty<object>() } }, JsonOptions));
+            File.WriteAllText(
+                catalogPath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 2,
+                        fixtures = new[]
+                        {
+                            new
+                            {
+                                id = "fx-synthetic-v2",
+                                version = "1",
+                                contentHash = new string('a', 64),
+                                category = "two-speaker",
+                                mode = "stored-turn",
+                                scenarioTags = new[] { "two-speaker" },
+                                consentRecord = "CONSENT-SYNTHETIC",
+                                classification = "restricted-test",
+                                owner = "test-owner",
+                                expiresAtUtc = "2030-01-01T00:00:00Z",
+                                enabled = true,
+                                expectedOutcomeRef = "truth-synthetic-v2",
+                                inputRoot = tempRoot,
+                                manifestPath,
+                                transcriptJsonPath = transcriptPath,
+                                enableSpeakerNameMatching = true,
+                                protectedArtifactPaths = Array.Empty<string>(),
+                            },
+                        },
+                    },
+                    JsonOptions));
+            File.WriteAllText(
+                truthPath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 1,
+                        outcomes = new[]
+                        {
+                            new
+                            {
+                                reference = "truth-synthetic-v2",
+                                expectedSpeakerCount = 2,
+                                expectedSpeakerNames = new[] { restrictedName },
+                            },
+                        },
+                    },
+                    JsonOptions));
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", reportPath);
+
+            Assert.True(
+                result.ExitCode == 0,
+                $"V2 catalog runner failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}{Environment.NewLine}report:{Environment.NewLine}{(File.Exists(reportPath) ? File.ReadAllText(reportPath) : "(missing)")}");
+            var reportText = File.ReadAllText(reportPath);
+            Assert.DoesNotContain(restrictedName, reportText, StringComparison.Ordinal);
+            Assert.DoesNotContain(restrictedName, result.StandardOutput, StringComparison.Ordinal);
+            Assert.DoesNotContain(truthPath, reportText, StringComparison.OrdinalIgnoreCase);
+
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Report JSON was empty.");
+            Assert.NotNull((string?)report["truthStoreSha256"]);
+            Assert.Equal(2, (int?)report["results"]?[0]?["expectedSpeakerCount"]);
+            Assert.Equal(1, (int?)report["results"]?[0]?["speakerNameMetrics"]?["expectedNameCount"]);
+
+            var scriptContents = File.ReadAllText(scriptPath);
+            Assert.DoesNotContain("$arguments.ExpectedSpeakerName", scriptContents, StringComparison.Ordinal);
+            Assert.DoesNotContain("$arguments.ExpectedSpeakerCount", scriptContents, StringComparison.Ordinal);
+
+            var outsideInputRoot = Path.Combine(tempRoot, "allowlisted-inputs-only");
+            Directory.CreateDirectory(outsideInputRoot);
+            var catalog = JsonNode.Parse(File.ReadAllText(catalogPath))?.AsObject()
+                ?? throw new InvalidOperationException("Catalog JSON was empty.");
+            var fixtures = catalog["fixtures"]?.AsArray()
+                ?? throw new InvalidOperationException("Catalog fixtures were missing.");
+            var fixture = fixtures[0]?.AsObject()
+                ?? throw new InvalidOperationException("Catalog fixture was missing.");
+            fixture["inputRoot"] = outsideInputRoot;
+            File.WriteAllText(catalogPath, catalog.ToJsonString(JsonOptions));
+            var rejectedReportPath = Path.Combine(tempRoot, "rejected-report.json");
+
+            var rejected = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", rejectedReportPath);
+
+            Assert.Equal(0, rejected.ExitCode);
+            var rejectedReport = File.ReadAllText(rejectedReportPath);
+            Assert.Contains("must stay under fixture inputRoot", rejectedReport, StringComparison.Ordinal);
+            Assert.DoesNotContain(transcriptPath, rejectedReport, StringComparison.OrdinalIgnoreCase);
+            var rejectedReportNode = JsonNode.Parse(rejectedReport) ?? throw new InvalidOperationException("Rejected report JSON was empty.");
+            Assert.Equal("missing_data", (string?)rejectedReportNode["results"]?[0]?["status"]);
+
+            fixture["inputRoot"] = tempRoot;
+            fixture["expiresAtUtc"] = "2000-01-01T00:00:00Z";
+            File.WriteAllText(catalogPath, catalog.ToJsonString(JsonOptions));
+            var expiredReportPath = Path.Combine(tempRoot, "expired-report.json");
+            var expired = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", expiredReportPath);
+
+            Assert.Equal(0, expired.ExitCode);
+            var expiredReport = File.ReadAllText(expiredReportPath);
+            Assert.DoesNotContain(restrictedName, expiredReport, StringComparison.Ordinal);
+            var expiredReportNode = JsonNode.Parse(expiredReport) ?? throw new InvalidOperationException("Expired report JSON was empty.");
+            Assert.Equal("skipped", (string?)expiredReportNode["results"]?[0]?["status"]);
+            Assert.Equal("Fixture consent or retention approval expired.", (string?)expiredReportNode["results"]?[0]?["skipReason"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void TestDiarizationFixtureCatalogScript_Rejects_Unsafe_Report_Paths_And_Invalid_Counts()
     {
         var repoRoot = GetRepoRoot();
@@ -403,9 +569,81 @@ public sealed class DiarizationFixtureReplayTests
             Assert.NotEqual(0, invalidCountResult.ExitCode);
             Assert.True(File.Exists(reportPath), "Expected invalid fixture validation to still write a metadata report.");
             Assert.Contains(
-                "expectedSpeakerCount must be an integer from 1 through 16",
+                "expectedSpeakerCount must be an integer from 0 through 16",
                 File.ReadAllText(reportPath),
                 StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void NewDiarizationVttFixtureScript_Creates_Private_Truth_Without_Leaking_Speakers_Into_Catalog()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationVttFixture.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-vtt-fixture-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var sourceRoot = Path.Combine(tempRoot, "source");
+            var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+            Directory.CreateDirectory(sourceRoot);
+            var audioPath = Path.Combine(sourceRoot, "source.wav");
+            var vttPath = Path.Combine(sourceRoot, "source.vtt");
+            const string privateSpeakerA = "PRIVATE_FIXTURE_SPEAKER_A";
+            const string privateSpeakerB = "PRIVATE_FIXTURE_SPEAKER_B";
+            const string privateText = "PRIVATE_FIXTURE_TRANSCRIPT_TEXT";
+            File.WriteAllBytes(audioPath, [0x52, 0x49, 0x46, 0x46]);
+            File.WriteAllText(
+                vttPath,
+                $"00:00:00 --> 00:00:01{Environment.NewLine}{privateSpeakerA}: {privateText} first{Environment.NewLine}{Environment.NewLine}00:00:01 --> 00:00:02{Environment.NewLine}{privateSpeakerB}: {privateText} second{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioPath", audioPath,
+                "-VttPath", vttPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-vtt-synthetic",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+
+            Assert.True(
+                result.ExitCode == 0,
+                $"VTT fixture builder failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            var catalogText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json"));
+            var truthText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-truth-store.local.json"));
+            Assert.DoesNotContain(privateSpeakerA, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerA, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, truthText, StringComparison.Ordinal);
+
+            var catalog = JsonNode.Parse(catalogText) ?? throw new InvalidOperationException("Catalog JSON was empty.");
+            Assert.Equal("two-speaker", (string?)catalog["fixtures"]?[0]?["category"]);
+
+            var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
+            Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+            var snapshotText = File.ReadAllText(Path.Combine(fixtureRoot, "fx-vtt-synthetic", "processing", "transcription.snapshot.json"));
+            Assert.Contains(privateText, snapshotText, StringComparison.Ordinal);
+
+            var catalogReportPath = Path.Combine(tempRoot, "catalog-report.json");
+            var catalogResult = RunPowerShell(
+                Path.Combine(repoRoot, "scripts", "Test-DiarizationFixtureCatalog.ps1"),
+                "-CatalogPath", Path.Combine(fixtureRoot, "fixture-catalog.local.json"),
+                "-TruthStorePath", Path.Combine(fixtureRoot, "fixture-truth-store.local.json"),
+                "-DryRun",
+                "-ReportPath", catalogReportPath);
+            Assert.Equal(0, catalogResult.ExitCode);
+            var catalogReport = JsonNode.Parse(File.ReadAllText(catalogReportPath)) ?? throw new InvalidOperationException("Catalog report JSON was empty.");
+            Assert.Equal("dry_run", (string?)catalogReport["results"]?[0]?["status"]);
         }
         finally
         {

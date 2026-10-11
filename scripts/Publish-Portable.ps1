@@ -2,13 +2,39 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = ".artifacts\publish\win-x64",
+    [string]$StableAppHostPath = "",
+    [string]$StableDeploymentCliAppHostPath = "",
+    [string]$StableWorkerAppHostPath = "",
     [switch]$FrameworkDependent
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$outputPath = Join-Path $repoRoot $OutputRoot
+
+function Resolve-ArtifactRoot {
+    param(
+        [string]$CandidatePath,
+        [string]$RepositoryRoot
+    )
+
+    $resolvedRepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\\')
+    $resolvedPath = if ([System.IO.Path]::IsPathRooted($CandidatePath)) {
+        [System.IO.Path]::GetFullPath($CandidatePath)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $CandidatePath))
+    }
+
+    if ($resolvedPath.TrimEnd('\\') -eq $resolvedRepositoryRoot -or
+        $resolvedPath -eq [System.IO.Path]::GetPathRoot($resolvedPath)) {
+        throw "Portable publish output root must be a dedicated directory, not '$resolvedPath'."
+    }
+
+    return $resolvedPath
+}
+
+$outputPath = Resolve-ArtifactRoot -CandidatePath $OutputRoot -RepositoryRoot $repoRoot
 $appTemp = Join-Path $outputPath "app-temp"
 $cliTemp = Join-Path $outputPath "cli-temp"
 $workerTemp = Join-Path $outputPath "worker-temp"
@@ -125,6 +151,22 @@ function Read-ModelCatalog {
     return Get-Content -Path $CatalogPath -Raw | ConvertFrom-Json
 }
 
+function Get-Sha256Hash {
+    param(
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace("-", [string]::Empty).ToLowerInvariant()
+    }
+    finally {
+        $hasher.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function New-BundleIntegrityEntry {
     param(
         [string]$BundleRoot,
@@ -140,7 +182,7 @@ function New-BundleIntegrityEntry {
     return [ordered]@{
         relativePath = $RelativePath
         lengthBytes  = [int64]$item.Length
-        sha256       = ((Get-FileHash -Path $resolvedPath -Algorithm SHA256).Hash).ToLowerInvariant()
+        sha256       = Get-Sha256Hash -Path $resolvedPath
     }
 }
 
@@ -183,6 +225,53 @@ function Assert-LooseFileWpfShellPublishLayout {
     if ($missingArtifacts.Count -gt 0) {
         throw "Portable app publish is missing loose-file WPF shell artifacts: $($missingArtifacts -join '; ')."
     }
+}
+
+function Restore-VerifiedStableAppHostIfNeeded {
+    param(
+        [string]$PublishRoot,
+        [string]$AppHostFileName,
+        [string]$ProjectName,
+        [string]$ConfiguredStableAppHostPath
+    )
+
+    $publishedAppHostPath = Join-Path $PublishRoot $AppHostFileName
+    if (Test-Path -LiteralPath $publishedAppHostPath) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ConfiguredStableAppHostPath)) {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $ConfiguredStableAppHostPath)) {
+        throw "Configured stable apphost '$ConfiguredStableAppHostPath' does not exist."
+    }
+
+    $buildRoot = if ([string]::IsNullOrWhiteSpace($env:MeetingRecorderBuildRoot)) {
+        Join-Path ([System.IO.Path]::GetTempPath()) "MeetingRecorderBuild"
+    }
+    else {
+        $env:MeetingRecorderBuildRoot
+    }
+    $expectedAppHostPath = Join-Path $buildRoot "obj\$ProjectName\$Configuration\net8.0-windows\$Runtime\apphost.exe"
+    if (-not (Test-Path -LiteralPath $expectedAppHostPath)) {
+        throw "Cannot verify stable apphost because current build apphost '$expectedAppHostPath' does not exist."
+    }
+
+    $expectedHash = Get-Sha256Hash -Path $expectedAppHostPath
+    $stableHash = Get-Sha256Hash -Path $ConfiguredStableAppHostPath
+    if ($stableHash -ne $expectedHash) {
+        throw "Configured stable apphost hash does not match the current build apphost."
+    }
+
+    Copy-Item -LiteralPath $ConfiguredStableAppHostPath -Destination $publishedAppHostPath -Force
+    if (-not (Test-Path -LiteralPath $publishedAppHostPath) -or
+        (Get-Sha256Hash -Path $publishedAppHostPath) -ne $expectedHash) {
+        throw "Verified stable apphost could not be restored to '$publishedAppHostPath'."
+    }
+
+    Write-Host "Restored a hash-verified stable apphost after publish-output removal."
 }
 
 function Assert-LooseFileWpfShellBundleLayout {
@@ -265,7 +354,7 @@ function Copy-SherpaDirectMlRuntimeIfAvailable {
             throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' length does not match sherpa-directml-runtime.json. Git LFS may not have fetched the runtime binaries."
         }
 
-        $runtimeFileSha256 = ((Get-FileHash -Path $runtimeFilePath -Algorithm SHA256).Hash).ToLowerInvariant()
+        $runtimeFileSha256 = Get-Sha256Hash -Path $runtimeFilePath
         if ($runtimeFileSha256 -ne [string]$manifestEntry[0].sha256) {
             throw "Bundled DirectML speaker-labeling runtime file '$runtimeFile' hash does not match sherpa-directml-runtime.json."
         }
@@ -283,9 +372,24 @@ Remove-Item -Recurse -Force $workerTemp -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $finalPath -ErrorAction SilentlyContinue
 
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.App\MeetingRecorder.App.csproj") -PublishOutput $appTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $appTemp `
+    -AppHostFileName "MeetingRecorder.App.exe" `
+    -ProjectName "MeetingRecorder.App" `
+    -ConfiguredStableAppHostPath $StableAppHostPath
 Assert-LooseFileWpfShellPublishLayout -PublishRoot $appTemp
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\AppPlatform.Deployment.Cli\AppPlatform.Deployment.Cli.csproj") -PublishOutput $cliTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $cliTemp `
+    -AppHostFileName "AppPlatform.Deployment.Cli.exe" `
+    -ProjectName "AppPlatform.Deployment.Cli" `
+    -ConfiguredStableAppHostPath $StableDeploymentCliAppHostPath
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj") -PublishOutput $workerTemp
+Restore-VerifiedStableAppHostIfNeeded `
+    -PublishRoot $workerTemp `
+    -AppHostFileName "MeetingRecorder.ProcessingWorker.exe" `
+    -ProjectName "MeetingRecorder.ProcessingWorker" `
+    -ConfiguredStableAppHostPath $StableWorkerAppHostPath
 
 New-Item -ItemType Directory -Force -Path $finalPath | Out-Null
 Copy-Item -Path (Join-Path $appTemp "*") -Destination $finalPath -Recurse -Force

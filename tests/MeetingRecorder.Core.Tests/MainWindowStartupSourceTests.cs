@@ -47,6 +47,18 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Home_Refresh_Does_Not_Start_Automatic_Cleanup_And_Offloads_Archive_Receipt_Scanning()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+
+        Assert.Contains("Task.Run(", source);
+        Assert.Contains("() => _meetingArchiveReceiptService.FindReceiptsAsync", source);
+        Assert.Contains("refreshMode == MeetingRefreshMode.Full &&", source);
+        Assert.Contains("ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)", source);
+    }
+
+    [Fact]
     public void Full_Refresh_Publishes_Baseline_Rows_Before_Queueing_Background_Enrichment()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -143,6 +155,26 @@ public sealed class MainWindowStartupSourceTests
         Assert.Contains("RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, \"startup warmup\");", warmupBlock);
         Assert.DoesNotContain("await RefreshMeetingListAsync(MeetingRefreshMode.Fast);", warmupBlock);
         Assert.Contains("ScheduleDeferredStartupMaintenance();", warmupBlock);
+    }
+
+    [Fact]
+    public void Startup_And_Published_Repair_Recovery_Use_Bounded_Callback_Intent_Lanes()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var warmupStart = source.IndexOf("private void ScheduleStartupWarmup", StringComparison.Ordinal);
+        var maintenanceStart = source.IndexOf("private void ScheduleDeferredStartupMaintenance", StringComparison.Ordinal);
+        var resumeStart = source.IndexOf("internal async Task ResumePendingProcessingAfterMaintenanceAsync", StringComparison.Ordinal);
+        var warmupBlock = source[warmupStart..maintenanceStart];
+        var maintenanceBlock = source[maintenanceStart..resumeStart];
+        var resumeBlock = source[resumeStart..source.IndexOf("private void ScheduleDeferredMeetingsRefresh", resumeStart, StringComparison.Ordinal)];
+
+        Assert.Contains("TryBeginCallbackIntent(\"startup-warmup\", \"startup-warmup\")", warmupBlock, StringComparison.Ordinal);
+        Assert.Contains("RunStartupWarmupAsync(callbackIntent)", warmupBlock, StringComparison.Ordinal);
+        Assert.Contains("TryBeginCallbackIntent(\"startup-maintenance\", \"deferred-startup-maintenance\")", maintenanceBlock, StringComparison.Ordinal);
+        Assert.Contains("RunDeferredStartupMaintenanceAsync(callbackIntent)", maintenanceBlock, StringComparison.Ordinal);
+        Assert.Contains("TryBeginCallbackIntent(\"startup-recovery\", \"published-repair-resume\")", resumeBlock, StringComparison.Ordinal);
+        Assert.Contains("CompleteCallbackIntent(callbackIntent);", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -310,6 +342,39 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Matcher_Mode_Gates_Reclassification_And_Rollover_Before_Legacy_Action_Selection()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("private void RecordReclassificationShadow", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        var matcherIndex = methodBlock.IndexOf("ContinuityCutoverMode.Matcher", StringComparison.Ordinal);
+        var transitionIndex = methodBlock.IndexOf("MainWindowInteractionLogic.GetEligibleActiveSessionTransition(", StringComparison.Ordinal);
+        Assert.True(matcherIndex >= 0, "Expected matcher authority before an active-session split action.");
+        Assert.True(transitionIndex > matcherIndex, "Legacy mechanics may select action only after matcher verdict permits DifferentMeeting.");
+        Assert.Contains("matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Matcher_Mode_Uses_Identity_Recovery_Without_Legacy_SameMeeting_Presumption()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var detectionStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var detectionEnd = source.IndexOf("private async Task<bool> TryReclassifyActiveSessionAsync", detectionStart, StringComparison.Ordinal);
+        var detectionBlock = source[detectionStart..detectionEnd];
+
+        var recoveryStart = detectionBlock.IndexOf("if (_liveConfig.Current.MeetingIdentityContinuityEnabled", StringComparison.Ordinal);
+        var recoveryEnd = detectionBlock.IndexOf("var manualStopSuppressionDisposition", recoveryStart, StringComparison.Ordinal);
+        var recoveryBlock = detectionBlock[recoveryStart..recoveryEnd];
+        Assert.Contains("ContinuityCutoverMode.Matcher", recoveryBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingIdentityVerdict.Unknown", recoveryBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (shouldRecoverFromRecentAutoStop &&", recoveryBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Main_Tab_Selection_Changes_Are_Ignored_Until_The_Window_Is_Fully_Initialized()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -434,6 +499,8 @@ public sealed class MainWindowStartupSourceTests
         Assert.Contains("return false;", helperBlock, StringComparison.Ordinal);
         Assert.Contains("new WindowInteropHelper(window).Handle", helperBlock, StringComparison.Ordinal);
         Assert.Contains("windowHandle == nint.Zero", helperBlock, StringComparison.Ordinal);
+        Assert.Contains("ExistingAppWindowActivator.RestoreAndActivateWindow(windowHandle);", helperBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("window.Topmost", helperBlock, StringComparison.Ordinal);
         Assert.Contains("return true;", helperBlock, StringComparison.Ordinal);
     }
 
@@ -462,16 +529,34 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Shutdown_Path_Bounds_Processing_Queue_Stop_Before_Closing_The_Application()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var shutdownStart = source.IndexOf("private async Task ShutdownAsync()", StringComparison.Ordinal);
+        var shutdownEnd = source.IndexOf("private async Task StopCurrentRecordingAsync(", shutdownStart, StringComparison.Ordinal);
+        var shutdownBlock = source[shutdownStart..shutdownEnd];
+
+        Assert.Contains("ShutdownProcessingStopTimeout", source);
+        Assert.Contains("new CancellationTokenSource(ShutdownProcessingStopTimeout)", shutdownBlock);
+        Assert.Contains("await _processingQueue.StopAsync(shutdownProcessingStopCts.Token);", shutdownBlock);
+        Assert.Contains("continuing application exit", shutdownBlock, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Header_Shell_Status_Action_Slot_Uses_Hidden_Instead_Of_Collapsed_To_Avoid_Layout_Shifts()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
-        var updateStart = source.IndexOf("var shellStatus = _shellStatusOverride ?? MainWindowInteractionLogic.BuildShellStatus(", StringComparison.Ordinal);
-        var updateEnd = source.IndexOf("private static string BuildMicCaptureReadinessText(", updateStart, StringComparison.Ordinal);
+        var updateStart = source.IndexOf("private void ApplyHomeCommandCenterState(HomeCommandCenterState state)", StringComparison.Ordinal);
+        var updateEnd = source.IndexOf("private static bool HasConfiguredOutputDirectories(", updateStart, StringComparison.Ordinal);
         var updateBlock = source[updateStart..updateEnd];
+        var headerActionStart = updateBlock.IndexOf("HeaderShellStatusActionButton.Visibility", StringComparison.Ordinal);
+        var headerActionEnd = updateBlock.IndexOf("HomeNextBestActionHeadlineTextBlock.Text", headerActionStart, StringComparison.Ordinal);
+        var headerActionBlock = updateBlock[headerActionStart..headerActionEnd];
 
-        Assert.Contains("Visibility.Hidden", updateBlock);
-        Assert.DoesNotContain("Visibility.Collapsed", updateBlock);
+        Assert.Contains("Visibility.Hidden", headerActionBlock);
+        Assert.DoesNotContain("Visibility.Collapsed", headerActionBlock);
     }
 
     [Fact]

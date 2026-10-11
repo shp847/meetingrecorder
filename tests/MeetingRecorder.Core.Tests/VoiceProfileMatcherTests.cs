@@ -171,6 +171,21 @@ public sealed class VoiceProfileMatcherTests
         Assert.Single(differentMeetingSameSpeaker);
     }
 
+    [Fact]
+    public void ApplyPredictions_Preserves_Explicit_User_Meeting_Name()
+    {
+        var matcher = new VoiceProfileMatcher();
+        var speaker = new SpeakerIdentity("speaker_00", "Morgan Yu", true, null, SpeakerNameSource.UserEdited);
+        var prediction = new SpeakerNamePrediction(
+            "speaker_00", "voice_pranav", "Pranav Sharma", 0.99d,
+            SpeakerNameSource.AutoAppliedVoiceProfile,
+            SpeakerNameDecisionReason.AutoAppliedHighConfidence);
+
+        var updated = Assert.Single(matcher.ApplyPredictions([speaker], [prediction]));
+
+        Assert.Equal(speaker, updated);
+    }
+
     private static SpeakerVoiceSample Sample(string speakerId, IReadOnlyList<float> embedding)
     {
         return new SpeakerVoiceSample(

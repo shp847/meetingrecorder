@@ -1994,7 +1994,7 @@ public sealed class AutoRecordingContinuityPolicyTests
             activeSessionTitle: "Meet - btw-osmp-hmr and 26 more pages - Work - Microsoft Edge",
             configuredTimeout: TimeSpan.FromSeconds(30));
 
-        Assert.Equal(TimeSpan.FromMinutes(3), timeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), timeout);
     }
 
     [Fact]
@@ -2024,7 +2024,7 @@ public sealed class AutoRecordingContinuityPolicyTests
             activeSessionTitle: "Meet - btw-osmp-hmr and 26 more pages - Work - Microsoft Edge",
             configuredTimeout);
 
-        Assert.Equal(TimeSpan.FromMinutes(3), timeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), timeout);
     }
 
     [Fact]
@@ -2052,7 +2052,35 @@ public sealed class AutoRecordingContinuityPolicyTests
             activeSessionTitle: "Meet - Named Customer Workshop - Work - Microsoft Edge",
             configuredTimeout: TimeSpan.FromSeconds(30));
 
-        Assert.Equal(TimeSpan.FromMinutes(3), timeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), timeout);
+    }
+
+    [Fact]
+    public void GetAutoStopTimeout_Extends_When_Active_Named_Google_Meet_Is_Obscured_By_Generic_Teams_Shell()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.85d,
+            SessionTitle: "Microsoft Teams | Pinned window",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Microsoft Teams | Pinned window | Microsoft Teams", 0.70d, now),
+                new DetectionSignal("teams-host", "Microsoft Teams", 0.15d, now),
+                new DetectionSignal("audio-silence", "Headphones; peak=0.000; status=below-threshold", 0d, now),
+            ],
+            Reason: "Meeting-like window detected, but no active system audio was observed.");
+
+        var timeout = policy.GetAutoStopTimeout(
+            decision,
+            MeetingPlatform.GoogleMeet,
+            activeSessionTitle: "Meet - VIP DigiNerv Logic Walkthrough and 34 more pages - Work - Microsoft Edge",
+            configuredTimeout: TimeSpan.FromSeconds(30));
+
+        Assert.Equal(TimeSpan.FromMinutes(5), timeout);
     }
 
     [Fact]

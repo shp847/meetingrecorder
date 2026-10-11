@@ -12,9 +12,13 @@ public sealed class SessionManifestStore
         WriteIndented = true,
     };
 
-    public SessionManifestStore(ArtifactPathBuilder pathBuilder)
+    private readonly MeetingIdentitySnapshotService _identitySnapshotService;
+
+    public SessionManifestStore(ArtifactPathBuilder pathBuilder, MeetingIdentitySnapshotService? identitySnapshotService = null)
     {
         PathBuilder = pathBuilder;
+        _identitySnapshotService = identitySnapshotService ?? new MeetingIdentitySnapshotService(
+            new MeetingIdentityKeyStore(AppDataPaths.GetMeetingIdentityKeyPath()));
     }
 
     public ArtifactPathBuilder PathBuilder { get; }
@@ -73,11 +77,46 @@ public sealed class SessionManifestStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(manifestPath) ?? throw new InvalidOperationException("Manifest path must include a directory."));
-        var normalizedManifest = NormalizeManifest(manifest);
+        var normalizedManifest = NormalizeManifest(_identitySnapshotService.EnsureForNormalSave(manifest));
         var json = JsonSerializer.Serialize(normalizedManifest, SerializerOptions);
-        File.WriteAllText(manifestPath, json);
+        var temporaryPath = manifestPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var backupPath = temporaryPath + ".bak";
+        try
+        {
+            File.WriteAllText(temporaryPath, json);
+            if (File.Exists(manifestPath))
+            {
+                File.Replace(temporaryPath, manifestPath, backupPath, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                File.Move(temporaryPath, manifestPath);
+            }
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+
+            if (File.Exists(backupPath))
+            {
+                File.Delete(backupPath);
+            }
+        }
         return Task.CompletedTask;
     }
+
+    public MeetingIdentitySnapshot? GetIdentitySnapshotForComparison(MeetingSessionManifest manifest) =>
+        _identitySnapshotService.GetForComparison(manifest);
+
+    public MeetingIdentitySnapshot? CreateIdentitySnapshotForComparison(
+        MeetingPlatform platform,
+        string? meetingTitle,
+        DetectedAudioSource? audioSource,
+        DateTimeOffset capturedAtUtc) =>
+        _identitySnapshotService.CreateForRuntime(platform, meetingTitle, audioSource, capturedAtUtc);
 
     public async Task<IReadOnlyList<string>> FindPendingManifestPathsAsync(string workDir, CancellationToken cancellationToken = default)
     {
@@ -107,6 +146,12 @@ public sealed class SessionManifestStore
                 continue;
             }
 
+            if (manifest.ImportedSourceAudio is not null &&
+                await IsImportedWorkBlockedBySetupAsync(manifestPath, cancellationToken))
+            {
+                continue;
+            }
+
             if (manifest.State is SessionState.Queued or SessionState.Processing or SessionState.Finalizing)
             {
                 pending.Add((manifestPath, manifest));
@@ -118,6 +163,43 @@ public sealed class SessionManifestStore
             .ThenBy(candidate => candidate.Manifest.StartedAtUtc)
             .Select(candidate => candidate.Path)
             .ToArray();
+    }
+
+    private static async Task<bool> IsImportedWorkBlockedBySetupAsync(
+        string manifestPath,
+        CancellationToken cancellationToken)
+    {
+        var sessionRoot = Path.GetDirectoryName(manifestPath);
+        if (string.IsNullOrWhiteSpace(sessionRoot))
+        {
+            return true;
+        }
+
+        var jobPath = Path.Combine(sessionRoot, "import-job.json");
+        if (!File.Exists(jobPath))
+        {
+            // Legacy imported manifests did not have a companion job. Preserve
+            // their pre-S5 resume behavior rather than silently reclassifying them.
+            return false;
+        }
+
+        try
+        {
+            var loaded = await new ExternalAudioImportJobStore(jobPath).LoadAsync(cancellationToken);
+            return loaded.Job is null ||
+                   !loaded.Schema.CanRead ||
+                   loaded.Job.State == ExternalAudioImportJobState.BlockedBySetup;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // An unreadable companion job is unknown safety state. Keep staged
+            // work intact for repair; never start a worker from incomplete truth.
+            return true;
+        }
     }
 
     internal static int GetPendingResumePriority(MeetingSessionManifest manifest)
@@ -142,7 +224,7 @@ public sealed class SessionManifestStore
         CancellationToken cancellationToken)
     {
         await SaveAsync(manifest, manifestPath, cancellationToken);
-        return NormalizeManifest(manifest);
+        return NormalizeManifest(_identitySnapshotService.EnsureForNormalSave(manifest));
     }
 
     private static MeetingSessionManifest NormalizeManifest(MeetingSessionManifest manifest)

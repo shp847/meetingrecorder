@@ -12,12 +12,12 @@
   "gitHubRepositoryOwner": "shp847",
   "gitHubRepositoryName": "meetingrecorder",
   "managedInstallLayout": {
-    "installRoot": "%LOCALAPPDATA%\\Programs\\Meeting Recorder",
+    "installRoot": "%USERPROFILE%\\MeetingRecorder",
     "dataRoot": "%LOCALAPPDATA%\\MeetingRecorder",
     "configPath": "%LOCALAPPDATA%\\MeetingRecorder\\config\\appsettings.json",
     "preservedDataDirectories": [ "config", "logs", "audio", "transcripts", "work" ],
     "mergeWithoutOverwriteDirectories": [ "models" ],
-    "legacyInstallRoots": [ "%USERPROFILE%\\Documents\\MeetingRecorder", "%USERPROFILE%\\Documents\\Meeting Recorder" ]
+    "legacyInstallRoots": [ "%LOCALAPPDATA%\\Programs\\Meeting Recorder", "%USERPROFILE%\\Documents\\MeetingRecorder", "%USERPROFILE%\\Documents\\Meeting Recorder" ]
   },
   "releaseChannelPolicy": {
     "supportsPerUserMsi": true,

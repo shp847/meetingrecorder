@@ -453,9 +453,8 @@ public partial class App : Application
             return false;
         }
 
-        window.Topmost = true;
+        ExistingAppWindowActivator.RestoreAndActivateWindow(windowHandle);
         window.Activate();
-        window.Topmost = false;
         window.Focus();
         return true;
     }

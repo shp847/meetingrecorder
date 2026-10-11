@@ -28,6 +28,11 @@ public sealed class PortableBundleInstaller
     private readonly IDeploymentLogger _logger;
     private readonly InstallProvenanceStore _provenanceStore;
 
+    private sealed record LegacyInstallRootBackup(
+        string OriginalRoot,
+        string BackupRoot,
+        List<string> MergedDataFiles);
+
     public PortableBundleInstaller()
         : this(
             new InstallPathProcessManager(),
@@ -75,10 +80,11 @@ public sealed class PortableBundleInstaller
         CancellationToken cancellationToken)
     {
         var sourceBundleRoot = ResolveSourceBundleRoot(request.BundleRoot, manifest.ExecutableName);
-        var resolvedInstallRoot = Path.GetFullPath(
-            string.IsNullOrWhiteSpace(request.InstallRoot)
-                ? GetDefaultInstallRoot(manifest)
-                : request.InstallRoot);
+        var resolvedInstallRoot = ResolveInstallRoot(manifest, request);
+        var legacyInstallRoots = IsCanonicalInstallRoot(manifest, resolvedInstallRoot)
+            ? ResolveLegacyInstallRoots(manifest, resolvedInstallRoot)
+            : [];
+        var preservedPayloadSourceRoot = ResolvePreservedPayloadSourceRoot(request, legacyInstallRoots);
         var isUpdate = Directory.Exists(resolvedInstallRoot);
         var preservedPayloadFiles = ResolvePreservedPayloadFiles(
             request,
@@ -103,6 +109,7 @@ public sealed class PortableBundleInstaller
         var finalInstallMoved = false;
         var desktopShortcutCreated = false;
         var startMenuShortcutCreated = false;
+        var migratedLegacyInstallRoots = new List<LegacyInstallRootBackup>();
 
         try
         {
@@ -128,6 +135,10 @@ public sealed class PortableBundleInstaller
             BundleIntegrityValidator.ValidateBundle(stagingRoot, preservedPayloadFiles);
 
             await _processManager.EnsureInstallPathReleasedAsync(resolvedInstallRoot, cancellationToken);
+            foreach (var legacyInstallRoot in legacyInstallRoots)
+            {
+                await _processManager.EnsureInstallPathReleasedAsync(legacyInstallRoot, cancellationToken);
+            }
 
             if (isUpdate)
             {
@@ -153,6 +164,33 @@ public sealed class PortableBundleInstaller
                 _logger.Info($"Promoting staged bundle '{stagingRoot}' into '{resolvedInstallRoot}'.");
                 Directory.Move(stagingRoot, resolvedInstallRoot);
                 finalInstallMoved = true;
+            }
+
+            RestorePreservedPayloadFiles(
+                preservedPayloadSourceRoot,
+                resolvedInstallRoot,
+                preservedPayloadFiles);
+            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot, preservedPayloadFiles);
+            _logger.Info($"Validating installed bundle integrity under '{resolvedInstallRoot}'.");
+            try
+            {
+                BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot, preservedPayloadFiles);
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new InvalidOperationException(
+                    $"The installed bundle under '{resolvedInstallRoot}' is incomplete after promotion. A security tool may have quarantined one or more executable files. Underlying error: {exception.Message}",
+                    exception);
+            }
+
+            MigrateLegacyInstallRoots(
+                legacyInstallRoots,
+                resolvedInstallRoot,
+                migratedLegacyInstallRoots,
+                cancellationToken);
+            foreach (var migratedLegacyInstallRoot in migratedLegacyInstallRoots)
+            {
+                _logger.Info($"Migrated legacy install root '{migratedLegacyInstallRoot.OriginalRoot}'.");
             }
 
             var executablePath = Path.Combine(resolvedInstallRoot, manifest.ExecutableName);
@@ -233,27 +271,6 @@ public sealed class PortableBundleInstaller
                     : "Start Menu shortcut creation failed.");
             }
 
-            var quarantinedLegacyInstallRoots = QuarantineLegacyInstallRoots(
-                manifest.ManagedInstallLayout.LegacyInstallRoots,
-                resolvedInstallRoot);
-            foreach (var quarantinedLegacyInstallRoot in quarantinedLegacyInstallRoots)
-            {
-                _logger.Info($"Quarantined legacy install root to '{quarantinedLegacyInstallRoot}'.");
-            }
-
-            EnsureInstalledExecutablePayload(sourceBundleRoot, resolvedInstallRoot, preservedPayloadFiles);
-            _logger.Info($"Validating installed bundle integrity under '{resolvedInstallRoot}'.");
-            try
-            {
-                BundleIntegrityValidator.ValidateBundle(resolvedInstallRoot, preservedPayloadFiles);
-            }
-            catch (InvalidOperationException exception)
-            {
-                throw new InvalidOperationException(
-                    $"The installed bundle under '{resolvedInstallRoot}' is incomplete after promotion. A security tool may have quarantined one or more executable files. Underlying error: {exception.Message}",
-                    exception);
-            }
-
             PersistInstallProvenance(manifest, request, isUpdate);
             _logger.Info($"Persisted install provenance at '{_provenanceStore.GetPath(manifest.ManagedInstallLayout.DataRoot)}'.");
 
@@ -270,6 +287,10 @@ public sealed class PortableBundleInstaller
 
             TryDeleteDirectory(stagingRoot);
             CleanupBackupDirectory(backupRoot);
+            foreach (var migratedLegacyInstallRoot in migratedLegacyInstallRoots)
+            {
+                CleanupBackupDirectory(migratedLegacyInstallRoot.BackupRoot);
+            }
             _logger.Info("Cleaned up installer backup directory.");
 
             return new InstallResult(
@@ -283,6 +304,8 @@ public sealed class PortableBundleInstaller
         {
             _logger.Error("Bundle install failed. Attempting rollback.");
             TryDeleteDirectory(stagingRoot);
+
+            RollbackLegacyInstallRoots(migratedLegacyInstallRoots);
 
             if (movedBackup)
             {
@@ -337,29 +360,95 @@ public sealed class PortableBundleInstaller
         throw new InvalidOperationException("The portable application bundle could not be found.");
     }
 
+    private string ResolveInstallRoot(AppProductManifest manifest, InstallRequest request)
+    {
+        var defaultInstallRoot = Path.GetFullPath(GetDefaultInstallRoot(manifest));
+        if (string.IsNullOrWhiteSpace(request.InstallRoot))
+        {
+            return defaultInstallRoot;
+        }
+
+        var requestedInstallRoot = Path.GetFullPath(request.InstallRoot);
+        var isLegacyAutoUpdate = request.Channel == InstallChannel.AutoUpdate &&
+            manifest.ManagedInstallLayout.LegacyInstallRoots
+                .Select(Path.GetFullPath)
+                .Any(legacyInstallRoot => string.Equals(
+                    legacyInstallRoot,
+                    requestedInstallRoot,
+                    StringComparison.OrdinalIgnoreCase));
+
+        if (isLegacyAutoUpdate)
+        {
+            _logger.Info($"Redirecting auto-update from legacy install root '{requestedInstallRoot}' to '{defaultInstallRoot}'.");
+            return defaultInstallRoot;
+        }
+
+        return requestedInstallRoot;
+    }
+
+    private static bool IsCanonicalInstallRoot(AppProductManifest manifest, string installRoot)
+    {
+        return string.Equals(
+            Path.GetFullPath(manifest.ManagedInstallLayout.InstallRoot),
+            Path.GetFullPath(installRoot),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolvePreservedPayloadSourceRoot(
+        InstallRequest request,
+        IReadOnlyList<string> legacyInstallRoots)
+    {
+        if (request.Channel != InstallChannel.AutoUpdate || string.IsNullOrWhiteSpace(request.InstallRoot))
+        {
+            return null;
+        }
+
+        var requestedInstallRoot = Path.GetFullPath(request.InstallRoot);
+        return legacyInstallRoots.FirstOrDefault(legacyInstallRoot =>
+            string.Equals(legacyInstallRoot, requestedInstallRoot, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<string> ResolveLegacyInstallRoots(
+        AppProductManifest manifest,
+        string currentInstallRoot)
+    {
+        var normalizedCurrentInstallRoot = Path.GetFullPath(currentInstallRoot);
+        return manifest.ManagedInstallLayout.LegacyInstallRoots
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Where(path => !string.Equals(path, normalizedCurrentInstallRoot, StringComparison.OrdinalIgnoreCase))
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static IReadOnlySet<string> ResolvePreservedPayloadFiles(
         InstallRequest request,
         string sourceBundleRoot,
         string installRoot,
         bool isUpdate)
     {
-        if (!isUpdate)
-        {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        }
-
         var requestedPreservedPayloadFiles = (request.PreservedPayloadFiles ?? [])
             .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
             .ToArray();
         if (requestedPreservedPayloadFiles.Length > 0)
         {
-            EnsureStableAppHostLayoutsSupportAutoUpdate(
-                sourceBundleRoot,
-                installRoot,
-                requestedPreservedPayloadFiles);
+            if (isUpdate)
+            {
+                EnsureStableAppHostLayoutsSupportAutoUpdate(
+                    sourceBundleRoot,
+                    installRoot,
+                    requestedPreservedPayloadFiles);
+            }
+
             return new HashSet<string>(
                 requestedPreservedPayloadFiles,
                 StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (!isUpdate)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
         if (request.Channel != InstallChannel.AutoUpdate)
@@ -549,30 +638,84 @@ public sealed class PortableBundleInstaller
             $"The installed bundle is missing required executable files after deployment: {string.Join(", ", missingRequiredFiles.Select(fileName => $"'{fileName}'"))}.");
     }
 
-    internal static IReadOnlyList<string> QuarantineLegacyInstallRoots(
-        IReadOnlyList<string> legacyInstallRoots,
-        string currentInstallRoot)
+    private static void RestorePreservedPayloadFiles(
+        string? sourceInstallRoot,
+        string installRoot,
+        IReadOnlySet<string> preservedPayloadFiles)
     {
-        var quarantinedRoots = new List<string>();
-        var normalizedCurrentInstallRoot = Path.GetFullPath(currentInstallRoot);
-
-        foreach (var legacyInstallRoot in legacyInstallRoots
-                     .Where(path => !string.IsNullOrWhiteSpace(path))
-                     .Select(Path.GetFullPath)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(sourceInstallRoot) || preservedPayloadFiles.Count == 0)
         {
-            if (string.Equals(legacyInstallRoot, normalizedCurrentInstallRoot, StringComparison.OrdinalIgnoreCase) ||
-                !Directory.Exists(legacyInstallRoot))
-            {
-                continue;
-            }
-
-            var quarantineRoot = CreateLegacyInstallBackupPath(legacyInstallRoot);
-            TryMoveExistingInstallToBackup(legacyInstallRoot, quarantineRoot);
-            quarantinedRoots.Add(quarantineRoot);
+            return;
         }
 
-        return quarantinedRoots;
+        foreach (var fileName in preservedPayloadFiles)
+        {
+            var sourcePath = Path.Combine(sourceInstallRoot, fileName);
+            var destinationPath = Path.Combine(installRoot, fileName);
+            if (!File.Exists(sourcePath))
+            {
+                throw CreateInstallerResetRequiredException();
+            }
+
+            if (!File.Exists(destinationPath))
+            {
+                File.Copy(sourcePath, destinationPath, overwrite: false);
+            }
+        }
+    }
+
+    private static void MigrateLegacyInstallRoots(
+        IReadOnlyList<string> legacyInstallRoots,
+        string currentInstallRoot,
+        List<LegacyInstallRootBackup> migratedRoots,
+        CancellationToken cancellationToken)
+    {
+        foreach (var legacyInstallRoot in legacyInstallRoots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var backupRoot = CreateLegacyInstallBackupPath(legacyInstallRoot);
+            var migration = new LegacyInstallRootBackup(legacyInstallRoot, backupRoot, []);
+            TryMoveExistingInstallToBackup(legacyInstallRoot, backupRoot);
+            migratedRoots.Add(migration);
+
+            migration.MergedDataFiles.AddRange(MergeDirectoryWithoutOverwriting(
+                Path.Combine(backupRoot, ManagedDataDirectoryName),
+                Path.Combine(currentInstallRoot, ManagedDataDirectoryName),
+                cancellationToken));
+        }
+    }
+
+    private static void RollbackLegacyInstallRoots(IReadOnlyList<LegacyInstallRootBackup> migratedRoots)
+    {
+        foreach (var migratedRoot in migratedRoots.Reverse())
+        {
+            foreach (var mergedDataFile in migratedRoot.MergedDataFiles)
+            {
+                try
+                {
+                    if (File.Exists(mergedDataFile))
+                    {
+                        File.Delete(mergedDataFile);
+                    }
+                }
+                catch
+                {
+                    // Best effort rollback cleanup only.
+                }
+            }
+
+            try
+            {
+                if (!Directory.Exists(migratedRoot.OriginalRoot) && Directory.Exists(migratedRoot.BackupRoot))
+                {
+                    Directory.Move(migratedRoot.BackupRoot, migratedRoot.OriginalRoot);
+                }
+            }
+            catch
+            {
+                // The original exception remains the actionable failure.
+            }
+        }
     }
 
     internal static void CleanupBackupDirectory(string backupRoot)
@@ -707,14 +850,15 @@ public sealed class PortableBundleInstaller
         }
     }
 
-    private static void MergeDirectoryWithoutOverwriting(
+    private static IReadOnlyList<string> MergeDirectoryWithoutOverwriting(
         string sourcePath,
         string destinationPath,
         CancellationToken cancellationToken)
     {
+        var mergedFiles = new List<string>();
         if (!Directory.Exists(sourcePath))
         {
-            return;
+            return mergedFiles;
         }
 
         foreach (var file in Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories))
@@ -730,7 +874,10 @@ public sealed class PortableBundleInstaller
             Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)
                 ?? throw new InvalidOperationException("Destination file must have a parent directory."));
             File.Copy(file, destinationFile, overwrite: false);
+            mergedFiles.Add(destinationFile);
         }
+
+        return mergedFiles;
     }
 
     private static void MoveReplaceableInstallEntriesToBackup(

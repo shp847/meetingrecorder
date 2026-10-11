@@ -39,7 +39,7 @@ public sealed class PortableInstallServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetDefaultInstallRoot_Uses_LocalApplicationData_Programs()
+    public void GetDefaultInstallRoot_Uses_UserProfile()
     {
         var service = new PortableInstallService();
 
@@ -47,9 +47,8 @@ public sealed class PortableInstallServiceTests : IDisposable
 
         Assert.Equal(
             Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Programs",
-                "Meeting Recorder"),
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "MeetingRecorder"),
             installRoot);
     }
 

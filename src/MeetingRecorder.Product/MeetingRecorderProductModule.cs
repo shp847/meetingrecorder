@@ -20,9 +20,10 @@ public sealed class MeetingRecorderProductModule :
     private static readonly IReadOnlyList<SettingsSectionDefinition> SettingsSections =
     [
         new("setup", "Setup", "Make transcription and speaker labeling ready."),
-        new("general", "General", "Daily defaults and helper behavior."),
-        new("files", "Files", "Output folders and managed storage."),
-        new("updates", "Updates", "Release checks and installation behavior."),
+        new("recording", "Recording", "Recording assistance, microphone scope, and startup behavior."),
+        new("processing", "Processing", "Transcript, backlog, speaker-labeling, and local learning behavior."),
+        new("summaries", "Summaries", "Summary mode, readiness, and provider boundary."),
+        new("files-and-updates", "Files & Updates", "Output folders, release checks, and update controls."),
         new("advanced", "Advanced", "Troubleshooting and infrastructure overrides."),
     ];
 
@@ -77,6 +78,10 @@ public sealed class MeetingRecorderProductModule :
             MergeWithoutOverwriteDirectories: ["models"],
             LegacyInstallRoots:
             [
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Programs",
+                    "Meeting Recorder"),
                 Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     "Documents",

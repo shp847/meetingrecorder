@@ -50,6 +50,152 @@ public sealed class ModelProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisionAsync_Recommended_Transcription_Does_Not_Provision_Or_Reconfigure_SpeakerLabeling()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        var seedConfigStore = fixture.CreateConfigStore();
+        var speakerAssetPath = Path.Combine(fixture.Root, "optional", "speaker-labeling");
+        var seededConfig = new AppConfig
+        {
+            AudioOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Recordings"),
+            TranscriptOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Transcripts"),
+            WorkDir = Path.Combine(fixture.AppRoot, "work"),
+            ModelCacheDir = fixture.ModelCacheRoot,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Custom,
+            DiarizationAssetPath = speakerAssetPath,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+            BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+            UpdateFeedUrl = "https://example.com/releases/latest",
+        };
+        await seedConfigStore.SaveAsync(seededConfig);
+
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false));
+        var service = fixture.CreateService(feedClient);
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.HighAccuracyDownloaded,
+                RespectExistingConfigPreferences: false,
+                ProvisionSpeakerLabeling: false));
+
+        Assert.True(result.Result.Transcription.IsReady);
+        Assert.Equal(TranscriptionModelProfilePreference.Standard, result.Config.TranscriptionModelProfilePreference);
+        Assert.Equal(fixture.StandardTranscriptionTargetPath, result.Config.TranscriptionModelPath);
+        Assert.Equal(seededConfig.SpeakerLabelingModelProfilePreference, result.Config.SpeakerLabelingModelProfilePreference);
+        Assert.Equal(seededConfig.DiarizationAssetPath, result.Config.DiarizationAssetPath);
+        Assert.Equal(seededConfig.BackgroundSpeakerLabelingMode, result.Config.BackgroundSpeakerLabelingMode);
+        Assert.False(result.Result.SpeakerLabeling.IsReady);
+        Assert.Contains("does not download", result.Result.SpeakerLabeling.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(fixture.StandardSpeakerLabelingTargetPath));
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_Recommended_Transcription_Reports_Size_And_Honors_Cancel()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        using var cancellationSource = new CancellationTokenSource();
+        var progress = new CancelOnFirstDownloadProgress(cancellationSource);
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false));
+        var service = fixture.CreateService(feedClient);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await service.ProvisionAsync(
+                new ModelProvisioningRequest(
+                    fixture.InstallRoot,
+                    fixture.ModelCatalogPath,
+                    "https://example.com/releases/latest",
+                    TranscriptionModelProfilePreference.Standard,
+                    SpeakerLabelingModelProfilePreference.Standard,
+                    RespectExistingConfigPreferences: false,
+                    ProvisionSpeakerLabeling: false,
+                    TranscriptionDownloadProgress: progress),
+                cancellationSource.Token));
+
+        Assert.Equal(0, progress.FirstProgress.BytesDownloaded);
+        Assert.NotNull(progress.FirstProgress.TotalBytes);
+        Assert.Equal(fixture.CreateWhisperModelBytes().LongLength, progress.FirstProgress.TotalBytes);
+        Assert.False(File.Exists(fixture.StandardTranscriptionTargetPath));
+        Assert.False(File.Exists(fixture.ResultStorePath));
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_Failed_Recommended_Transcription_Preserves_Existing_Valid_Custom_Model()
+    {
+        var fixture = await ProvisioningFixture.CreateAsync();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.CustomTranscriptionPath)!);
+        await File.WriteAllBytesAsync(fixture.CustomTranscriptionPath, fixture.CreateWhisperModelBytes());
+        var configStore = fixture.CreateConfigStore();
+        await configStore.SaveAsync(new AppConfig
+        {
+            AudioOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Recordings"),
+            TranscriptOutputDir = Path.Combine(fixture.DocumentsRoot, "Meetings", "Transcripts"),
+            WorkDir = Path.Combine(fixture.AppRoot, "work"),
+            ModelCacheDir = fixture.ModelCacheRoot,
+            TranscriptionModelPath = fixture.CustomTranscriptionPath,
+            TranscriptionModelProfilePreference = TranscriptionModelProfilePreference.Custom,
+            SpeakerLabelingModelProfilePreference = SpeakerLabelingModelProfilePreference.Disabled,
+            UpdateFeedUrl = "https://example.com/releases/latest",
+        });
+        var feedClient = new StubAppUpdateFeedClient(
+            payload: fixture.CreateReleasePayload(
+                includeStandardTranscription: true,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false),
+            downloads: await fixture.CreateDownloadsAsync(
+                includeStandardTranscription: false,
+                includeHighAccuracyTranscription: false,
+                includeStandardSpeakerLabeling: false,
+                includeHighAccuracySpeakerLabeling: false),
+            failingDownloads: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                fixture.StandardTranscriptionDownloadUrl,
+            });
+        var service = fixture.CreateService(feedClient);
+
+        var result = await service.ProvisionAsync(
+            new ModelProvisioningRequest(
+                fixture.InstallRoot,
+                fixture.ModelCatalogPath,
+                "https://example.com/releases/latest",
+                TranscriptionModelProfilePreference.Standard,
+                SpeakerLabelingModelProfilePreference.Disabled,
+                RespectExistingConfigPreferences: false,
+                ProvisionSpeakerLabeling: false));
+
+        Assert.True(result.Result.Transcription.IsReady);
+        Assert.True(result.Result.Transcription.RetryRecommended);
+        Assert.Equal(TranscriptionModelProfilePreference.Custom, result.Config.TranscriptionModelProfilePreference);
+        Assert.Equal(fixture.CustomTranscriptionPath, result.Config.TranscriptionModelPath);
+        Assert.Contains("remains active", result.Result.Transcription.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(fixture.StandardTranscriptionTargetPath));
+    }
+
+    [Fact]
     public async Task ProvisionAsync_Completes_Install_But_Requires_FirstLaunch_Setup_When_Standard_Transcription_Download_Fails()
     {
         var fixture = await ProvisioningFixture.CreateAsync();
@@ -779,6 +925,7 @@ public sealed class ModelProvisioningServiceTests
             IProgress<FileDownloadProgress>? progress,
             CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_failingDownloads.Contains(downloadUrl))
             {
                 throw new InvalidOperationException("Simulated download failure.");
@@ -792,6 +939,29 @@ public sealed class ModelProvisioningServiceTests
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
             await File.WriteAllBytesAsync(destinationPath, payload, cancellationToken);
             progress?.Report(new FileDownloadProgress(payload.LongLength, payload.LongLength));
+        }
+    }
+
+    private sealed class CancelOnFirstDownloadProgress : IProgress<FileDownloadProgress>
+    {
+        private readonly CancellationTokenSource _cancellationSource;
+
+        public CancelOnFirstDownloadProgress(CancellationTokenSource cancellationSource)
+        {
+            _cancellationSource = cancellationSource;
+        }
+
+        public FileDownloadProgress FirstProgress { get; private set; } = new(-1, null);
+
+        public void Report(FileDownloadProgress value)
+        {
+            if (FirstProgress.BytesDownloaded >= 0)
+            {
+                return;
+            }
+
+            FirstProgress = value;
+            _cancellationSource.Cancel();
         }
     }
 

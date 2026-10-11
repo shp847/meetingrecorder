@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MeetingRecorder.Core\MeetingRecorder.Core.csproj" />
+    <ProjectReference Include="..\..\src\MeetingRecorder.App\MeetingRecorder.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\MeetingRecorder.Core.Tests\WpfRenderHarness.cs" Link="WpfRenderHarness.cs" />
+  </ItemGroup>
+
+</Project>

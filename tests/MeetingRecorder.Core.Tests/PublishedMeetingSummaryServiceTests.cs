@@ -49,11 +49,14 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
         Assert.Equal("The team aligned on launch readiness.", json["summary"]?["overview"]?.GetValue<string>());
         Assert.Equal("OpenAI", json["summary"]?["provider"]?["providerName"]?.GetValue<string>());
         Assert.Equal("OpenAi", json["summary"]?["provider"]?["providerKind"]?.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(json["summary"]?["attributionFingerprint"]?.GetValue<string>()));
+        Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, json["summary"]?["attributionSchemaVersion"]?.GetValue<int>());
 
         var markdown = await File.ReadAllTextAsync(markdownPath);
         Assert.Contains("## Summary", markdown, StringComparison.Ordinal);
         Assert.True(markdown.IndexOf("## Summary", StringComparison.Ordinal) < markdown.IndexOf("## Transcript", StringComparison.Ordinal));
         Assert.Contains("- Provider: OpenAI (gpt-5-mini)", markdown, StringComparison.Ordinal);
+        Assert.Contains("Speaker attribution: current when this summary was generated", markdown, StringComparison.Ordinal);
 
         var savedManifest = await manifestStore.LoadAsync(manifestPath);
         Assert.Equal(StageExecutionState.Succeeded, savedManifest.SummarizationStatus.State);
@@ -61,6 +64,9 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_root, "work", "session-1", "processing", "summary.snapshot.json")));
         Assert.DoesNotContain("sk-secret", await File.ReadAllTextAsync(jsonPath), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sk-secret", markdown, StringComparison.OrdinalIgnoreCase);
+        var reread = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.False(string.IsNullOrWhiteSpace(reread.Summary?.AttributionFingerprint));
+        Assert.Equal(MeetingSummaryAttributionStateResolver.AttributionSchemaVersion, reread.Summary?.AttributionSchemaVersion);
     }
 
     [Fact]
@@ -142,6 +148,33 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
         Assert.DoesNotContain("raw response body", await File.ReadAllTextAsync(jsonPath), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task GenerateAsync_Skips_When_Speaker_Attribution_Changes_During_Generation()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        var markdownPath = Path.Combine(_root, "meeting.md");
+        await WriteTranscriptArtifactsAsync(jsonPath, markdownPath);
+        var provider = new TrackingSummaryProvider
+        {
+            ResultFactory = request =>
+            {
+                File.WriteAllText(jsonPath, File.ReadAllText(jsonPath).Replace("Speaker 1", "Alex", StringComparison.Ordinal));
+                return new MeetingSummaryResult(
+                    new ProcessingStageStatus("summarization", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Summary generated."),
+                    new MeetingSummary("Overview", [], [], [], [], new MeetingSummaryProviderInfo(SummaryChatProviderKind.OpenAi, "OpenAI", "gpt-5-mini", false), DateTimeOffset.UtcNow, MeetingSummaryTranscriptFingerprint.Compute(request.Segments)));
+            },
+        };
+
+        var result = await new PublishedMeetingSummaryService(provider).GenerateAsync(
+            CreateRecord(jsonPath, markdownPath, readyPath: null, manifestPath: null),
+            CreateEnabledConfig());
+
+        Assert.Equal(StageExecutionState.Skipped, result.Status.State);
+        var json = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!.AsObject();
+        Assert.Null(json["summary"]);
+        Assert.Contains("changed during generation", result.Status.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static AppConfig CreateEnabledConfig()
     {
         return new AppConfig
@@ -149,6 +182,7 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
             SummaryGenerationMode = MeetingSummaryGenerationMode.Enabled,
             SummaryProviderPreference = MeetingSummaryProviderPreference.OpenAiOnly,
             SummaryOpenAiModel = "gpt-5-mini",
+            SummaryHostedRouteConsentVersion = SummaryExperienceResolver.HostedRouteConsentPolicyVersion,
         };
     }
 

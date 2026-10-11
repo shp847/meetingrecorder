@@ -1,4 +1,6 @@
 using MeetingRecorder.Core.Domain;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -8,7 +10,16 @@ public sealed class TranscriptRenderer
 {
     public string RenderMarkdown(MeetingSessionManifest manifest, IReadOnlyList<TranscriptSegment> segments)
     {
+        return RenderMarkdown(manifest, segments, speakerLabelResolver: null);
+    }
+
+    public string RenderMarkdown(
+        MeetingSessionManifest manifest,
+        IReadOnlyList<TranscriptSegment> segments,
+        Func<TranscriptSegment, string>? speakerLabelResolver)
+    {
         var speakerCatalog = BuildSpeakerCatalog(manifest.ProcessingMetadata?.Speakers);
+        var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges);
         var metadataLines = new List<string>
         {
             $"- Session ID: {manifest.SessionId}",
@@ -49,7 +60,7 @@ public sealed class TranscriptRenderer
 
         var paragraphs = TranscriptParagraphBuilder.Build(
             segments,
-            segment => ResolveSpeakerLabel(segment, speakerCatalog));
+            segment => speakerLabelResolver?.Invoke(segment) ?? ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId));
         foreach (var paragraph in paragraphs)
         {
             lines.Add($"[{paragraph.Start:hh\\:mm\\:ss} - {paragraph.End:hh\\:mm\\:ss}] **{paragraph.SpeakerLabel}:** {paragraph.Text}");
@@ -61,6 +72,7 @@ public sealed class TranscriptRenderer
     public string RenderJson(MeetingSessionManifest manifest, IReadOnlyList<TranscriptSegment> segments)
     {
         var speakerCatalog = BuildSpeakerCatalog(manifest.ProcessingMetadata?.Speakers);
+        var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges);
         var payload = new TranscriptDocument(
             manifest.SessionId,
             manifest.Platform.ToString(),
@@ -83,13 +95,15 @@ public sealed class TranscriptRenderer
             manifest.ProcessingMetadata?.Speakers ?? Array.Empty<SpeakerIdentity>(),
             manifest.ProcessingMetadata?.SpeakerTurns ?? Array.Empty<SpeakerTurn>(),
             manifest.ProcessingMetadata?.DiarizationMetadata,
-            segments.Select(segment => new TranscriptDocumentSegment(
+            manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>(),
+            segments.Select((segment, index) => new TranscriptDocumentSegment(
                 segment.Start,
                 segment.End,
                 segment.SpeakerId,
-                ResolveSpeakerLabel(segment, speakerCatalog),
+                ResolveSpeakerLabel(segment, speakerCatalog, canonicalBySpeakerId),
                 segment.SpeakerLabel,
-                segment.Text)).ToArray());
+                segment.Text,
+                ResolveSegmentId(segment, index))).ToArray());
 
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions
         {
@@ -117,6 +131,7 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("speakers")] IReadOnlyList<SpeakerIdentity> Speakers,
         [property: JsonPropertyName("speakerTurns")] IReadOnlyList<SpeakerTurn> SpeakerTurns,
         [property: JsonPropertyName("diarizationMetadata")] DiarizationMetadata? DiarizationMetadata,
+        [property: JsonPropertyName("speakerClusterMerges")] IReadOnlyList<SpeakerClusterMergeMetadata> SpeakerClusterMerges,
         [property: JsonPropertyName("segments")] IReadOnlyList<TranscriptDocumentSegment> Segments);
 
     private sealed record TranscriptDocumentSegment(
@@ -125,7 +140,19 @@ public sealed class TranscriptRenderer
         [property: JsonPropertyName("speakerId")] string? SpeakerId,
         [property: JsonPropertyName("speakerLabel")] string? SpeakerLabel,
         [property: JsonPropertyName("displaySpeakerLabel")] string? DisplaySpeakerLabel,
-        [property: JsonPropertyName("text")] string Text);
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("segmentId")] string SegmentId);
+
+    private static string ResolveSegmentId(TranscriptSegment segment, int index)
+    {
+        if (!string.IsNullOrWhiteSpace(segment.SegmentId))
+        {
+            return segment.SegmentId.Trim();
+        }
+
+        var identity = string.Join("\n", index, segment.Start.Ticks, segment.End.Ticks, segment.SpeakerId ?? string.Empty, segment.Text);
+        return "seg_" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..16].ToLowerInvariant();
+    }
 
     private sealed record TranscriptDocumentSummary(
         [property: JsonPropertyName("overview")] string Overview,
@@ -273,8 +300,23 @@ public sealed class TranscriptRenderer
                 .ToDictionary(group => group.Key, group => group.Last().DisplayName, StringComparer.Ordinal);
     }
 
-    private static string ResolveSpeakerLabel(TranscriptSegment segment, IReadOnlyDictionary<string, string> speakerCatalog)
+    private static string ResolveSpeakerLabel(
+        TranscriptSegment segment,
+        IReadOnlyDictionary<string, string> speakerCatalog,
+        IReadOnlyDictionary<string, string> canonicalBySpeakerId)
     {
+        if (!string.IsNullOrWhiteSpace(segment.SpeakerId))
+        {
+            var effectiveSpeakerId = canonicalBySpeakerId.TryGetValue(segment.SpeakerId, out var canonicalSpeakerId)
+                ? canonicalSpeakerId
+                : segment.SpeakerId;
+            if (speakerCatalog.TryGetValue(effectiveSpeakerId, out var effectiveDisplayName) &&
+                !string.IsNullOrWhiteSpace(effectiveDisplayName))
+            {
+                return effectiveDisplayName;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(segment.SpeakerLabel))
         {
             return segment.SpeakerLabel;
