@@ -123,8 +123,8 @@ records an approved dependency change.
 | 4 — Inline Audio Clip Playback | `Ready` | Define bounded local clip derivation, cache lifecycle, recording safety, and one-session playback. |
 | 5 — Transcript-Label Click Editing | `Ready` | Define accessible label-to-review focus, current-revision global rename, and additive override schema reservation. |
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
-| 7 — Merge Duplicate Speakers | `Ready` | Define user-confirmed canonical speaker mapping, conflict gates, artifact consistency, and repair boundary. |
-| 8 — Corrections, Rejections, Undo, And Local Learning | `Partial` | 2026-09-29: identity-keyed correction decision contract and safety matrix implemented; additive receipt persistence remains. |
+| 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
+| 8 — Corrections, Rejections, Undo, And Local Learning | `Done` | 2026-10-11: artifact-first receipt, retry, scoped feedback, learning boundary, and undo completion verified below. |
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
 | 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
@@ -3802,8 +3802,8 @@ Sprint 6 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 callback-boundary implementation).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 callback-boundary implementation); `Done` (2026-10-11 atomic newest-only undo completion).
 - User outcome: a reviewer can collapse a normal duplicate-cluster split into one person without rerunning processing, losing source attribution, or accidentally teaching duplicate voice samples.
 - Scope / non-goals: add user-confirmed merge of two or more current-revision speaker clusters in Speaker Review. Do not alter worker clustering thresholds, mutate embeddings, merge meetings, silently merge suggested names, or use manual merge for severe diarization fragmentation.
 - Dependencies and decisions: consume S1 identity precedence, S2 review, S3 evidence, S6 effective attribution, S8 history/undo, S11 repair guidance, and S12 derived consistency. Existing `SpeakerClusterMergeService` is worker-side similarity recovery and is not the user action. User merge writes an additive current-revision canonical-cluster mapping: source cluster ids remain immutable/auditable; all effective rows/segments resolve to a selected canonical speaker id.
@@ -3823,7 +3823,8 @@ Sprint 6 acceptance criteria:
 - Evidence and date: 2026-10-11 added exact inverse validation for a future undo surface. Only the newest unique merge operation can reverse; a missing, inconsistent, or superseded operation is rejected before any writer can affect newer merges or unrelated name corrections. Effective transcript labels already feed summary attribution freshness, so a merge marks a prior summary historic without rewriting it. Focused merge/inverse/summary contracts passed 19/19.
 - Evidence and date: 2026-10-11 added explicit `actorSource` provenance to the merge audit record. The user action writes `user-confirmed-speaker-review`; legacy records deserialize as `user`. Focused merge/catalog/schema contracts passed 46/46.
 - Evidence and date: 2026-10-11 made Speaker Review resolve each source cluster through persisted canonical merge metadata while retaining its immutable source `speakerId`. The canonical speaker's name/provenance appears as the effective review value; malformed metadata falls back safely to source data. Focused merge/catalog contracts passed 45/45.
-- Remaining gap or next action: add Speaker Review multi-select, confirmation/preview, conflict and repair gates, summary-review signal, and exact inverse support before marking Sprint 7 Done.
+- Evidence and date: 2026-10-11 added revision-checked `Undo Latest Merge`. Only the newest audit operation can reverse; it atomically updates manifest, JSON, and Markdown from source labels while preserving diarization ids, text, timestamps, explicit name corrections, and local voice-profile samples. Focused merge/inverse/XAML contracts passed 88/88; `Build-Installer.ps1` produced the 84.6 MB portable ZIP and 72.8 MB MSI. `Test-All.ps1` completed all build phases but its unfiltered core-test host stopped progressing; this does not supersede focused passing contracts.
+- Remaining gap or next action: none. Treat future merge usability feedback as a narrowly scoped defect.
 
 Goal: handle the common over-split case where one person appears as two or more
 generic speakers.

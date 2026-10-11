@@ -135,6 +135,7 @@ public partial class MeetingDetailWindow : Window
     private bool _canSplit;
     private bool _canApplySpeakerNames;
     private bool _canMergeSpeakerClusters;
+    private string? _latestSpeakerMergeOperationId;
     private bool _canUndoSpeakerNameRecognition;
     private bool _canArchive;
     private bool _canDelete;
@@ -180,6 +181,8 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
 
     internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
+
+    internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
     internal event EventHandler? RefreshSpeakerNamesRequested;
 
@@ -246,6 +249,12 @@ public partial class MeetingDetailWindow : Window
     internal void SetSpeakerQualityStatus(string text)
     {
         SpeakerQualityTextBlock.Text = text;
+    }
+
+    internal void SetSpeakerMergeUndoState(string? operationId)
+    {
+        _latestSpeakerMergeOperationId = string.IsNullOrWhiteSpace(operationId) ? null : operationId.Trim();
+        UpdateMaintenanceButtonAvailability();
     }
 
     internal MeetingDetailRefreshDisposition GetRefreshDisposition(MeetingDetailTaskCenterState incoming)
@@ -381,6 +390,7 @@ public partial class MeetingDetailWindow : Window
             SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
             rows.Count(row => row.IsSelectedForMerge) >= 2 &&
             SpeakerMergeCanonicalComboBox.SelectedItem is MeetingDetailSpeakerMergeChoice;
+        UndoSpeakerMergeButton.IsEnabled = canUseMaintenance && !string.IsNullOrWhiteSpace(_latestSpeakerMergeOperationId);
         RefreshSpeakerNamesButton.IsEnabled = canUseMaintenance && _canApplySpeakerNames;
         UndoSpeakerNameRecognitionButton.IsEnabled = canUseMaintenance && _canUndoSpeakerNameRecognition;
         ArchiveButton.IsEnabled = canUseMaintenance && _canArchive;
@@ -499,6 +509,14 @@ public partial class MeetingDetailWindow : Window
             new MeetingDetailSpeakerMergeEventArgs(
                 selected,
                 (SpeakerMergeCanonicalComboBox.SelectedItem as MeetingDetailSpeakerMergeChoice)?.SpeakerId));
+    }
+
+    private void UndoSpeakerMergeButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_latestSpeakerMergeOperationId))
+        {
+            UndoSpeakerMergeRequested?.Invoke(this, new MeetingDetailTextEventArgs(_latestSpeakerMergeOperationId));
+        }
     }
 
     private void SpeakerLabelsDataGrid_OnCellEditEnding(object sender, System.Windows.Controls.DataGridCellEditEndingEventArgs e)

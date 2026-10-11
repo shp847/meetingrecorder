@@ -638,6 +638,121 @@ public sealed class MeetingOutputCatalogService
         }
     }
 
+    /// <summary>
+    /// Reverses only the newest user-confirmed speaker merge as one revision-checked local
+    /// transaction. It restores effective transcript labels from immutable source labels;
+    /// raw diarization ids, text, timestamps, and voice-profile data remain unchanged.
+    /// </summary>
+    public async Task<SpeakerClusterMergeTransactionResult> ReverseSpeakerClusterMergeIfCurrentAsync(
+        MeetingOutputRecord record,
+        string expectedRevision,
+        string operationId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(expectedRevision) ||
+            !string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before reversing a speaker merge.");
+        }
+
+        if (string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath) ||
+            string.IsNullOrWhiteSpace(record.JsonPath) || !File.Exists(record.JsonPath) ||
+            string.IsNullOrWhiteSpace(record.MarkdownPath) || !File.Exists(record.MarkdownPath))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Published transcript artifacts are unavailable. Reload or reprocess this meeting before reversing a speaker merge.");
+        }
+
+        var manifestStore = new SessionManifestStore(_pathBuilder);
+        var manifest = await manifestStore.LoadAsync(record.ManifestPath, cancellationToken);
+        var existing = manifest.ProcessingMetadata?.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>();
+        var inverse = SpeakerClusterMergeInverseResolver.Resolve(
+            new SpeakerClusterMergeInverseRequest(operationId, expectedRevision, existing));
+        if (!inverse.CanReverse)
+        {
+            return new SpeakerClusterMergeTransactionResult(false, inverse.Explanation);
+        }
+
+        if (manifest.ProcessingMetadata?.Speakers is not { Count: > 0 })
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before reversing a speaker merge.");
+        }
+
+        var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(inverse.RemainingMerges);
+        if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+        {
+            return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before reversing a speaker merge.");
+        }
+
+        var artifacts = new[] { record.ManifestPath, record.JsonPath, record.MarkdownPath }
+            .Select(path => path!)
+            .Select(path => new SpeakerArtifactTransactionFile(
+                path,
+                path + ".speaker-merge-undo-" + Guid.NewGuid().ToString("N") + ".tmp",
+                path + ".speaker-merge-undo-" + Guid.NewGuid().ToString("N") + ".bak"))
+            .ToArray();
+        var tempByPath = artifacts.ToDictionary(item => item.SourcePath, item => item.TempPath, StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var artifact in artifacts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Copy(artifact.SourcePath, artifact.TempPath, overwrite: false);
+            }
+
+            var temporaryRecord = record with
+            {
+                ManifestPath = GetTemporaryPath(record.ManifestPath, tempByPath),
+                JsonPath = GetTemporaryPath(record.JsonPath, tempByPath),
+                MarkdownPath = GetTemporaryPath(record.MarkdownPath, tempByPath),
+            };
+            await ApplySpeakerClusterMergeToTemporaryArtifactsAsync(
+                temporaryRecord,
+                inverse.RemainingMerges,
+                canonicalBySpeakerId,
+                cancellationToken,
+                regenerateMarkdownFromSource: true);
+
+            if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
+            {
+                return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before reversing a speaker merge.");
+            }
+
+            var committed = new List<SpeakerArtifactTransactionFile>(artifacts.Length);
+            try
+            {
+                foreach (var artifact in artifacts)
+                {
+                    File.Replace(artifact.TempPath, artifact.SourcePath, artifact.BackupPath, ignoreMetadataErrors: true);
+                    committed.Add(artifact);
+                }
+            }
+            catch
+            {
+                foreach (var artifact in committed.AsEnumerable().Reverse())
+                {
+                    if (File.Exists(artifact.BackupPath))
+                    {
+                        File.Copy(artifact.BackupPath, artifact.SourcePath, overwrite: true);
+                    }
+                }
+
+                throw;
+            }
+
+            return new SpeakerClusterMergeTransactionResult(true);
+        }
+        finally
+        {
+            foreach (var artifact in artifacts)
+            {
+                TryDeleteArtifactTransactionFile(artifact.TempPath);
+                TryDeleteArtifactTransactionFile(artifact.BackupPath);
+            }
+        }
+    }
+
     public async Task ClearSpeakerProfileSuggestionsAsync(
         MeetingOutputRecord record,
         IReadOnlyList<SpeakerNameRejectedMatch> rejectedMatches,
@@ -2270,7 +2385,8 @@ public sealed class MeetingOutputCatalogService
         MeetingOutputRecord temporaryRecord,
         IReadOnlyList<SpeakerClusterMergeMetadata> allMerges,
         IReadOnlyDictionary<string, string> canonicalBySpeakerId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool regenerateMarkdownFromSource = false)
     {
         var manifestStore = new SessionManifestStore(_pathBuilder);
         var manifest = await manifestStore.LoadAsync(temporaryRecord.ManifestPath!, cancellationToken);
@@ -2293,10 +2409,26 @@ public sealed class MeetingOutputCatalogService
             canonicalBySpeakerId,
             speakers,
             cancellationToken);
-        await UpdateMarkdownSpeakerLabelsAsync(
-            temporaryRecord.MarkdownPath!,
-            BuildCanonicalSpeakerLabelMap(canonicalBySpeakerId, speakers),
-            cancellationToken);
+        if (regenerateMarkdownFromSource)
+        {
+            if (!MeetingTranscriptDocumentReader.TryReadSourceLabeledSegments(temporaryRecord.JsonPath, out var sourceSegments))
+            {
+                throw new InvalidOperationException("Transcript JSON does not contain source-labeled segments needed to reverse a speaker merge.");
+            }
+
+            var updatedManifest = await manifestStore.LoadAsync(temporaryRecord.ManifestPath!, cancellationToken);
+            await File.WriteAllTextAsync(
+                temporaryRecord.MarkdownPath!,
+                new TranscriptRenderer().RenderMarkdown(updatedManifest, sourceSegments),
+                cancellationToken);
+        }
+        else
+        {
+            await UpdateMarkdownSpeakerLabelsAsync(
+                temporaryRecord.MarkdownPath!,
+                BuildCanonicalSpeakerLabelMap(canonicalBySpeakerId, speakers),
+                cancellationToken);
+        }
     }
 
     private static async Task UpdateJsonSpeakerClusterMergesAsync(
@@ -2331,9 +2463,16 @@ public sealed class MeetingOutputCatalogService
                     }
 
                     var sourceSpeakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
-                    if (string.IsNullOrWhiteSpace(sourceSpeakerId) ||
-                        !canonicalBySpeakerId.TryGetValue(sourceSpeakerId.Trim(), out var canonicalSpeakerId) ||
-                        !displayNameBySpeakerId.TryGetValue(canonicalSpeakerId, out var canonicalDisplayName))
+                    if (string.IsNullOrWhiteSpace(sourceSpeakerId))
+                    {
+                        continue;
+                    }
+
+                    var normalizedSourceSpeakerId = sourceSpeakerId.Trim();
+                    var effectiveSpeakerId = canonicalBySpeakerId.TryGetValue(normalizedSourceSpeakerId, out var canonicalSpeakerId)
+                        ? canonicalSpeakerId
+                        : normalizedSourceSpeakerId;
+                    if (!displayNameBySpeakerId.TryGetValue(effectiveSpeakerId, out var canonicalDisplayName))
                     {
                         continue;
                     }

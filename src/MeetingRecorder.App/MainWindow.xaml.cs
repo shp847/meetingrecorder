@@ -7085,6 +7085,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
+            _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
             _meetingDetailWindow.RefreshSpeakerNamesRequested += async (_, _) => await RefreshOpenMeetingDetailSpeakerNamesAsync();
             _meetingDetailWindow.UndoSpeakerNameRecognitionRequested += async (_, _) => await UndoOpenMeetingDetailSpeakerNameRecognitionAsync();
             _meetingDetailWindow.ArchiveRequested += async (_, _) => await ArchiveOpenMeetingDetailAsync();
@@ -7179,6 +7180,7 @@ public partial class MainWindow : Window
             var evidenceSpeakerIds = new HashSet<string>(StringComparer.Ordinal);
             var diagnosticSpeakers = Array.Empty<SpeakerIdentity>();
             var diagnosticTurns = Array.Empty<SpeakerTurn>();
+            string? latestSpeakerMergeOperationId = null;
             if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
             {
                 try
@@ -7186,6 +7188,7 @@ public partial class MainWindow : Window
                     var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
                     diagnosticSpeakers = manifest.ProcessingMetadata?.Speakers?.ToArray() ?? [];
                     diagnosticTurns = manifest.ProcessingMetadata?.SpeakerTurns?.ToArray() ?? [];
+                    latestSpeakerMergeOperationId = manifest.ProcessingMetadata?.SpeakerClusterMerges?.LastOrDefault()?.OperationId;
                     foreach (var sample in manifest.ProcessingMetadata?.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>())
                     {
                         if (!string.IsNullOrWhiteSpace(sample.SpeakerId))
@@ -7273,6 +7276,7 @@ public partial class MainWindow : Window
             }
 
             detailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+            detailWindow.SetSpeakerMergeUndoState(latestSpeakerMergeOperationId);
             detailWindow.SetSpeakerQualityStatus(BuildSpeakerQualityStatus(
                 row,
                 speakerExperience,
@@ -7907,6 +7911,59 @@ public partial class MainWindow : Window
         {
             _logger.Log($"Speaker cluster merge failed: {exception}");
             _meetingDetailWindow?.SetMaintenanceStatus("Speaker merge did not finish. Reload the meeting and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async Task UndoOpenMeetingDetailSpeakerMergeAsync(string operationId)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || string.IsNullOrWhiteSpace(operationId))
+        {
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            this,
+            "Undo the latest speaker merge? Transcript labels will return to their prior source speakers. Original IDs, text, timestamps, name corrections, and local voice profiles stay unchanged.",
+            "Undo Speaker Merge",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceStatus("Reversing latest speaker merge...");
+        try
+        {
+            var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+            var result = await _meetingOutputCatalogService.ReverseSpeakerClusterMergeIfCurrentAsync(
+                row.Source,
+                revision,
+                operationId,
+                _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "Speaker merge could not be reversed. Reload and try again.");
+                return;
+            }
+
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus("Latest speaker merge reversed. Existing summaries remain unchanged for review.");
+            AppendActivity($"Reversed latest speaker merge for '{row.Title}' without changing local voice profiles.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Speaker cluster merge undo failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("Speaker merge could not be reversed. Reload and try again.");
         }
         finally
         {

@@ -422,6 +422,12 @@
                                                     Click="MergeSelectedSpeakersButton_OnClick"
                                                     AutomationProperties.Name="Merge selected speaker clusters"
                                                     Content="Merge Selected Speakers" />
+                                            <Button x:Name="UndoSpeakerMergeButton"
+                                                    Margin="10,0,0,0"
+                                                    Style="{StaticResource SecondaryActionButtonStyle}"
+                                                    Click="UndoSpeakerMergeButton_OnClick"
+                                                    AutomationProperties.Name="Undo latest speaker merge"
+                                                    Content="Undo Latest Merge" />
                                         </WrapPanel>
                                     </StackPanel>
                                 </Border>

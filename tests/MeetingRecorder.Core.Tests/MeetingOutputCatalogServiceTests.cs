@@ -1301,6 +1301,27 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.DoesNotContain("**Speaker B:**", markdown, StringComparison.Ordinal);
         var rendered = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
         Assert.Contains(rendered.StructuredSegments, row => row.SpeakerLabel == "Alex" && row.Text == "Second");
+
+        var reverseRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var reverse = await service.ReverseSpeakerClusterMergeIfCurrentAsync(record, reverseRevision, "merge-1");
+
+        Assert.True(reverse.IsApplied, reverse.ConflictReason);
+        savedManifest = await manifestStore.LoadAsync(manifestPath);
+        Assert.Empty(savedManifest.ProcessingMetadata!.SpeakerClusterMerges ?? Array.Empty<SpeakerClusterMergeMetadata>());
+        Assert.Equal("profile-alex", savedManifest.ProcessingMetadata.Speakers![0].ProfileId);
+        Assert.Equal("profile-b", savedManifest.ProcessingMetadata.Speakers![1].ProfileId);
+        Assert.Single(savedManifest.ProcessingMetadata.SpeakerVoiceSamples!);
+
+        document = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!.AsObject();
+        Assert.Equal("speaker-b", document["segments"]![1]!["speakerId"]!.GetValue<string>());
+        Assert.Equal("Speaker B", document["segments"]![1]!["speakerLabel"]!.GetValue<string>());
+        Assert.Equal("Speaker B", document["segments"]![1]!["displaySpeakerLabel"]!.GetValue<string>());
+        Assert.Empty(document["speakerClusterMerges"]!.AsArray());
+        markdown = await File.ReadAllTextAsync(markdownPath);
+        Assert.Contains("**Speaker B:** Second", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("**Alex:** Second", markdown, StringComparison.Ordinal);
+        rendered = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.Contains(rendered.StructuredSegments, row => row.SpeakerLabel == "Speaker B" && row.Text == "Second");
     }
 
     [Fact]
