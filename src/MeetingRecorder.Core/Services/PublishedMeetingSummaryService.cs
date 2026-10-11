@@ -376,6 +376,7 @@ public sealed class PublishedMeetingSummaryService
 
         AddBulletSection(lines, "Risks And Open Questions", summary.RisksAndOpenQuestions);
         lines.Add($"- Provider: {summary.Provider.ProviderName} ({summary.Provider.Model})");
+        lines.Add("- Speaker attribution: current when this summary was generated; reopen the meeting in Meeting Recorder before relying on names after speaker edits.");
         if (summary.Provider.FallbackUsed)
         {
             lines.Add("- Fallback used: Yes");

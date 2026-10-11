@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 59.
-**Ready:** 37. **Partial:** 27. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 60.
+**Ready:** 37. **Partial:** 26. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -128,7 +128,7 @@ records an approved dependency change.
 | 9 — Automatic Future Naming | `Partial` | 2026-09-29: conservative local eligibility matrix implemented; post-processing dispatch and receipt persistence remain. |
 | 10 — Rematch Past Meetings | `Done` | 2026-10-10: explicit one-meeting and selected-batch rematch, revalidation, bounded receipt ledger, cancellation outcomes, focused tests, docs, and installer build verified. |
 | 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
-| 12 — Summary And Derived Output Consistency | `Partial` | 2026-09-29: attribution fingerprint and readable historic-summary state implemented; persistence and regeneration wiring remain. |
+| 12 — Summary And Derived Output Consistency | `Done` | 2026-10-10: persisted attribution provenance, guarded manual regeneration, historic action-item state, focused tests, docs, and installer build verified. |
 | 13 — Profile Management And Privacy | `Partial` | 2026-09-29: lifecycle consequence/preflight contract implemented; store serialization, unavailable UX, and exclusion audit remain. |
 | 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Done` | 2026-10-10: product owner retires manual visual/assistive qualification; existing deterministic semantics remain and production feedback opens scoped fixes. |
@@ -4059,8 +4059,8 @@ Sprint 11 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 attribution-state slice).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 attribution-state slice); `Done` (2026-10-10: persisted attribution provenance, stale action-item disclosure, guarded manual regeneration, focused tests, docs, and package evidence complete).
 - User outcome: people can still read an earlier summary while knowing speaker attribution changed, and can deliberately regenerate it from current effective names.
 - Scope / non-goals: track speaker-attribution staleness for summary and named derived meeting outputs. Do not auto-call a provider, re-run transcription/diarization, edit generated prose in place, overwrite a readable prior result, or broaden external data-sharing consent.
 - Dependencies and decisions: consume S1 effective identity, S6 overrides, S7 merges, S11 repair revisions, and existing summary provider/consent flow. Current summary fingerprint handles transcript generation but not necessarily effective attribution. Define `AttributionFingerprint` over artifact revision plus ordered stable segment ids, effective speaker ids/display labels/sources and override/merge version—never raw profiles/vectors/audio; pair it with existing transcript fingerprint.
@@ -4074,7 +4074,8 @@ Sprint 11 acceptance criteria:
 - Evidence and date: 2026-09-27 audit found summary transcript fingerprint reuse and speaker identity artifact updates, but no speaker-attribution fingerprint/stale resolver, repair preservation rule, or current-name regeneration proof.
 - Evidence and date: 2026-09-29 added attribution-fingerprint/state fixtures for effective label/source changes, transcript changes, and readable historic summary regeneration state. The model excludes profiles, vectors, and audio.
 - Evidence and date: 2026-10-10 persisted attribution provenance (fingerprint plus schema) through automatic/manual summary generation, manifest, snapshot, and transcript JSON. Existing summaries remain readable but are marked historic when provenance is absent or speaker attribution changes; regeneration is manual and rechecks the transcript/attribution snapshot before publication. Focused resolver, publication, worker, detail, and XAML tests passed 211/211; installer build produced the portable ZIP and MSI.
-- Remaining gap or next action: define action-item ownership provenance/historic display and verify it across all derived-output readers before marking this sprint Done.
+- Evidence and date: 2026-10-10 added explicit historic action-item headings for stale summaries and a Markdown provenance caution. Focused tests remained 211/211; final installer rebuild verified the same source state.
+- Remaining gap or next action: none. Reopen only for a scoped summary-provenance regression from production feedback.
 
 Goal: make speaker edits flow into downstream meeting outputs.
 

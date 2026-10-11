@@ -56,6 +56,7 @@ public sealed class PublishedMeetingSummaryServiceTests : IDisposable
         Assert.Contains("## Summary", markdown, StringComparison.Ordinal);
         Assert.True(markdown.IndexOf("## Summary", StringComparison.Ordinal) < markdown.IndexOf("## Transcript", StringComparison.Ordinal));
         Assert.Contains("- Provider: OpenAI (gpt-5-mini)", markdown, StringComparison.Ordinal);
+        Assert.Contains("Speaker attribution: current when this summary was generated", markdown, StringComparison.Ordinal);
 
         var savedManifest = await manifestStore.LoadAsync(manifestPath);
         Assert.Equal(StageExecutionState.Succeeded, savedManifest.SummarizationStatus.State);

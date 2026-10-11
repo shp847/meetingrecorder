@@ -2505,6 +2505,7 @@ public sealed class MainWindowInteractionLogicTests
         Assert.Equal("Summary route recorded with this meeting.", state.Summary.ProviderText);
         Assert.Contains("configured fallback", state.Summary.WarningText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("predates", state.Summary.WarningText, StringComparison.OrdinalIgnoreCase);
+        Assert.True(state.Summary.IsHistoric);
         Assert.False(state.Summary.CanGenerate);
         Assert.False(state.Summary.CanRetry);
         Assert.Equal("IonQ", state.ProjectName);

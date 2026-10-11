@@ -483,6 +483,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("UserActionCopyResolver.Resolve(UserActionIntent.GenerateSummary)", mainWindowSource);
         Assert.Contains("MeetingSummaryAttributionStateResolver.ComputeAttributionFingerprint", File.ReadAllText(GetPath("src", "MeetingRecorder.Core", "Services", "MainWindowInteractionLogic.cs")));
         Assert.Contains("Regenerate Summary", windowSource);
+        Assert.Contains("Historic Action Items", windowSource);
         Assert.Contains("OpenSettingsSurface(SettingsInformationArchitecture.ResolveControl(\"ConfigSummaryGenerationEnabledCheckBox\"))", mainWindowSource);
         Assert.Contains("RefreshOpenMeetingDetailWindow", mainWindowSource);
 

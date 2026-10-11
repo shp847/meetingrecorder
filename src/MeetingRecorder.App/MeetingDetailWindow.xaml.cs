@@ -288,6 +288,7 @@ public partial class MeetingDetailWindow : Window
         AiSummaryKeyPointsItemsControl.Visibility = summary.KeyPoints.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryDecisionsHeaderTextBlock.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryDecisionsItemsControl.Visibility = summary.Decisions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AiSummaryActionItemsHeaderTextBlock.Text = summary.IsHistoric ? "Historic Action Items" : "Action Items";
         AiSummaryActionItemsHeaderTextBlock.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryActionItemsControl.Visibility = summary.ActionItems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         AiSummaryRisksHeaderTextBlock.Visibility = summary.RisksAndOpenQuestions.Count == 0 ? Visibility.Collapsed : Visibility.Visible;

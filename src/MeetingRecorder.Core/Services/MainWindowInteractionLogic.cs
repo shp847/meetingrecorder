@@ -231,7 +231,8 @@ internal sealed record MeetingDetailSummaryState(
     bool ShowGeneratedContent,
     bool CanConfigure,
     bool CanGenerate,
-    bool CanRetry);
+    bool CanRetry,
+    bool IsHistoric = false);
 
 internal sealed record MeetingTranscriptReaderResult(
     bool HasTranscript,
@@ -1636,7 +1637,8 @@ internal static class MainWindowInteractionLogic
                 ShowGeneratedContent: true,
                 CanConfigure: true,
                 CanGenerate: attributionState.CanRegenerate && generatedSummaryExperience.CanGenerate,
-                CanRetry: false);
+                CanRetry: false,
+                IsHistoric: attributionState.State != MeetingSummaryAttributionState.Current);
         }
 
         if (isGeneratingSummary)
