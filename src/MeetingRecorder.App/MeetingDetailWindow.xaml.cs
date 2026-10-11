@@ -213,6 +213,8 @@ public partial class MeetingDetailWindow : Window
 
     internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? ApplyParagraphOverrideRequested;
 
+    internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? RevertParagraphOverrideRequested;
+
     internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
     internal event EventHandler? RefreshSpeakerNamesRequested;
@@ -650,6 +652,14 @@ public partial class MeetingDetailWindow : Window
         if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow { HasManualAttributionOverride: true } segment)
         {
             SetMaintenanceStatus($"Original paragraph attribution: {segment.OriginalSpeakerLabel ?? segment.SpeakerId ?? "Speaker"}.");
+        }
+    }
+
+    private void RevertParagraphOverrideButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow segment && segment.CanRevertParagraphOverride)
+        {
+            RevertParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment));
         }
     }
 

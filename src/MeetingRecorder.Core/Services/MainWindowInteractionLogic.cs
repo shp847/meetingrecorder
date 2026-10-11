@@ -203,7 +203,8 @@ internal sealed record MeetingTranscriptSegmentRow(
     string? SpeakerId = null,
     string? SegmentId = null,
     string? OriginalSpeakerLabel = null,
-    EffectiveSegmentAttributionState AttributionState = EffectiveSegmentAttributionState.Source)
+    EffectiveSegmentAttributionState AttributionState = EffectiveSegmentAttributionState.Source,
+    string? AttributionOverrideId = null)
 {
     public bool CanOpenSpeakerReview => !string.IsNullOrWhiteSpace(SpeakerId);
 
@@ -217,6 +218,8 @@ internal sealed record MeetingTranscriptSegmentRow(
         AttributionState != EffectiveSegmentAttributionState.ReviewNeeded;
 
     public bool HasManualAttributionOverride => AttributionState == EffectiveSegmentAttributionState.Override;
+
+    public bool CanRevertParagraphOverride => HasManualAttributionOverride && !string.IsNullOrWhiteSpace(AttributionOverrideId);
 
     public string AttributionIndicator => AttributionState switch
     {

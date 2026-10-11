@@ -19,7 +19,8 @@ public sealed record SegmentAttributionOverride(
     [property: JsonPropertyName("actorSource")] string ActorSource,
     [property: JsonPropertyName("createdAtUtc")] DateTimeOffset CreatedAtUtc,
     [property: JsonPropertyName("updatedAtUtc")] DateTimeOffset UpdatedAtUtc,
-    [property: JsonPropertyName("reason")] string? Reason = null);
+    [property: JsonPropertyName("reason")] string? Reason = null,
+    [property: JsonPropertyName("revertedAtUtc")] DateTimeOffset? RevertedAtUtc = null);
 
 public enum EffectiveSegmentAttributionState
 {

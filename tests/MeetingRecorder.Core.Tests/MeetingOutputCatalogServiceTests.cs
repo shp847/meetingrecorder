@@ -1390,7 +1390,7 @@ public sealed class MeetingOutputCatalogServiceTests
         await File.WriteAllTextAsync(jsonPath, """{ "segments":[{"segmentId":"seg-1","start":"00:00:00","end":"00:00:02","speakerId":"speaker-a","speakerLabel":"Alex","displaySpeakerLabel":"Alex","text":"Hello"}] }""");
         await File.WriteAllTextAsync(markdownPath, "# old transcript");
         var record = new MeetingOutputRecord("override", "Override test", manifest.StartedAtUtc, MeetingPlatform.Teams, null, null, markdownPath, jsonPath, null, manifestPath, SessionState.Published, Array.Empty<MeetingAttendee>(), true, "model.bin");
-        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var revision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
         var value = new SegmentAttributionOverride("override-1", revision, "seg-1", "speaker-a", SegmentAttributionOverrideTargetKind.Speaker, "speaker-b", "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
         var result = await new MeetingOutputCatalogService(pathBuilder).ApplySegmentAttributionOverrideIfCurrentAsync(record, revision, value);
@@ -1402,6 +1402,14 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Contains("**Blair:** Hello", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
         var transcript = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
         Assert.Single(transcript.SafeAttributionOverrides);
+
+        var revertRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        var revert = await new MeetingOutputCatalogService(pathBuilder).RevertSegmentAttributionOverrideIfCurrentAsync(record, revertRevision, "override-1");
+
+        Assert.True(revert.IsApplied, revert.ConflictReason);
+        document = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!.AsObject();
+        Assert.NotNull(document["speakerAttributionOverrides"]![0]!["revertedAtUtc"]);
+        Assert.Contains("**Alex:** Hello", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
     }
 
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)

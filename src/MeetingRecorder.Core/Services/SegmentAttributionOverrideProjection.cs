@@ -27,7 +27,8 @@ internal static class SegmentAttributionOverrideProjectionService
                 segment.SpeakerId,
                 segment.SegmentId,
                 string.IsNullOrWhiteSpace(segment.SourceSpeakerLabel) ? segment.SpeakerLabel : segment.SourceSpeakerLabel,
-                attribution.State));
+                attribution.State,
+                attribution.OverrideId));
         }
 
         return new SegmentAttributionOverrideProjection(effectiveSegments, rows);

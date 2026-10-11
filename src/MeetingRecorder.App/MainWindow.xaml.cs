@@ -7110,6 +7110,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
             _meetingDetailWindow.ApplyParagraphOverrideRequested += async (_, args) => await ApplyOpenMeetingDetailParagraphOverrideAsync(args.Segment);
+            _meetingDetailWindow.RevertParagraphOverrideRequested += async (_, args) => await RevertOpenMeetingDetailParagraphOverrideAsync(args.Segment);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
             _meetingDetailWindow.PlaySpeakerEvidenceRequested += async (_, args) => await PlayOpenMeetingDetailSpeakerEvidenceAsync(args);
             _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
@@ -7231,6 +7232,7 @@ public partial class MainWindow : Window
                     : "Add Speaker Labels",
             };
             var speakerArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+            var segmentAttributionRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(row.Source);
             var speakerLabels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
             var localProfileNames = Array.Empty<string>();
             var isLocalProfileStoreAvailable = true;
@@ -7280,7 +7282,7 @@ public partial class MainWindow : Window
                     .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
                 var overrideProjection = SegmentAttributionOverrideProjectionService.Project(
                     transcript.StructuredSegments,
-                    speakerArtifactRevision,
+                    segmentAttributionRevision,
                     speakersById,
                     transcript.SafeAttributionOverrides);
                 transcript = transcript with
@@ -7907,7 +7909,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+        var revision = MeetingOutputCatalogService.GetSegmentAttributionRevision(row.Source);
         _isApplyingSpeakerNames = true;
         UpdateMeetingActionState();
         _meetingDetailWindow?.SetMaintenanceBusy(true);
@@ -8050,6 +8052,61 @@ public partial class MainWindow : Window
         dialog.Content = body;
         AutomationProperties.SetName(dialog, "Correct paragraph attribution");
         return dialog.ShowDialog() == true ? result : null;
+    }
+
+    private async Task RevertOpenMeetingDetailParagraphOverrideAsync(MeetingTranscriptSegmentRow segment)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || !segment.CanRevertParagraphOverride || string.IsNullOrWhiteSpace(segment.AttributionOverrideId))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("This paragraph correction is no longer current. Reload meeting details and try again.");
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            this,
+            "Revert this paragraph-only attribution correction? Original speaker ID, text, timestamps, and local voice profiles remain unchanged.",
+            "Revert Paragraph Correction",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var revision = MeetingOutputCatalogService.GetSegmentAttributionRevision(row.Source);
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceBusy(true);
+        try
+        {
+            var result = await _meetingOutputCatalogService.RevertSegmentAttributionOverrideIfCurrentAsync(
+                row.Source,
+                revision,
+                segment.AttributionOverrideId,
+                _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "Paragraph correction could not be reverted. Reload and try again.");
+                return;
+            }
+
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus("Paragraph attribution correction reverted. Its local audit record remains for this revision.");
+            AppendActivity($"Reverted paragraph-only attribution correction for '{row.Title}'.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Paragraph attribution revert failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("Paragraph correction could not be reverted. Reload and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+            _meetingDetailWindow?.SetMaintenanceBusy(false);
+        }
     }
 
     private async Task ApplyOpenMeetingDetailSpeakerNamesAsync(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows)

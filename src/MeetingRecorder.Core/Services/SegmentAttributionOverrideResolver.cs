@@ -19,7 +19,8 @@ public static class SegmentAttributionOverrideResolver
 
         var match = overrides.LastOrDefault(item =>
             string.Equals(item.ArtifactRevision, artifactRevision, StringComparison.Ordinal) &&
-            string.Equals(item.SegmentId, segment.SegmentId, StringComparison.Ordinal));
+            string.Equals(item.SegmentId, segment.SegmentId, StringComparison.Ordinal) &&
+            item.RevertedAtUtc is null);
         if (match is null) return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);
         if (!string.Equals(match.ActorSource, "UserOverride", StringComparison.Ordinal))
             return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.ReviewNeeded, match.Id, "Unknown override source.");

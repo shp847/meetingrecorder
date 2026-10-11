@@ -28,4 +28,43 @@ public static class SegmentAttributionOverrideDocumentMutator
         if (value.TargetKind == SegmentAttributionOverrideTargetKind.DisplayName) segment["speakerLabel"] = value.TargetValue.Trim();
         return true;
     }
+
+    public static bool TryRevert(JsonObject document, string overrideId, string artifactRevision, out string? reason)
+    {
+        reason = null;
+        if (string.IsNullOrWhiteSpace(overrideId) || string.IsNullOrWhiteSpace(artifactRevision) ||
+            document["speakerAttributionOverrides"] is not JsonArray existing)
+        {
+            reason = "Paragraph correction history is unavailable.";
+            return false;
+        }
+
+        var item = existing.OfType<JsonObject>().LastOrDefault(candidate =>
+        {
+            try
+            {
+                var parsed = candidate.Deserialize<SegmentAttributionOverride>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return parsed is not null &&
+                       string.Equals(parsed.Id, overrideId, StringComparison.Ordinal) &&
+                       string.Equals(parsed.ArtifactRevision, artifactRevision, StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
+        });
+        if (item is null)
+        {
+            reason = "Paragraph correction is no longer current.";
+            return false;
+        }
+
+        if (item["revertedAtUtc"] is not null || item["RevertedAtUtc"] is not null)
+        {
+            return true;
+        }
+
+        item["revertedAtUtc"] = DateTimeOffset.UtcNow;
+        return true;
+    }
 }
