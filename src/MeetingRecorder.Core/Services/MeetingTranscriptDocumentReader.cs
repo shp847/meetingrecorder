@@ -1,5 +1,6 @@
 using MeetingRecorder.Core.Domain;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -20,7 +21,8 @@ internal static class MeetingTranscriptDocumentReader
                 out var jsonSegments,
                 out var structuredSegments,
                 out var summarizationStatus,
-                out var summary))
+                out var summary,
+                out var overrides))
         {
             return new MeetingTranscriptReaderResult(
                 jsonSegments.Count > 0,
@@ -29,7 +31,8 @@ internal static class MeetingTranscriptDocumentReader
                 structuredSegments,
                 summarizationStatus,
                 summary,
-                HasStructuredJson: true);
+                HasStructuredJson: true,
+                overrides);
         }
 
         var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
@@ -72,6 +75,7 @@ internal static class MeetingTranscriptDocumentReader
                 out _,
                 out var jsonStructuredSegments,
                 out _,
+                out _,
                 out _) &&
             jsonStructuredSegments.Count > 0)
         {
@@ -93,7 +97,7 @@ internal static class MeetingTranscriptDocumentReader
     {
         segments = Array.Empty<TranscriptSegment>();
         return !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath) &&
-               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, preferSourceLabels: true) &&
+               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, preferSourceLabels: true) &&
                segments.Count > 0;
     }
 
@@ -103,12 +107,14 @@ internal static class MeetingTranscriptDocumentReader
         out IReadOnlyList<TranscriptSegment> structuredSegments,
         out ProcessingStageStatus? summarizationStatus,
         out MeetingSummary? summary,
+        out IReadOnlyList<SegmentAttributionOverride> overrides,
         bool preferSourceLabels = false)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
         structuredSegments = Array.Empty<TranscriptSegment>();
         summarizationStatus = null;
         summary = null;
+        overrides = Array.Empty<SegmentAttributionOverride>();
         try
         {
             var root = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
@@ -157,12 +163,29 @@ internal static class MeetingTranscriptDocumentReader
             structuredSegments = structuredRows;
             summarizationStatus = TryReadSummarizationStatus(root);
             summary = TryReadSummary(root);
+            overrides = root is null ? Array.Empty<SegmentAttributionOverride>() : ReadAttributionOverrides(root);
             return structuredRows.Count > 0;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static IReadOnlyList<SegmentAttributionOverride> ReadAttributionOverrides(JsonObject root)
+    {
+        if (root["speakerAttributionOverrides"] is not JsonArray items) return Array.Empty<SegmentAttributionOverride>();
+        var result = new List<SegmentAttributionOverride>();
+        foreach (var item in items.OfType<JsonObject>())
+        {
+            try
+            {
+                var parsed = item.Deserialize<SegmentAttributionOverride>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (parsed is not null && !string.IsNullOrWhiteSpace(parsed.Id) && !string.IsNullOrWhiteSpace(parsed.SegmentId)) result.Add(parsed);
+            }
+            catch { }
+        }
+        return result;
     }
 
     private static bool TryReadMarkdownTranscript(

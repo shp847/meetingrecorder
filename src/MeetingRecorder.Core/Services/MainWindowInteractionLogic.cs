@@ -249,8 +249,10 @@ internal sealed record MeetingTranscriptReaderResult(
     IReadOnlyList<TranscriptSegment> StructuredSegments,
     ProcessingStageStatus? SummarizationStatus,
     MeetingSummary? Summary,
-    bool HasStructuredJson)
+    bool HasStructuredJson,
+    IReadOnlyList<SegmentAttributionOverride>? AttributionOverrides = null)
 {
+    public IReadOnlyList<SegmentAttributionOverride> SafeAttributionOverrides => AttributionOverrides ?? Array.Empty<SegmentAttributionOverride>();
     public MeetingTranscriptReaderResult(
         bool hasTranscript,
         string statusText,
