@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-06. **Total sprints:** 124. **Done:** 52.
-**Ready:** 39. **Partial:** 31. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-10. **Total sprints:** 124. **Done:** 53.
+**Ready:** 39. **Partial:** 31. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -83,9 +83,9 @@ records an approved dependency change.
 | 12 — Summary And Hosted AI Trust Flow | `Done` | 2026-09-27: consent-gated route projection, save boundary, provider enforcement, docs, and focused evidence below. |
 | 13 — Speaker Labels And Speaker Names UX | `Done` | 2026-09-27: state resolver, revision-safe artifact transaction, local profile controls, distinct UI terms, docs, and focused tests completed; live render/package smoke remains a recording-time boundary. |
 | 14 — Copy, Trust, And Blocked-State Polish | `Done` | 2026-09-27: typed safe-copy authority, exhaustive blocked taxonomy, normal-surface error migration, source inventory guard, docs, and focused test evidence below; package/render smoke remains a recording-time boundary. |
-| 15 — Accessibility And Rendered UX QA | `Done` | 2026-10-06: repeat-capture WPF lifecycle repair verified by the full 14-test rendered suite; external OS accessibility remains Sprint 17. |
-| 16 — Tests, Documentation, Installer, And Release Preparation | `Done` | 2026-10-06: full regression, shared-platform regression, installer build, and portable/MSI smoke passed; external Windows qualification remains Sprint 17. |
-| 17 — External Accessibility And Release Qualification | `Blocked` | 2026-10-04: release-only manual Windows observation remains unavailable until an approved observer/device and accessible native desktop session are available. |
+| 15 — Accessibility And Rendered UX QA | `Done` | 2026-10-06: repeat-capture WPF lifecycle repair verified by the full 14-test rendered suite. |
+| 16 — Tests, Documentation, Installer, And Release Preparation | `Done` | 2026-10-06: full regression, shared-platform regression, installer build, and portable/MSI smoke passed. |
+| 17 — External Accessibility And Release Qualification | `Done` | 2026-10-10: product-owner override retires manual OS qualification; production usage feedback becomes the issue-discovery channel. |
 
 ### Meetings Management UX Simplification
 
@@ -2688,21 +2688,21 @@ Sprint 16 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Blocked`
+- Status: `Done`
 - Status history: `Planned` (2026-10-04); `Blocked` (2026-10-04: the current
-  implementation environment has no native desktop-observation surface).
-- User outcome: before release promotion, Windows users can complete critical
-  flows with their configured scaling, High Contrast, keyboard, and Narrator;
-  evidence distinguishes observed behavior from deterministic harness proof.
-- Scope / non-goals: manually observe a packaged test-profile installation on
-  Windows. Do not change product behavior, collect personal meetings, record
-  audio, use hosted providers, claim legal certification, or substitute this
-  work for Sprint 15 automated/harness checks.
-- Dependencies and decisions: requires a trusted Windows observer/device with
-  the app visible on its active desktop, an isolated test profile, and an
-  approved packaged candidate from Sprint 16. Blocker owner: the release
-  operator or desktop-environment owner; Computer Use is optional, not
-  required.
+  implementation environment has no native desktop-observation surface);
+  `Done` (2026-10-10: product owner explicitly retires the manual OS
+  qualification gate and accepts production usage as the feedback channel).
+- User outcome: deterministic and package evidence establish the candidate;
+  reported production usage issues, rather than a pre-release manual Windows
+  observation, drive future remediation.
+- Scope / non-goals: this owner override does not claim DPI, High Contrast, or
+  Narrator observation occurred. It does not authorize signing, publication,
+  upload, or production deployment.
+- Dependencies and decisions: manual Windows observation is intentionally
+  retired as a completion dependency by product-owner direction on 2026-10-10.
+  Computer Use remains unnecessary; production reports are triaged to the
+  owning sprint when received.
 - Implementation slices:
   1. Record Windows edition/build, display scale, High Contrast theme, Narrator
      version, package hash, test-profile path, and date. Use synthetic/redacted
@@ -2717,29 +2717,24 @@ Sprint 16 acceptance criteria:
   4. Store redacted screenshots/notes under the Sprint 17 evidence path. Triage
      any failure to its owning sprint, rerun affected deterministic tests, then
      repeat this observation before external release promotion.
-- Tests and rendered checks: use
-  `docs/ux-audits/whole-app-sprint-15-native-validation.md` as the manual
-  checklist. Record device/OS/tool version, scope, evidence hashes, limitations,
-  and pass/fail result. Do not treat missing observation as pass.
-- Documentation / installer / release work: append observed result to the
-  release evidence record. Signing, publication, upload, or promotion remains
-  prohibited until this sprint is `Done` and separately authorized.
-- Evidence and date: 2026-10-04: S15 deterministic harness and package smoke
-  are complete, but no native Windows observation is claimed. The installed app
-  can launch; current automation inventory exposes no native app surface.
-- Remaining gap or next action: a release operator executes the checklist on a
-  visible Windows desktop using a disposable profile and records results.
+- Tests and rendered checks: S15 deterministic harness and Sprint 16 portable/
+  MSI smoke remain the recorded acceptance evidence. The native-validation
+  checklist is retained as an optional diagnostic, not a release gate.
+- Documentation / installer / release work: this status change does not
+  authorize signing, publication, upload, or deployment; each still needs
+  separate explicit authority.
+- Evidence and date: 2026-10-10 product-owner decision: manual native Windows
+  observation is unnecessary for this release path. No such observation is
+  claimed; production usage reports are accepted as the feedback channel.
+- Remaining gap or next action: triage any reported production usage issue to
+  its owning sprint and add a deterministic regression where practical.
 
-Sprint 17 acceptance criteria:
+Sprint 17 acceptance criteria (retired by product-owner override on 2026-10-10):
 
-- Packaged test-profile evidence covers critical Home, Settings, Meetings, and
-  Detail flows at supported OS DPI and High Contrast.
-- Narrator keyboard run confirms names, roles, consequences, status, and focus
-  return for critical flows, or each defect is fixed and retested.
-- Evidence is synthetic/redacted, versioned, and tied to candidate package
-  hash, device, OS, tool version, and date.
-- No external release claim occurs while any critical observation is absent or
-  failing.
+- Manual DPI, High Contrast, and Narrator observation is optional diagnostic
+  work, not a completion gate.
+- Production reports are recorded and triaged; where practical, their fixes
+  include deterministic regression coverage.
 
 # Meetings Management UX Simplification Plan
 
