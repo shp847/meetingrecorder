@@ -20,7 +20,8 @@ public sealed record SpeakerClusterMergeRecord(
     string ArtifactRevision,
     IReadOnlyList<string> SourceSpeakerIds,
     string CanonicalSpeakerId,
-    string EvidenceFingerprint);
+    string EvidenceFingerprint,
+    string ActorSource = "user");
 
 public sealed record SpeakerClusterMergeDecision(
     SpeakerClusterMergeDisposition Disposition,
@@ -86,6 +87,7 @@ public static class SpeakerClusterMergeResolver
             string.IsNullOrWhiteSpace(request.MeetingStableIdentity) ||
             string.IsNullOrWhiteSpace(request.ArtifactRevision) ||
             string.IsNullOrWhiteSpace(request.EvidenceFingerprint) ||
+            string.IsNullOrWhiteSpace(request.ActorSource) ||
             canonical is null ||
             sourceIds.Length < 2 ||
             !sourceIds.Contains(canonical, StringComparer.Ordinal))

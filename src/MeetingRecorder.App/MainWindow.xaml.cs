@@ -7889,7 +7889,8 @@ public partial class MainWindow : Window
                     sourceIds,
                     canonicalSpeakerId,
                     evidenceFingerprint,
-                    DateTimeOffset.UtcNow),
+                    DateTimeOffset.UtcNow,
+                    "user-confirmed-speaker-review"),
                 _lifetimeCts.Token);
             if (!result.IsApplied)
             {

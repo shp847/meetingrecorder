@@ -102,7 +102,8 @@ public sealed record SpeakerClusterMergeMetadata(
     [property: JsonPropertyName("sourceSpeakerIds")] IReadOnlyList<string> SourceSpeakerIds,
     [property: JsonPropertyName("canonicalSpeakerId")] string CanonicalSpeakerId,
     [property: JsonPropertyName("evidenceFingerprint")] string EvidenceFingerprint,
-    [property: JsonPropertyName("createdAtUtc")] DateTimeOffset CreatedAtUtc);
+    [property: JsonPropertyName("createdAtUtc")] DateTimeOffset CreatedAtUtc,
+    [property: JsonPropertyName("actorSource")] string ActorSource = "user");
 
 public sealed record SpeakerVoiceSample(
     [property: JsonPropertyName("speakerId")] string SpeakerId,

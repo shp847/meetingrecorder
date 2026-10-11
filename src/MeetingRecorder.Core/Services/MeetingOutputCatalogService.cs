@@ -547,7 +547,8 @@ public sealed class MeetingOutputCatalogService
                 merge.ArtifactRevision,
                 merge.SourceSpeakerIds,
                 merge.CanonicalSpeakerId,
-                merge.EvidenceFingerprint),
+                merge.EvidenceFingerprint,
+                merge.ActorSource),
             SpeakerClusterMergeResolver.BuildCanonicalMap(existing));
         if (mergeDecision.Disposition == SpeakerClusterMergeDisposition.Redundant)
         {

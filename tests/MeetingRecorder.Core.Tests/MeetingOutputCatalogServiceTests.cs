@@ -1279,6 +1279,7 @@ public sealed class MeetingOutputCatalogServiceTests
         var savedManifest = await manifestStore.LoadAsync(manifestPath);
         var savedMerge = Assert.Single(savedManifest.ProcessingMetadata!.SpeakerClusterMerges!);
         Assert.Equal("speaker-a", savedMerge.CanonicalSpeakerId);
+        Assert.Equal("user", savedMerge.ActorSource);
         Assert.Equal("profile-alex", savedManifest.ProcessingMetadata.Speakers![0].ProfileId);
         Assert.Equal("profile-b", savedManifest.ProcessingMetadata.Speakers![1].ProfileId);
         Assert.Single(savedManifest.ProcessingMetadata.SpeakerVoiceSamples!);
@@ -1288,6 +1289,7 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Equal("Alex", document["segments"]![1]!["speakerLabel"]!.GetValue<string>());
         Assert.Equal("Speaker B", document["segments"]![1]!["displaySpeakerLabel"]!.GetValue<string>());
         Assert.Equal("speaker-a", document["speakerClusterMerges"]![0]!["canonicalSpeakerId"]!.GetValue<string>());
+        Assert.Equal("user", document["speakerClusterMerges"]![0]!["actorSource"]!.GetValue<string>());
 
         var markdown = await File.ReadAllTextAsync(markdownPath);
         Assert.Contains("**Alex:** Second", markdown, StringComparison.Ordinal);
