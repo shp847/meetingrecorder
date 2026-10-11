@@ -4118,7 +4118,8 @@ Sprint 12 acceptance criteria:
 - Documentation / installer / release work: document local path class, sensitive voice-derived data, lifecycle, artifact exclusions, backup/recovery limit, and no cloud sharing. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found profile list/disable/delete controls and storage tests, but no full lifecycle consequence contract, matching race proof, corrupt-store UX, or privacy exclusion audit across shipped artifacts.
 - Evidence and date: 2026-09-29 added `VoiceProfileLifecycleResolver` tests for disable/enable/delete consequences, confirmation, active-mutation blocking, unavailable-store behavior, and historic-attribution preservation.
-- Remaining gap or next action: add store-revision serialization and corrupt-store settings state plus profile-payload exclusion scans before marking this sprint Done.
+- Evidence and date: 2026-10-10 added a cross-process-safe local store lease for read/write/delete transactions, so concurrent app/worker learning and profile lifecycle mutations serialize. Settings now clears stale rows/disables all profile mutations when storage is unavailable, and explicitly reports a corrupt-store recovery while preserving published meeting names. Focused profile/store/learning/correction/matcher/XAML contracts passed 95/95.
+- Remaining gap or next action: add profile-payload exclusion scans across published/exported artifacts and installer payload before marking this sprint Done.
 
 Goal: make voice memory trustworthy and controllable.
 

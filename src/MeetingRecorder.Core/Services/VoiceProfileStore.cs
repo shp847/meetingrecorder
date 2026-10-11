@@ -30,7 +30,8 @@ public sealed record VoiceProfile(
 public sealed record VoiceProfileStoreDocument(
     int SchemaVersion,
     DateTimeOffset UpdatedAtUtc,
-    IReadOnlyList<VoiceProfile> Profiles);
+    IReadOnlyList<VoiceProfile> Profiles,
+    [property: JsonIgnore] bool WasRecoveredFromCorruption = false);
 
 public sealed class VoiceProfileStore
 {
@@ -58,13 +59,39 @@ public sealed class VoiceProfileStore
 
     public async Task<VoiceProfileStoreDocument> LoadOrCreateAsync(CancellationToken cancellationToken = default)
     {
+        await using var storeLock = await AcquireLockAsync(cancellationToken);
+        return await LoadOrCreateCoreAsync(cancellationToken);
+    }
+
+    public async Task SaveAsync(
+        VoiceProfileStoreDocument document,
+        CancellationToken cancellationToken = default)
+    {
+        await using var storeLock = await AcquireLockAsync(cancellationToken);
+        await SaveCoreAsync(document, cancellationToken);
+    }
+
+    public async Task<VoiceProfileStoreDocument> UpdateAsync(
+        Func<VoiceProfileStoreDocument, VoiceProfileStoreDocument> update,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        await using var storeLock = await AcquireLockAsync(cancellationToken);
+        var current = await LoadOrCreateCoreAsync(cancellationToken);
+        var updated = Normalize(update(current));
+        await SaveCoreAsync(updated, cancellationToken);
+        return updated;
+    }
+
+    private async Task<VoiceProfileStoreDocument> LoadOrCreateCoreAsync(CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(GetStoreDirectory());
 
         if (!File.Exists(StorePath))
         {
             var created = CreateEmptyDocument();
-            await SaveAsync(created, cancellationToken);
+            await SaveCoreAsync(created, cancellationToken);
             return created;
         }
 
@@ -81,14 +108,14 @@ public sealed class VoiceProfileStore
         {
             TryBackupCorruptStore();
             var created = CreateEmptyDocument();
-            await SaveAsync(created, cancellationToken);
-            return created;
+            await SaveCoreAsync(created, cancellationToken);
+            return created with { WasRecoveredFromCorruption = true };
         }
     }
 
-    public async Task SaveAsync(
+    private async Task SaveCoreAsync(
         VoiceProfileStoreDocument document,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(GetStoreDirectory());
@@ -109,18 +136,6 @@ public sealed class VoiceProfileStore
         }
 
         File.Move(tempPath, StorePath);
-    }
-
-    public async Task<VoiceProfileStoreDocument> UpdateAsync(
-        Func<VoiceProfileStoreDocument, VoiceProfileStoreDocument> update,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(update);
-
-        var current = await LoadOrCreateAsync(cancellationToken);
-        var updated = Normalize(update(current));
-        await SaveAsync(updated, cancellationToken);
-        return updated;
     }
 
     public async Task<VoiceProfileStoreDocument> DisableProfileAsync(
@@ -172,15 +187,33 @@ public sealed class VoiceProfileStore
             cancellationToken);
     }
 
-    public Task DeleteAllAsync(CancellationToken cancellationToken = default)
+    public async Task DeleteAllAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (File.Exists(StorePath))
-        {
-            File.Delete(StorePath);
-        }
+        await UpdateAsync(_ => CreateEmptyDocument(), cancellationToken);
+    }
 
-        return Task.CompletedTask;
+    private async Task<FileStream> AcquireLockAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(GetStoreDirectory());
+        var lockPath = StorePath + ".lock";
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+            }
+        }
     }
 
     private string GetStoreDirectory()
@@ -220,7 +253,8 @@ public sealed class VoiceProfileStore
         return new VoiceProfileStoreDocument(
             CurrentSchemaVersion,
             document.UpdatedAtUtc == default ? DateTimeOffset.UtcNow : document.UpdatedAtUtc,
-            profiles);
+            profiles,
+            document.WasRecoveredFromCorruption);
     }
 
     private static VoiceProfile NormalizeProfile(VoiceProfile profile)

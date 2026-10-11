@@ -158,6 +158,7 @@ public partial class MainWindow : Window
     private bool _isSuggestingMeetingTitle;
     private bool _isApplyingSuggestedMeetingTitles;
     private bool _isApplyingSpeakerNames;
+    private bool _isVoiceProfileStoreAvailable;
     private bool _isUpdatingMeetingProject;
     private bool _isMergingMeetings;
     private bool _isSplittingMeeting;
@@ -8969,6 +8970,7 @@ public partial class MainWindow : Window
             var rows = document.Profiles
                 .Select(profile => new VoiceProfileSettingsRow(profile))
                 .ToArray();
+            _isVoiceProfileStoreAvailable = true;
             VoiceProfilesDataGrid.ItemsSource = rows;
             var experience = SpeakerExperienceResolver.Resolve(new SpeakerExperienceInput(
                 SpeakerExperienceSurface.Settings,
@@ -8986,9 +8988,11 @@ public partial class MainWindow : Window
                 NameSuggestionCount: 0,
                 HasProfileAttribution: false,
                 RequiresRefresh: false));
-            ConfigSpeakerNameLearningStatusTextBlock.Text = rows.Length == 0
-                ? $"No local Voice Profiles have been taught yet. {experience.Explanation}"
-                : $"Stored {rows.Length} local Voice Profile(s). {experience.Explanation}";
+            ConfigSpeakerNameLearningStatusTextBlock.Text = document.WasRecoveredFromCorruption
+                ? "Local Voice Profile storage was repaired after unreadable data. Existing meeting names stay unchanged; teach profiles again only if wanted."
+                : rows.Length == 0
+                    ? $"No local Voice Profiles have been taught yet. {experience.Explanation}"
+                    : $"Stored {rows.Length} local Voice Profile(s). {experience.Explanation}";
             UpdateVoiceProfileActionState();
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
@@ -8997,6 +9001,8 @@ public partial class MainWindow : Window
         }
         catch (Exception)
         {
+            _isVoiceProfileStoreAvailable = false;
+            VoiceProfilesDataGrid.ItemsSource = Array.Empty<VoiceProfileSettingsRow>();
             ConfigSpeakerNameLearningStatusTextBlock.Text = SpeakerExperienceResolver.Resolve(new SpeakerExperienceInput(
                 SpeakerExperienceSurface.Settings,
                 HasMeetingManifest: false,
@@ -9130,26 +9136,26 @@ public partial class MainWindow : Window
         ApplyVoiceProfileActionState(
             EnableVoiceProfileButton,
             UserActionIntent.EnableVoiceProfile,
-            selectedProfile?.Status == VoiceProfileStatus.Disabled.ToString(),
+            _isVoiceProfileStoreAvailable && selectedProfile?.Status == VoiceProfileStatus.Disabled.ToString(),
             selectedProfile is null
                 ? UserActionBlockedReasonKind.SelectionRequired
                 : UserActionBlockedReasonKind.ActionNotEligible);
         ApplyVoiceProfileActionState(
             DisableVoiceProfileButton,
             UserActionIntent.DisableVoiceProfile,
-            selectedProfile?.Status == VoiceProfileStatus.Active.ToString(),
+            _isVoiceProfileStoreAvailable && selectedProfile?.Status == VoiceProfileStatus.Active.ToString(),
             selectedProfile is null
                 ? UserActionBlockedReasonKind.SelectionRequired
                 : UserActionBlockedReasonKind.ActionNotEligible);
         ApplyVoiceProfileActionState(
             DeleteVoiceProfileButton,
             UserActionIntent.DeleteVoiceProfile,
-            selectedProfile is not null,
+            _isVoiceProfileStoreAvailable && selectedProfile is not null,
             UserActionBlockedReasonKind.SelectionRequired);
         ApplyVoiceProfileActionState(
             DeleteAllVoiceProfilesButton,
             UserActionIntent.DeleteAllVoiceProfiles,
-            VoiceProfilesDataGrid.ItemsSource is IEnumerable<VoiceProfileSettingsRow> rows && rows.Any(),
+            _isVoiceProfileStoreAvailable && VoiceProfilesDataGrid.ItemsSource is IEnumerable<VoiceProfileSettingsRow> rows && rows.Any(),
             UserActionBlockedReasonKind.NoEligibleItems);
     }
 
