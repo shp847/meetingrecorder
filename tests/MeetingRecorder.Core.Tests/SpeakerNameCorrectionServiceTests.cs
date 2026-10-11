@@ -217,7 +217,8 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             1,
             _now,
             [Profile("voice_pranav", "Pranav Sharma")]));
-        var service = CreateService(profileStore);
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
         var request = new SpeakerNameReviewRequest(
             MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record),
             [new SpeakerNameCorrectionDraft(
@@ -350,13 +351,15 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             1,
             _now,
             [Profile("voice_pranav", "Pranav Sharma")]));
-        var service = CreateService(profileStore);
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
 
         var result = await service.RefreshSpeakerNameAttributionAsync(
             context.Record,
             SpeakerNameLearningMode.LocalAutoLearn,
             new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
-            _now);
+            _now,
+            operationId: "post-publish-operation");
 
         var prediction = Assert.Single(result.Predictions);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, prediction.Source);
@@ -370,6 +373,11 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
         Assert.Equal("Pranav Sharma", updatedSpeaker.DisplayName);
         Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, updatedSpeaker.NameSource);
         Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var receipt = await receiptStore.FindAsync("post-publish-operation:speaker_00");
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.AutoApplyRecognition, receipt.Action);
+        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+        Assert.Equal(FutureNamingEligibility.AutoApplied, Assert.Single(result.EligibilitySnapshots!).Eligibility);
     }
 
     [Fact]

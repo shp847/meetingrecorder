@@ -3905,8 +3905,8 @@ Sprint 8 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: `VoiceProfileMatcher`, config thresholds, decision tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 eligibility decision matrix).
+- Status: `Done`
+- Status history: `Partial` (2026-09-27 source audit: `VoiceProfileMatcher`, config thresholds, decision tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 eligibility decision matrix); `Done` (2026-10-11 post-publication local attribution).
 - User outcome: future meetings may receive a remembered name only when local evidence clears conservative rules; all uncertainty remains clearly reviewable.
 - Scope / non-goals: harden post-processing profile attribution. Do not identify live speakers, use attendee/calendar/file/title/count hints, alter diarization, send embeddings off-device, or turn a suggestion into a correction.
 - Dependencies and decisions: consume S1/S8 identity, revision, suppression and receipts. Current matcher applies threshold/margin/profile-maturity/minimum-duration and one auto winner per profile. Run only after final speaker samples/artifact revision exist; candidate input is profile/sample embedding compatibility plus scoped rejection, nothing else.
@@ -3918,8 +3918,7 @@ Sprint 8 acceptance criteria:
 - Tests and rendered checks: exhaustive gate/precedence matrix, one-profile-per-speaker collision, revisions/retry/idempotence, user/override preservation, suppression/undo/disabled rollback, incompatible model, no-hint static dependency test, and local-only log redaction. Render each readiness state and immediate undo at 1280x800/125%, keyboard/screen-reader source/reason.
 - Documentation / installer / release work: document post-processing-only/local recognition, conservative rules, suggestion/undo and no hidden identity hints. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found threshold/margin/maturity/duration/duplicate gates and tests, but no lifecycle snapshot, rollout/rollback contract, revisioned attribution receipt, or mechanical no-hint evidence.
-- Evidence and date: 2026-09-29 added `FutureNamingEligibilityResolver` with conservative precedence tests for disabled, evidence/profile gaps, suppression, thresholds, ambiguity, suggestions, and auto-apply. It admits no attendee, calendar, title, filename, or speaker-count inputs.
-- Remaining gap or next action: bind the versioned eligibility snapshot to post-publish prediction dispatch and persistent attribution receipts before marking this sprint Done.
+- Evidence and date: 2026-09-29 added `FutureNamingEligibilityResolver` with conservative precedence tests for disabled, evidence/profile gaps, suppression, thresholds, ambiguity, suggestions, and auto-apply. It admits no attendee, calendar, title, filename, or speaker-count inputs. 2026-10-11 wired versioned eligibility snapshots and auto-attribution receipts through the processing worker after transcript publication; explicit user names stay untouched. Focused correction/matcher/eligibility tests passed (31), and a processor integration test proved published generic labels become only a mature high-confidence local name with its local receipt (1). User waived manual rendered/DPI/high-contrast/Narrator qualification for the speaker roadmap, accepting production-use feedback as the remaining experience signal.
 
 Goal: automatically convert generic labels to person names in future calls
 without increasing false attribution risk.

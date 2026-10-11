@@ -28,7 +28,8 @@ public sealed record SpeakerCorrectionReceipt(
     SpeakerNameSource NextNameSource,
     string? NextProfileId,
     SpeakerCorrectionLearningDisposition LearningDisposition,
-    DateTimeOffset RecordedAtUtc)
+    DateTimeOffset RecordedAtUtc,
+    string? PolicyVersion = null)
 {
     public const int CurrentSchemaVersion = 1;
 }

@@ -7,6 +7,7 @@ public enum SpeakerCorrectionAction
     ConfirmName = 0,
     RejectSuggestion = 1,
     UndoRecognition = 2,
+    AutoApplyRecognition = 3,
 }
 
 public enum SpeakerCorrectionDisposition

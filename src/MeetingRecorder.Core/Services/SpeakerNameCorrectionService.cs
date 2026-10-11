@@ -35,7 +35,14 @@ public sealed record SpeakerNameRejectionResult(
 
 public sealed record SpeakerNameRefreshResult(
     IReadOnlyList<SpeakerNamePrediction> Predictions,
-    string? Warning);
+    string? Warning,
+    IReadOnlyList<FutureNamingEligibilitySnapshot>? EligibilitySnapshots = null);
+
+public sealed record FutureNamingEligibilitySnapshot(
+    string MeetingRevision,
+    string SpeakerId,
+    string PolicyVersion,
+    FutureNamingEligibility Eligibility);
 
 public sealed record SpeakerNameUndoResult(
     int UpdatedSpeakerCount,
@@ -404,6 +411,7 @@ public sealed class SpeakerNameCorrectionService
         SpeakerNameLearningMode learningMode,
         SpeakerNameRecognitionOptions options,
         DateTimeOffset now,
+        string? operationId = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -441,6 +449,17 @@ public sealed class SpeakerNameCorrectionService
             }
 
             var updatedSpeakers = _profileMatcher.ApplyPredictions(speakers, predictions);
+            var eligibilitySnapshots = BuildEligibilitySnapshots(
+                expectedArtifactRevision,
+                samples,
+                profiles,
+                predictions,
+                learningMode,
+                options);
+            if (speakers.SequenceEqual(updatedSpeakers))
+            {
+                return new SpeakerNameRefreshResult(predictions, null, eligibilitySnapshots);
+            }
             var transaction = await _outputCatalogService.UpdateSpeakerIdentitiesIfCurrentAsync(
                 record,
                 expectedArtifactRevision,
@@ -453,8 +472,17 @@ public sealed class SpeakerNameCorrectionService
                     transaction.ConflictReason ?? "Meeting speaker data changed. Reload before refreshing local suggestions.");
             }
 
+            var receiptWarning = await TryPersistAutoAttributionReceiptsAsync(
+                manifest,
+                expectedArtifactRevision,
+                speakers,
+                updatedSpeakers,
+                predictions,
+                operationId,
+                now,
+                cancellationToken);
             await _learningService.UpdateLastMatchedAsync(predictions, now, cancellationToken);
-            return new SpeakerNameRefreshResult(predictions, null);
+            return new SpeakerNameRefreshResult(predictions, receiptWarning, eligibilitySnapshots);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -656,4 +684,91 @@ public sealed class SpeakerNameCorrectionService
         var value = string.Join("\n", speaker.Id, speaker.DisplayName, speaker.NameSource, speaker.ProfileId, speaker.SuggestedDisplayName, speaker.DecisionReason);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
+
+    private async Task<string?> TryPersistAutoAttributionReceiptsAsync(
+        MeetingSessionManifest manifest,
+        string artifactRevision,
+        IReadOnlyList<SpeakerIdentity> priorSpeakers,
+        IReadOnlyList<SpeakerIdentity> updatedSpeakers,
+        IReadOnlyList<SpeakerNamePrediction> predictions,
+        string? operationId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var operationPrefix = NormalizeOperationId(operationId) ?? Guid.NewGuid().ToString("N");
+        var priorById = priorSpeakers.ToDictionary(speaker => speaker.Id, StringComparer.Ordinal);
+        var updatedById = updatedSpeakers.ToDictionary(speaker => speaker.Id, StringComparer.Ordinal);
+        try
+        {
+            foreach (var prediction in predictions.Where(prediction => prediction.Source == SpeakerNameSource.AutoAppliedVoiceProfile))
+            {
+                if (!priorById.TryGetValue(prediction.SpeakerId, out var prior) ||
+                    !updatedById.TryGetValue(prediction.SpeakerId, out var updated) ||
+                    prior == updated)
+                {
+                    continue;
+                }
+
+                await _receiptStore.AppendOrReplaceAsync(new SpeakerCorrectionReceipt(
+                    SpeakerCorrectionReceipt.CurrentSchemaVersion,
+                    operationPrefix + ":" + prediction.SpeakerId,
+                    manifest.SessionId,
+                    artifactRevision,
+                    prediction.SpeakerId,
+                    SpeakerCorrectionAction.AutoApplyRecognition,
+                    CreateSpeakerFingerprint(prior),
+                    prior.NameSource,
+                    prior.ProfileId,
+                    updated.NameSource,
+                    updated.ProfileId,
+                    SpeakerCorrectionLearningDisposition.NotRequested,
+                    now,
+                    FutureNamingPolicyVersion), cancellationToken);
+            }
+
+            return null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return "Local automatic name-attribution receipt could not be saved.";
+        }
+    }
+
+    private static IReadOnlyList<FutureNamingEligibilitySnapshot> BuildEligibilitySnapshots(
+        string meetingRevision,
+        IReadOnlyList<SpeakerVoiceSample> samples,
+        IReadOnlyList<VoiceProfile> profiles,
+        IReadOnlyList<SpeakerNamePrediction> predictions,
+        SpeakerNameLearningMode learningMode,
+        SpeakerNameRecognitionOptions options)
+    {
+        var samplesById = samples.ToDictionary(sample => sample.SpeakerId, StringComparer.Ordinal);
+        var profilesById = profiles.ToDictionary(profile => profile.ProfileId, StringComparer.Ordinal);
+        return predictions
+            .Where(prediction => samplesById.ContainsKey(prediction.SpeakerId) && profilesById.ContainsKey(prediction.ProfileId))
+            .Select(prediction =>
+            {
+                var sample = samplesById[prediction.SpeakerId];
+                var profile = profilesById[prediction.ProfileId];
+                var decision = FutureNamingEligibilityResolver.Resolve(new FutureNamingEligibilityInput(
+                    meetingRevision,
+                    prediction.SpeakerId,
+                    FutureNamingPolicyVersion,
+                    learningMode != SpeakerNameLearningMode.Disabled,
+                    HasSample: true,
+                    HasCompatibleProfile: true,
+                    IsProfileMature: profile.SampleCount >= options.MinimumAutoApplyProfileSampleCount,
+                    HasMinimumSpeech: sample.SpeechDuration >= options.MinimumAutoApplySpeechDuration,
+                    MeetsSuggestionThreshold: true,
+                    MeetsAutoApplyThreshold: prediction.Confidence >= options.AutoApplyConfidenceThreshold,
+                    HasRequiredMargin: prediction.DecisionReason != SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin,
+                    IsDuplicateProfileCandidate: prediction.DecisionReason == SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
+                    IsSuppressed: false));
+                return new FutureNamingEligibilitySnapshot(meetingRevision, prediction.SpeakerId, FutureNamingPolicyVersion, decision.Eligibility);
+            })
+            .OrderBy(snapshot => snapshot.SpeakerId, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private const string FutureNamingPolicyVersion = "voice-profile-matcher-v1";
 }

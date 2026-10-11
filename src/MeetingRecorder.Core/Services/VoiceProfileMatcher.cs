@@ -83,6 +83,11 @@ public sealed class VoiceProfileMatcher
         return speakers
             .Select(speaker =>
             {
+                if (speaker.IsUserEdited || speaker.NameSource == SpeakerNameSource.UserEdited)
+                {
+                    return speaker;
+                }
+
                 if (!predictionsBySpeakerId.TryGetValue(speaker.Id, out var prediction))
                 {
                     return speaker;

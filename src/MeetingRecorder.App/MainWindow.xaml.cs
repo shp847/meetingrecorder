@@ -7814,7 +7814,8 @@ public partial class MainWindow : Window
                 _liveConfig.Current.SpeakerNameLearningMode,
                 BuildSpeakerNameRecognitionOptions(_liveConfig.Current),
                 DateTimeOffset.UtcNow,
-                _lifetimeCts.Token);
+                operationId: null,
+                cancellationToken: _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
             RefreshOpenMeetingDetailWindow();
             _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(

@@ -58,6 +58,13 @@ internal static class Program
                 FileSummarySecretStore.CreateDefault(),
                 new SummaryChatClient(summaryHttpClient),
                 modelProxyClient);
+            var voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
+            var speakerNameCorrectionService = new SpeakerNameCorrectionService(
+                new MeetingOutputCatalogService(pathBuilder),
+                manifestStore,
+                new SpeakerNameLearningService(voiceProfileStore),
+                new VoiceProfileMatcher(),
+                voiceProfileStore);
             var processor = new SessionProcessor(
                 manifestStore,
                 pathBuilder,
@@ -66,7 +73,8 @@ internal static class Program
                 CreateDiarizationProvider(config, diarizationThreadCount, logger, resolvedConfigPath),
                 new TranscriptRenderer(),
                 new FilePublishService(),
-                summarizationProvider);
+                summarizationProvider,
+                speakerNameCorrectionService: speakerNameCorrectionService);
 
             var published = await processor.ProcessAsync(manifestPath, config, stage);
             logger.Log($"Processing completed successfully. Ready marker: '{published.ReadyMarkerPath}'.");

@@ -2,6 +2,7 @@ using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Processing;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -33,7 +34,8 @@ public sealed class SessionProcessor
         TranscriptRenderer transcriptRenderer,
         FilePublishService publishService,
         IMeetingSummarizationProvider? summarizationProvider = null,
-        SessionProcessingInputResolver? processingInputResolver = null)
+        SessionProcessingInputResolver? processingInputResolver = null,
+        SpeakerNameCorrectionService? speakerNameCorrectionService = null)
     {
         ManifestStore = manifestStore;
         PathBuilder = pathBuilder;
@@ -44,6 +46,7 @@ public sealed class SessionProcessor
         PublishService = publishService;
         SummarizationProvider = summarizationProvider ?? NoOpMeetingSummarizationProvider.Instance;
         ProcessingInputResolver = processingInputResolver ?? new SessionProcessingInputResolver();
+        SpeakerNameCorrectionService = speakerNameCorrectionService;
     }
 
     public SessionManifestStore ManifestStore { get; }
@@ -63,6 +66,9 @@ public sealed class SessionProcessor
     public IMeetingSummarizationProvider SummarizationProvider { get; }
 
     public SessionProcessingInputResolver ProcessingInputResolver { get; }
+
+    /// <summary>Optional post-publication local-only naming. It is absent from test and transcript-only processors.</summary>
+    public SpeakerNameCorrectionService? SpeakerNameCorrectionService { get; }
 
     public Task<PublishedArtifactSet> ProcessAsync(
         string manifestPath,
@@ -435,6 +441,13 @@ public sealed class SessionProcessor
                 PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, DateTimeOffset.UtcNow, "Artifacts published."),
             };
             await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
+            manifest = await ApplyPostPublicationSpeakerNamesAsync(
+                manifestPath,
+                manifest,
+                published,
+                stem,
+                config,
+                cancellationToken);
             await TryMarkImportedJobPublishedAsync(input, activeImportJob, cancellationToken);
             var healMode = config.OngoingMeetingHealRolloutMode;
             if (healMode == OngoingMeetingHealRolloutMode.Live ||
@@ -824,6 +837,57 @@ public sealed class SessionProcessor
             : manifest with { SummarizationStatus = status, Summary = null };
         await ManifestStore.SaveAsync(manifest, manifestPath, cancellationToken);
         throw new InvalidOperationException($"The {stage.ToString().ToLowerInvariant()} stage is blocked. {reason}");
+    }
+
+    private async Task<MeetingSessionManifest> ApplyPostPublicationSpeakerNamesAsync(
+        string manifestPath,
+        MeetingSessionManifest manifest,
+        PublishedArtifactSet published,
+        string stem,
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        if (SpeakerNameCorrectionService is null ||
+            manifest.ProcessingMetadata?.Speakers is not { Count: > 0 } ||
+            manifest.ProcessingMetadata.SpeakerVoiceSamples is not { Count: > 0 })
+        {
+            return manifest;
+        }
+
+        var record = new MeetingOutputRecord(
+            stem,
+            string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle,
+            manifest.StartedAtUtc,
+            manifest.Platform,
+            manifest.EndedAtUtc is { } endedAt ? endedAt - manifest.StartedAtUtc : null,
+            published.AudioPath,
+            published.MarkdownPath,
+            published.JsonPath,
+            published.ReadyMarkerPath,
+            manifestPath,
+            SessionState.Published,
+            manifest.Attendees,
+            true,
+            manifest.ProcessingMetadata.TranscriptionModelFileName,
+            manifest.ProjectName,
+            manifest.DetectedAudioSource,
+            manifest.KeyAttendees,
+            manifest.CaptureTimeline,
+            manifest.LoopbackCaptureSegments);
+        var revision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var operationId = "post-publish-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            manifest.SessionId + "\n" + revision)))[..24];
+        _ = await SpeakerNameCorrectionService.RefreshSpeakerNameAttributionAsync(
+            record,
+            config.SpeakerNameLearningMode,
+            new SpeakerNameRecognitionOptions(
+                config.SpeakerNameAutoApplyConfidenceThreshold,
+                config.SpeakerNameSuggestionConfidenceThreshold,
+                config.SpeakerNameMatchMarginThreshold),
+            DateTimeOffset.UtcNow,
+            operationId,
+            cancellationToken);
+        return await ManifestStore.LoadAsync(manifestPath, cancellationToken);
     }
 
     private string BuildOutputStem(MeetingSessionManifest manifest)

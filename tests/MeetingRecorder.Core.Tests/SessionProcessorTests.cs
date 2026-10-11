@@ -1067,6 +1067,56 @@ public sealed class SessionProcessorTests
         }
     }
 
+    [Fact]
+    public async Task ProcessAsync_AutoNames_Only_After_Publication_And_Writes_A_Receipt()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+        try
+        {
+            var profileStore = new VoiceProfileStore(Path.Combine(context.Root, "speaker-profiles", "voice-profiles.json"));
+            await profileStore.SaveAsync(new VoiceProfileStoreDocument(
+                1,
+                DateTimeOffset.UtcNow,
+                [new VoiceProfile(
+                    "voice_pranav", "Pranav Sharma", "embedding.onnx", 3, [1f, 0f, 0f], 2,
+                    ["older-session"], null, VoiceProfileStatus.Active, [])]));
+            var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(context.Root, "speaker-corrections", "receipts.json"));
+            var namingService = new SpeakerNameCorrectionService(
+                new MeetingOutputCatalogService(context.PathBuilder),
+                context.ManifestStore,
+                new SpeakerNameLearningService(profileStore),
+                new VoiceProfileMatcher(),
+                profileStore,
+                receiptStore);
+            var processor = new SessionProcessor(
+                context.ManifestStore,
+                context.PathBuilder,
+                new WaveChunkMerger(),
+                new TrackingTranscriptionProvider(),
+                new AutoNamingDiarizationProvider(),
+                new TranscriptRenderer(),
+                new FilePublishService(),
+                speakerNameCorrectionService: namingService);
+
+            var published = await processor.ProcessAsync(context.ManifestPath, context.CreateConfig());
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var speaker = Assert.Single(manifest.ProcessingMetadata!.Speakers!);
+
+            Assert.Equal(SessionState.Published, manifest.State);
+            Assert.Equal("Pranav Sharma", speaker.DisplayName);
+            Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, speaker.NameSource);
+            Assert.Contains("**Pranav Sharma:**", await File.ReadAllTextAsync(published.MarkdownPath), StringComparison.Ordinal);
+            var receiptPath = Path.Combine(context.Root, "speaker-corrections", "receipts.json");
+            var receipts = JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(await File.ReadAllTextAsync(receiptPath)) ?? [];
+            var receipt = Assert.Single(receipts.Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
+            Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
     private static SessionProcessor CreateProcessor(
         SessionManifestStore manifestStore,
         ArtifactPathBuilder pathBuilder,
@@ -1220,6 +1270,21 @@ public sealed class SessionProcessorTests
                 [new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(1))],
                 null));
         }
+    }
+
+    private sealed class AutoNamingDiarizationProvider : IDiarizationProvider
+    {
+        public Task<DiarizationResult> ApplySpeakerLabelsAsync(
+            string audioPath,
+            IReadOnlyList<TranscriptSegment> transcriptSegments,
+            CancellationToken cancellationToken) => Task.FromResult(new DiarizationResult(
+                transcriptSegments.Select(segment => segment with { SpeakerId = "speaker_00" }).ToArray(),
+                true,
+                "speaker labels applied",
+                [new SpeakerIdentity("speaker_00", "Speaker 1", false)],
+                [new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(9))],
+                null,
+                [new SpeakerVoiceSample("speaker_00", "embedding.onnx", 3, [1f, 0f, 0f], TimeSpan.FromSeconds(9), DateTimeOffset.UtcNow)]));
     }
 
     private sealed class ThrowingDiarizationProvider : IDiarizationProvider
