@@ -103,7 +103,7 @@ internal sealed class ExistingAppWindowActivator
         return windowClassName.StartsWith("HwndWrapper[", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool ActivateWindow(nint windowHandle)
+    internal static bool RestoreAndActivateWindow(nint windowHandle)
     {
         if (windowHandle == nint.Zero)
         {
@@ -111,8 +111,11 @@ internal sealed class ExistingAppWindowActivator
         }
 
         ShowWindowAsync(windowHandle, SwRestore);
-        return SetForegroundWindow(windowHandle);
+        SetForegroundWindow(windowHandle);
+        return true;
     }
+
+    private static bool ActivateWindow(nint windowHandle) => RestoreAndActivateWindow(windowHandle);
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);

@@ -107,6 +107,13 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Timeline
 
+### 2026-10-11: Single-instance activation recovery
+
+- Trigger: installed Meeting Recorder process `25648` was responsive with a valid visible window handle, but the window was minimized and a `Local\\MeetingRecorder.Activate` signal did not acknowledge within three seconds. The foreground request therefore could not restore the user-visible app through normal single-instance activation.
+- Live-machine recovery: restored the existing handle with `ShowWindowAsync(SW_RESTORE)` and foregrounded it. The window was no longer minimized and became the foreground window. No Meeting Recorder process was stopped, restarted, or modified.
+- Source change: activation restores its native window handle before WPF `Activate`/`Focus`; remove the temporary WPF `Topmost` toggle. This narrows the activation path and avoids the WPF window-setting path implicated by prior logged `Win32Exception (1816)` quota failures.
+- Tests: focused activation/startup contracts passed 49/49. Package: `Build-Installer.ps1` produced `MeetingRecorder-v0.3-win-x64.zip` (88,716,644 bytes) and `MeetingRecorderInstaller.msi` (76,378,112 bytes). Installed: app remains the pre-change binary because replacing a live recording application is intentionally deferred. This live recovery does not prove the shipped fix.
+
 ### 2026-03-23: Detection foundation
 
 - Commit: `60f6d45`

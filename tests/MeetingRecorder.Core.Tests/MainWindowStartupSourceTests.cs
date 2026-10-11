@@ -487,6 +487,8 @@ public sealed class MainWindowStartupSourceTests
         Assert.Contains("return false;", helperBlock, StringComparison.Ordinal);
         Assert.Contains("new WindowInteropHelper(window).Handle", helperBlock, StringComparison.Ordinal);
         Assert.Contains("windowHandle == nint.Zero", helperBlock, StringComparison.Ordinal);
+        Assert.Contains("ExistingAppWindowActivator.RestoreAndActivateWindow(windowHandle);", helperBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("window.Topmost", helperBlock, StringComparison.Ordinal);
         Assert.Contains("return true;", helperBlock, StringComparison.Ordinal);
     }
 
