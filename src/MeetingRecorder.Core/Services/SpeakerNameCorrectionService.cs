@@ -1,5 +1,7 @@
 using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace MeetingRecorder.Core.Services;
 
@@ -134,17 +136,6 @@ public sealed class SpeakerNameCorrectionService
                 RequiresReload: true);
         }
 
-        if (!string.Equals(
-                MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
-                request.ExpectedArtifactRevision,
-                StringComparison.Ordinal))
-        {
-            return new SpeakerNameCorrectionResult(
-                new SpeakerNameLearningResult(0, 0, requestedCount),
-                "Meeting speaker data changed. Reload before applying name changes.",
-                RequiresReload: true);
-        }
-
         var manifestBeforeChange = await TryLoadManifestAsync(record.ManifestPath, cancellationToken);
         if (manifestBeforeChange?.ProcessingMetadata?.Speakers is not { Count: > 0 } speakers)
         {
@@ -163,6 +154,42 @@ public sealed class SpeakerNameCorrectionService
             return new SpeakerNameCorrectionResult(
                 new SpeakerNameLearningResult(0, 0, requestedCount),
                 "Speaker name review contains invalid or duplicate diarization labels. Reload before trying again.",
+                RequiresReload: true);
+        }
+
+        var operationId = NormalizeOperationId(request.OperationId);
+        if (operationId is not null)
+        {
+            var receiptOperations = draftsBySpeakerId
+                .Select(group => operationId + ":" + group.Key)
+                .ToArray();
+            var priorReceipts = await Task.WhenAll(receiptOperations.Select(id => _receiptStore.FindAsync(id, cancellationToken)));
+            var matchingReceiptCount = priorReceipts.Count(receipt =>
+                receipt is not null &&
+                string.Equals(receipt.MeetingStableIdentity, manifestBeforeChange.SessionId, StringComparison.Ordinal) &&
+                string.Equals(receipt.ArtifactRevision, request.ExpectedArtifactRevision, StringComparison.Ordinal));
+            if (matchingReceiptCount == priorReceipts.Length)
+            {
+                return new SpeakerNameCorrectionResult(new SpeakerNameLearningResult(0, 0, 0), null);
+            }
+
+            if (matchingReceiptCount > 0)
+            {
+                return new SpeakerNameCorrectionResult(
+                    new SpeakerNameLearningResult(0, 0, requestedCount),
+                    "Only part of this speaker correction was recorded. Reload before trying again.",
+                    RequiresReload: true);
+            }
+        }
+
+        if (!string.Equals(
+                MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+                request.ExpectedArtifactRevision,
+                StringComparison.Ordinal))
+        {
+            return new SpeakerNameCorrectionResult(
+                new SpeakerNameLearningResult(0, 0, requestedCount),
+                "Meeting speaker data changed. Reload before applying name changes.",
                 RequiresReload: true);
         }
 
@@ -267,19 +294,24 @@ public sealed class SpeakerNameCorrectionService
         }
 
         var warnings = new List<string>();
-        var operationId = string.IsNullOrWhiteSpace(request.OperationId) ? Guid.NewGuid().ToString("N") : request.OperationId.Trim();
+        operationId ??= Guid.NewGuid().ToString("N");
+        var persistedReceipts = new List<SpeakerCorrectionReceipt>();
         try
         {
             foreach (var updated in updatedBySpeakerId)
             {
                 var prior = currentBySpeakerId[updated.Key];
-                await _receiptStore.AppendOrReplaceAsync(new SpeakerCorrectionReceipt(
+                var receipt = new SpeakerCorrectionReceipt(
                     SpeakerCorrectionReceipt.CurrentSchemaVersion, operationId + ":" + updated.Key,
                     manifestBeforeChange.SessionId, request.ExpectedArtifactRevision, updated.Key,
                     prior.NameSource == SpeakerNameSource.SuggestedVoiceProfile && normalizedDrafts.Single(d => d.SpeakerId == updated.Key).RejectSuggestion ? SpeakerCorrectionAction.RejectSuggestion : SpeakerCorrectionAction.ConfirmName,
-                    request.ExpectedArtifactRevision, prior.NameSource, prior.ProfileId, updated.Value.NameSource, updated.Value.ProfileId,
-                    confirmedCorrections.Any(d => d.SpeakerId == updated.Key) ? SpeakerCorrectionLearningDisposition.Pending : SpeakerCorrectionLearningDisposition.NotRequested,
-                    now), cancellationToken);
+                    CreateSpeakerFingerprint(prior), prior.NameSource, prior.ProfileId, updated.Value.NameSource, updated.Value.ProfileId,
+                    confirmedCorrections.Any(d => d.SpeakerId == updated.Key) && learningMode != SpeakerNameLearningMode.Disabled
+                        ? SpeakerCorrectionLearningDisposition.Pending
+                        : SpeakerCorrectionLearningDisposition.NotRequested,
+                    now);
+                await _receiptStore.AppendOrReplaceAsync(receipt, cancellationToken);
+                persistedReceipts.Add(receipt);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -287,6 +319,7 @@ public sealed class SpeakerNameCorrectionService
             warnings.Add("Local speaker correction receipt could not be saved.");
         }
         SpeakerNameLearningResult learningResult;
+        var learningFailed = false;
         try
         {
             learningResult = await _learningService.LearnFromConfirmedCorrectionsAsync(
@@ -299,7 +332,28 @@ public sealed class SpeakerNameCorrectionService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             learningResult = new SpeakerNameLearningResult(0, 0, confirmedCorrections.Count);
+            learningFailed = true;
             warnings.Add("Local Voice Profile learning could not be saved.");
+        }
+
+        if (persistedReceipts.Count > 0)
+        {
+            var learningDisposition = learningMode == SpeakerNameLearningMode.Disabled
+                ? SpeakerCorrectionLearningDisposition.NotRequested
+                : learningFailed
+                    ? SpeakerCorrectionLearningDisposition.Failed
+                    : SpeakerCorrectionLearningDisposition.Completed;
+            try
+            {
+                foreach (var receipt in persistedReceipts.Where(receipt => receipt.LearningDisposition == SpeakerCorrectionLearningDisposition.Pending))
+                {
+                    await _receiptStore.AppendOrReplaceAsync(receipt with { LearningDisposition = learningDisposition }, cancellationToken);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                warnings.Add("Local speaker correction receipt could not be updated.");
+            }
         }
 
         var rejectedCount = 0;
@@ -415,6 +469,15 @@ public sealed class SpeakerNameCorrectionService
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
+        return await UndoProfileSpeakerNameRecognitionAsync(record, now, operationId: null, cancellationToken);
+    }
+
+    public async Task<SpeakerNameUndoResult> UndoProfileSpeakerNameRecognitionAsync(
+        MeetingOutputRecord record,
+        DateTimeOffset now,
+        string? operationId,
+        CancellationToken cancellationToken = default)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         var expectedArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
         var manifest = await TryLoadManifestAsync(record.ManifestPath, cancellationToken);
@@ -424,6 +487,21 @@ public sealed class SpeakerNameCorrectionService
                 0,
                 0,
                 "No undoable voice-profile speaker names were found because the meeting speaker metadata is unavailable.");
+        }
+
+        operationId = NormalizeOperationId(operationId);
+        if (operationId is not null)
+        {
+            var priorReceipts = await Task.WhenAll(speakers
+                .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+                .Select(speaker => _receiptStore.FindAsync(operationId + ":" + speaker.Id, cancellationToken)));
+            if (priorReceipts.Any(receipt =>
+                receipt?.Action == SpeakerCorrectionAction.UndoRecognition &&
+                string.Equals(receipt.MeetingStableIdentity, manifest.SessionId, StringComparison.Ordinal) &&
+                string.Equals(receipt.ArtifactRevision, expectedArtifactRevision, StringComparison.Ordinal)))
+            {
+                return new SpeakerNameUndoResult(0, 0, null);
+            }
         }
 
         var updatedSpeakers = new List<SpeakerIdentity>(speakers.Count);
@@ -469,20 +547,46 @@ public sealed class SpeakerNameCorrectionService
                 transaction.ConflictReason ?? "Meeting speaker data changed. Reload before undoing profile names.");
         }
 
+        var warnings = new List<string>();
+        operationId ??= Guid.NewGuid().ToString("N");
+        try
+        {
+            foreach (var (speaker, index) in speakers.Select((speaker, index) => (speaker, index)).Where(entry => IsUndoableProfileAttribution(entry.speaker)))
+            {
+                var updated = ClearProfileAttribution(speaker, index);
+                await _receiptStore.AppendOrReplaceAsync(new SpeakerCorrectionReceipt(
+                    SpeakerCorrectionReceipt.CurrentSchemaVersion,
+                    operationId + ":" + speaker.Id,
+                    manifest.SessionId,
+                    expectedArtifactRevision,
+                    speaker.Id,
+                    SpeakerCorrectionAction.UndoRecognition,
+                    CreateSpeakerFingerprint(speaker),
+                    speaker.NameSource,
+                    speaker.ProfileId,
+                    updated.NameSource,
+                    updated.ProfileId,
+                    SpeakerCorrectionLearningDisposition.NotRequested,
+                    now), cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            warnings.Add("Profile names were removed, but local correction receipt could not be saved.");
+        }
+
         try
         {
             var suppressedMatchCount = await _learningService.RejectMatchesAsync(
                 rejectedMatches,
                 now,
                 cancellationToken);
-            return new SpeakerNameUndoResult(updatedSpeakerCount, suppressedMatchCount, null);
+            return new SpeakerNameUndoResult(updatedSpeakerCount, suppressedMatchCount, warnings.Count == 0 ? null : string.Join(" ", warnings));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return new SpeakerNameUndoResult(
-                updatedSpeakerCount,
-                0,
-                "Profile names were removed, but local suggestion suppression could not be saved.");
+            warnings.Add("Profile names were removed, but local suggestion suppression could not be saved.");
+            return new SpeakerNameUndoResult(updatedSpeakerCount, 0, string.Join(" ", warnings));
         }
     }
 
@@ -542,5 +646,14 @@ public sealed class SpeakerNameCorrectionService
             SuggestedDisplayName = null,
             DecisionReason = null,
         };
+    }
+
+    private static string? NormalizeOperationId(string? operationId) =>
+        string.IsNullOrWhiteSpace(operationId) ? null : operationId.Trim();
+
+    private static string CreateSpeakerFingerprint(SpeakerIdentity speaker)
+    {
+        var value = string.Join("\n", speaker.Id, speaker.DisplayName, speaker.NameSource, speaker.ProfileId, speaker.SuggestedDisplayName, speaker.DecisionReason);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 }

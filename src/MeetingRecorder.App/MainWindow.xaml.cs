@@ -7852,6 +7852,7 @@ public partial class MainWindow : Window
             await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
                 row.Source,
                 DateTimeOffset.UtcNow,
+                Guid.NewGuid().ToString("N"),
                 _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
             await RefreshVoiceProfileSettingsAsync();

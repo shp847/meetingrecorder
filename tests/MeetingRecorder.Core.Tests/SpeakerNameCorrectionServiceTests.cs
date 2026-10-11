@@ -242,6 +242,33 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyReviewAsync_Persists_Completed_Receipt_And_Deduplicates_A_Retry()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
+        var request = new SpeakerNameReviewRequest(
+            MeetingOutputCatalogService.GetSpeakerArtifactRevision(context.Record),
+            [new SpeakerNameCorrectionDraft("speaker_00", "Speaker 1", "Pranav Sharma", null, SpeakerNameSource.None)],
+            "review-operation");
+
+        var first = await service.ApplyReviewAsync(context.Record, request, SpeakerNameLearningMode.LocalAutoLearn, _now);
+        var receipt = await receiptStore.FindAsync("review-operation:speaker_00");
+        var retry = await service.ApplyReviewAsync(context.Record, request, SpeakerNameLearningMode.LocalAutoLearn, _now.AddMinutes(1));
+
+        Assert.Null(first.LearningWarning);
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.ConfirmName, receipt.Action);
+        Assert.Equal(SpeakerNameSource.None, receipt.PriorNameSource);
+        Assert.Equal(SpeakerNameSource.UserEdited, receipt.NextNameSource);
+        Assert.Equal(SpeakerCorrectionLearningDisposition.Completed, receipt.LearningDisposition);
+        Assert.NotEqual(request.ExpectedArtifactRevision, receipt.PriorFingerprint);
+        Assert.False(retry.RequiresReload);
+        Assert.Equal(0, retry.LearningResult.CreatedCount + retry.LearningResult.UpdatedCount + retry.LearningResult.SkippedCount);
+    }
+
+    [Fact]
     public async Task RejectMatchesAsync_Clears_Suggestion_And_Stores_Profile_Rejection()
     {
         var context = await CreatePublishedMeetingAsync(
@@ -473,6 +500,37 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UndoProfileSpeakerNameRecognitionAsync_Persists_Receipt_And_Deduplicates_A_Retry()
+    {
+        var context = await CreatePublishedMeetingAsync(
+            speaker: new SpeakerIdentity(
+                "speaker_00",
+                "Pranav Sharma",
+                false,
+                "voice_pranav",
+                SpeakerNameSource.AutoAppliedVoiceProfile,
+                0.93d,
+                null,
+                SpeakerNameDecisionReason.AutoAppliedHighConfidence));
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var service = CreateService(profileStore, receiptStore);
+
+        var first = await service.UndoProfileSpeakerNameRecognitionAsync(context.Record, _now, "undo-operation");
+        var receipt = await receiptStore.FindAsync("undo-operation:speaker_00");
+        var retry = await service.UndoProfileSpeakerNameRecognitionAsync(context.Record, _now.AddMinutes(1), "undo-operation");
+
+        Assert.Equal(1, first.UpdatedSpeakerCount);
+        Assert.NotNull(receipt);
+        Assert.Equal(SpeakerCorrectionAction.UndoRecognition, receipt.Action);
+        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, receipt.PriorNameSource);
+        Assert.Equal(SpeakerNameSource.None, receipt.NextNameSource);
+        Assert.Equal(0, retry.UpdatedSpeakerCount);
+        Assert.Null(retry.Warning);
+    }
+
+    [Fact]
     public async Task UndoProfileSpeakerNameRecognitionAsync_Preserves_Artifact_Update_When_Feedback_Store_Fails()
     {
         var context = await CreatePublishedMeetingAsync(
@@ -499,7 +557,9 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
         Assert.Contains("**Speaker 1:** Hello there", markdown, StringComparison.Ordinal);
     }
 
-    private SpeakerNameCorrectionService CreateService(VoiceProfileStore profileStore)
+    private SpeakerNameCorrectionService CreateService(
+        VoiceProfileStore profileStore,
+        SpeakerCorrectionReceiptStore? receiptStore = null)
     {
         var pathBuilder = new ArtifactPathBuilder();
         return new SpeakerNameCorrectionService(
@@ -507,7 +567,8 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             new SessionManifestStore(pathBuilder),
             new SpeakerNameLearningService(profileStore),
             new VoiceProfileMatcher(),
-            profileStore);
+            profileStore,
+            receiptStore);
     }
 
     private async Task<TestMeetingContext> CreatePublishedMeetingAsync(
