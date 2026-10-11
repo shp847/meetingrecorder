@@ -155,6 +155,7 @@ public partial class MeetingDetailWindow : Window
     private string _appliedProjectDraft = string.Empty;
     private WaveOutEvent? _speakerReviewOutput;
     private AudioFileReader? _speakerReviewReader;
+    private IDisposable? _speakerReviewLease;
     private MeetingDetailSpeakerLabelEditorRow? _playingSpeakerRow;
 
     public MeetingDetailWindow()
@@ -604,12 +605,13 @@ public partial class MeetingDetailWindow : Window
         PlaySpeakerEvidenceRequested?.Invoke(this, new MeetingDetailSpeakerEvidenceCueEventArgs(row, cue));
     }
 
-    internal void PlaySpeakerReviewClip(MeetingDetailSpeakerLabelEditorRow row, string clipPath)
+    internal void PlaySpeakerReviewClip(MeetingDetailSpeakerLabelEditorRow row, string clipPath, IDisposable lease)
     {
         StopSpeakerReviewPlayback();
         try
         {
             _speakerReviewReader = new AudioFileReader(clipPath);
+            _speakerReviewLease = lease;
             _speakerReviewOutput = new WaveOutEvent();
             _speakerReviewOutput.PlaybackStopped += (_, _) => Dispatcher.BeginInvoke(StopSpeakerReviewPlayback);
             _speakerReviewOutput.Init(_speakerReviewReader);
@@ -634,6 +636,8 @@ public partial class MeetingDetailWindow : Window
         _speakerReviewOutput = null;
         _speakerReviewReader?.Dispose();
         _speakerReviewReader = null;
+        _speakerReviewLease?.Dispose();
+        _speakerReviewLease = null;
         if (previous is not null)
         {
             previous.PlaybackText = "Play clip";

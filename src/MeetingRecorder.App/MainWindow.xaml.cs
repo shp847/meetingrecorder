@@ -7073,6 +7073,7 @@ public partial class MainWindow : Window
             };
             _meetingDetailWindow.Closed += (_, _) =>
             {
+                _ = _speakerReviewClipService.CleanupAsync();
                 _meetingDetailWindow = null;
                 _openMeetingDetailStem = null;
                 Dispatcher.BeginInvoke(() =>
@@ -7152,7 +7153,7 @@ public partial class MainWindow : Window
             _lifetimeCts.Token);
         if (result.IsAvailable && result.ClipPath is not null && _meetingDetailWindow is not null)
         {
-            _meetingDetailWindow.PlaySpeakerReviewClip(args.Row, result.ClipPath);
+            _meetingDetailWindow.PlaySpeakerReviewClip(args.Row, result.ClipPath, _speakerReviewClipService.AcquireLease(result.ClipPath));
             _meetingDetailWindow.SetMaintenanceStatus("Playing local review clip. Audio stays on this device.");
             return;
         }

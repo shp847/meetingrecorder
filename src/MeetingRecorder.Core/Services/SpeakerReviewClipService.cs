@@ -2,6 +2,7 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
 
 namespace MeetingRecorder.Core.Services;
 
@@ -41,6 +42,7 @@ public sealed class SpeakerReviewClipService
     private const int MaximumCacheFiles = 48;
     private const long MaximumCacheBytes = 100L * 1024 * 1024;
     private static readonly TimeSpan MaximumCacheAge = TimeSpan.FromDays(3);
+    private static readonly ConcurrentDictionary<string, int> ActiveLeases = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _cacheRoot;
 
     public SpeakerReviewClipService(string? cacheRoot = null)
@@ -128,7 +130,8 @@ public sealed class SpeakerReviewClipService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var file = files[index];
-            if (DateTime.UtcNow - file.LastWriteTimeUtc > MaximumCacheAge || index >= MaximumCacheFiles || retainedBytes + file.Length > MaximumCacheBytes)
+            if (!IsLeased(file.FullName) &&
+                (DateTime.UtcNow - file.LastWriteTimeUtc > MaximumCacheAge || index >= MaximumCacheFiles || retainedBytes + file.Length > MaximumCacheBytes))
             {
                 TryDelete(file.FullName);
             }
@@ -139,6 +142,14 @@ public sealed class SpeakerReviewClipService
         }
         foreach (var temporary in new DirectoryInfo(_cacheRoot).EnumerateFiles("*.tmp-*")) TryDelete(temporary.FullName);
     }, cancellationToken);
+
+    public IDisposable AcquireLease(string clipPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clipPath);
+        var fullPath = Path.GetFullPath(clipPath);
+        ActiveLeases.AddOrUpdate(fullPath, 1, (_, count) => count + 1);
+        return new ClipLease(fullPath);
+    }
 
     private static (TimeSpan Start, TimeSpan Duration) SelectWindow(TimeSpan cueStart, TimeSpan cueEnd, TimeSpan sourceDuration)
     {
@@ -183,5 +194,22 @@ public sealed class SpeakerReviewClipService
     }
 
     private static SpeakerReviewClipResult Unavailable(string message) => new(SpeakerReviewClipState.Unavailable, message, null, TimeSpan.Zero, TimeSpan.Zero);
+    private static bool IsLeased(string path) => ActiveLeases.ContainsKey(path);
     private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
+
+    private sealed class ClipLease(string path) : IDisposable
+    {
+        private string? _path = path;
+
+        public void Dispose()
+        {
+            var value = Interlocked.Exchange(ref _path, null);
+            if (value is null) return;
+            ActiveLeases.AddOrUpdate(value, 0, (_, count) => count <= 1 ? 0 : count - 1);
+            if (ActiveLeases.TryGetValue(value, out var count) && count == 0)
+            {
+                ActiveLeases.TryRemove(value, out _);
+            }
+        }
+    }
 }

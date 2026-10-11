@@ -70,6 +70,30 @@ public sealed class SpeakerReviewClipServiceTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    [Fact]
+    public async Task CleanupAsync_Does_Not_Delete_Leased_Clip()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var source = Path.Combine(root, "source.wav");
+            WriteSilence(source, seconds: 20);
+            var service = new SpeakerReviewClipService(Path.Combine(root, "speaker-review"));
+            var result = await service.GetOrCreateAsync(Request(source, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(6)));
+            File.SetLastWriteTimeUtc(result.ClipPath!, DateTime.UtcNow.AddDays(-4));
+
+            using (service.AcquireLease(result.ClipPath!))
+            {
+                await service.CleanupAsync();
+                Assert.True(File.Exists(result.ClipPath));
+            }
+
+            await service.CleanupAsync();
+            Assert.False(File.Exists(result.ClipPath));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     private static SpeakerReviewClipRequest Request(string path, TimeSpan start, TimeSpan end) =>
         new("meeting-stable-id", "revision", "speaker-id", start, end, path);
 
