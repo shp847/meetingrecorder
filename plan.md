@@ -120,7 +120,7 @@ records an approved dependency change.
 | 1 — Speaker Identity Contract | `Done` | 2026-09-29: revisioned safe review snapshot, precedence, migration-safe source state, and privacy tests verified below. |
 | 2 — Speaker Review Surface Foundation | `Done` | 2026-10-11: bounded local-only name choices, snapshot-backed review well, draft/pending state, and separate repair route verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 3 — Contextual Transcript Evidence | `Done` | 2026-10-11: bounded local in-memory cue selection, truthful evidence states, and Speaker Review disclosure/navigation verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
-| 4 — Inline Audio Clip Playback | `Partial` | 2026-10-11: bounded read-only WAV extraction, opaque cache/leases, concurrent dedupe, playback progress, and refresh/maintenance/close disposal are covered; rendered/package qualification remains. |
+| 4 — Inline Audio Clip Playback | `Done` | 2026-10-11: bounded read-only WAV extraction, opaque cache/leases, concurrent dedupe, playback progress, and refresh/maintenance/close disposal are covered; product owner accepts production feedback while S16 owns package qualification. |
 | 5 — Transcript-Label Click Editing | `Done` | 2026-10-11: stable speaker/segment IDs, accessible current-review focus, existing revision-checked global rename, and reserved no-op override compatibility verified. |
 | 6 — Segment-Level Attribution Overrides | `Done` | 2026-10-11: source-revision-fenced transactions, scoped correction/revert, and non-applying reprocess audit with review status are complete; project-wide release qualification remains S16-owned. |
 | 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
@@ -3645,8 +3645,8 @@ Sprint 3 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-10-11 bounded extraction and inline playback implementation); `Partial` (2026-10-11 playback lifecycle, cancellation, and concurrent-cache coverage).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-10-11 bounded extraction and inline playback implementation); `Partial` (2026-10-11 playback lifecycle, cancellation, and concurrent-cache coverage); `Done` (2026-10-11 product owner accepts production feedback; S16 owns package qualification).
 - User outcome: a reviewer can hear a short, relevant local excerpt from a speaker cue without leaving the decision context or risking published meeting artifacts.
 - Scope / non-goals: derive/play temporary clips for Sprint 3 evidence from published meeting audio. Do not edit/re-encode published audio, stream/upload audio, add continuous transcript playback, store clip references in meeting artifacts, or permit review playback during active recording.
 - Dependencies and decisions: consume artifact-revision evidence from Sprint 3 and use existing NAudio/WAV utility patterns only behind a review-specific service. Current code has capture/merge/audio validation utilities but no review player. Playback is a single app-owned session; active recording blocks playback/generation so review audio cannot contaminate loopback capture.
@@ -3660,7 +3660,7 @@ Sprint 3 acceptance criteria:
 - Documentation / installer / release work: document temporary local review clips, recording-time block, cache cleanup, and audio does not leave device. Reassess package dependency/licensing impact before shipping NAudio playback additions; Sprint 16 owns installer/release gates.
 - Evidence and date: 2026-09-27 audit found NAudio capture/merge/input-inspection infrastructure and no review-clip cache/player or speaker-evidence audio surface. Existing audio code is not proof that a review clip is source-preserving or recording-safe.
 - Evidence and date: 2026-10-11 added opaque app-local WAV clip extraction with source fingerprint revalidation, bounded cache cleanup, active leases, cancellation state, and per-key concurrent generation dedupe. Inline controls now expose play/pause/stop state and progress; revision refresh, maintenance, detail close, and playback completion stop/dispose the owned player and release its lease. Eight focused clip/player tests pass with an isolated build root.
-- Remaining gap or next action: run the documented rendered keyboard/screen-reader states and Sprint 16 package/release qualification. The product owner has retired standalone manual visual/assistive qualification in favor of production feedback, so no further human gate blocks implementation.
+- Remaining gap or next action: none. Sprint 16 owns package/release qualification; product owner accepts production feedback for future usability defects.
 
 Goal: provide the required "hear this speaker" cue in the same review workflow.
 
