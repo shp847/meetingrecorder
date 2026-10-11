@@ -135,6 +135,26 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
     }
 
     [Fact]
+    public void Read_Parses_Valid_Segment_Overrides_And_Ignores_Malformed_Entries()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(jsonPath, """
+            { "speakerAttributionOverrides": [
+                { "id": "override_1", "artifactRevision": "rev_1", "segmentId": "seg_1", "originalSpeakerId": "speaker_00", "targetKind": 1, "targetValue": "Alex", "actorSource": "UserOverride", "createdAtUtc": "2026-10-11T00:00:00Z", "updatedAtUtc": "2026-10-11T00:00:00Z" },
+                { "id": "bad", "segmentId": "", "targetKind": "unknown" }
+              ], "segments": [
+                { "start": "00:00:00", "end": "00:00:02", "speakerId": "speaker_00", "speakerLabel": "Speaker 1", "segmentId": "seg_1", "text": "Hello." }
+              ] }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        var item = Assert.Single(result.SafeAttributionOverrides);
+        Assert.Equal("override_1", item.Id);
+        Assert.Equal(SegmentAttributionOverrideTargetKind.DisplayName, item.TargetKind);
+    }
+
+    [Fact]
     public void Read_Parses_Summary_Status_And_Content_From_Json_Sidecar()
     {
         var jsonPath = Path.Combine(_root, "meeting.json");
