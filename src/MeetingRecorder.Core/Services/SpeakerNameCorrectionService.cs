@@ -47,19 +47,22 @@ public sealed class SpeakerNameCorrectionService
     private readonly SpeakerNameLearningService _learningService;
     private readonly VoiceProfileMatcher _profileMatcher;
     private readonly VoiceProfileStore _profileStore;
+    private readonly SpeakerCorrectionReceiptStore _receiptStore;
 
     public SpeakerNameCorrectionService(
         MeetingOutputCatalogService outputCatalogService,
         SessionManifestStore manifestStore,
         SpeakerNameLearningService learningService,
         VoiceProfileMatcher profileMatcher,
-        VoiceProfileStore profileStore)
+        VoiceProfileStore profileStore,
+        SpeakerCorrectionReceiptStore? receiptStore = null)
     {
         _outputCatalogService = outputCatalogService;
         _manifestStore = manifestStore;
         _learningService = learningService;
         _profileMatcher = profileMatcher;
         _profileStore = profileStore;
+        _receiptStore = receiptStore ?? new SpeakerCorrectionReceiptStore();
     }
 
     public async Task<SpeakerNameCorrectionResult> ApplyCorrectionsAsync(
@@ -264,6 +267,25 @@ public sealed class SpeakerNameCorrectionService
         }
 
         var warnings = new List<string>();
+        var operationId = string.IsNullOrWhiteSpace(request.OperationId) ? Guid.NewGuid().ToString("N") : request.OperationId.Trim();
+        try
+        {
+            foreach (var updated in updatedBySpeakerId)
+            {
+                var prior = currentBySpeakerId[updated.Key];
+                await _receiptStore.AppendOrReplaceAsync(new SpeakerCorrectionReceipt(
+                    SpeakerCorrectionReceipt.CurrentSchemaVersion, operationId + ":" + updated.Key,
+                    manifestBeforeChange.SessionId, request.ExpectedArtifactRevision, updated.Key,
+                    prior.NameSource == SpeakerNameSource.SuggestedVoiceProfile && normalizedDrafts.Single(d => d.SpeakerId == updated.Key).RejectSuggestion ? SpeakerCorrectionAction.RejectSuggestion : SpeakerCorrectionAction.ConfirmName,
+                    request.ExpectedArtifactRevision, prior.NameSource, prior.ProfileId, updated.Value.NameSource, updated.Value.ProfileId,
+                    confirmedCorrections.Any(d => d.SpeakerId == updated.Key) ? SpeakerCorrectionLearningDisposition.Pending : SpeakerCorrectionLearningDisposition.NotRequested,
+                    now), cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            warnings.Add("Local speaker correction receipt could not be saved.");
+        }
         SpeakerNameLearningResult learningResult;
         try
         {
