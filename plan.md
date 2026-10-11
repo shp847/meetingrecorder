@@ -7,7 +7,7 @@ dependency on another section.
 # Sprint Delivery Tracker
 
 **Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 61.
-**Ready:** 37. **Partial:** 25. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ready:** 37. **Partial:** 24. **Blocked:** 2. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -130,7 +130,7 @@ records an approved dependency change.
 | 11 — Bad Diarization Repair Guidance | `Done` | 2026-10-10: quality routing, repair preflight, opaque local intent audit, focused tests, and installer build verified; production feedback owns future issues. |
 | 12 — Summary And Derived Output Consistency | `Done` | 2026-10-10: persisted attribution provenance, guarded manual regeneration, historic action-item state, focused tests, docs, and installer build verified. |
 | 13 — Profile Management And Privacy | `Done` | 2026-10-10: serialized local store, truthful recovery state, profile-payload exclusion evidence, focused tests, docs, and installer build verified. |
-| 14 — Calibration And Experience Harness | `Partial` | 2026-09-29: protected false-attribution promotion gate implemented; corpus manifest, metrics report, and experience fixtures remain. |
+| 14 — Calibration And Experience Harness | `Blocked` | 2026-10-11: redacted aggregate report and runtime isolation are complete; an authorized non-synthetic corpus and human reviewer sign-off are external prerequisites. |
 | 15 — UI Polish, Accessibility, And Rendered QA | `Done` | 2026-10-10: product owner retires manual visual/assistive qualification; existing deterministic semantics remain and production feedback opens scoped fixes. |
 | 16 — Documentation, Installer, And Release Smoke | `Partial` | 2026-09-29: S1–S15 acceptance matrix added; package gates remain open and upstream Partial evidence is explicit. |
 
@@ -4153,8 +4153,8 @@ Sprint 13 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: fixture/calibration scripts, threshold parser, replay tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 promotion gate slice).
+- Status: `Blocked`
+- Status history: `Partial` (2026-09-27 source audit: fixture/calibration scripts, threshold parser, replay tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 promotion gate slice); `Blocked` (2026-10-11: code-only report, privacy, and production-isolation work completed; governed corpus and reviewer remain external).
 - User outcome: threshold/model changes demonstrably reduce manual cleanup without silently increasing wrong automatic names.
 - Scope / non-goals: turn existing synthetic fixture tooling into a controlled quality/release harness. Do not use fixture labels/names/files/attendees as runtime hints, train production profiles from corpus data, collect user meeting data, or auto-promote thresholds.
 - Dependencies and decisions: S9 defines false attribution severity; S11 diagnosis and S15 UX states consume results. Existing scripts support metadata-only calibration candidates. Build a versioned corpus manifest separating public synthetic fixtures from access-controlled consented audio; runtime sees neither labels nor expected outcomes. Candidate config is test-only/explicit and cannot change production defaults outside reviewed release config.
@@ -4171,7 +4171,8 @@ Sprint 13 acceptance criteria:
 - Evidence and date: 2026-10-10 expanded the disabled synthetic fixture catalog/schema and calibration protected set with overlap, hybrid/shared-microphone, and no-speech categories. Zero-speaker expectations are valid only as corpus assertions; the calibration path remains metadata-only and cannot supply runtime hints. Focused calibration/replay/metric/promotion contracts passed 19/19.
 - Evidence and date: 2026-10-11 added schema-v2 redacted fixture/calibration reports: SHA-256 provenance, baseline/candidate aggregates, Wilson speaker-count interval, explicit unavailable-metric accounting, and human-review/default-change state. Local paths, fixture titles, protected artifact hashes, and run paths are excluded. Focused calibration/replay/metric/promotion contracts passed 19/19.
 - Evidence and date: 2026-10-11 made the runtime ignore calibration environment overrides unless the controlled comparison harness explicitly enables them for its child process; added static source coverage and documented the boundary.
-- Remaining gap or next action: produce a governed non-synthetic baseline/candidate report with an authorized corpus and recorded human review before any threshold change.
+- Blocker and owner: a consented, governed non-synthetic corpus and recorded human reviewer sign-off are not available in the workspace. Product owner/corpus custodian must provide those inputs before any threshold change.
+- Remaining gap or next action: on receipt of that corpus and authorization, run a baseline/candidate comparison and retain the redacted report with reviewer sign-off before any threshold change.
 
 Goal: prove the system reduces manual effort without unsafe automatic naming.
 
