@@ -232,7 +232,8 @@ internal static class MeetingTranscriptDocumentReader
             .Select(paragraph => new MeetingTranscriptSegmentRow(
                 FormatTranscriptTimestamp(paragraph.Start),
                 paragraph.SpeakerLabel,
-                paragraph.Text))
+                paragraph.Text,
+                paragraph.SpeakerId))
             .ToArray();
     }
 

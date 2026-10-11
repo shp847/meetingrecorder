@@ -1,5 +1,6 @@
 using MeetingRecorder.Core.Services;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
@@ -598,6 +599,35 @@ public partial class MeetingDetailWindow : Window
             TranscriptSearchTextBox.Text = cue.TranscriptTimestamp;
             TranscriptSegmentsListBox.ScrollIntoView(TranscriptSegmentsListBox.Items.Cast<object>().FirstOrDefault());
         }
+    }
+
+    private void OpenSpeakerReviewFromTranscriptButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not MeetingTranscriptSegmentRow segment ||
+            string.IsNullOrWhiteSpace(segment.SpeakerId))
+        {
+            SetMaintenanceStatus("Speaker review is unavailable for this transcript label.");
+            return;
+        }
+
+        var rows = SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>;
+        var target = rows?.FirstOrDefault(row => string.Equals(row.SpeakerId, segment.SpeakerId, StringComparison.Ordinal));
+        if (target is null)
+        {
+            SetMaintenanceStatus("This transcript label is no longer current. Refresh meeting details and try again.");
+            return;
+        }
+
+        SpeakerReviewExpander.IsExpanded = true;
+        SpeakerLabelsDataGrid.SelectedItem = target;
+        SpeakerLabelsDataGrid.ScrollIntoView(target);
+        if (SpeakerLabelsDataGrid.Columns.Count > 2)
+        {
+            SpeakerLabelsDataGrid.CurrentCell = new DataGridCellInfo(target, SpeakerLabelsDataGrid.Columns[2]);
+        }
+
+        SpeakerLabelsDataGrid.Focus();
+        SetMaintenanceStatus($"Speaker Review is ready for {target.AnonymousLabel}.");
     }
 
     private void PlaySpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)

@@ -7,7 +7,8 @@ internal sealed record TranscriptParagraph(
     TimeSpan Start,
     TimeSpan End,
     string SpeakerLabel,
-    string Text);
+    string Text,
+    string? SpeakerId);
 
 internal static partial class TranscriptParagraphBuilder
 {
@@ -31,14 +32,17 @@ internal static partial class TranscriptParagraphBuilder
             }
 
             var speakerLabel = NormalizeSpeakerLabel(speakerLabelResolver(segment));
-            if (current is null || !StringComparer.Ordinal.Equals(current.SpeakerLabel, speakerLabel))
+            var speakerId = NormalizeSpeakerId(segment.SpeakerId);
+            if (current is null ||
+                !StringComparer.Ordinal.Equals(current.SpeakerLabel, speakerLabel) ||
+                !StringComparer.Ordinal.Equals(current.SpeakerId, speakerId))
             {
                 if (current is not null)
                 {
                     paragraphs.Add(current.Build());
                 }
 
-                current = new ParagraphBuilder(segment.Start, segment.End, speakerLabel, text);
+                current = new ParagraphBuilder(segment.Start, segment.End, speakerLabel, speakerId, text);
                 continue;
             }
 
@@ -65,6 +69,9 @@ internal static partial class TranscriptParagraphBuilder
         return WhitespacePattern().Replace(text.Trim(), " ");
     }
 
+    private static string? NormalizeSpeakerId(string? speakerId) =>
+        string.IsNullOrWhiteSpace(speakerId) ? null : speakerId.Trim();
+
     private static string JoinText(string existingText, string appendedText)
     {
         return appendedText.Length > 0 && IsAttachedPunctuation(appendedText[0])
@@ -84,11 +91,12 @@ internal static partial class TranscriptParagraphBuilder
     {
         private string _text;
 
-        public ParagraphBuilder(TimeSpan start, TimeSpan end, string speakerLabel, string text)
+        public ParagraphBuilder(TimeSpan start, TimeSpan end, string speakerLabel, string? speakerId, string text)
         {
             Start = start;
             End = end;
             SpeakerLabel = speakerLabel;
+            SpeakerId = speakerId;
             _text = text;
         }
 
@@ -98,6 +106,8 @@ internal static partial class TranscriptParagraphBuilder
 
         public string SpeakerLabel { get; }
 
+        public string? SpeakerId { get; }
+
         public void Append(TimeSpan end, string text)
         {
             End = end > End ? end : End;
@@ -106,7 +116,7 @@ internal static partial class TranscriptParagraphBuilder
 
         public TranscriptParagraph Build()
         {
-            return new TranscriptParagraph(Start, End, SpeakerLabel, _text);
+            return new TranscriptParagraph(Start, End, SpeakerLabel, _text, SpeakerId);
         }
     }
 }

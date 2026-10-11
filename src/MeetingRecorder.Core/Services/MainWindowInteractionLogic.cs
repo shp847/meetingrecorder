@@ -199,7 +199,15 @@ internal sealed record MeetingSelectionCommandState(
 internal sealed record MeetingTranscriptSegmentRow(
     string Timestamp,
     string SpeakerLabel,
-    string Text);
+    string Text,
+    string? SpeakerId = null)
+{
+    public bool CanOpenSpeakerReview => !string.IsNullOrWhiteSpace(SpeakerId);
+
+    public string SpeakerReviewAutomationName => CanOpenSpeakerReview
+        ? $"Open Speaker Review for {SpeakerLabel}"
+        : $"Speaker label {SpeakerLabel}; speaker review is unavailable";
+}
 
 internal enum MeetingDetailSummaryStatus
 {

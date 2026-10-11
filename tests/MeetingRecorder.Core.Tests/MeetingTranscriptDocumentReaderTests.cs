@@ -54,6 +54,7 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.Equal(2, result.Segments.Count);
         Assert.Equal("00:04", result.Segments[0].Timestamp);
         Assert.Equal("Speaker 1", result.Segments[0].SpeakerLabel);
+        Assert.False(result.Segments[0].CanOpenSpeakerReview);
         Assert.Equal("What are the objectives?", result.Segments[0].Text);
         Assert.Equal("Speaker 2", result.Segments[1].SpeakerLabel);
         Assert.True(result.HasStructuredJson);
@@ -109,6 +110,28 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
             "if we were presenting this, would we, the way I was thinking about it was just creating a script.",
             result.Segments[0].Text);
         Assert.Equal(4, result.StructuredSegments.Count);
+    }
+
+    [Fact]
+    public void Read_Does_Not_Coalesce_Equal_Display_Labels_With_Different_Speaker_Ids()
+    {
+        var jsonPath = Path.Combine(_root, "meeting.json");
+        File.WriteAllText(
+            jsonPath,
+            """
+            {
+              "segments": [
+                { "start": "00:00:00", "end": "00:00:02", "speakerId": "speaker_00", "speakerLabel": "Alex", "text": "First voice." },
+                { "start": "00:00:02", "end": "00:00:04", "speakerId": "speaker_01", "speakerLabel": "Alex", "text": "Second voice." }
+              ]
+            }
+            """);
+
+        var result = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+
+        Assert.Equal(2, result.Segments.Count);
+        Assert.Equal("speaker_00", result.Segments[0].SpeakerId);
+        Assert.Equal("speaker_01", result.Segments[1].SpeakerId);
     }
 
     [Fact]
@@ -178,6 +201,8 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.True(result.Summary.Provider.FallbackUsed);
         Assert.Equal("fingerprint-123", result.Summary.TranscriptFingerprint);
         Assert.Equal("speaker_00", result.StructuredSegments[0].SpeakerId);
+        Assert.Equal("speaker_00", result.Segments[0].SpeakerId);
+        Assert.True(result.Segments[0].CanOpenSpeakerReview);
     }
 
     [Fact]
