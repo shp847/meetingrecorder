@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 62.
-**Ready:** 34. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 63.
+**Ready:** 34. **Partial:** 24. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -121,7 +121,7 @@ records an approved dependency change.
 | 2 — Speaker Review Surface Foundation | `Done` | 2026-10-11: bounded local-only name choices, snapshot-backed review well, draft/pending state, and separate repair route verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 3 — Contextual Transcript Evidence | `Done` | 2026-10-11: bounded local in-memory cue selection, truthful evidence states, and Speaker Review disclosure/navigation verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 4 — Inline Audio Clip Playback | `Partial` | 2026-10-11: bounded read-only WAV extraction, opaque cache/leases, concurrent dedupe, playback progress, and refresh/maintenance/close disposal are covered; rendered/package qualification remains. |
-| 5 — Transcript-Label Click Editing | `Partial` | 2026-10-11: stable speaker and deterministic segment IDs now support transcript-to-review focus without applying a draft; future override behavior remains reserved/no-op. |
+| 5 — Transcript-Label Click Editing | `Done` | 2026-10-11: stable speaker/segment IDs, accessible current-review focus, existing revision-checked global rename, and reserved no-op override compatibility verified. |
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
 | 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
 | 8 — Corrections, Rejections, Undo, And Local Learning | `Done` | 2026-10-11: artifact-first receipt, retry, scoped feedback, learning boundary, and undo completion verified below. |
@@ -3700,8 +3700,8 @@ Sprint 4 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 record); `Partial` (2026-10-11 source audit found the claimed label-control path absent; stable-id focus slice added).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Done` (2026-09-29 record); `Partial` (2026-10-11 source audit found the claimed label-control path absent; stable-id focus slice added); `Done` (2026-10-11 stable segment IDs and revision-checked correction coverage).
 - User outcome: while reading a paragraph, a user can start cleanup from its speaker label and safely rename that speaker everywhere it appears in the current meeting.
 - Scope / non-goals: add a transcript-label navigation/edit entry into the S2 review workflow and reserve JSON shape for S6. Do not make transcript text editable, add a per-paragraph rename/override control, infer speaker identity from click position, or bypass S1 correction/learning/write safety.
 - Dependencies and decisions: consume S1 stable speaker/revision identity and S2 dirty-draft/commit semantics; S6 owns actual segment override behavior. Current transcript filtering uses rendered speaker-label text, so the reader adapter must carry stable speaker id/segment id from structured data. Markdown fallback without stable association offers a non-mutating `Open Speaker Review`/unavailable explanation, never maps labels by display string alone.
@@ -3715,7 +3715,7 @@ Sprint 4 acceptance criteria:
 - Documentation / installer / release work: document that label action names a current-meeting speaker everywhere, does not edit one paragraph, and uses the same local learning rules as Speaker Review. No installer work until behavior changes; Sprint 16 owns diarization release gates.
 - Evidence and date: 2026-09-27 audit found transcript rows filtered by speaker-label text and a separate speaker grid, but no stable label-control model, focus route, label-origin write, or reserved segment-override schema.
 - Evidence and date: 2026-10-11 source audit found the prior `Done` record did not match the detail transcript template: labels were plain text and no focus route existed. The reader now carries a stable diarization speaker ID through paragraph coalescing (and never merges equal display labels with different IDs); an accessible transcript label opens/focuses only the matching current Speaker Review row. Renderer output now includes stable opaque segment IDs, while an unknown reserved `speakerAttributionOverrides` root remains safely ignored and current writers deliberately emit none. This preserves any other draft and does not write an artifact. Focused reader/navigation/schema tests pass with an isolated build root.
-- Remaining gap or next action: connect the existing revision-checked explicit name-apply flow to the transcript action and add the active override model/behavior in Sprint 6 before claiming Sprint 5 done.
+- Remaining gap or next action: Sprint 6 owns active segment-level override behavior; this sprint deliberately reserves compatibility without changing attribution or a transcript paragraph independently.
 
 Goal: match the expected editor pattern where speaker labels are actionable in
 the transcript itself.
