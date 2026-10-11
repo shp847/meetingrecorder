@@ -1659,7 +1659,7 @@ public sealed class MeetingOutputCatalogService
         {
             var node = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
             var speakers = GetSpeakersArray(node);
-            if (speakers is { Count: > 0 })
+            if (node is not null && speakers is { Count: > 0 })
             {
                 var speakerLabels = new List<SpeakerLabelInfo>();
                 var seenSpeakerLabels = new HashSet<string>(StringComparer.Ordinal);
@@ -1702,7 +1702,7 @@ public sealed class MeetingOutputCatalogService
 
                 if (speakerLabels.Count > 0)
                 {
-                    return speakerLabels;
+                    return ResolveEffectiveSpeakerLabels(node, speakerLabels);
                 }
             }
 
@@ -1735,6 +1735,56 @@ public sealed class MeetingOutputCatalogService
         catch
         {
             return Array.Empty<SpeakerLabelInfo>();
+        }
+    }
+
+    private static IReadOnlyList<SpeakerLabelInfo> ResolveEffectiveSpeakerLabels(
+        JsonObject document,
+        IReadOnlyList<SpeakerLabelInfo> sourceLabels)
+    {
+        if (document["speakerClusterMerges"] is not JsonArray mergesNode || mergesNode.Count == 0)
+        {
+            return sourceLabels;
+        }
+
+        try
+        {
+            var merges = JsonSerializer.Deserialize<IReadOnlyList<SpeakerClusterMergeMetadata>>(mergesNode.ToJsonString());
+            var canonicalBySpeakerId = SpeakerClusterMergeResolver.BuildCanonicalMap(merges);
+            if (canonicalBySpeakerId.Count == 0)
+            {
+                return sourceLabels;
+            }
+
+            var sourceById = sourceLabels
+                .Where(label => !string.IsNullOrWhiteSpace(label.SpeakerId))
+                .GroupBy(label => label.SpeakerId!.Trim(), StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+            return sourceLabels
+                .Select(label =>
+                {
+                    if (string.IsNullOrWhiteSpace(label.SpeakerId) ||
+                        !canonicalBySpeakerId.TryGetValue(label.SpeakerId.Trim(), out var canonicalSpeakerId) ||
+                        !sourceById.TryGetValue(canonicalSpeakerId, out var canonical))
+                    {
+                        return label;
+                    }
+
+                    return label with
+                    {
+                        DisplayName = canonical.DisplayName,
+                        NameSource = canonical.NameSource,
+                        SuggestedDisplayName = canonical.SuggestedDisplayName,
+                        Confidence = canonical.Confidence,
+                        ProfileId = canonical.ProfileId,
+                        DecisionReason = canonical.DecisionReason,
+                    };
+                })
+                .ToArray();
+        }
+        catch
+        {
+            return sourceLabels;
         }
     }
 

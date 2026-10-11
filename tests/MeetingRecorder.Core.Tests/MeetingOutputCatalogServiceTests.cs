@@ -1291,6 +1291,11 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Equal("speaker-a", document["speakerClusterMerges"]![0]!["canonicalSpeakerId"]!.GetValue<string>());
         Assert.Equal("user", document["speakerClusterMerges"]![0]!["actorSource"]!.GetValue<string>());
 
+        var effectiveReviewRows = service.ListSpeakerLabelDetails(record);
+        Assert.Equal(2, effectiveReviewRows.Count);
+        Assert.All(effectiveReviewRows, reviewRow => Assert.Equal("Alex", reviewRow.DisplayName));
+        Assert.Equal(new[] { "speaker-a", "speaker-b" }, effectiveReviewRows.Select(reviewRow => reviewRow.SpeakerId));
+
         var markdown = await File.ReadAllTextAsync(markdownPath);
         Assert.Contains("**Alex:** Second", markdown, StringComparison.Ordinal);
         Assert.DoesNotContain("**Speaker B:**", markdown, StringComparison.Ordinal);
