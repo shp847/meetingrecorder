@@ -381,6 +381,33 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PastRematchService_Rematches_One_Current_Meeting_Without_Changing_Audio()
+    {
+        var context = await CreatePublishedMeetingAsync();
+        var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
+        await profileStore.SaveAsync(new VoiceProfileStoreDocument(1, _now, [Profile("voice_pranav", "Pranav Sharma")]));
+        var receiptStore = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "speaker-corrections", "receipts.json"));
+        var correctionService = CreateService(profileStore, receiptStore);
+        var rematchService = new PastRematchService(context.ManifestStore, profileStore, correctionService);
+
+        var result = await rematchService.RematchOneAsync(
+            context.Record,
+            SpeakerNameLearningMode.LocalAutoLearn,
+            new SpeakerNameRecognitionOptions(0.86d, 0.78d, 0.05d, 2, TimeSpan.FromSeconds(8)),
+            _now);
+
+        Assert.Equal(PastRematchDisposition.Eligible, result.PlanItem.Disposition);
+        Assert.Equal(PastRematchOutcome.AutoApplied, result.Outcome);
+        Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
+        var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, Assert.Single(manifest.ProcessingMetadata!.Speakers!).NameSource);
+        var receipt = Assert.Single((JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(
+            await File.ReadAllTextAsync(Path.Combine(_root, "speaker-corrections", "receipts.json"))) ?? [])
+            .Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
+        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+    }
+
+    [Fact]
     public async Task RefreshSpeakerNameAttributionAsync_Explains_When_Profiles_Are_Unavailable()
     {
         var context = await CreatePublishedMeetingAsync();

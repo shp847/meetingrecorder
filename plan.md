@@ -3968,7 +3968,8 @@ Sprint 9 acceptance criteria:
 - Documentation / installer / release work: document manual metadata-only rematch, eligibility, profile/suppression behavior, cancellation and no transcript/audio reprocessing. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found detail `Refresh Suggestions` and matcher update tests without retranscription, but no historic target planner, bulk preview/result/resume path, concurrency policy, or artifact-integrity proof.
 - Evidence and date: 2026-09-29 added `PastRematchPlanner` tests for current/published/compatible generic targets and exclusions for busy, stale, user-entered, structured-transcript, sample, and profile state. The planner holds metadata fingerprints only and does not open audio or invoke processing.
-- Remaining gap or next action: revalidate and dispatch the one-meeting path with durable outcome receipt before creating the explicit bounded batch UI.
+- Evidence and date: 2026-10-11 added the explicit one-meeting `Rematch Names` path. It revalidates the planner snapshot immediately before dispatch, calls the same revision-safe local matcher, preserves audio and user-entered names, and writes only local auto-attribution receipt metadata. Planner, rematch service, and detail-action tests passed (6); an unrelated undo feedback test intermittently hit a Windows file-share lock in the broader focused run.
+- Remaining gap or next action: add the explicit bounded batch preview, serial dispatch, resumable outcome ledger, cancellation, and retry before marking this sprint Done.
 
 Goal: let newer confirmed voice profiles improve older generic-speaker
 transcripts.

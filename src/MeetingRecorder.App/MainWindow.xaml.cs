@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private readonly MeetingOutputCatalogService _meetingOutputCatalogService;
     private readonly VoiceProfileStore _voiceProfileStore;
     private readonly SpeakerNameCorrectionService _speakerNameCorrectionService;
+    private readonly PastRematchService _pastRematchService;
     private readonly MeetingCleanupExecutionService _meetingCleanupExecutionService;
     private readonly MeetingArchiveReceiptService _meetingArchiveReceiptService;
     private readonly AutoStartRegistrationService _autoStartRegistrationService;
@@ -278,6 +279,10 @@ public partial class MainWindow : Window
             new SpeakerNameLearningService(_voiceProfileStore),
             new VoiceProfileMatcher(),
             _voiceProfileStore);
+        _pastRematchService = new PastRematchService(
+            _manifestStore,
+            _voiceProfileStore,
+            _speakerNameCorrectionService);
         _meetingCleanupExecutionService = new MeetingCleanupExecutionService(_pathBuilder, _meetingOutputCatalogService);
         _meetingArchiveReceiptService = new MeetingArchiveReceiptService();
         _autoStartRegistrationService = new AutoStartRegistrationService();
@@ -7809,17 +7814,19 @@ public partial class MainWindow : Window
             UserActionIntent.RefreshLocalNameSuggestions).ProgressText);
         try
         {
-            await _speakerNameCorrectionService.RefreshSpeakerNameAttributionAsync(
+            var result = await _pastRematchService.RematchOneAsync(
                 row.Source,
                 _liveConfig.Current.SpeakerNameLearningMode,
                 BuildSpeakerNameRecognitionOptions(_liveConfig.Current),
                 DateTimeOffset.UtcNow,
-                operationId: null,
-                cancellationToken: _lifetimeCts.Token);
+                _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
             RefreshOpenMeetingDetailWindow();
             _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
                 UserActionIntent.RefreshLocalNameSuggestions).SuccessText);
+            AppendActivity(result.Outcome is PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested
+                ? $"Rematched local speaker names for '{row.Title}'."
+                : result.Warning ?? result.PlanItem.Reason);
         }
         catch (Exception exception)
         {

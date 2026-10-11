@@ -373,7 +373,7 @@
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
                                             Click="RefreshSpeakerNamesButton_OnClick"
-                                            Content="Refresh Local Suggestions" />
+                                            Content="Rematch Names" />
                                     <Button x:Name="UndoSpeakerNameRecognitionButton"
                                             Margin="10,0,0,0"
                                             HorizontalAlignment="Left"
@@ -384,7 +384,7 @@
                                 <TextBlock Margin="0,8,0,0"
                                            Style="{StaticResource DialogBodyTextStyle}"
                                            TextWrapping="Wrap"
-                                           Text="Refresh Suggestions checks local voice profiles without renaming. Repair Speaker Labels is a separate Fix action for suspicious clusters." />
+                                           Text="Rematch Names checks stored local voice samples without transcription or diarization. Repair Speaker Labels is a separate Fix action for suspicious clusters." />
                             </StackPanel>
                         </Border>
                     </Expander>

@@ -536,7 +536,7 @@ public sealed class MainWindowXamlTests
         var mainWindowSource = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
 
         Assert.Contains("x:Name=\"RefreshSpeakerNamesButton\"", xaml);
-        Assert.Contains("Content=\"Refresh Local Suggestions\"", xaml);
+        Assert.Contains("Content=\"Rematch Names\"", xaml);
         Assert.Contains("x:Name=\"UndoSpeakerNameRecognitionButton\"", xaml);
         Assert.Contains("Content=\"Undo Profile Names\"", xaml);
         Assert.Contains("Diarization Label", xaml);
@@ -544,6 +544,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Local Name Suggestion", xaml);
         Assert.Contains("Speaker Review", xaml);
         Assert.Contains("SpeakerReviewExpander", xaml);
+        Assert.Contains("Rematch Names checks stored local voice samples", xaml);
         Assert.Contains("Repair Speaker Labels is a separate Fix action", xaml);
         Assert.Contains("SpeakerReviewStatusTextBlock", xaml);
         Assert.Contains("Binding=\"{Binding AnonymousLabel, Mode=OneWay}\"", xaml);
