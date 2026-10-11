@@ -547,6 +547,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Rematch Names checks stored local voice samples", xaml);
         Assert.Contains("Repair Speaker Labels is a separate Fix action", xaml);
         Assert.Contains("SpeakerReviewStatusTextBlock", xaml);
+        Assert.Contains("SpeakerQualityTextBlock", xaml);
         Assert.Contains("Binding=\"{Binding AnonymousLabel, Mode=OneWay}\"", xaml);
         Assert.Contains("<ComboBox IsEditable=\"True\"", xaml);
         Assert.Contains("ItemsSource=\"{Binding NameChoices, Mode=OneWay}\"", xaml);
@@ -557,6 +558,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("SpeakerReviewSnapshotResolver.Resolve", mainWindowSource);
         Assert.Contains("BuildSpeakerReviewNameChoices", mainWindowSource);
         Assert.Contains("SpeakerEvidenceService", mainWindowSource);
+        Assert.Contains("BuildSpeakerQualityStatus", mainWindowSource);
+        Assert.Contains("SpeakerQualityDiagnosisResolver.Resolve", mainWindowSource);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);

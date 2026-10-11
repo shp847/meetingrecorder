@@ -7173,11 +7173,15 @@ public partial class MainWindow : Window
                 _logger.Log($"Meeting speaker review profile choices could not be loaded: {exception}");
             }
             var evidenceSpeakerIds = new HashSet<string>(StringComparer.Ordinal);
+            var diagnosticSpeakers = Array.Empty<SpeakerIdentity>();
+            var diagnosticTurns = Array.Empty<SpeakerTurn>();
             if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
             {
                 try
                 {
                     var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
+                    diagnosticSpeakers = manifest.ProcessingMetadata?.Speakers?.ToArray() ?? [];
+                    diagnosticTurns = manifest.ProcessingMetadata?.SpeakerTurns?.ToArray() ?? [];
                     foreach (var sample in manifest.ProcessingMetadata?.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>())
                     {
                         if (!string.IsNullOrWhiteSpace(sample.SpeakerId))
@@ -7264,6 +7268,12 @@ public partial class MainWindow : Window
             }
 
             detailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+            detailWindow.SetSpeakerQualityStatus(BuildSpeakerQualityStatus(
+                row,
+                speakerExperience,
+                diagnosticSpeakers,
+                diagnosticTurns,
+                speakerRows));
             detailWindow.ApplyTaskCenterState(detailTaskCenter);
             detailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
             if (IsMeetingMarkedAsap(row) &&
@@ -15186,6 +15196,43 @@ public partial class MainWindow : Window
             NameSuggestionCount: 0,
             HasProfileAttribution: false,
             RequiresRefresh: false));
+    }
+
+    private static string BuildSpeakerQualityStatus(
+        MeetingListRow row,
+        SpeakerExperienceStateResult speakerExperience,
+        IReadOnlyList<SpeakerIdentity> speakers,
+        IReadOnlyList<SpeakerTurn> turns,
+        IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> reviewRows)
+    {
+        var usableTurns = turns.Where(turn => !string.IsNullOrWhiteSpace(turn.SpeakerId) && turn.End > turn.Start).ToArray();
+        var clusterCount = speakers.Count > 0
+            ? speakers.Count
+            : usableTurns.Select(turn => turn.SpeakerId).Distinct(StringComparer.Ordinal).Count();
+        var tinyTurnRatio = usableTurns.Length == 0
+            ? 0d
+            : usableTurns.Count(turn => turn.End - turn.Start < TimeSpan.FromSeconds(2)) / (double)usableTurns.Length;
+        var runChurnRatio = usableTurns.Length <= 1
+            ? 0d
+            : usableTurns.Zip(usableTurns.Skip(1), (previous, next) => !string.Equals(previous.SpeakerId, next.SpeakerId, StringComparison.Ordinal)).Count(changed => changed) /
+                (double)(usableTurns.Length - 1);
+        var turnSpeakerIds = usableTurns.Select(turn => turn.SpeakerId).ToHashSet(StringComparer.Ordinal);
+        var diagnosis = SpeakerQualityDiagnosisResolver.Resolve(new SpeakerQualityDiagnosisInput(
+            HasCurrentMetadata: !string.IsNullOrWhiteSpace(MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source)),
+            IsProcessing: row.Source.ManifestState is SessionState.Queued or SessionState.Processing or SessionState.Finalizing,
+            HasLabels: row.Source.HasSpeakerLabels,
+            ClusterCount: clusterCount,
+            TinyTurnRatio: tinyTurnRatio,
+            RunChurnRatio: runChurnRatio,
+            UnsupportedSpeakerCount: speakers.Count(speaker => !turnSpeakerIds.Contains(speaker.Id)),
+            DuplicateEffectiveNameCount: speakers.Where(speaker => !string.IsNullOrWhiteSpace(speaker.DisplayName))
+                .GroupBy(speaker => speaker.DisplayName.Trim(), StringComparer.OrdinalIgnoreCase).Count(group => group.Count() > 1),
+            HasGenericNames: reviewRows.Any(review => review.AnonymousLabel.StartsWith("Speaker", StringComparison.OrdinalIgnoreCase)),
+            HasProfileSuggestions: reviewRows.Any(review => review.HasSuggestion),
+            HasNormalSplitCandidate: false,
+            IsRepairReady: speakerExperience.Permits(SpeakerExperienceAction.RepairSpeakerLabels)));
+        var signals = diagnosis.SecondarySignals.Count == 0 ? string.Empty : $" Signals: {string.Join(", ", diagnosis.SecondarySignals)}.";
+        return $"Quality check: {diagnosis.PrimaryReason} Recommended route: {diagnosis.Route}.{signals}";
     }
 
     private bool CanChangeRushProcessing(MeetingListRow row)

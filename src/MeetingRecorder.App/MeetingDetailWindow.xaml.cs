@@ -219,6 +219,11 @@ public partial class MeetingDetailWindow : Window
         ApplyTranscriptFilter();
     }
 
+    internal void SetSpeakerQualityStatus(string text)
+    {
+        SpeakerQualityTextBlock.Text = text;
+    }
+
     internal MeetingDetailRefreshDisposition GetRefreshDisposition(MeetingDetailTaskCenterState incoming)
     {
         if (_appliedTaskCenterRevision is null)
