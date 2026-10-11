@@ -143,6 +143,32 @@ public sealed class MeetingArchiveReceiptService
             ?? throw new InvalidDataException("Archive receipt is empty or malformed.");
     }
 
+    public async Task<IReadOnlyList<(string ReceiptPath, MeetingArchiveReceipt Receipt)>> FindReceiptsAsync(
+        string archiveRoot,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(archiveRoot)) return Array.Empty<(string, MeetingArchiveReceipt)>();
+
+        var receipts = new List<(string ReceiptPath, MeetingArchiveReceipt Receipt)>();
+        foreach (var receiptPath in Directory.EnumerateFiles(archiveRoot, ReceiptFileName, SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                receipts.Add((receiptPath, await ReadReceiptAsync(receiptPath, cancellationToken)));
+            }
+            catch (Exception exception) when (exception is InvalidDataException or JsonException)
+            {
+                // A malformed local receipt is intentionally not discoverable as recoverable.
+            }
+        }
+
+        return receipts
+            .OrderByDescending(item => item.Receipt.ArchivedAtUtc)
+            .ThenBy(item => item.Receipt.MeetingStem, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private static async Task WriteReceiptAsync(string receiptPath, MeetingArchiveReceipt receipt, CancellationToken cancellationToken)
     {
         var temporaryPath = receiptPath + ".tmp-" + Guid.NewGuid().ToString("N");

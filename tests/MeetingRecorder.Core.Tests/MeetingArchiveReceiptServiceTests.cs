@@ -67,6 +67,26 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         Assert.Equal("new-publish", await File.ReadAllTextAsync(audio));
     }
 
+    [Fact]
+    public async Task FindReceiptsAsync_Returns_Only_Valid_Manual_Archive_Receipts()
+    {
+        var source = Path.Combine(_root, "published");
+        var archive = Path.Combine(_root, "archive");
+        Directory.CreateDirectory(source);
+        var audio = await WriteAsync(source, "meeting.wav", "audio");
+        var service = new MeetingArchiveReceiptService();
+        await service.ArchiveAsync("meeting", "user-archive", [("audio", audio)], archive);
+        var invalidDirectory = Path.Combine(archive, "legacy", "bad");
+        Directory.CreateDirectory(invalidDirectory);
+        await File.WriteAllTextAsync(Path.Combine(invalidDirectory, MeetingArchiveReceiptService.ReceiptFileName), "not json");
+
+        var found = await service.FindReceiptsAsync(archive);
+
+        var item = Assert.Single(found);
+        Assert.Equal("meeting", item.Receipt.MeetingStem);
+        Assert.EndsWith(MeetingArchiveReceiptService.ReceiptFileName, item.ReceiptPath, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
