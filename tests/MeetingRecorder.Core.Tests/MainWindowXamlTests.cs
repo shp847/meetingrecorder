@@ -550,8 +550,12 @@ public sealed class MainWindowXamlTests
         Assert.Contains("<ComboBox IsEditable=\"True\"", xaml);
         Assert.Contains("ItemsSource=\"{Binding NameChoices, Mode=OneWay}\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"Meeting display name\"", xaml);
+        Assert.Contains("Content=\"{Binding EvidenceToggleText}\"", xaml);
+        Assert.Contains("Click=\"ToggleSpeakerEvidenceButton_OnClick\"", xaml);
+        Assert.Contains("Content=\"Show in transcript\"", xaml);
         Assert.Contains("SpeakerReviewSnapshotResolver.Resolve", mainWindowSource);
         Assert.Contains("BuildSpeakerReviewNameChoices", mainWindowSource);
+        Assert.Contains("SpeakerEvidenceService", mainWindowSource);
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);

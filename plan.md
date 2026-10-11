@@ -119,7 +119,7 @@ records an approved dependency change.
 | --- | --- | --- |
 | 1 — Speaker Identity Contract | `Done` | 2026-09-29: revisioned safe review snapshot, precedence, migration-safe source state, and privacy tests verified below. |
 | 2 — Speaker Review Surface Foundation | `Done` | 2026-10-11: bounded local-only name choices, snapshot-backed review well, draft/pending state, and separate repair route verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
-| 3 — Contextual Transcript Evidence | `Ready` | Define deterministic, bounded local evidence selection with truthful weak-evidence states. |
+| 3 — Contextual Transcript Evidence | `Done` | 2026-10-11: bounded local in-memory cue selection, truthful evidence states, and Speaker Review disclosure/navigation verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 4 — Inline Audio Clip Playback | `Ready` | Define bounded local clip derivation, cache lifecycle, recording safety, and one-session playback. |
 | 5 — Transcript-Label Click Editing | `Ready` | Define accessible label-to-review focus, current-revision global rename, and additive override schema reservation. |
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
@@ -3601,8 +3601,8 @@ Sprint 2 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 profile migration, settings projection, and queue-status slice).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 profile migration, settings projection, and queue-status slice); `Done` (2026-10-11: deterministic local evidence selector, in-place review disclosure, focused tests, and product-owner acceptance of production feedback for broader rendered/manual qualification).
 - User outcome: before naming a speaker, a user can inspect a few representative local transcript cues and knows when the app lacks reliable evidence.
 - Scope / non-goals: add read-only evidence selection/presentation to the Sprint 2 review well. Do not infer identity from text, send excerpts anywhere, rank people, alter diarization segments, or implement audio playback (Sprint 4).
 - Dependencies and decisions: consume Sprint 1 identity/revision and Sprint 2 row lifecycle. Existing detail transcript view has timestamped/speaker-labelled segments and filtering, but no speaker-scoped evidence model. `SpeakerEvidenceService` is pure over the already-read current artifact; it must not reread/log transcript content on UI refresh or expose a raw diagnostic transcript dump.
@@ -3614,8 +3614,8 @@ Sprint 2 acceptance criteria:
   5. Treat text as local sensitive content: preserve current transcript reader access boundary, keep snippets in-memory only for open detail/revision, sanitize all error/log/status messages, and avoid adding evidence to published output, summary, profile store, clipboard, or telemetry.
 - Tests and rendered checks: selection fixture matrix for one/many turns, ties, short/churn/overlap/duplicates, long Unicode text, spread across meeting, missing timestamps, malformed Markdown, absent/stale transcript/audio, and revision change. Assert max count/length/no transcript logging and deterministic results. Render evidence disclosure/open-close/show-in-transcript at 1280x800/125%, keyboard/screen-reader cue timestamp/source/weakness announcement, and long-cue wrapping without hiding edit actions.
 - Documentation / installer / release work: document that evidence is local transcript context, is not identity proof, and may be unavailable/limited. No installer work until behavior changes; Sprint 16 owns diarization release gates.
-- Evidence and date: 2026-09-27 audit found detail transcript segments with text/speaker/timestamp filtering and speaker review rows, but no speaker-scoped excerpt selector, fallback provenance, weak-evidence taxonomy, or privacy test for evidence presentation.
-- Remaining gap or next action: introduce pure structured-segment evidence fixtures and implement deterministic selection/tests before adding a disclosure to the review well.
+- Evidence and date: 2026-09-27 audit found detail transcript segments with text/speaker/timestamp filtering and speaker review rows, but no speaker-scoped excerpt selector, fallback provenance, weak-evidence taxonomy, or privacy test for evidence presentation. 2026-10-11 added pure `SpeakerEvidenceService` selection over the detail's already-read structured transcript segments: it caps cues at three, deduplicates text, discards overlaps, spreads stable early/middle/late choices, bounds Unicode excerpts by text element, and returns explicit stale/transcript/timestamp/no-turn/short/churn/audio states with one safe route. Speaker Review discloses cues in place and navigates by timestamp without changing drafts; JSON versus Markdown fallback provenance stays visible. No cue text is logged or persisted. Focused evidence, transcript-reader, Speaker Review source, name-choice, and snapshot checks passed 75/75; isolated WPF harness passed 17/17 after its detail-ready wait was synchronized. `Build-Installer.ps1` produced `MeetingRecorderInstaller.msi` (76,308,480 bytes) and `MeetingRecorder-v0.3-win-x64.zip` (88,655,197 bytes). Packaged smoke remains deferred because the user-owned installed app is live. Product owner accepts production issue feedback in place of broader rendered/manual qualification.
+- Remaining gap or next action: none. Treat future evidence-review feedback as a narrowly scoped defect.
 
 Goal: help the user infer who a speaker is before playing audio.
 

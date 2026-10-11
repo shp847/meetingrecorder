@@ -297,7 +297,8 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
         Assert.Equal(new[] { "Hello team.", "Let's start." }, result.Segments.Select(segment => segment.Text));
         Assert.Equal("01:05", result.Segments[1].Timestamp);
         Assert.False(result.HasStructuredJson);
-        Assert.Empty(result.StructuredSegments);
+        Assert.Equal(2, result.StructuredSegments.Count);
+        Assert.All(result.StructuredSegments, segment => Assert.Null(segment.SpeakerId));
         Assert.Null(result.SummarizationStatus);
         Assert.Null(result.Summary);
     }

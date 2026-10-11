@@ -7125,6 +7125,8 @@ public partial class MainWindow : Window
                 return;
             }
 
+            var detailWindow = _meetingDetailWindow;
+
             var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
             var speakerExperience = ResolveSpeakerExperienceForMeeting(row);
             var canQueueSpeakerLabels = speakerExperience.Permits(SpeakerExperienceAction.AddSpeakerLabels) ||
@@ -7202,6 +7204,22 @@ public partial class MainWindow : Window
                 IsStale: false,
                 HasRepairWarning: row.Source.HasSuspiciousSpeakerLabels));
             var nameChoices = BuildSpeakerReviewNameChoices(row.Source, speakerReview.Rows, localProfileNames);
+            var evidenceService = new SpeakerEvidenceService();
+            var evidenceSource = transcript.HasStructuredJson
+                ? SpeakerEvidenceSourceKind.StructuredTranscript
+                : SpeakerEvidenceSourceKind.MarkdownFallback;
+            var speakerEvidence = speakerLabels
+                .Select((label, index) => evidenceService.Select(new SpeakerEvidenceRequest(
+                    row.Source.Stem,
+                    speakerArtifactRevision,
+                    label.SpeakerId ?? $"legacy_{index}",
+                    label.DisplayName,
+                    transcript.StructuredSegments,
+                    transcript.HasTranscript,
+                    row.CanOpenAudioArtifact,
+                    IsArtifactStale: false,
+                    evidenceSource)))
+                .ToArray();
             var speakerRows = speakerLabels
                 .Select((label, index) => new MeetingDetailSpeakerLabelEditorRow(
                     label.DisplayName,
@@ -7213,7 +7231,8 @@ public partial class MainWindow : Window
                     speakerArtifactRevision,
                     label.NameSource,
                     speakerReview.Rows[index],
-                    nameChoices))
+                    nameChoices,
+                    speakerEvidence[index]))
                 .ToArray();
             var detailTaskCenter = MeetingDetailTaskCenterResolver.Resolve(new MeetingDetailTaskCenterInput(
                 new MeetingDetailSnapshotRevision(
@@ -7229,22 +7248,22 @@ public partial class MainWindow : Window
                 row.CanOpenTranscriptArtifact,
                 ResolveMeetingActionCatalogState([row], row, IsMeetingActionInProgress())));
 
-            if (_meetingDetailWindow.GetRefreshDisposition(detailTaskCenter) ==
+            if (detailWindow.GetRefreshDisposition(detailTaskCenter) ==
                 MeetingDetailRefreshDisposition.KeepDraftsAndOfferReload)
             {
-                _meetingDetailWindow.ApplyTaskCenterState(detailTaskCenter, markAsApplied: false);
-                _meetingDetailWindow.SetMaintenanceStatus(
+                detailWindow.ApplyTaskCenterState(detailTaskCenter, markAsApplied: false);
+                detailWindow.SetMaintenanceStatus(
                     "Meeting details changed in the background. Your unsaved drafts are preserved; finish them before reopening or refreshing this detail view.");
                 return;
             }
 
-            _meetingDetailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
-            _meetingDetailWindow.ApplyTaskCenterState(detailTaskCenter);
-            _meetingDetailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
+            detailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+            detailWindow.ApplyTaskCenterState(detailTaskCenter);
+            detailWindow.SetMaintenanceBusy(IsMeetingActionInProgress());
             if (IsMeetingMarkedAsap(row) &&
                 _latestProcessingQueueStatusSnapshot.RushRequest is { LifecycleText: { Length: > 0 } lifecycleText })
             {
-                _meetingDetailWindow.SetMaintenanceStatus(
+                detailWindow.SetMaintenanceStatus(
                     $"{lifecycleText}. Clear ASAP releases only this meeting's future priority; it does not cancel current work.");
             }
         }
@@ -7313,7 +7332,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(reviewRows);
         ArgumentNullException.ThrowIfNull(activeProfileNames);
 
-        return meeting.Attendees.Select(attendee => attendee.Name)
+        return (meeting.Attendees ?? Array.Empty<MeetingAttendee>()).Select(attendee => attendee.Name)
             .Concat(meeting.KeyAttendees ?? Array.Empty<string>())
             .Concat(reviewRows
                 .Where(review => review.NameSource is SpeakerReviewNameSource.UserEntered or SpeakerReviewNameSource.AutoApplied)

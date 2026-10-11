@@ -33,12 +33,16 @@ internal static class MeetingTranscriptDocumentReader
         }
 
         var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
-        if (hasMarkdown && TryReadMarkdownTranscript(markdownPath!, out var markdownSegments))
+        if (hasMarkdown && TryReadMarkdownTranscript(markdownPath!, out var markdownRows, out var markdownSegments))
         {
             return new MeetingTranscriptReaderResult(
-                markdownSegments.Count > 0,
-                BuildStatusText(markdownSegments.Count, markdownSegments.Count, "Markdown transcript"),
-                markdownSegments);
+                markdownRows.Count > 0,
+                BuildStatusText(markdownRows.Count, markdownSegments.Count, "Markdown transcript"),
+                markdownRows,
+                markdownSegments,
+                null,
+                null,
+                HasStructuredJson: false);
         }
 
         if (!hasJson && !hasMarkdown)
@@ -150,16 +154,20 @@ internal static class MeetingTranscriptDocumentReader
         }
     }
 
-    private static bool TryReadMarkdownTranscript(string markdownPath, out IReadOnlyList<MeetingTranscriptSegmentRow> segments)
+    private static bool TryReadMarkdownTranscript(
+        string markdownPath,
+        out IReadOnlyList<MeetingTranscriptSegmentRow> segments,
+        out IReadOnlyList<TranscriptSegment> structuredSegments)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
-        if (!TryReadMarkdownTranscriptSegments(markdownPath, out var markdownSegments))
+        structuredSegments = Array.Empty<TranscriptSegment>();
+        if (!TryReadMarkdownTranscriptSegments(markdownPath, out structuredSegments))
         {
             return false;
         }
 
-        segments = BuildDisplayRows(markdownSegments);
-        return markdownSegments.Count > 0;
+        segments = BuildDisplayRows(structuredSegments);
+        return structuredSegments.Count > 0;
     }
 
     private static bool TryReadMarkdownTranscriptSegments(string markdownPath, out IReadOnlyList<TranscriptSegment> segments)

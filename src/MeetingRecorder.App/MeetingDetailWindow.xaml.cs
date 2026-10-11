@@ -25,7 +25,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     string artifactRevision = "",
     SpeakerNameSource expectedNameSource = SpeakerNameSource.None,
     SpeakerReviewRow? reviewSnapshot = null,
-    IReadOnlyList<string>? nameChoices = null)
+    IReadOnlyList<string>? nameChoices = null,
+    SpeakerEvidenceSnapshot? evidenceSnapshot = null)
 {
     public string OriginalLabel { get; } = originalLabel;
 
@@ -46,6 +47,20 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public SpeakerNameSource ExpectedNameSource { get; } = expectedNameSource;
 
     public IReadOnlyList<string> NameChoices { get; } = nameChoices ?? Array.Empty<string>();
+
+    public SpeakerEvidenceSnapshot? EvidenceSnapshot { get; } = evidenceSnapshot;
+
+    public IReadOnlyList<SpeakerEvidenceCue> EvidenceCues => EvidenceSnapshot?.Cues ?? Array.Empty<SpeakerEvidenceCue>();
+
+    public bool HasEvidenceCues => EvidenceCues.Count > 0;
+
+    public bool IsEvidenceVisible { get; set; }
+
+    public string EvidenceToggleText => HasEvidenceCues
+        ? IsEvidenceVisible ? "Hide evidence" : $"View evidence ({EvidenceCues.Count})"
+        : "Evidence unavailable";
+
+    public string EvidenceSummary => EvidenceSnapshot?.Summary ?? "Local transcript evidence is unavailable.";
 
     public string AnonymousLabel => reviewSnapshot?.AnonymousLabel ?? OriginalLabel;
 
@@ -441,6 +456,24 @@ public partial class MeetingDetailWindow : Window
     private void SpeakerLabelsDataGrid_OnCellEditEnding(object sender, System.Windows.Controls.DataGridCellEditEndingEventArgs e)
     {
         Dispatcher.BeginInvoke(UpdateSpeakerReviewStatus);
+    }
+
+    private void ToggleSpeakerEvidenceButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MeetingDetailSpeakerLabelEditorRow row && row.HasEvidenceCues)
+        {
+            row.IsEvidenceVisible = !row.IsEvidenceVisible;
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+    }
+
+    private void ShowSpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is SpeakerEvidenceCue cue)
+        {
+            TranscriptSearchTextBox.Text = cue.TranscriptTimestamp;
+            TranscriptSegmentsListBox.ScrollIntoView(TranscriptSegmentsListBox.Items.Cast<object>().FirstOrDefault());
+        }
     }
 
     private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)

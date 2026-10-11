@@ -837,6 +837,10 @@ internal static class WpfRenderHarness
         detailWindow.UpdateLayout();
         FlushDispatcher(detailWindow.Dispatcher, DispatcherPriority.Render);
         var title = RequireElement<TextBlock>(detailWindow, "MeetingTitleTextBlock");
+        WaitForCondition(
+            detailWindow.Dispatcher,
+            () => string.Equals(title.Text, "Synthetic processing review", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(10));
         var closeButton = FindDescendant<Button>(detailWindow, button =>
             string.Equals(AutomationProperties.GetName(button), "Close meeting details", StringComparison.Ordinal))
             ?? throw new InvalidOperationException("Meeting detail must expose a named Close action.");

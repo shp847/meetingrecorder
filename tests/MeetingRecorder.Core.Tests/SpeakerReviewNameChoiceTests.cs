@@ -76,4 +76,28 @@ public sealed class SpeakerReviewNameChoiceTests
         Assert.Equal("Profile 01", choices[0]);
         Assert.Equal("Profile 24", choices[^1]);
     }
+
+    [Fact]
+    public void BuildSpeakerReviewNameChoices_Tolerates_Legacy_Meetings_Without_Attendee_Metadata()
+    {
+        var meeting = new MeetingOutputRecord(
+            "meeting",
+            "Meeting",
+            DateTimeOffset.UtcNow,
+            MeetingPlatform.Teams,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null!,
+            false,
+            null);
+
+        var choices = MainWindow.BuildSpeakerReviewNameChoices(meeting, [], ["Morgan Yu"]);
+
+        Assert.Equal(["Morgan Yu"], choices);
+    }
 }

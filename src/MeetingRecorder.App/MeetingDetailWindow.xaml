@@ -297,7 +297,70 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                         </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Evidence"
+                                                                Width="132">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <Button MinWidth="118"
+                                                            Height="26"
+                                                            Click="ToggleSpeakerEvidenceButton_OnClick"
+                                                            IsEnabled="{Binding HasEvidenceCues}"
+                                                            AutomationProperties.Name="View local speaker evidence"
+                                                            ToolTip="{Binding EvidenceSummary}"
+                                                            Content="{Binding EvidenceToggleText}" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                     </DataGrid.Columns>
+                                    <DataGrid.RowDetailsTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="SpeakerEvidenceDisclosureBorder"
+                                                    Margin="8,0,8,8"
+                                                    Padding="10"
+                                                    Background="{StaticResource AppMutedCardBrush}"
+                                                    Visibility="Collapsed">
+                                                <StackPanel>
+                                                    <TextBlock Text="Local transcript context can help review a name, but does not prove identity."
+                                                               TextWrapping="Wrap" />
+                                                    <ItemsControl Margin="0,6,0,0"
+                                                                  ItemsSource="{Binding EvidenceCues}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Border Margin="0,0,0,6"
+                                                                        Padding="8"
+                                                                        BorderBrush="{StaticResource AppOutlineBrush}"
+                                                                        BorderThickness="1">
+                                                                    <StackPanel>
+                                                                        <TextBlock FontFamily="{StaticResource AppMonoFontFamily}"
+                                                                                   Text="{Binding Timestamp}" />
+                                                                        <TextBlock Margin="0,3,0,0"
+                                                                                   TextWrapping="Wrap"
+                                                                                   Text="{Binding Excerpt}" />
+                                                                        <TextBlock Margin="0,3,0,0"
+                                                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                                                   Text="{Binding SourceKind}" />
+                                                                        <Button Margin="0,6,0,0"
+                                                                                HorizontalAlignment="Left"
+                                                                                Style="{StaticResource SecondaryActionButtonStyle}"
+                                                                                Click="ShowSpeakerEvidenceCueButton_OnClick"
+                                                                                AutomationProperties.Name="Show evidence cue in transcript"
+                                                                                Content="Show in transcript" />
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsEvidenceVisible}" Value="True">
+                                                    <Setter TargetName="SpeakerEvidenceDisclosureBorder"
+                                                            Property="Visibility"
+                                                            Value="Visible" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </DataGrid.RowDetailsTemplate>
                                 </DataGrid>
                                 <WrapPanel Margin="0,10,0,0">
                                     <Button x:Name="ApplySpeakerNamesButton"
