@@ -113,13 +113,17 @@ public sealed class DiarizationFixtureReplayTests
         var fixtures = root.GetProperty("fixtures").EnumerateArray().ToArray();
 
         Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
-        Assert.True(fixtures.Length >= 6);
+        Assert.True(fixtures.Length >= 9);
         Assert.All(fixtures, fixture => Assert.False(fixture.GetProperty("enabled").GetBoolean()));
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "two-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "one-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "three-plus-speaker");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "short-call");
         Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "noisy-similar-voices");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "overlap");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "hybrid-shared-mic");
+        Assert.Contains(fixtures, fixture => fixture.GetProperty("category").GetString() == "no-speech");
+        Assert.Contains("\"minimum\": 0", schemaText, StringComparison.Ordinal);
         Assert.Contains("Expected values are assertions only, not runtime hints", exampleText, StringComparison.Ordinal);
         Assert.Contains("\"expectedSpeakerCount\"", schemaText, StringComparison.Ordinal);
         Assert.Contains("\"expectedSpeakerNames\"", schemaText, StringComparison.Ordinal);
@@ -405,7 +409,7 @@ public sealed class DiarizationFixtureReplayTests
             Assert.NotEqual(0, invalidCountResult.ExitCode);
             Assert.True(File.Exists(reportPath), "Expected invalid fixture validation to still write a metadata report.");
             Assert.Contains(
-                "expectedSpeakerCount must be an integer from 1 through 16",
+                "expectedSpeakerCount must be an integer from 0 through 16",
                 File.ReadAllText(reportPath),
                 StringComparison.Ordinal);
         }

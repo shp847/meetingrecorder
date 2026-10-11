@@ -324,8 +324,8 @@ function Validate-Fixture {
     $expectedSpeakerCount = Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
     if ($null -ne $expectedSpeakerCount -and -not [string]::IsNullOrWhiteSpace([string]$expectedSpeakerCount)) {
         $parsedCount = 0
-        if (-not [int]::TryParse([string]$expectedSpeakerCount, [ref]$parsedCount) -or $parsedCount -lt 1 -or $parsedCount -gt 16) {
-            throw "Fixture '$id' expectedSpeakerCount must be an integer from 1 through 16."
+        if (-not [int]::TryParse([string]$expectedSpeakerCount, [ref]$parsedCount) -or $parsedCount -lt 0 -or $parsedCount -gt 16) {
+            throw "Fixture '$id' expectedSpeakerCount must be an integer from 0 through 16."
         }
     }
 

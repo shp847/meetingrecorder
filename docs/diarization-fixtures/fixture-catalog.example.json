@@ -117,6 +117,54 @@
       "enableSpeakerNameMatching": false,
       "protectedArtifactPaths": [],
       "notes": "Use for overlapping audio, noisy audio, or acoustically similar voices."
+    },
+    {
+      "id": "overlap-example",
+      "title": "Known overlap example",
+      "category": "overlap",
+      "mode": "stored-turn",
+      "enabled": false,
+      "disabledReason": "Replace placeholder paths in the local private catalog.",
+      "manifestPath": "C:/Private/MeetingRecorder/fixtures/overlap/manifest.json",
+      "transcriptJsonPath": "C:/Private/MeetingRecorder/fixtures/overlap/transcript.json",
+      "expectedSpeakerCount": 2,
+      "expectedSpeakerNames": [],
+      "expectedNameMode": "none",
+      "enableSpeakerNameMatching": false,
+      "protectedArtifactPaths": [],
+      "notes": "Overlap is a protected case; expected values remain assertions only."
+    },
+    {
+      "id": "hybrid-shared-mic-example",
+      "title": "Known hybrid or shared microphone example",
+      "category": "hybrid-shared-mic",
+      "mode": "stored-turn",
+      "enabled": false,
+      "disabledReason": "Replace placeholder paths in the local private catalog.",
+      "manifestPath": "C:/Private/MeetingRecorder/fixtures/hybrid-shared-mic/manifest.json",
+      "transcriptJsonPath": "C:/Private/MeetingRecorder/fixtures/hybrid-shared-mic/transcript.json",
+      "expectedSpeakerCount": 2,
+      "expectedSpeakerNames": [],
+      "expectedNameMode": "none",
+      "enableSpeakerNameMatching": false,
+      "protectedArtifactPaths": [],
+      "notes": "Shared microphones are protected against automatic identity promotion."
+    },
+    {
+      "id": "no-speech-example",
+      "title": "Known no-speech example",
+      "category": "no-speech",
+      "mode": "stored-turn",
+      "enabled": false,
+      "disabledReason": "Replace placeholder paths in the local private catalog.",
+      "manifestPath": "C:/Private/MeetingRecorder/fixtures/no-speech/manifest.json",
+      "transcriptJsonPath": "C:/Private/MeetingRecorder/fixtures/no-speech/transcript.json",
+      "expectedSpeakerCount": 0,
+      "expectedSpeakerNames": [],
+      "expectedNameMode": "none",
+      "enableSpeakerNameMatching": false,
+      "protectedArtifactPaths": [],
+      "notes": "No-speech fixtures block automatic speaker identity claims."
     }
   ]
 }

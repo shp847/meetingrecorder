@@ -4168,7 +4168,8 @@ Sprint 13 acceptance criteria:
 - Documentation / installer / release work: document corpus governance, command, promotion authority, no-go rules, report retention/redaction, and release evidence. No installer work until behavior changes; Sprint 16 owns release gates.
 - Evidence and date: 2026-09-27 audit found candidate allowlists, metadata-only dry runs and fixture replay, but no labeled/blinded corpus contract, release promotion decision record, false-auto gate, production-isolation proof, or experience-fixture matrix.
 - Evidence and date: 2026-09-29 added `DiarizationPromotionGate` tests that prohibit promotion for incomplete protected evidence, protected false automatic attribution, reduced speaker-count correctness, or higher false-auto counts; passing candidates still require human review.
-- Remaining gap or next action: add corpus-manifest schema and synthetic protected-case metrics before any threshold change.
+- Evidence and date: 2026-10-10 expanded the disabled synthetic fixture catalog/schema and calibration protected set with overlap, hybrid/shared-microphone, and no-speech categories. Zero-speaker expectations are valid only as corpus assertions; the calibration path remains metadata-only and cannot supply runtime hints. Focused calibration/replay/metric/promotion contracts passed 19/19.
+- Remaining gap or next action: produce the governed aggregate metrics report with explicit candidate/baseline/human-review evidence before any threshold change.
 
 Goal: prove the system reduces manual effort without unsafe automatic naming.
 

@@ -51,7 +51,10 @@ $ProtectedCategories = @(
     "one-speaker",
     "three-plus-speaker",
     "short-call",
-    "noisy-similar-voices")
+    "noisy-similar-voices",
+    "overlap",
+    "hybrid-shared-mic",
+    "no-speech")
 
 function ConvertTo-Array {
     param($Value)
