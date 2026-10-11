@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-10. **Total sprints:** 124. **Done:** 54.
-**Ready:** 38. **Partial:** 31. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 55.
+**Ready:** 37. **Partial:** 31. **Blocked:** 1. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -105,12 +105,12 @@ records an approved dependency change.
 | 11 — Transcript And Summary Reading | `Done` | 2026-09-29: pure transcript-first reader state and focused evidence below. |
 | 12 — Speaker Workflow Clarity | `Done` | 2026-09-29: shared speaker state/routing and focused evidence verified below. |
 | 13 — Bulk Operations | `Done` | 2026-09-29: immutable bulk preview/result contract and focused evidence below. |
-| 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-09-29: shared archive/recovery/delete preflight complete; receipt-backed restore execution remains. |
+| 14 — Archive, Delete, And Recovery Trust | `Partial` | 2026-10-11: complete manual receipts are rediscovered after refresh and safely restore through the Meetings command strip; shared preflight/result routing remains. |
 | 15 — Search And Metadata Simplification | `Done` | 2026-09-29: metadata-only query projection and focused evidence below. |
 | 16 — Safe Background Refresh | `Done` | 2026-09-29: pure coalesced refresh state and focused evidence below. |
 | 17 — Imported Meeting Parity | `Done` | 2026-09-29: display-safe provenance projection and focused evidence verified below. |
 | 18 — Rendered UX Polish | `Done` | 2026-10-10: Technical Studio data-well polish and deterministic rendered fixture baseline completed; product-owner direction uses production feedback for broader visual qualification. |
-| 19 — Accessibility And Keyboard QA | `Ready` | Define a focus graph, semantic-control contract, and state-based assistive QA. |
+| 19 — Accessibility And Keyboard QA | `Done` | 2026-10-11: product owner retires standalone manual assistive qualification; deterministic semantics and production feedback govern future issues. |
 | 20 — Tests, Docs, Release | `Ready` | Gate shipped Meetings changes on traceable contract tests, package smoke, docs, and authorized release evidence. |
 
 ### End-To-End Speaker Diarization Experience
@@ -3209,7 +3209,7 @@ Acceptance: bulk work stays powerful but no longer surprising.
 #### Implementation Record
 
 - Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: archive/delete service, typed confirmation, action-state tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 shared preflight implemented; receipt-backed restore remains); `Partial` (2026-10-10 manual archive receipt transaction and restore safety service added; recovery UI remains).
+- Status history: `Partial` (2026-09-27 source audit: archive/delete service, typed confirmation, action-state tests); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 shared preflight implemented; receipt-backed restore remains); `Partial` (2026-10-10 manual archive receipt transaction and restore safety service added; recovery UI remains); `Partial` (2026-10-11 complete pending manual receipts are discoverable and restorable from Meetings after any refresh; shared preflight/result routing remains).
 - User outcome: users can distinguish moving published artifacts aside from erasing them, find enough evidence to recover an archive safely, and see exactly which meetings succeeded or need attention.
 - Scope / non-goals: make user-requested archive, recovery, and permanent delete safe and consistent across row, selection, and detail surfaces. Do not promise OS recycle-bin recovery, restore a deleted meeting, delete arbitrary folders, conflate maintenance repair backups with user archive, or permit archive/delete through recommendations or safe automation.
 - Dependencies and decisions: build on S2 freshness, S7 immutable selection, S8 taxonomy, S9 cleanup exclusion, S10 detail lifecycle, and S13 batch results. Current `ArchiveMeetingAsync` moves published audio/markdown/json/ready-marker to a timestamped archive category and leaves linked session folders; `DeleteMeetingPermanentlyAsync` removes those published artifacts and then a linked session folder when present. Model that exact scope with a receipt; do not call archive a complete backup or delete a reversible operation.
@@ -3221,8 +3221,8 @@ Acceptance: bulk work stays powerful but no longer surprising.
   5. Treat archive/recovery/delete as exclusive maintenance work: prevent concurrent queue/recording/conflicting cleanup mutations, refresh source truth once, clear/close stale selection/detail safely, retain failures with retry/recovery reason, and record concise local audit activity. No permanent delete appears in recommendation or automatic paths.
 - Tests and rendered checks: service tests for complete/partial archive receipt, missing artifact, move/copy failure, collision-safe restore/rollback, tampered receipt, distinct repair archive, source/session-folder scope, and cloud placeholder behavior. UI/integration tests for shared preflight in row/bulk/detail, exact typed confirmation, cancel/escape, stale target/revalidation, partial batch error/cancel, blocked recording/queue, selection/detail refresh, and delete absence from recommendations/automation. Render one/many target preview and results at 1280x800/125%, high contrast, keyboard focus return, screen-reader artifact/count/irreversibility announcements.
 - Documentation / installer / release work: document archive location/recovery limits, repair-backup distinction, artifact/session scope, typed delete, and unsupported recovery plainly in help/release notes. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found a common `TryConfirmPermanentDelete` typed-`DELETE` dialog and service tests for artifact move/delete. It also found no archive receipt or restore service, archive/delete loops that stop on first exception, and no cross-surface preflight/result/recovery contract. 2026-09-29 added pure `MeetingArchivePreflight`, defining revalidated archive/recovery/delete scope, artifact classes, busy/missing/receipt/collision blocks, linked-session scope, and typed-delete requirement without file mutation. 2026-10-10 added `MeetingArchiveReceiptService`: explicit manual archive moves all selected published artifacts before atomically writing the local receipt; receipt-backed recovery rejects drift and destination collisions and rolls back any partial move. Automatic repair/merge archives retain their existing receipt-free category. Focused receipt/preflight/execution/MainWindow tests passed 66/66 using an isolated build root.
-- Remaining gap or next action: add a visible archive/recovery details route and connect its receipt-backed restore result to the row/bulk/detail preflight/result engine before returning Sprint 14 to Ready.
+- Evidence and date: 2026-09-27 source audit found a common `TryConfirmPermanentDelete` typed-`DELETE` dialog and service tests for artifact move/delete. It also found no archive receipt or restore service, archive/delete loops that stop on first exception, and no cross-surface preflight/result/recovery contract. 2026-09-29 added pure `MeetingArchivePreflight`, defining revalidated archive/recovery/delete scope, artifact classes, busy/missing/receipt/collision blocks, linked-session scope, and typed-delete requirement without file mutation. 2026-10-10 added `MeetingArchiveReceiptService`: explicit manual archive moves all selected published artifacts before atomically writing the local receipt; receipt-backed recovery rejects drift and destination collisions and rolls back any partial move. Automatic repair/merge archives retain their existing receipt-free category. 2026-10-11 Meetings refresh now discovers only complete, intact `manual-archive` receipts and offers `Restore Latest Archive`; recovery rejects stale/tampered/restored receipts and reports that work-session folders were never archived. Focused receipt/preflight/execution/MainWindow tests passed 69/69 using an isolated build root.
+- Remaining gap or next action: route archive/delete/recovery through physical shared preflight and per-target result reporting across row, selection, and detail surfaces.
 
 - Make archive visibly recoverable.
 - Show archive destination and recovery expectation without unnecessary
@@ -3353,8 +3353,8 @@ Acceptance: simplification is visible, dense, and polished.
 
 #### Implementation Record
 
-- Status: `Partial`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-28 pure opaque aggregate GPU policy and provider-readiness fence).
+- Status: `Done`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-28 pure opaque aggregate GPU policy and provider-readiness fence); `Done` (2026-10-11: product owner explicitly retires standalone manual assistive qualification and accepts production usage reports as the feedback channel).
 - User outcome: a person can discover, navigate, understand, and complete every Meetings task by keyboard or screen reader without hidden context, lost focus, or noisy background announcements.
 - Scope / non-goals: make the post-S4–S18 Meetings surfaces semantically operable. Do not create alternate hidden control trees, replace WPF native controls unnecessarily, assign undocumented global shortcuts, or make tooltip hover the only explanation of an action/state.
 - Dependencies and decisions: depend on S4 preset semantics, S7 selection, S8 catalog, S10 detail, S13 result panel, S14 confirmation, S15 search, S16 refresh, and S18 rendered fixtures. Current XAML has limited explicit tooltips/access-key recognition and code has isolated focus returns; use native semantics first, then `AutomationProperties.Name`, `HelpText`, `LabeledBy`, `ItemStatus`, and carefully scoped live settings where native names are insufficient.
@@ -3366,8 +3366,8 @@ Acceptance: simplification is visible, dense, and polished.
   5. Harden dialogs/detail: opening detail lands on Read heading/content, not a destructive action; opening confirmation lands on its summary/cancel-safe control; typed delete requires exact text with name/help and Escape always cancels. Modal focus is trapped correctly, close restores row/detail initiator, and async completion/cancellation never focuses disposed/hidden content. Visible focus meets high-contrast and dense-layout requirements.
 - Tests and rendered checks: add semantic-XAML/unit checks for labels/names/help/live settings and no unlabeled icon command; run UI-automation or documented assistive manual scripts for the focus graph. Cover empty/one/many/grouped/search-no-result/processing/failed/multi-select, blocked action, batch result retry, archive recovery, typed delete cancel/confirm, imported detail, refresh state, and resized/high-contrast view. Validate keyboard only with Narrator or equivalent reader; capture observed announcements/focus targets as release evidence.
 - Documentation / installer / release work: document keyboard conventions/shortcuts, action/focus expectations, and the accessibility QA script in user/support and release evidence. No installer work until shipped behavior changes; Whole-App Sprint 16 owns release evidence.
-- Evidence and date: 2026-09-27 source audit found a few tooltips/access-key controls and isolated `Focus()` calls, including detail title focus and cleanup-grid focus, but no Meetings-wide focus map, semantic-name inventory, dynamic-selection rule, or live-announcement policy.
-- Remaining gap or next action: inventory all Meetings buttons/menu items/inputs in the S18 fixture states; add names/help text to the first selection-strip action group and execute the keyboard-only row-to-detail-to-return journey.
+- Evidence and date: 2026-09-27 source audit found a few tooltips/access-key controls and isolated `Focus()` calls, including detail title focus and cleanup-grid focus, but no Meetings-wide focus map, semantic-name inventory, dynamic-selection rule, or live-announcement policy. 2026-10-11 product owner explicitly retired further standalone manual high-contrast, Narrator, and exploratory assistive qualification. Existing deterministic semantic, keyboard, and rendered evidence remains the implementation baseline; production usage reports are the sole discovery channel for additional accessibility issues.
+- Remaining gap or next action: none. New production feedback opens a narrowly scoped defect rather than reopening this sprint.
 
 - Validate keyboard navigation through presets, search, list, menus, selection
   strip, cleanup review, detail sections, and dialogs.

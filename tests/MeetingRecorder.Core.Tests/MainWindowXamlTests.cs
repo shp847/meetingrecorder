@@ -1052,6 +1052,21 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
+    public void Meetings_Archive_Provides_Receipt_Backed_Recovery_In_The_Initiating_Viewport()
+    {
+        var xaml = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml"));
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("x:Name=\"RestoreLatestArchiveButton\"", xaml);
+        Assert.Contains("Click=\"RestoreLatestArchiveButton_OnClick\"", xaml);
+        Assert.Contains("_meetingArchiveReceiptService.ArchiveAsync(", source);
+        Assert.Contains("_meetingArchiveReceiptService.FindReceiptsAsync(", source);
+        Assert.Contains("_meetingArchiveReceiptService.RestoreAsync(", source);
+        Assert.Contains("RestoreLatestArchiveButton.Visibility = recoveryReceipts.Count > 0", source);
+        Assert.Contains("The work session was never archived.", source);
+    }
+
+    [Fact]
     public void Meeting_Detail_Uses_Revisioned_Task_Center_Draft_Safety_And_Intent_Sections()
     {
         var detailXamlPath = GetPath("src", "MeetingRecorder.App", "MeetingDetailWindow.xaml");

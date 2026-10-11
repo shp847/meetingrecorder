@@ -16,8 +16,8 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         var transcript = await WriteAsync(source, "meeting.md", "transcript");
         var service = new MeetingArchiveReceiptService();
 
-        var receipt = await service.ArchiveAsync("meeting", "user-archive", [("audio", audio), ("transcript", transcript)], archive);
-        var receiptPath = Path.Combine(archive, "user-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName);
+        var receipt = await service.ArchiveAsync("meeting", "manual-archive", [("audio", audio), ("transcript", transcript)], archive);
+        var receiptPath = Path.Combine(archive, "manual-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName);
 
         Assert.True(File.Exists(receiptPath));
         Assert.False(File.Exists(audio));
@@ -39,11 +39,11 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         Directory.CreateDirectory(source);
         var audio = await WriteAsync(source, "meeting.wav", "audio");
         var service = new MeetingArchiveReceiptService();
-        await service.ArchiveAsync("meeting", "user-archive", [("audio", audio)], archive);
-        var archivedAudio = Path.Combine(archive, "user-archive", "meeting", "meeting.wav");
+        await service.ArchiveAsync("meeting", "manual-archive", [("audio", audio)], archive);
+        var archivedAudio = Path.Combine(archive, "manual-archive", "meeting", "meeting.wav");
         await File.WriteAllTextAsync(archivedAudio, "tampered");
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => service.RestoreAsync(Path.Combine(archive, "user-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName)));
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.RestoreAsync(Path.Combine(archive, "manual-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName)));
 
         Assert.True(File.Exists(archivedAudio));
         Assert.False(File.Exists(audio));
@@ -57,11 +57,11 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         Directory.CreateDirectory(source);
         var audio = await WriteAsync(source, "meeting.wav", "audio");
         var service = new MeetingArchiveReceiptService();
-        await service.ArchiveAsync("meeting", "user-archive", [("audio", audio)], archive);
+        await service.ArchiveAsync("meeting", "manual-archive", [("audio", audio)], archive);
         await File.WriteAllTextAsync(audio, "new-publish");
-        var archivedAudio = Path.Combine(archive, "user-archive", "meeting", "meeting.wav");
+        var archivedAudio = Path.Combine(archive, "manual-archive", "meeting", "meeting.wav");
 
-        await Assert.ThrowsAsync<IOException>(() => service.RestoreAsync(Path.Combine(archive, "user-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName)));
+        await Assert.ThrowsAsync<IOException>(() => service.RestoreAsync(Path.Combine(archive, "manual-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName)));
 
         Assert.True(File.Exists(archivedAudio));
         Assert.Equal("new-publish", await File.ReadAllTextAsync(audio));
@@ -75,7 +75,7 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         Directory.CreateDirectory(source);
         var audio = await WriteAsync(source, "meeting.wav", "audio");
         var service = new MeetingArchiveReceiptService();
-        await service.ArchiveAsync("meeting", "user-archive", [("audio", audio)], archive);
+        await service.ArchiveAsync("meeting", "manual-archive", [("audio", audio)], archive);
         var invalidDirectory = Path.Combine(archive, "legacy", "bad");
         Directory.CreateDirectory(invalidDirectory);
         await File.WriteAllTextAsync(Path.Combine(invalidDirectory, MeetingArchiveReceiptService.ReceiptFileName), "not json");
@@ -85,6 +85,24 @@ public sealed class MeetingArchiveReceiptServiceTests : IDisposable
         var item = Assert.Single(found);
         Assert.Equal("meeting", item.Receipt.MeetingStem);
         Assert.EndsWith(MeetingArchiveReceiptService.ReceiptFileName, item.ReceiptPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindReceiptsAsync_Excludes_Already_Restored_And_NonManual_Receipts()
+    {
+        var source = Path.Combine(_root, "published");
+        var archive = Path.Combine(_root, "archive");
+        Directory.CreateDirectory(source);
+        var audio = await WriteAsync(source, "meeting.wav", "audio");
+        var service = new MeetingArchiveReceiptService();
+        await service.ArchiveAsync("meeting", "manual-archive", [("audio", audio)], archive);
+        var receiptPath = Path.Combine(archive, "manual-archive", "meeting", MeetingArchiveReceiptService.ReceiptFileName);
+
+        await service.RestoreAsync(receiptPath);
+        Assert.Empty(await service.FindReceiptsAsync(archive));
+
+        await service.ArchiveAsync("meeting", "repair-archive", [("audio", audio)], archive);
+        Assert.Empty(await service.FindReceiptsAsync(archive));
     }
 
     public void Dispose()

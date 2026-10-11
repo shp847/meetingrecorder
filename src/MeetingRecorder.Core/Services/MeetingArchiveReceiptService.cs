@@ -92,13 +92,13 @@ public sealed class MeetingArchiveReceiptService
     public async Task<MeetingArchiveReceipt> RestoreAsync(string receiptPath, CancellationToken cancellationToken = default)
     {
         var receipt = await ReadReceiptAsync(receiptPath, cancellationToken);
-        if (receipt.SchemaVersion != SchemaVersion || receipt.Artifacts.Count == 0)
+        var archiveDirectory = Path.GetDirectoryName(Path.GetFullPath(receiptPath))
+            ?? throw new InvalidDataException("Archive receipt has no containing directory.");
+        if (!IsManualRecoveryReceipt(receipt, archiveDirectory))
         {
             throw new InvalidDataException("Archive receipt is not valid for recovery.");
         }
 
-        var archiveDirectory = Path.GetDirectoryName(Path.GetFullPath(receiptPath))
-            ?? throw new InvalidDataException("Archive receipt has no containing directory.");
         foreach (var artifact in receipt.Artifacts)
         {
             var archivedPath = Path.Combine(archiveDirectory, artifact.ArchivedFileName);
@@ -155,7 +155,14 @@ public sealed class MeetingArchiveReceiptService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                receipts.Add((receiptPath, await ReadReceiptAsync(receiptPath, cancellationToken)));
+                var receipt = await ReadReceiptAsync(receiptPath, cancellationToken);
+                var receiptDirectory = Path.GetDirectoryName(Path.GetFullPath(receiptPath));
+                if (receiptDirectory is not null &&
+                    IsManualRecoveryReceipt(receipt, receiptDirectory) &&
+                    await HasCompleteArchivedArtifactsAsync(receipt, receiptDirectory, cancellationToken))
+                {
+                    receipts.Add((receiptPath, receipt));
+                }
             }
             catch (Exception exception) when (exception is InvalidDataException or JsonException)
             {
@@ -204,5 +211,46 @@ public sealed class MeetingArchiveReceiptService
         await using var stream = File.OpenRead(path);
         var hash = await SHA256.HashDataAsync(stream, cancellationToken);
         return Convert.ToHexString(hash);
+    }
+
+    private static bool IsManualRecoveryReceipt(MeetingArchiveReceipt receipt, string archiveDirectory)
+    {
+        if (receipt.SchemaVersion != SchemaVersion ||
+            !string.Equals(receipt.Category, "manual-archive", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(receipt.MeetingStem) ||
+            receipt.Artifacts.Count == 0)
+        {
+            return false;
+        }
+
+        return receipt.Artifacts.All(artifact =>
+            !string.IsNullOrWhiteSpace(artifact.ArtifactClass) &&
+            Path.IsPathFullyQualified(artifact.OriginalPath) &&
+            !string.IsNullOrWhiteSpace(artifact.ArchivedFileName) &&
+            string.Equals(artifact.ArchivedFileName, Path.GetFileName(artifact.ArchivedFileName), StringComparison.Ordinal) &&
+            !Path.IsPathRooted(artifact.ArchivedFileName) &&
+            artifact.SizeBytes >= 0 &&
+            !string.IsNullOrWhiteSpace(artifact.Sha256) &&
+            Path.GetFullPath(Path.Combine(archiveDirectory, artifact.ArchivedFileName))
+                .StartsWith(Path.GetFullPath(archiveDirectory) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<bool> HasCompleteArchivedArtifactsAsync(
+        MeetingArchiveReceipt receipt,
+        string archiveDirectory,
+        CancellationToken cancellationToken)
+    {
+        foreach (var artifact in receipt.Artifacts)
+        {
+            var archivedPath = Path.Combine(archiveDirectory, artifact.ArchivedFileName);
+            if (!File.Exists(archivedPath) ||
+                new FileInfo(archivedPath).Length != artifact.SizeBytes ||
+                !string.Equals(await ComputeSha256Async(archivedPath, cancellationToken), artifact.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

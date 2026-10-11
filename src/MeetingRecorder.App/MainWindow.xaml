@@ -1141,6 +1141,14 @@
                                                 Height="32"
                                                 Click="ReviewCleanupSuggestionsActionButton_OnClick"
                                                 Content="Review Suggestions" />
+                                         <Button x:Name="RestoreLatestArchiveButton"
+                                                 Width="164"
+                                                 Height="32"
+                                                 Margin="10,0,0,0"
+                                                 Click="RestoreLatestArchiveButton_OnClick"
+                                                 Content="Restore Latest Archive"
+                                                 ToolTip="Restores only the latest complete manual archive after receipt validation."
+                                                 Visibility="Collapsed" />
                                     </WrapPanel>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock x:Name="MeetingSelectionSummaryTextBlock"

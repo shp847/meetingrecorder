@@ -5888,12 +5888,16 @@ public partial class MainWindow : Window
 
         try
         {
-            var records = await Task.Run(
+            var recordsTask = Task.Run(
                 () => _meetingOutputCatalogService.ListMeetings(
                     config.AudioOutputDir,
                     config.TranscriptOutputDir,
                     config.WorkDir),
                 _lifetimeCts.Token);
+            var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
+            var recoveryReceiptsTask = _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, _lifetimeCts.Token);
+            var records = await recordsTask;
+            var recoveryReceipts = await recoveryReceiptsTask;
             if (refreshVersion != Volatile.Read(ref _meetingRefreshVersion) || _lifetimeCts.IsCancellationRequested)
             {
                 return;
@@ -5902,6 +5906,9 @@ public partial class MainWindow : Window
             _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
             _lastSuccessfulMeetingsRefreshUtc = DateTimeOffset.UtcNow;
             _hasMeetingsRefreshFailure = false;
+            RestoreLatestArchiveButton.Visibility = recoveryReceipts.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             MeetingsDataGrid.ItemsSource = _allMeetingRows;
             ApplyMeetingsWorkspaceView(selectedStems);
             _logger.Log(
@@ -14731,6 +14738,7 @@ public partial class MainWindow : Window
             }
 
             MeetingCleanupRecommendationsStatusTextBlock.Text = archiveCopy.SuccessText;
+            RestoreLatestArchiveButton.Visibility = Visibility.Visible;
             await RefreshMeetingListAsync();
             return true;
         }
@@ -14742,6 +14750,45 @@ public partial class MainWindow : Window
                 UserActionBlockedReasonKind.OperationFailed).BlockedText;
             AppendActivity("Meeting archive did not finish.");
             return false;
+        }
+        finally
+        {
+            _isArchivingMeetings = false;
+            UpdateMeetingActionState();
+        }
+    }
+
+    private async void RestoreLatestArchiveButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (IsMeetingActionInProgress())
+        {
+            return;
+        }
+
+        _isArchivingMeetings = true;
+        UpdateMeetingActionState();
+        try
+        {
+            var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(_liveConfig.Current.AudioOutputDir);
+            var receipt = (await _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, _lifetimeCts.Token))
+                .FirstOrDefault();
+            if (receipt.Receipt is null)
+            {
+                MeetingCleanupRecommendationsStatusTextBlock.Text = "No complete manual archive receipt is available to restore.";
+                return;
+            }
+
+            await _meetingArchiveReceiptService.RestoreAsync(receipt.ReceiptPath, _lifetimeCts.Token);
+            MeetingCleanupRecommendationsStatusTextBlock.Text =
+                $"Restored published artifacts for '{receipt.Receipt.MeetingStem}'. The work session was never archived.";
+            RestoreLatestArchiveButton.Visibility = Visibility.Collapsed;
+            await RefreshMeetingListAsync();
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Meeting archive recovery failed: {exception}");
+            MeetingCleanupRecommendationsStatusTextBlock.Text =
+                "Archive recovery could not proceed because the receipt, artifacts, or original destination changed.";
         }
         finally
         {
