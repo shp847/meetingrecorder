@@ -115,6 +115,7 @@ public partial class MainWindow : Window
     private readonly MeetingsAttendeeBackfillService _meetingsAttendeeBackfillService;
     private readonly MeetingCleanupAutoApplyCacheService _meetingCleanupAutoApplyCacheService;
     private readonly MeetingCleanupWorkLedgerService _meetingCleanupWorkLedgerService;
+    private readonly SpeakerReviewClipService _speakerReviewClipService = new();
     private readonly DispatcherTimer _detectionTimer;
     private readonly DispatcherTimer _audioGraphTimer;
     private readonly DispatcherTimer _updateTimer;
@@ -7099,6 +7100,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
             _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
+            _meetingDetailWindow.PlaySpeakerEvidenceRequested += async (_, args) => await PlayOpenMeetingDetailSpeakerEvidenceAsync(args);
             _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
             _meetingDetailWindow.RefreshSpeakerNamesRequested += async (_, _) => await RefreshOpenMeetingDetailSpeakerNamesAsync();
             _meetingDetailWindow.UndoSpeakerNameRecognitionRequested += async (_, _) => await UndoOpenMeetingDetailSpeakerNameRecognitionAsync();
@@ -7114,6 +7116,48 @@ public partial class MainWindow : Window
     private void RefreshOpenMeetingDetailWindow()
     {
         _ = RefreshOpenMeetingDetailWindowAsync();
+    }
+
+    private async Task PlayOpenMeetingDetailSpeakerEvidenceAsync(MeetingDetailSpeakerEvidenceCueEventArgs args)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || _meetingDetailWindow is null ||
+            string.IsNullOrWhiteSpace(args.Row.SpeakerId) ||
+            string.IsNullOrWhiteSpace(row.Source.AudioPath))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Audio clip is unavailable for this review.");
+            return;
+        }
+
+        if (_recordingCoordinator.IsRecording)
+        {
+            _meetingDetailWindow.SetMaintenanceStatus("Stop recording before playing review audio.");
+            return;
+        }
+
+        if (IsMeetingActionInProgress())
+        {
+            _meetingDetailWindow.SetMaintenanceStatus("Review audio waits for the current meeting action.");
+            return;
+        }
+
+        var result = await _speakerReviewClipService.GetOrCreateAsync(
+            new SpeakerReviewClipRequest(
+                row.Source.Stem,
+                args.Row.ArtifactRevision,
+                args.Row.SpeakerId,
+                args.Cue.Start,
+                args.Cue.End,
+                row.Source.AudioPath),
+            _lifetimeCts.Token);
+        if (result.IsAvailable && result.ClipPath is not null && _meetingDetailWindow is not null)
+        {
+            _meetingDetailWindow.PlaySpeakerReviewClip(args.Row, result.ClipPath);
+            _meetingDetailWindow.SetMaintenanceStatus("Playing local review clip. Audio stays on this device.");
+            return;
+        }
+
+        _meetingDetailWindow?.SetMaintenanceStatus(result.Message);
     }
 
     private async Task RefreshOpenMeetingDetailWindowAsync()

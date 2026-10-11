@@ -2,6 +2,7 @@ using MeetingRecorder.Core.Services;
 using System.Windows;
 using System.Windows.Input;
 using MeetingRecorder.Core.Domain;
+using NAudio.Wave;
 
 namespace MeetingRecorder.App;
 
@@ -21,6 +22,14 @@ internal sealed class MeetingDetailSpeakerMergeEventArgs(
 {
     public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
     public string? CanonicalSpeakerId { get; } = canonicalSpeakerId;
+}
+
+internal sealed class MeetingDetailSpeakerEvidenceCueEventArgs(
+    MeetingDetailSpeakerLabelEditorRow row,
+    SpeakerEvidenceCue cue) : EventArgs
+{
+    public MeetingDetailSpeakerLabelEditorRow Row { get; } = row;
+    public SpeakerEvidenceCue Cue { get; } = cue;
 }
 
 internal sealed record MeetingDetailSpeakerMergeChoice(string SpeakerId, string Label)
@@ -69,6 +78,8 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
     public bool HasEvidenceCues => EvidenceCues.Count > 0;
 
     public bool IsEvidenceVisible { get; set; }
+
+    public string PlaybackText { get; set; } = "Play clip";
 
     public bool IsSelectedForMerge { get; set; }
 
@@ -142,6 +153,9 @@ public partial class MeetingDetailWindow : Window
     private MeetingDetailSnapshotRevision? _appliedTaskCenterRevision;
     private string _appliedTitleDraft = string.Empty;
     private string _appliedProjectDraft = string.Empty;
+    private WaveOutEvent? _speakerReviewOutput;
+    private AudioFileReader? _speakerReviewReader;
+    private MeetingDetailSpeakerLabelEditorRow? _playingSpeakerRow;
 
     public MeetingDetailWindow()
     {
@@ -181,6 +195,8 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
 
     internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
+
+    internal event EventHandler<MeetingDetailSpeakerEvidenceCueEventArgs>? PlaySpeakerEvidenceRequested;
 
     internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
@@ -571,6 +587,60 @@ public partial class MeetingDetailWindow : Window
         }
     }
 
+    private void PlaySpeakerEvidenceCueButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SpeakerEvidenceCue cue ||
+            (sender as FrameworkElement)?.Tag is not MeetingDetailSpeakerLabelEditorRow row)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_playingSpeakerRow, row))
+        {
+            StopSpeakerReviewPlayback();
+            return;
+        }
+
+        PlaySpeakerEvidenceRequested?.Invoke(this, new MeetingDetailSpeakerEvidenceCueEventArgs(row, cue));
+    }
+
+    internal void PlaySpeakerReviewClip(MeetingDetailSpeakerLabelEditorRow row, string clipPath)
+    {
+        StopSpeakerReviewPlayback();
+        try
+        {
+            _speakerReviewReader = new AudioFileReader(clipPath);
+            _speakerReviewOutput = new WaveOutEvent();
+            _speakerReviewOutput.PlaybackStopped += (_, _) => Dispatcher.BeginInvoke(StopSpeakerReviewPlayback);
+            _speakerReviewOutput.Init(_speakerReviewReader);
+            _speakerReviewOutput.Play();
+            _playingSpeakerRow = row;
+            row.PlaybackText = "Stop clip";
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+        catch
+        {
+            StopSpeakerReviewPlayback();
+            SetMaintenanceStatus("Audio clip could not be played.");
+        }
+    }
+
+    private void StopSpeakerReviewPlayback()
+    {
+        var previous = _playingSpeakerRow;
+        _playingSpeakerRow = null;
+        _speakerReviewOutput?.Stop();
+        _speakerReviewOutput?.Dispose();
+        _speakerReviewOutput = null;
+        _speakerReviewReader?.Dispose();
+        _speakerReviewReader = null;
+        if (previous is not null)
+        {
+            previous.PlaybackText = "Play clip";
+            SpeakerLabelsDataGrid.Items.Refresh();
+        }
+    }
+
     private void RefreshSpeakerNamesButton_OnClick(object sender, RoutedEventArgs e)
     {
         RefreshSpeakerNamesRequested?.Invoke(this, EventArgs.Empty);
@@ -614,6 +684,12 @@ public partial class MeetingDetailWindow : Window
     private void CloseButton_OnClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        StopSpeakerReviewPlayback();
+        base.OnClosed(e);
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)

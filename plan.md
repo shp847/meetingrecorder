@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 61.
-**Ready:** 37. **Partial:** 23. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 62.
+**Ready:** 35. **Partial:** 24. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -111,7 +111,7 @@ records an approved dependency change.
 | 17 — Imported Meeting Parity | `Done` | 2026-09-29: display-safe provenance projection and focused evidence verified below. |
 | 18 — Rendered UX Polish | `Done` | 2026-10-10: Technical Studio data-well polish and deterministic rendered fixture baseline completed; product-owner direction uses production feedback for broader visual qualification. |
 | 19 — Accessibility And Keyboard QA | `Done` | 2026-10-11: product owner retires standalone manual assistive qualification; deterministic semantics and production feedback govern future issues. |
-| 20 — Tests, Docs, Release | `Ready` | Gate shipped Meetings changes on traceable contract tests, package smoke, docs, and authorized release evidence. |
+| 20 — Tests, Docs, Release | `Done` | 2026-09-28: bounded queue lanes and package verification completed; detailed record below is authoritative. |
 
 ### End-To-End Speaker Diarization Experience
 
@@ -120,7 +120,7 @@ records an approved dependency change.
 | 1 — Speaker Identity Contract | `Done` | 2026-09-29: revisioned safe review snapshot, precedence, migration-safe source state, and privacy tests verified below. |
 | 2 — Speaker Review Surface Foundation | `Done` | 2026-10-11: bounded local-only name choices, snapshot-backed review well, draft/pending state, and separate repair route verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
 | 3 — Contextual Transcript Evidence | `Done` | 2026-10-11: bounded local in-memory cue selection, truthful evidence states, and Speaker Review disclosure/navigation verified; product owner accepts production feedback in place of broader rendered/manual qualification. |
-| 4 — Inline Audio Clip Playback | `Ready` | Define bounded local clip derivation, cache lifecycle, recording safety, and one-session playback. |
+| 4 — Inline Audio Clip Playback | `Partial` | 2026-10-11: bounded read-only local WAV extraction, opaque cache keys, and inline Play/Stop path added; cache leases, progress, and controller coverage remain. |
 | 5 — Transcript-Label Click Editing | `Ready` | Define accessible label-to-review focus, current-revision global rename, and additive override schema reservation. |
 | 6 — Segment-Level Attribution Overrides | `Ready` | Define additive per-segment attribution, effective-label precedence, revision safety, and no-learning boundary. |
 | 7 — Merge Duplicate Speakers | `Done` | 2026-10-11: revision-checked canonical mapping, safety gates, atomic artifacts, effective attribution, and newest-only exact undo verified. |
@@ -3645,8 +3645,8 @@ Sprint 3 acceptance criteria:
 
 ### Implementation Record
 
-- Status: `Done`
-- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 implementation); `Done` (2026-09-29 verification).
+- Status: `Partial`
+- Status history: `Planned`; `Ready` (2026-09-27 pressure test); `Partial` (2026-10-11 bounded extraction and inline playback implementation).
 - User outcome: a reviewer can hear a short, relevant local excerpt from a speaker cue without leaving the decision context or risking published meeting artifacts.
 - Scope / non-goals: derive/play temporary clips for Sprint 3 evidence from published meeting audio. Do not edit/re-encode published audio, stream/upload audio, add continuous transcript playback, store clip references in meeting artifacts, or permit review playback during active recording.
 - Dependencies and decisions: consume artifact-revision evidence from Sprint 3 and use existing NAudio/WAV utility patterns only behind a review-specific service. Current code has capture/merge/audio validation utilities but no review player. Playback is a single app-owned session; active recording blocks playback/generation so review audio cannot contaminate loopback capture.
@@ -3659,7 +3659,7 @@ Sprint 3 acceptance criteria:
 - Tests and rendered checks: fixture WAVs for window/padding/clamp, short/missing/locked/corrupt/unsupported source, cancellation, source hash/mtime preservation, temp cleanup, cache hit/invalidation/eviction/in-use lease, concurrent request dedupe, and revision race. Controller tests for one-session stop/dispose, recording block, endpoint failure, close/shutdown. Render generating/play/pause/completed/unavailable/error at 1280x800/125%; keyboard/screen-reader controls, progress, error/retry, focus and no-autoplay validation.
 - Documentation / installer / release work: document temporary local review clips, recording-time block, cache cleanup, and audio does not leave device. Reassess package dependency/licensing impact before shipping NAudio playback additions; Sprint 16 owns installer/release gates.
 - Evidence and date: 2026-09-27 audit found NAudio capture/merge/input-inspection infrastructure and no review-clip cache/player or speaker-evidence audio surface. Existing audio code is not proof that a review clip is source-preserving or recording-safe.
-- Remaining gap or next action: create a read-only clip-window/extraction service with source-fingerprint and cancellation tests, then add controller tests before placing any play button.
+- Remaining gap or next action: add active-clip leases, playback progress, and controller lifecycle coverage before release qualification.
 
 Goal: provide the required "hear this speaker" cue in the same review workflow.
 

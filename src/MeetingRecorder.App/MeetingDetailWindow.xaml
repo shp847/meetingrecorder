@@ -358,6 +358,13 @@
                                                                         <Button Margin="0,6,0,0"
                                                                                 HorizontalAlignment="Left"
                                                                                 Style="{StaticResource SecondaryActionButtonStyle}"
+                                                                                Click="PlaySpeakerEvidenceCueButton_OnClick"
+                                                                                Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGridRow}}"
+                                                                                AutomationProperties.Name="Play local evidence audio clip"
+                                                                                Content="{Binding DataContext.PlaybackText, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                                                                        <Button Margin="0,6,0,0"
+                                                                                HorizontalAlignment="Left"
+                                                                                Style="{StaticResource SecondaryActionButtonStyle}"
                                                                                 Click="ShowSpeakerEvidenceCueButton_OnClick"
                                                                                 AutomationProperties.Name="Show evidence cue in transcript"
                                                                                 Content="Show in transcript" />
