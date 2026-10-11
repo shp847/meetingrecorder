@@ -89,12 +89,21 @@ internal static class MeetingTranscriptDocumentReader
         return false;
     }
 
+    internal static bool TryReadSourceLabeledSegments(string? jsonPath, out IReadOnlyList<TranscriptSegment> segments)
+    {
+        segments = Array.Empty<TranscriptSegment>();
+        return !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath) &&
+               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, preferSourceLabels: true) &&
+               segments.Count > 0;
+    }
+
     private static bool TryReadJsonTranscript(
         string jsonPath,
         out IReadOnlyList<MeetingTranscriptSegmentRow> segments,
         out IReadOnlyList<TranscriptSegment> structuredSegments,
         out ProcessingStageStatus? summarizationStatus,
-        out MeetingSummary? summary)
+        out MeetingSummary? summary,
+        bool preferSourceLabels = false)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
         structuredSegments = Array.Empty<TranscriptSegment>();
@@ -128,10 +137,10 @@ internal static class MeetingTranscriptDocumentReader
                 var speakerId = GetJsonString(segmentObject, "speakerId", "SpeakerId");
                 var speakerLabel = GetJsonString(
                     segmentObject,
-                    "speakerLabel",
-                    "SpeakerLabel",
-                    "displaySpeakerLabel",
-                    "DisplaySpeakerLabel",
+                    preferSourceLabels ? "displaySpeakerLabel" : "speakerLabel",
+                    preferSourceLabels ? "DisplaySpeakerLabel" : "SpeakerLabel",
+                    preferSourceLabels ? "speakerLabel" : "displaySpeakerLabel",
+                    preferSourceLabels ? "SpeakerLabel" : "DisplaySpeakerLabel",
                     "speakerId",
                     "SpeakerId");
                 structuredRows.Add(new TranscriptSegment(
