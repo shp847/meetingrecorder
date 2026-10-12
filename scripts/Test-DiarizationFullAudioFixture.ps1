@@ -327,6 +327,13 @@ Write-Output "Worker exit code: $exitCode"
 Write-Output ("Elapsed: {0:c}" -f $elapsed)
 
 $updatedManifest = Get-Content -LiteralPath $probeManifestPath -Raw | ConvertFrom-Json
+$diarizationMessage = $updatedManifest.diarizationStatus.message
+if ([string]::IsNullOrWhiteSpace($diarizationMessage)) {
+    # Some terminal worker failures are recorded only as the session-level
+    # summary. Keep this in the ephemeral child result so the catalog can map
+    # it to a fixed, privacy-safe failure class before it writes its report.
+    $diarizationMessage = $updatedManifest.errorSummary
+}
 $speakers = @($updatedManifest.processingMetadata.speakers)
 $turns = @($updatedManifest.processingMetadata.speakerTurns)
 $samples = @($updatedManifest.processingMetadata.speakerVoiceSamples)
@@ -394,7 +401,7 @@ $result = [pscustomobject]@{
         "collapsed below expected speaker count"
     }
     DiarizationState = $updatedManifest.diarizationStatus.state
-    DiarizationMessage = $updatedManifest.diarizationStatus.message
+    DiarizationMessage = $diarizationMessage
     OutputTranscriptDir = $probeTranscriptsRoot
     ProtectedArtifacts = $protectedArtifacts
 }

@@ -1,9 +1,10 @@
 # Diarization calibration evidence
 
 The fixture catalog and calibration candidate files in this folder are
-synthetic templates. A consented local corpus belongs under the ignored
-`.artifacts/diarization-fixtures` folder and must use opaque fixture IDs.
-It never ships with the application.
+synthetic templates. A consented local corpus belongs in a private root outside
+source control and Meeting Recorder app-data; reports alone belong under the
+ignored `.artifacts/diarization-fixtures` folder. Fixture IDs must be opaque.
+The corpus never ships with the application.
 
 New governed catalogs use `fixture-catalog-v2.schema.json`. Keep inputs and
 governance metadata in the private catalog; keep count/name expectations in a
@@ -14,11 +15,14 @@ Each v2 fixture declares one private `inputRoot`; every source/protected
 artifact must stay under it and cannot traverse a symlink/reparse point, use
 repo/report output, or Meeting Recorder app-data/profile paths.
 
-For Fireflies VTT-style transcripts, use `New-DiarizationVttFixture.ps1` to
-copy one approved audio input into a private fixture root and produce its
-manifest, transcript snapshot, restricted count-only truth record, and v2
-catalog. Speaker labels remain only in the private source transcript; count
-taxonomy is inferred and speaker-name matching stays disabled.
+For VTT or Fireflies timestamped Markdown transcripts, use
+`New-DiarizationVttFixture.ps1` with exactly one of `-VttPath` or
+`-TranscriptMarkdownPath`. It copies one approved audio input into a private
+fixture root and produces its manifest, transcript snapshot, restricted
+count-only truth record, and v2 catalog. Speaker labels remain only in the
+private source transcript; count taxonomy is inferred and speaker-name matching
+stays disabled. Builder console output contains only opaque fixture ID,
+category, and count—not input paths.
 The full-audio runner also supports a locally built worker launched through
 `dotnet Worker.dll`; bounded native labeling relaunches that same assembly.
 

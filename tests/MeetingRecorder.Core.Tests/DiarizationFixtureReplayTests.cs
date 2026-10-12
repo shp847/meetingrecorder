@@ -281,9 +281,16 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Contains("Remove-Item -LiteralPath $probeRootToCleanup -Recurse -Force", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Get-SafeDiarizationState", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("no_diagnostic", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("return \"helper_\" + $Matches.kind", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("if ($Message -match '(?i)helper failed') { return \"helper_no_diagnostic\" }", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("if ($Message -match '(?i)helper') { return \"helper_no_diagnostic\" }", scriptContents, StringComparison.Ordinal);
             Assert.Contains("$result.diarizationState = Get-SafeDiarizationState -State $childResult.DiarizationState", scriptContents, StringComparison.Ordinal);
             Assert.Contains("$result.diarizationFailureKind = Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("$result.diarizationMessage", scriptContents, StringComparison.Ordinal);
+            var fullAudioScriptContents = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Test-DiarizationFullAudioFixture.ps1"));
+            Assert.Contains("$diarizationMessage = $updatedManifest.errorSummary", fullAudioScriptContents, StringComparison.Ordinal);
+            Assert.Contains("DiarizationMessage = $diarizationMessage", fullAudioScriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);
         }
@@ -617,6 +624,7 @@ public sealed class DiarizationFixtureReplayTests
             Assert.True(
                 result.ExitCode == 0,
                 $"VTT fixture builder failed.{Environment.NewLine}stdout:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(sourceRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
             var catalogText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json"));
             var truthText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-truth-store.local.json"));
             Assert.DoesNotContain(privateSpeakerA, catalogText, StringComparison.Ordinal);
@@ -644,6 +652,61 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Equal(0, catalogResult.ExitCode);
             var catalogReport = JsonNode.Parse(File.ReadAllText(catalogReportPath)) ?? throw new InvalidOperationException("Catalog report JSON was empty.");
             Assert.Equal("dry_run", (string?)catalogReport["results"]?[0]?["status"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void NewDiarizationVttFixtureScript_Imports_Timestamped_Markdown_Without_Leaking_Speakers()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationVttFixture.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-markdown-fixture-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var sourceRoot = Path.Combine(tempRoot, "source");
+            var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+            Directory.CreateDirectory(sourceRoot);
+            var audioPath = Path.Combine(sourceRoot, "source.wav");
+            var markdownPath = Path.Combine(sourceRoot, "source.md");
+            const string privateSpeakerA = "PRIVATE_FIXTURE_SPEAKER_A";
+            const string privateSpeakerB = "PRIVATE_FIXTURE_SPEAKER_B";
+            const string privateText = "PRIVATE_FIXTURE_TRANSCRIPT_TEXT";
+            File.WriteAllBytes(audioPath, [0x52, 0x49, 0x46, 0x46]);
+            File.WriteAllText(
+                markdownPath,
+                $"[00:00:00 - 00:00:01] **{privateSpeakerA}:** {privateText} first{Environment.NewLine}" +
+                $"[00:00:01 - 00:00:02] **{privateSpeakerB}:** {privateText} second{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioPath", audioPath,
+                "-TranscriptMarkdownPath", markdownPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-markdown-synthetic",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+
+            Assert.True(result.ExitCode == 0, $"Markdown fixture builder failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(sourceRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var catalogText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json"));
+            var truthText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-truth-store.local.json"));
+            Assert.DoesNotContain(privateSpeakerA, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerA, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, truthText, StringComparison.Ordinal);
+            var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
+            Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
         }
         finally
         {
