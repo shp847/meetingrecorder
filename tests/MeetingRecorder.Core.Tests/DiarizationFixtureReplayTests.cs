@@ -724,6 +724,65 @@ public sealed class DiarizationFixtureReplayTests
     }
 
     [Fact]
+    public void NewDiarizationVttFixtureScript_Imports_Fireflies_Point_Timestamps_Without_Leaking_Speakers()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationVttFixture.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-fireflies-fixture-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var sourceRoot = Path.Combine(tempRoot, "source");
+            var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+            Directory.CreateDirectory(sourceRoot);
+            var audioPath = Path.Combine(sourceRoot, "source.wav");
+            var markdownPath = Path.Combine(sourceRoot, "source.md");
+            const string privateSpeakerA = "PRIVATE_FIXTURE_SPEAKER_A";
+            const string privateSpeakerB = "PRIVATE_FIXTURE_SPEAKER_B";
+            const string privateText = "PRIVATE_FIXTURE_TRANSCRIPT_TEXT";
+            File.WriteAllBytes(audioPath, [0x52, 0x49, 0x46, 0x46]);
+            File.WriteAllText(
+                markdownPath,
+                $"**{privateSpeakerA}** *[0:00]*: {privateText} first{Environment.NewLine}" +
+                $"**{privateSpeakerB}** *[0:03]*: {privateText} second{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioPath", audioPath,
+                "-TranscriptMarkdownPath", markdownPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-fireflies-synthetic",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+
+            Assert.True(result.ExitCode == 0, $"Fireflies fixture builder failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(sourceRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var catalogText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json"));
+            var truthText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-truth-store.local.json"));
+            Assert.DoesNotContain(privateSpeakerA, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, catalogText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerA, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateSpeakerB, truthText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateText, truthText, StringComparison.Ordinal);
+            var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
+            Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+            var snapshot = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtureRoot, "fx-fireflies-synthetic", "processing", "transcription.snapshot.json")));
+            Assert.Equal("00:00:00", (string?)snapshot?["segments"]?[0]?["start"]);
+            Assert.Equal("00:00:03", (string?)snapshot?["segments"]?[0]?["end"]);
+            Assert.Equal("00:00:04", (string?)snapshot?["segments"]?[1]?["end"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void NewDiarizationVttFixtureScript_Appends_Reviewed_Private_Catalog_Without_Leaking_Input_Path()
     {
         var repoRoot = GetRepoRoot();

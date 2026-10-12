@@ -26,6 +26,12 @@ category, and count—not input paths. To add another approved fixture to an
 already reviewed root, pass `-Append`; duplicate IDs and mismatched catalog or
 truth-store versions fail before the existing catalog is changed.
 
+The builder accepts both timestamp ranges and Fireflies point timestamps in
+the form `**speaker** *[m:ss]*: text`. Point-timestamp end times derive from
+the next segment; the final or non-monotonic point receives a one-second
+private snapshot interval. This normalization stays inside the private fixture
+root and never enters catalog, truth, console, or report data.
+
 When an approved source does not exist for a required category, use
 `Add-DiarizationFixtureCoverageBlock.ps1` with an opaque ID and one of its
 fixed block reasons. It writes a disabled catalog record only; it neither
