@@ -7,7 +7,7 @@ dependency on another section.
 # Sprint Delivery Tracker
 
 **Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 62.
-**Ready:** 34. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ready:** 34. **Partial:** 24. **Blocked:** 4. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -139,7 +139,7 @@ records an approved dependency change.
 | Sprint | Status | Evidence or first expansion focus |
 | --- | --- | --- |
 | 1 — Stabilize The Current Feature Baseline | `Done` | 2026-10-11: later receipt/rejection/refresh wiring verified against 44 focused contracts; release smoke remains S16-owned. |
-| 2 — Build Fixture Evidence And Metrics | `Partial` | 2026-10-12: two approved one-speaker entries, seven explicit coverage blocks, opaque output, stale-worker repair, and terminal fixture timeboxes are evidenced; native labels and enabled hard-case inputs remain. |
+| 2 — Build Fixture Evidence And Metrics | `Blocked` | 2026-10-12: two approved one-speaker entries, seven explicit coverage blocks, opaque output, stale-worker repair, and terminal fixture timeboxes are evidenced. Required enabled multi-speaker and hard-case inputs are not available in the authorized corpus, so calibration cannot proceed. |
 | 3 — Calibrate Recognition And Diarization Thresholds | `Partial` | 2026-09-29: coverage/regression/manual-promotion comparison gate added; pinned corpus/holdout receipts remain. |
 | 4 — Repair, Undo, And Release Readiness | `Partial` | 2026-09-29: revision-safe undo preflight added; receipt persistence, release evidence, and package smoke remain. |
 
@@ -4468,8 +4468,8 @@ Sprint 1 verification:
 
 ### Implementation Record
 
-- Status: `Partial`
-- Status history: `Partial` (2026-09-27 source audit: catalog runner, schema/example, replay/full-audio scripts, hash/redaction tests exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 redacted metric slice); `Partial` (2026-10-11 v2 opaque catalog/restricted truth-store boundary and synthetic isolation test); `Partial` (2026-10-11 first approved private full-audio fixture reached native diarization, but the protected matrix remains incomplete).
+- Status: `Blocked`
+- Status history: `Partial` (2026-09-27 source audit: catalog runner, schema/example, replay/full-audio scripts, hash/redaction tests exist); `Ready` (2026-09-27 pressure test); `Partial` (2026-09-29 redacted metric slice); `Partial` (2026-10-11 v2 opaque catalog/restricted truth-store boundary and synthetic isolation test); `Partial` (2026-10-11 first approved private full-audio fixture reached native diarization, but the protected matrix remains incomplete); `Blocked` (2026-10-12: authorized corpus provides only one-speaker inputs, while required enabled multi-speaker and hard-case coverage is unavailable).
 - User outcome: maintainers can measure diarization/name-recognition regressions locally without exposing meeting content or letting expected answers influence production decisions.
 - Scope / non-goals: operationalize private, consented fixture evidence and metadata-only reports over existing runners. Do not commit real fixtures, names, transcripts, audio, embeddings, profile stores, expected answers, or production threshold changes; do not call app/worker/installer/update services from harness.
 - Dependencies and decisions: S1 freezes correction behavior; S3 consumes evidence. `Test-DiarizationFixtureCatalog.ps1`, full-audio/stored-turn runners, schemas/examples, and contract tests already cover parts of catalog, output placement, protected hashes, and redaction. Treat catalog metadata as untrusted input. Separate opaque fixture identity from a restricted truth store: production invocation receives only audio/manifest/config; assertion process receives expected count/name/mapping after production result is immutable. Never pass truth through environment, command line, working folder visible to worker, profile store, manifest, attendee metadata, or runtime config.
@@ -4494,7 +4494,7 @@ Sprint 1 verification:
 - Evidence and date: 2026-10-12 traced the fast `helper_no_diagnostic` catalog receipt to a stale runtime-specific Debug worker DLL being preferred over the newer framework Debug worker. The full-audio script now selects the runtime worker only when it is at least as new as the framework output. A bounded full-worker probe using the selected current worker remained active after 20 seconds and was cleanly removed, replacing the immediate stale-worker failure. Focused fixture/calibration contracts passed 24/24 with `UseAppHost=false`; ordinary apphost creation remains intermittently denied in the existing temporary build directory.
 - Evidence and date: 2026-10-12 catalog execution against the corrected current worker stayed active through two minutes of bounded native inference rather than returning the former immediate zero-label receipt. The disposable catalog process tree was then stopped intentionally and verified absent, so this is runtime-path evidence only—not a completed quality run.
 - Evidence and date: 2026-10-12 added `FixtureTimeoutSeconds` to the catalog runner. It starts full-audio fixtures in a child process, captures and discards child output, and uses Windows tree termination so a timed-out native child cannot retain the pipe or continue running. A one-second private short-call run produced a terminal metadata-only `timed_out` receipt with no private-path leak and no residual harness or worker process. Focused fixture/calibration contracts passed 24/24 with `UseAppHost=false`.
-- Remaining gap or next action: obtain a bounded full-audio completion on the two enabled one-speaker fixtures, then obtain enabled multi-speaker/hard-case inputs or retain the explicit blocked records before any calibration claim. Do not mark S2 done from two one-speaker fixtures.
+- Remaining gap or next action: obtain approved enabled inputs for two-speaker, three-plus, noisy/similar, overlap, hybrid, no-speech, and protected-regression categories, plus bounded full-audio completions, before reopening S2. The authorized corpus currently contains only one-speaker inputs. Do not calibrate or change production thresholds from the current evidence.
 
 Goal: create a repeatable local calibration loop that evaluates full-audio meetings without deploys, app clicks, or runtime hints.
 
