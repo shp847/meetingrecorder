@@ -281,6 +281,10 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Contains("Remove-Item -LiteralPath $probeRootToCleanup -Recurse -Force", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Get-SafeDiarizationState", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("FixtureTimeoutSeconds", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("function Invoke-FullAudioFixtureScript", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("taskkill.exe /PID $process.Id /T /F", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Fixture execution reached its configured timeout.", scriptContents, StringComparison.Ordinal);
             Assert.Contains("no_diagnostic", scriptContents, StringComparison.Ordinal);
             Assert.Contains("return \"helper_\" + $Matches.kind", scriptContents, StringComparison.Ordinal);
             Assert.Contains("if ($Message -match '(?i)helper failed') { return \"helper_no_diagnostic\" }", scriptContents, StringComparison.Ordinal);

@@ -16,6 +16,9 @@ param(
 
     [switch]$NoBuild,
 
+    [ValidateRange(0, 3600)]
+    [int]$FixtureTimeoutSeconds = 0,
+
     [string]$ReportsRoot,
 
     [string]$ReportPath,
@@ -472,6 +475,8 @@ function New-BaseResult {
         enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enabled" -DefaultValue $true)
         status = "pending"
         skipReason = $null
+        failureStage = $null
+        failureLine = $null
         elapsedMilliseconds = 0
         expectedSpeakerCount = if ($null -eq $expectedSpeakerCount -or [string]::IsNullOrWhiteSpace([string]$expectedSpeakerCount)) { $null } else { [int]$expectedSpeakerCount }
         detectedSpeakerCount = $null
@@ -618,6 +623,68 @@ function Resolve-FixtureInputs {
     }
 }
 
+function Invoke-FullAudioFixtureScript {
+    param(
+        [string]$ScriptPath,
+        [hashtable]$Arguments,
+        [int]$TimeoutSeconds
+    )
+
+    if ($TimeoutSeconds -le 0) {
+        $null = & $ScriptPath @Arguments | Out-String
+        return [pscustomobject]@{ TimedOut = $false; ExitCode = 0 }
+    }
+
+    $powerShellPath = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $startInfo = [Diagnostics.ProcessStartInfo]::new($powerShellPath)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $argumentTokens = [System.Collections.Generic.List[string]]::new()
+    $argumentTokens.Add('-NoProfile')
+    $argumentTokens.Add('-ExecutionPolicy')
+    $argumentTokens.Add('Bypass')
+    $argumentTokens.Add('-File')
+    $argumentTokens.Add($ScriptPath)
+    foreach ($key in $Arguments.Keys) {
+        $value = $Arguments[$key]
+        if ($value -is [bool]) {
+            if ($value) { $argumentTokens.Add("-$key") }
+            continue
+        }
+
+        $argumentTokens.Add("-$key")
+        $argumentTokens.Add([string]$value)
+    }
+    $startInfo.Arguments = ($argumentTokens | ForEach-Object {
+            '"' + $_.Replace('"', '\"') + '"'
+        }) -join ' '
+
+    $process = [Diagnostics.Process]::Start($startInfo)
+    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    try {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            # Windows PowerShell hosts on .NET Framework cannot reliably kill
+            # the native helper tree. taskkill /T also closes inherited output
+            # handles, allowing the drain below to complete deterministically.
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            $process.WaitForExit()
+            return [pscustomobject]@{ TimedOut = $true; ExitCode = $null }
+        }
+
+        return [pscustomobject]@{ TimedOut = $false; ExitCode = $process.ExitCode }
+    }
+    finally {
+        # Drain output so a private child-script diagnostic cannot block the
+        # process. It is deliberately not printed or written to the report.
+        $null = $standardOutputTask.GetAwaiter().GetResult()
+        $null = $standardErrorTask.GetAwaiter().GetResult()
+        $process.Dispose()
+    }
+}
+
 function Invoke-Fixture {
     param(
         $Fixture,
@@ -627,6 +694,7 @@ function Invoke-Fixture {
 
     $result = New-BaseResult -Fixture $Fixture
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $failureStage = "fixture-validation"
     try {
         Validate-Fixture -Fixture $Fixture
 
@@ -649,6 +717,7 @@ function Invoke-Fixture {
             return [pscustomobject]$result
         }
 
+        $failureStage = "fixture-input-resolution"
         $inputs = $null
         try {
             $inputs = Resolve-FixtureInputs -Fixture $Fixture
@@ -661,6 +730,7 @@ function Invoke-Fixture {
             return [pscustomobject]$result
         }
 
+        $failureStage = "fixture-input-hash"
         $artifactHashesBefore = @(Get-ArtifactHashes -Paths $inputs.protectedArtifactPaths -InputRoot $inputs.inputRoot)
         $transcriptMetrics = Get-TranscriptMetrics -TranscriptJsonPath $inputs.transcriptJsonPath
         $result.segmentCount = $transcriptMetrics.segmentCount
@@ -726,7 +796,23 @@ function Invoke-Fixture {
                 $acceleration = [string](Get-PropertyValue -Object $Fixture -Name "accelerationPreference" -DefaultValue "CpuOnly")
                 if (-not [string]::IsNullOrWhiteSpace($acceleration)) { $arguments.AccelerationPreference = $acceleration }
 
-                $null = & $FullAudioScript @arguments | Out-String
+                $failureStage = "full-audio-dispatch"
+                $fullAudioExecution = Invoke-FullAudioFixtureScript `
+                    -ScriptPath $FullAudioScript `
+                    -Arguments $arguments `
+                    -TimeoutSeconds $FixtureTimeoutSeconds
+                if ($fullAudioExecution.TimedOut) {
+                    $failureStage = "full-audio-timeout-cleanup"
+                    $result.status = "timed_out"
+                    $result.message = "Fixture execution reached its configured timeout."
+                    $result.speakerCountStatus = "timed_out"
+                    $result.speakerNameMetrics.status = "timed_out"
+                    return [pscustomobject]$result
+                }
+                if ($fullAudioExecution.ExitCode -ne 0) {
+                    throw "Full-audio fixture script failed with exit code $($fullAudioExecution.ExitCode)."
+                }
+                $failureStage = "full-audio-result-read"
                 $childResult = Get-Content -LiteralPath $childResultPath -Raw | ConvertFrom-Json
                 $result.detectedSpeakerCount = [int]$childResult.SpeakerCount
                 $result.voiceSampleCount = [int]$childResult.VoiceSampleCount
@@ -763,6 +849,7 @@ function Invoke-Fixture {
             }
         }
 
+        $failureStage = "fixture-artifact-verify"
         $artifactResults = @()
         foreach ($before in $artifactHashesBefore) {
             $afterHash = Get-FileSha256 -PathValue $before.path
@@ -770,6 +857,7 @@ function Invoke-Fixture {
         }
         $result.artifactSafety.allUnchanged = @($artifactResults | Where-Object { -not $_ }).Count -eq 0
 
+        $failureStage = "fixture-truth-evaluation"
         $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
         $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
         if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
@@ -802,6 +890,8 @@ function Invoke-Fixture {
     }
     catch {
         $result.status = "failed"
+        $result.failureStage = $failureStage
+        $result.failureLine = $_.InvocationInfo.ScriptLineNumber
         $result.message = Get-SafeReportMessage -Message $_.Exception.Message
         $result.speakerCountStatus = "failed"
         if ($result.speakerNameMetrics.status -eq "not_run") {
@@ -898,6 +988,7 @@ $summary = [ordered]@{
     tooMany = @($results | Where-Object { $_.speakerCountStatus -eq "too_many" }).Count
     missingData = @($results | Where-Object { $_.status -eq "missing_data" }).Count
     skipped = @($results | Where-Object { $_.status -eq "skipped" }).Count
+    timedOut = @($results | Where-Object { $_.status -eq "timed_out" }).Count
     failed = @($results | Where-Object { $_.status -eq "failed" }).Count
     dryRun = @($results | Where-Object { $_.status -eq "dry_run" }).Count
     elapsedMilliseconds = [int64]$runStopwatch.ElapsedMilliseconds
@@ -916,6 +1007,7 @@ $report = [ordered]@{
         fixtureId = $FixtureId
         category = $Category
         includeDisabled = [bool]$IncludeDisabled
+        fixtureTimeoutSeconds = $FixtureTimeoutSeconds
     }
     truthStoreSha256 = if ($script:ResolvedTruthStorePath) { Get-FileSha256 -PathValue $script:ResolvedTruthStorePath } else { $null }
     summary = $summary
@@ -933,6 +1025,7 @@ Write-Output "  Too few: $($summary.tooFew)"
 Write-Output "  Too many: $($summary.tooMany)"
 Write-Output "  Missing data: $($summary.missingData)"
 Write-Output "  Skipped: $($summary.skipped)"
+Write-Output "  Timed out: $($summary.timedOut)"
 Write-Output "  Failed: $($summary.failed)"
 if ($DryRun) {
     Write-Output "  Dry run: $($summary.dryRun)"
