@@ -48,6 +48,9 @@ function ConvertTo-VttTimeSpan {
     param([string]$Value)
 
     $normalized = $Value.Trim().Replace(',', '.')
+    if ($normalized -match '^\d{1,2}:\d{2}(?:\.\d{1,3})?$') {
+        $normalized = "00:$normalized"
+    }
     $parsed = [TimeSpan]::Zero
     if (-not [TimeSpan]::TryParse($normalized, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
         throw 'Transcript timestamp is invalid.'
@@ -141,29 +144,67 @@ function Read-MarkdownSegments {
 
     $lines = Get-Content -LiteralPath $PathValue
     $segments = [System.Collections.Generic.List[object]]::new()
+    $pointTimestampSegments = [System.Collections.Generic.List[object]]::new()
     $speakerTokens = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $linePattern = '^\s*\[(?<start>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\s*-\s*(?<end>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\]\s+\*\*(?<speaker>[^*:]{1,160}):\*\*\s*(?<text>.+?)\s*$'
+    $rangePattern = '^\s*\[(?<start>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\s*-\s*(?<end>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\]\s+\*\*(?<speaker>[^*:]{1,160}):\*\*\s*(?<text>.+?)\s*$'
+    $firefliesPointPattern = '^\s*\*\*(?<speaker>[^*:\r\n]{1,160})\*\*\s*\*\[(?<start>\d{1,2}:\d{2}(?::\d{2})?(?:[\.,]\d{1,3})?)\]\*\s*:\s*(?<text>.+?)\s*$'
     foreach ($line in $lines) {
-        if ([string]$line -notmatch $linePattern) {
+        if ([string]$line -match $rangePattern) {
+            $start = ConvertTo-VttTimeSpan -Value $Matches.start
+            $end = ConvertTo-VttTimeSpan -Value $Matches.end
+            $speaker = $Matches.speaker.Trim()
+            $text = $Matches.text.Trim()
+            if ([string]::IsNullOrWhiteSpace($speaker) -or [string]::IsNullOrWhiteSpace($text) -or $end -le $start) {
+                continue
+            }
+
+            [void]$speakerTokens.Add($speaker)
+            $segments.Add([ordered]@{
+                    start = $start.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                    end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                    speakerId = $null
+                    speakerLabel = $null
+                    text = $text
+                })
             continue
         }
 
-        $start = ConvertTo-VttTimeSpan -Value $Matches.start
-        $end = ConvertTo-VttTimeSpan -Value $Matches.end
-        $speaker = $Matches.speaker.Trim()
-        $text = $Matches.text.Trim()
-        if ([string]::IsNullOrWhiteSpace($speaker) -or [string]::IsNullOrWhiteSpace($text) -or $end -le $start) {
-            continue
-        }
+        if ([string]$line -match $firefliesPointPattern) {
+            $speaker = $Matches.speaker.Trim()
+            $text = $Matches.text.Trim()
+            if ([string]::IsNullOrWhiteSpace($speaker) -or [string]::IsNullOrWhiteSpace($text)) {
+                continue
+            }
 
-        [void]$speakerTokens.Add($speaker)
-        $segments.Add([ordered]@{
-                start = $start.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
-                end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
-                speakerId = $null
-                speakerLabel = $null
-                text = $text
-            })
+            [void]$speakerTokens.Add($speaker)
+            $pointTimestampSegments.Add([pscustomobject]@{
+                    start = ConvertTo-VttTimeSpan -Value $Matches.start
+                    text = $text
+                })
+        }
+    }
+
+    if ($segments.Count -eq 0 -and $pointTimestampSegments.Count -gt 0) {
+        for ($index = 0; $index -lt $pointTimestampSegments.Count; $index++) {
+            $start = $pointTimestampSegments[$index].start
+            $end = if ($index -lt ($pointTimestampSegments.Count - 1)) {
+                $pointTimestampSegments[$index + 1].start
+            }
+            else {
+                $start.Add([TimeSpan]::FromSeconds(1))
+            }
+            if ($end -le $start) {
+                $end = $start.Add([TimeSpan]::FromSeconds(1))
+            }
+
+            $segments.Add([ordered]@{
+                    start = $start.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                    end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                    speakerId = $null
+                    speakerLabel = $null
+                    text = $pointTimestampSegments[$index].text
+                })
+        }
     }
 
     if ($segments.Count -eq 0) {
