@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.App.Services;
@@ -202,6 +203,64 @@ internal sealed class MeetingCleanupWorkLedgerService
                 Save();
             }
         }
+    }
+
+    /// <summary>
+    /// Repairs durable cleanup receipts after an interrupted app lifetime.
+    /// Queue completion events are in-memory, so a published or failed manifest
+    /// can otherwise leave its cleanup receipt permanently marked Processing.
+    /// </summary>
+    public async Task<int> ReconcileTerminalManifestStatesAsync(
+        SessionManifestStore manifestStore,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(manifestStore);
+
+        string[] manifestPaths;
+        lock (_gate)
+        {
+            manifestPaths = Load().Values
+                .Where(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing)
+                .Select(entry => entry.ManifestPath)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        var reconciledCount = 0;
+        foreach (var manifestPath in manifestPaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
+                var succeeded = manifest.State switch
+                {
+                    SessionState.Published => true,
+                    SessionState.Failed => false,
+                    _ => (bool?)null,
+                };
+                if (!succeeded.HasValue)
+                {
+                    continue;
+                }
+
+                RecordCompletionForManifest(manifestPath, succeeded.Value);
+                reconciledCount++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Preserve the existing receipt when its manifest is not yet readable.
+            }
+        }
+
+        return reconciledCount;
     }
 
     public void MigrateLegacyEntries(IEnumerable<MeetingCleanupAutoApplyEntry> entries)
