@@ -717,6 +717,125 @@ public sealed class DiarizationFixtureReplayTests
         }
     }
 
+    [Fact]
+    public void NewDiarizationVttFixtureScript_Appends_Reviewed_Private_Catalog_Without_Leaking_Input_Path()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationVttFixture.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-append-fixture-test-" + Guid.NewGuid().ToString("N"));
+        var sourceRoot = Path.Combine(tempRoot, "source");
+        var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+        Directory.CreateDirectory(sourceRoot);
+
+        try
+        {
+            var audioPath = Path.Combine(sourceRoot, "source.wav");
+            var vttPath = Path.Combine(sourceRoot, "source.vtt");
+            File.WriteAllBytes(audioPath, [0x52, 0x49, 0x46, 0x46]);
+            File.WriteAllText(vttPath, "00:00:00 --> 00:00:01" + Environment.NewLine + "SPEAKER: private text");
+
+            var initial = RunPowerShell(
+                scriptPath,
+                "-AudioPath", audioPath,
+                "-VttPath", vttPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-initial-v1",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+            Assert.True(initial.ExitCode == 0, $"Initial fixture failed.{Environment.NewLine}{initial.StandardError}");
+
+            var appended = RunPowerShell(
+                scriptPath,
+                "-AudioPath", audioPath,
+                "-VttPath", vttPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-short-v1",
+                "-Append",
+                "-Category", "short-call",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+            Assert.True(appended.ExitCode == 0, $"Append fixture failed.{Environment.NewLine}{appended.StandardError}");
+            Assert.DoesNotContain(sourceRoot, appended.StandardOutput, StringComparison.OrdinalIgnoreCase);
+
+            var catalog = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json")))
+                ?? throw new InvalidOperationException("Catalog JSON was empty.");
+            var truth = JsonNode.Parse(File.ReadAllText(Path.Combine(fixtureRoot, "fixture-truth-store.local.json")))
+                ?? throw new InvalidOperationException("Truth JSON was empty.");
+            Assert.Equal(2, catalog["fixtures"]?.AsArray().Count);
+            Assert.Equal(2, truth["outcomes"]?.AsArray().Count);
+            Assert.Equal("short-call", (string?)catalog["fixtures"]?[1]?["category"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void AddDiarizationFixtureCoverageBlockScript_Records_Disabled_Category_Without_Source_Data()
+    {
+        var repoRoot = GetRepoRoot();
+        var blockScriptPath = Path.Combine(repoRoot, "scripts", "Add-DiarizationFixtureCoverageBlock.ps1");
+        var catalogScriptPath = Path.Combine(repoRoot, "scripts", "Test-DiarizationFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-coverage-block-test-" + Guid.NewGuid().ToString("N"));
+        var fixtureRoot = Path.Combine(tempRoot, "private-fixtures");
+        Directory.CreateDirectory(fixtureRoot);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(fixtureRoot, "fixture-catalog.local.json"),
+                JsonSerializer.Serialize(new { schemaVersion = 2, fixtures = Array.Empty<object>() }, JsonOptions));
+            File.WriteAllText(
+                Path.Combine(fixtureRoot, "fixture-truth-store.local.json"),
+                JsonSerializer.Serialize(new { schemaVersion = 1, outcomes = Array.Empty<object>() }, JsonOptions));
+
+            var blockResult = RunPowerShell(
+                blockScriptPath,
+                "-FixtureRoot", fixtureRoot,
+                "-FixtureId", "fx-blocked-two-speaker-v1",
+                "-Category", "two-speaker",
+                "-BlockedReason", "source-not-representative",
+                "-ConsentRecord", "test-consent",
+                "-Owner", "test-owner");
+
+            Assert.True(blockResult.ExitCode == 0, $"Coverage-block script failed.{Environment.NewLine}stderr:{Environment.NewLine}{blockResult.StandardError}");
+            Assert.DoesNotContain(fixtureRoot, blockResult.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var catalogText = File.ReadAllText(Path.Combine(fixtureRoot, "fixture-catalog.local.json"));
+            var catalog = JsonNode.Parse(catalogText) ?? throw new InvalidOperationException("Catalog JSON was empty.");
+            var fixture = catalog["fixtures"]?[0] ?? throw new InvalidOperationException("Blocked fixture was missing.");
+            Assert.Equal(false, (bool?)fixture["enabled"]);
+            Assert.Equal("source-not-representative", (string?)fixture["disabledReason"]);
+            Assert.Equal(string.Empty, (string?)fixture["audioPath"]);
+            Assert.Equal(string.Empty, (string?)fixture["transcriptionSnapshotPath"]);
+
+            var reportPath = Path.Combine(tempRoot, "report.json");
+            var catalogResult = RunPowerShell(
+                catalogScriptPath,
+                "-CatalogPath", Path.Combine(fixtureRoot, "fixture-catalog.local.json"),
+                "-TruthStorePath", Path.Combine(fixtureRoot, "fixture-truth-store.local.json"),
+                "-IncludeDisabled",
+                "-DryRun",
+                "-ReportPath", reportPath);
+            Assert.True(catalogResult.ExitCode == 0, $"Catalog did not skip coverage block.{Environment.NewLine}stderr:{Environment.NewLine}{catalogResult.StandardError}");
+            var reportText = File.ReadAllText(reportPath);
+            Assert.DoesNotContain(fixtureRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Report JSON was empty.");
+            Assert.Equal("skipped", (string?)report["results"]?[0]?["status"]);
+            Assert.Equal("source-not-representative", (string?)report["results"]?[0]?["skipReason"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
     private static DiarizationFixtureReplayFixture LoadFixture(string transcriptJsonPath, string? manifestPath)
     {
         var resolvedTranscriptPath = ResolveRequiredPath(transcriptJsonPath, "Transcript JSON");
