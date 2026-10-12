@@ -19,7 +19,7 @@ admission while setup is unavailable.
 
 ## User promise
 
-Explicit import and legacy watched-folder paths only read an original file.
+Explicit picker/drop and opt-in Import Inbox paths only read an original file.
 They copy it into a Meeting Recorder work session. They do not delete, move,
 rename, truncate, or overwrite the original source. Removing an unqueued row
 removes only that review row. It does not remove a source file, work session,
@@ -47,11 +47,11 @@ data.
 | --- | --- | --- | --- |
 | `Meetings > Add Audio Files` | `MainWindow.AddAudioFilesButton_OnClick` permits multi-select existing files, then creates `FilePicker` candidates. | User-owned. | `MainWindow.xaml.cs`, `ExternalAudioImportService` |
 | Drop on Meetings | `MeetingsWorkspaceGrid_OnDrop` accepts files and directories. A dropped directory expands only its top-level files; it is not recursive. | User-owned. | `MainWindow.xaml.cs` |
-| Legacy watch | Startup and background timer call `RunExternalAudioImportCycleAsync`; `ScanWatchedAudioFolderAsync` enumerates only configured `AudioOutputDir` top-level files. | User-owned. | `MainWindow.xaml.cs`, `ExternalAudioImportService` |
+| Recording output | The configured `AudioOutputDir` is publication-only. Startup and background maintenance never scan it as an external import source. | App-owned published artifacts. | `MainWindow.xaml.cs`, `ExternalAudioImportService` |
 | Import Inbox | `Settings > Files & Updates` offers an explicit opt-in Inbox. Startup/background scans reconcile only its top-level supported audio under a durable local lease, then queue one source through the normal staged-import path. If transcription setup is unavailable, cadence-bound discovery still writes local Inbox receipts but never queues work; Setup recovery can therefore see arrivals without a hidden worker start. | Inbox-owned only after a receipt; original retained unless the separate Archive option is enabled. | `ImportInboxLifecyclePolicy`, `ImportInboxReconciliationService`, `ImportInboxIntakeService`, `ImportInboxJournalStore` |
 | Candidate identity | `Path.GetFullPath` plus observed length and UTC last-write identify a batch or existing imported source. Friendly title, project, and filename alone do not identify a duplicate. | Read-only observation. | `ExternalAudioImportService` |
 | Accepted containers | `.wav`, `.mp3`, `.m4a`, `.aac`, and `.mp4` can be reviewed, but extension is never a codec guarantee. A source queues only when the local preparation stack decodes and normalizes it. | No mutation. | `ExternalAudioMediaProbe`, `ExternalAudioImportService` |
-| Watch stability | Watched sources need a 15-second quiet period. Explicit picker/drop candidates have no quiet-period gate. | No mutation. | `ExternalAudioImportService` |
+| Intake stability | Import Inbox sources need their policy-defined stable observation. Explicit picker/drop candidates have no quiet-period gate. | No mutation. | `ImportInboxLifecyclePolicy`, `ExternalAudioImportService` |
 | Preflight | Rejects missing/offline/duplicate/unsafe sources before decoding. `ExternalAudioMediaProbe` snapshots length and UTC write before and after the same local transcription preparation used by queued work, uses restricted read sharing, a two-minute cancellation limit, two concurrent probes per volume, a 2 GiB source limit, and deletes only randomized app-owned temporary probe files. Stable results distinguish ready, waiting/lock, changed, unsupported codec, no/empty/short audio, decode failure, and resource limit. | Read-only source; app-owned temporary probe only. | `ExternalAudioMediaProbe`, `ExternalAudioImportService` |
 | Setup gate | A missing, invalid, or unverified transcription model produces an opaque readiness snapshot. Queue Valid may still stage an already verified source, but saves it as `BlockedBySetup`; no worker admission occurs. `Resume Blocked Imports` is explicit after Setup is ready. | No source mutation; staged copy only after normal admission. | `ExternalAudioImportReadinessResolver`, `ExternalAudioImportReadinessCoordinator`, `MainWindow.xaml.cs` |
 | Queue admission | `QueueImportAsync` re-stats length and UTC write time before making a work session, rejects an unchanged source that already has an imported work session, and rechecks app-owned work/recordings/transcript storage with a conservative copy/normalization estimate. A source changed after review must be reviewed again. | No mutation. | `ExternalAudioImportService`, `ImportInboxPathPolicy` |

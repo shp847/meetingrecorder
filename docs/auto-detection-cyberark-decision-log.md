@@ -915,6 +915,20 @@ As of 2026-07-20, executable-policy facts are:
 5. Investigate why the post-processing normalized WAV was rediscovered as
    dropped audio and queued for a second transcription.
 
+### 2026-10-12: Published recordings re-imported by legacy output scan
+- Trigger / observed symptom: today’s meeting list contained paired imported sessions for published recordings, making recordings appear splintered.
+- Exact runtime or CyberArk evidence: seven normal capture manifests and seven matching `WatchedFolder` imported-source manifests were present. Each import source was a WAV under the configured recording-output directory. The live app’s startup and timer both called `RunExternalAudioImportCycleAsync`, which scanned that same directory. No CyberArk, executable-path, or audio-probe event was involved.
+- Hypothesis: confirmed. Using the publisher-owned output directory as a legacy external-audio inbox lets the app rediscover its own normalized WAVs and queue duplicate transcription sessions.
+- APIs or signals added/removed: no meeting detector, Windows audio probe, executable naming, signing, or install-location behavior changed. Legacy automatic output-folder intake is now a compatibility no-op; reviewed picker/drop and the separate opt-in Import Inbox remain the only external-audio entry paths.
+- Positive behavior expected: a newly published recording never re-enters the queue as an imported meeting; explicit user imports and Inbox processing continue normally.
+- False-positive/security boundary retained: no recording, transcript, work session, or source file was moved, merged, or deleted. Intake remains source-retaining and explicit/Inbox-scoped.
+- Tests added and results: focused external-audio-import regression suite passed 23/23. The first ordinary test build hit the known generated-apphost denial in the temporary build root; rerun with apphosts disabled for test-only output passed.
+- Package status: `Build-Installer.ps1` completed. ZIP `MeetingRecorder-v0.3-win-x64.zip` (88,748,011 bytes) and MSI `MeetingRecorderInstaller.msi` (76,378,112 bytes) were rebuilt locally.
+- Installed hash/version/signature status: direct local deployment replaced the stable bundle from the rebuilt ZIP payload; installed `MeetingRecorder.Core.dll` SHA-256 matched the bundle payload. Signing status unchanged.
+- Live-machine result: after confirming no active capture, the prior app was stopped, the managed install was refreshed at `C:\Users\psharm04\MeetingRecorder`, and the app relaunched responsive. Its local continuity matcher was enabled (`Matcher` rollout) for future identity-proven continuation. No live meeting was recorded for this check.
+- Outcome: retained in source and installed locally.
+- Follow-up / removal condition: keep automatic output-folder intake disabled permanently; only restore any automatic intake with a separate configured Inbox and durable receipt boundary.
+
 ## Entry Template
 
 Append future entries with all fields:

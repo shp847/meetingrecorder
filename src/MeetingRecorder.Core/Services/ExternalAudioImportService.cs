@@ -37,57 +37,32 @@ public sealed class ExternalAudioImportService
         _mediaProbe = mediaProbe ?? new ExternalAudioMediaProbe();
     }
 
-    public async Task<IReadOnlyList<ImportedExternalAudioResult>> ImportPendingAudioFilesAsync(
+    public Task<IReadOnlyList<ImportedExternalAudioResult>> ImportPendingAudioFilesAsync(
         AppConfig config,
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var candidates = await ScanWatchedAudioFolderAsync(config, nowUtc, cancellationToken);
-        var imported = new List<ImportedExternalAudioResult>();
-        foreach (var candidate in candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!candidate.CanQueue)
-            {
-                continue;
-            }
-
-            var request = new ExternalAudioImportRequest(
-                candidate.SourcePath,
-                candidate.SourceDisplayName,
-                candidate.SourceSizeBytes,
-                candidate.SourceLastWriteUtc,
-                candidate.ImportMethod,
-                candidate.Title,
-                candidate.StartedAtUtc,
-                ProjectName: null,
-                candidate.Preflight.Duration,
-                SourceRetained: true);
-            imported.Add(await QueueImportAsync(config, request, nowUtc, cancellationToken));
-        }
-
-        return imported;
+        // AudioOutputDir is owned by the recorder's publisher. Treating it as an
+        // import inbox re-queues the WAVs we publish and creates duplicate meetings.
+        // External audio enters through explicit picker/drop review or the separate,
+        // opt-in Import Inbox instead.
+        return Task.FromResult<IReadOnlyList<ImportedExternalAudioResult>>(
+            Array.Empty<ImportedExternalAudioResult>());
     }
 
-    public async Task<IReadOnlyList<ExternalAudioImportCandidate>> ScanWatchedAudioFolderAsync(
+    public Task<IReadOnlyList<ExternalAudioImportCandidate>> ScanWatchedAudioFolderAsync(
         AppConfig config,
         DateTimeOffset nowUtc,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (string.IsNullOrWhiteSpace(config.AudioOutputDir) || !Directory.Exists(config.AudioOutputDir))
-        {
-            return Array.Empty<ExternalAudioImportCandidate>();
-        }
-
-        var sourcePaths = Directory
-            .EnumerateFiles(config.AudioOutputDir)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return await BuildImportCandidatesAsync(config, sourcePaths, ExternalAudioImportMethod.WatchedFolder, nowUtc, cancellationToken);
+        // Kept as a compatibility no-op so no caller can treat the published
+        // recording directory as an external-audio inbox.
+        return Task.FromResult<IReadOnlyList<ExternalAudioImportCandidate>>(
+            Array.Empty<ExternalAudioImportCandidate>());
     }
 
     public async Task<IReadOnlyList<ExternalAudioImportCandidate>> BuildImportCandidatesAsync(
