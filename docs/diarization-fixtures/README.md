@@ -22,7 +22,16 @@ fixture root and produces its manifest, transcript snapshot, restricted
 count-only truth record, and v2 catalog. Speaker labels remain only in the
 private source transcript; count taxonomy is inferred and speaker-name matching
 stays disabled. Builder console output contains only opaque fixture ID,
-category, and count—not input paths.
+category, and count—not input paths. To add another approved fixture to an
+already reviewed root, pass `-Append`; duplicate IDs and mismatched catalog or
+truth-store versions fail before the existing catalog is changed.
+
+When an approved source does not exist for a required category, use
+`Add-DiarizationFixtureCoverageBlock.ps1` with an opaque ID and one of its
+fixed block reasons. It writes a disabled catalog record only; it neither
+creates fake audio/truth nor exposes a path. Run the catalog with
+`-IncludeDisabled` to make those coverage gaps visible in its metadata-only
+report. Replace the record with an approved fixture before enabling it.
 The full-audio runner also supports a locally built worker launched through
 `dotnet Worker.dll`; bounded native labeling relaunches that same assembly.
 

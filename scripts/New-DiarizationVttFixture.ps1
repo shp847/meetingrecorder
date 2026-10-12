@@ -13,6 +13,8 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
     [string]$FixtureId,
 
+    [switch]$Append,
+
     [ValidateSet('auto', 'one-speaker', 'two-speaker', 'three-plus-speaker', 'short-call', 'noisy-similar-voices', 'overlap', 'hybrid-shared-mic', 'no-speech')]
     [string]$Category = 'auto',
 
@@ -201,8 +203,16 @@ if (Test-Path -LiteralPath $fixtureDirectory) {
 
 $catalogPath = Join-Path $resolvedFixtureRoot 'fixture-catalog.local.json'
 $truthStorePath = Join-Path $resolvedFixtureRoot 'fixture-truth-store.local.json'
-if ((Test-Path -LiteralPath $catalogPath) -or (Test-Path -LiteralPath $truthStorePath)) {
-    throw 'Fixture catalog or truth store already exists. Add support is intentionally manual until provenance review is complete.'
+$catalogExists = Test-Path -LiteralPath $catalogPath -PathType Leaf
+$truthStoreExists = Test-Path -LiteralPath $truthStorePath -PathType Leaf
+if ($catalogExists -ne $truthStoreExists) {
+    throw 'Fixture catalog and truth store must either both exist or both be absent.'
+}
+if (($catalogExists -or $truthStoreExists) -and -not $Append) {
+    throw 'Fixture catalog already exists. Pass -Append only after reviewing the existing private catalog and truth store.'
+}
+if ($Append -and -not $catalogExists) {
+    throw 'Append requires an existing private fixture catalog and truth store.'
 }
 
 $inferredCategory = if ($parsed.SpeakerCount -eq 1) {
@@ -264,10 +274,7 @@ $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $configPath -Encod
 
 $contentHash = Get-FileSha256 -PathValue $audioDestination
 $truthReference = "truth-$FixtureId"
-$catalog = [ordered]@{
-    schemaVersion = 2
-    fixtures = @(
-        [ordered]@{
+$fixture = [ordered]@{
             id = $FixtureId
             version = '1'
             contentHash = $contentHash
@@ -287,18 +294,37 @@ $catalog = [ordered]@{
             configPath = $configPath
             enableSpeakerNameMatching = $false
             protectedArtifactPaths = @($audioDestination, $manifestPath, $snapshotPath, $configPath)
-        }
-    )
 }
-$truthStore = [ordered]@{
-    schemaVersion = 1
-    outcomes = @(
-        [ordered]@{
+$outcome = [ordered]@{
             reference = $truthReference
             expectedSpeakerCount = $parsed.SpeakerCount
             expectedSpeakerNames = @()
-        }
-    )
+}
+
+if ($Append) {
+    $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
+    $truthStore = Get-Content -LiteralPath $truthStorePath -Raw | ConvertFrom-Json
+    if ($catalog.schemaVersion -ne 2 -or $truthStore.schemaVersion -ne 1) {
+        throw 'Unsupported fixture catalog or truth-store schema.'
+    }
+    if (@($catalog.fixtures | Where-Object { $_.id -eq $FixtureId }).Count -gt 0) {
+        throw 'Fixture ID already exists in the private catalog.'
+    }
+    if (@($truthStore.outcomes | Where-Object { $_.reference -eq $truthReference }).Count -gt 0) {
+        throw 'Fixture truth reference already exists in the private truth store.'
+    }
+    $catalog.fixtures = @($catalog.fixtures) + @([pscustomobject]$fixture)
+    $truthStore.outcomes = @($truthStore.outcomes) + @([pscustomobject]$outcome)
+}
+else {
+    $catalog = [ordered]@{
+        schemaVersion = 2
+        fixtures = @($fixture)
+    }
+    $truthStore = [ordered]@{
+        schemaVersion = 1
+        outcomes = @($outcome)
+    }
 }
 
 $catalog | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
