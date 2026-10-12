@@ -38,6 +38,11 @@ During `-NoBuild` replay, an older runtime-specific worker output is ignored in
 favor of the newer framework build, preventing a stale publish from masking
 current fixture behavior.
 
+For bounded full-audio evidence, pass `-FixtureTimeoutSeconds` to the catalog
+runner. A timeout writes a metadata-only `timed_out` result, terminates only the
+fixture child process tree, and drains rather than exposing its console output.
+Use `0` (the default) to rely on the worker's existing processing limit.
+
 Run a metadata-only candidate comparison:
 
 ```powershell
