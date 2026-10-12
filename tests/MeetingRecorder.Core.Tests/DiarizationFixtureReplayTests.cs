@@ -291,6 +291,8 @@ public sealed class DiarizationFixtureReplayTests
             var fullAudioScriptContents = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Test-DiarizationFullAudioFixture.ps1"));
             Assert.Contains("$diarizationMessage = $updatedManifest.errorSummary", fullAudioScriptContents, StringComparison.Ordinal);
             Assert.Contains("DiarizationMessage = $diarizationMessage", fullAudioScriptContents, StringComparison.Ordinal);
+            Assert.Contains("$runtimeWorkerIsCurrent", fullAudioScriptContents, StringComparison.Ordinal);
+            Assert.Contains("LastWriteTimeUtc -ge", fullAudioScriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);
         }

@@ -243,9 +243,16 @@ else {
 
 $frameworkWorkerDirectory = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\bin\$Configuration\net8.0-windows"
 $runtimeWorkerDirectory = Join-Path $frameworkWorkerDirectory "win-x64"
-$workerDirectory = if (Test-Path -LiteralPath (Join-Path $runtimeWorkerDirectory "MeetingRecorder.ProcessingWorker.dll") -PathType Leaf) {
-    # The runtime-specific worker carries native Sherpa dependencies that are
-    # intentionally absent from a framework-only build.
+$frameworkWorkerDllPath = Join-Path $frameworkWorkerDirectory "MeetingRecorder.ProcessingWorker.dll"
+$runtimeWorkerDllPath = Join-Path $runtimeWorkerDirectory "MeetingRecorder.ProcessingWorker.dll"
+$runtimeWorkerIsCurrent =
+    (Test-Path -LiteralPath $runtimeWorkerDllPath -PathType Leaf) -and
+    (Test-Path -LiteralPath $frameworkWorkerDllPath -PathType Leaf) -and
+    ((Get-Item -LiteralPath $runtimeWorkerDllPath).LastWriteTimeUtc -ge (Get-Item -LiteralPath $frameworkWorkerDllPath).LastWriteTimeUtc)
+$workerDirectory = if ($runtimeWorkerIsCurrent) {
+    # The runtime-specific worker carries native Sherpa dependencies. Prefer
+    # it only when it is at least as current as the framework build; a leftover
+    # publish otherwise runs stale worker code during a -NoBuild fixture replay.
     $runtimeWorkerDirectory
 }
 else {
