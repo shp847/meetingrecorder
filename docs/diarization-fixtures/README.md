@@ -34,6 +34,9 @@ creates fake audio/truth nor exposes a path. Run the catalog with
 report. Replace the record with an approved fixture before enabling it.
 The full-audio runner also supports a locally built worker launched through
 `dotnet Worker.dll`; bounded native labeling relaunches that same assembly.
+During `-NoBuild` replay, an older runtime-specific worker output is ignored in
+favor of the newer framework build, preventing a stale publish from masking
+current fixture behavior.
 
 Run a metadata-only candidate comparison:
 
