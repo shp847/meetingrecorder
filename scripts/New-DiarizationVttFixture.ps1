@@ -2,8 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$AudioPath,
 
-    [Parameter(Mandatory = $true)]
     [string]$VttPath,
+
+    [string]$TranscriptMarkdownPath,
 
     [Parameter(Mandatory = $true)]
     [string]$FixtureRoot,
@@ -133,8 +134,60 @@ function Read-VttSegments {
     }
 }
 
+function Read-MarkdownSegments {
+    param([string]$PathValue)
+
+    $lines = Get-Content -LiteralPath $PathValue
+    $segments = [System.Collections.Generic.List[object]]::new()
+    $speakerTokens = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $linePattern = '^\s*\[(?<start>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\s*-\s*(?<end>\d{1,2}:\d{2}:\d{2}(?:[\.,]\d{1,3})?)\]\s+\*\*(?<speaker>[^*:]{1,160}):\*\*\s*(?<text>.+?)\s*$'
+    foreach ($line in $lines) {
+        if ([string]$line -notmatch $linePattern) {
+            continue
+        }
+
+        $start = ConvertTo-VttTimeSpan -Value $Matches.start
+        $end = ConvertTo-VttTimeSpan -Value $Matches.end
+        $speaker = $Matches.speaker.Trim()
+        $text = $Matches.text.Trim()
+        if ([string]::IsNullOrWhiteSpace($speaker) -or [string]::IsNullOrWhiteSpace($text) -or $end -le $start) {
+            continue
+        }
+
+        [void]$speakerTokens.Add($speaker)
+        $segments.Add([ordered]@{
+                start = $start.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
+                speakerId = $null
+                speakerLabel = $null
+                text = $text
+            })
+    }
+
+    if ($segments.Count -eq 0) {
+        throw 'Transcript Markdown contains no usable timestamped speaker segments.'
+    }
+    if ($speakerTokens.Count -lt 1 -or $speakerTokens.Count -gt 16) {
+        throw 'Transcript Markdown speaker count must be from 1 through 16.'
+    }
+
+    return [pscustomobject]@{
+        Segments = $segments
+        SpeakerCount = $speakerTokens.Count
+    }
+}
+
 $resolvedAudioPath = Resolve-RequiredFile -PathValue $AudioPath -Description 'Audio'
-$resolvedVttPath = Resolve-RequiredFile -PathValue $VttPath -Description 'VTT transcript'
+if ([string]::IsNullOrWhiteSpace($VttPath) -eq [string]::IsNullOrWhiteSpace($TranscriptMarkdownPath)) {
+    throw 'Pass exactly one of VttPath or TranscriptMarkdownPath.'
+}
+
+$parsed = if (-not [string]::IsNullOrWhiteSpace($VttPath)) {
+    Read-VttSegments -PathValue (Resolve-RequiredFile -PathValue $VttPath -Description 'VTT transcript')
+}
+else {
+    Read-MarkdownSegments -PathValue (Resolve-RequiredFile -PathValue $TranscriptMarkdownPath -Description 'Transcript Markdown')
+}
 $resolvedFixtureRoot = [System.IO.Path]::GetFullPath($FixtureRoot)
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath
 if ($resolvedFixtureRoot.StartsWith($repoRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -152,7 +205,6 @@ if ((Test-Path -LiteralPath $catalogPath) -or (Test-Path -LiteralPath $truthStor
     throw 'Fixture catalog or truth store already exists. Add support is intentionally manual until provenance review is complete.'
 }
 
-$parsed = Read-VttSegments -PathValue $resolvedVttPath
 $inferredCategory = if ($parsed.SpeakerCount -eq 1) {
     'one-speaker'
 }
@@ -252,7 +304,4 @@ $truthStore = [ordered]@{
 $catalog | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
 $truthStore | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $truthStorePath -Encoding UTF8
 
-Write-Output "Private fixture created: $FixtureId"
-Write-Output "Expected speaker count: $($parsed.SpeakerCount)"
-Write-Output "Catalog: $catalogPath"
-Write-Output "Truth store: $truthStorePath"
+Write-Output "Private fixture created. id=$FixtureId category=$Category expectedSpeakerCount=$($parsed.SpeakerCount)"

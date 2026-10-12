@@ -345,9 +345,14 @@ function Get-SafeDiarizationFailureKind {
         return "not_failed"
     }
 
-    if ($Message -match 'helper failed \((audio_preparation|helper_startup|native_inference|runtime_status)_(file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown)\)') {
-        return "helper_" + $Matches[1] + "_" + $Matches[2]
+    if ($Message -match 'helper failed \((?<kind>(?:(?:audio_preparation|helper_startup|native_inference|runtime_status)_(?:file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown)|no_diagnostic|native_runtime|model_or_asset|input_or_file|unknown))\)') {
+        return "helper_" + $Matches.kind
     }
+
+    # The bounded worker can report a helper failure without forwarding its
+    # child detail. That is still a stable diagnostic: do not broaden the
+    # report with the original message just to distinguish it.
+    if ($Message -match '(?i)helper failed') { return "helper_no_diagnostic" }
 
     # Classify in memory only.  Do not persist provider text: it may identify
     # a private path, a machine account, or an approved fixture.
@@ -355,7 +360,7 @@ function Get-SafeDiarizationFailureKind {
     if ($Message -match '(?i)directml|cuda|gpu|accelerat') { return "acceleration" }
     if ($Message -match '(?i)timeout|cancel') { return "timeout_or_cancel" }
     if ($Message -match '(?i)file|path|directory|not found|missing') { return "input_or_file" }
-    if ($Message -match '(?i)helper') { return "helper_execution" }
+    if ($Message -match '(?i)helper') { return "helper_no_diagnostic" }
     return "provider_or_processing"
 }
 
