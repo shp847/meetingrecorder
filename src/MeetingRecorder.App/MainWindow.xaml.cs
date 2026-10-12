@@ -698,6 +698,9 @@ public partial class MainWindow : Window
             await _processingQueue.ResumePendingSessionsAsync(
                 _meetingCleanupWorkLedgerService.GetQueuedManifestPaths(),
                 _lifetimeCts.Token);
+            await _meetingCleanupWorkLedgerService.ReconcileTerminalManifestStatesAsync(
+                _manifestStore,
+                _lifetimeCts.Token);
             RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler startup");
             await RunExternalAudioImportCycleAsync("startup", _lifetimeCts.Token);
             await RunAutomaticUpdateCycleAsync("startup", AppUpdateCheckTrigger.Startup, _lifetimeCts.Token);

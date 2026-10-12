@@ -1,4 +1,5 @@
 using MeetingRecorder.App.Services;
+using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 
 namespace MeetingRecorder.Core.Tests;
@@ -93,6 +94,30 @@ public sealed class MeetingCleanupWorkLedgerServiceTests : IDisposable
         Assert.Equal(reason, entry.Detail);
         Assert.Null(entry.ManifestPath);
         Assert.Null(entry.AffectedStems);
+    }
+
+    [Fact]
+    public async Task Terminal_Manifest_Reconciliation_Clears_Stale_Processing_Receipt()
+    {
+        var pathBuilder = new ArtifactPathBuilder();
+        var manifestStore = new SessionManifestStore(pathBuilder);
+        var published = await manifestStore.CreateAsync(
+            _root,
+            MeetingPlatform.Manual,
+            "Published cleanup",
+            Array.Empty<DetectionSignal>());
+        var manifestPath = Path.Combine(
+            pathBuilder.BuildSessionRoot(_root, published.SessionId),
+            "manifest.json");
+        await manifestStore.SaveAsync(published with { State = SessionState.Published }, manifestPath);
+
+        var ledger = CreateLedger();
+        ledger.Record("published-cleanup", CleanupWorkState.Processing, manifestPath);
+
+        var reconciled = await ledger.ReconcileTerminalManifestStatesAsync(manifestStore);
+
+        Assert.Equal(1, reconciled);
+        Assert.Equal(CleanupWorkState.Completed, Assert.Single(ledger.GetEntries()).State);
     }
 
     public void Dispose()

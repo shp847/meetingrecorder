@@ -19,6 +19,19 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
+    public void Deferred_Startup_Reconciles_Terminal_Cleanup_Work_Receipts()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var methodStart = source.IndexOf("private async Task RunDeferredStartupMaintenanceAsync", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("internal async Task ResumePendingProcessingAfterMaintenanceAsync", methodStart, StringComparison.Ordinal);
+        var methodBlock = source[methodStart..methodEnd];
+
+        Assert.Contains("ReconcileTerminalManifestStatesAsync", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("_processingQueue.ResumePendingSessionsAsync", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OnLoaded_Waits_For_The_First_Render_Before_Starting_Startup_Warmup_And_Long_Lived_Timers()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
