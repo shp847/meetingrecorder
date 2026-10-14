@@ -75,7 +75,8 @@ fixture titles, protected-artifact hashes, or profile data. Unsupported
 measurements remain unavailable; zero is never used as a substitute.
 
 Changing production thresholds is outside this command. It requires a governed
-baseline/candidate run, protected-case review with no false automatic naming,
+baseline/candidate run that covers every protected category in both runs,
+protected-case review with no false automatic naming,
 recorded human sign-off, and rollback evidence. Until then the report must say
 `keep_current_defaults` and production defaults remain unchanged.
 
