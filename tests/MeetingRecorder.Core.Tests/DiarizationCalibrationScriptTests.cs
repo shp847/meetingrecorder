@@ -145,6 +145,25 @@ public sealed class DiarizationCalibrationScriptTests
     }
 
     [Fact]
+    public void CalibrationParameterMap_Covers_Every_Runtime_Variable_And_Unset_Rollback()
+    {
+        var repoRoot = GetRepoRoot();
+        var mapPath = Path.Combine(repoRoot, "docs", "diarization-fixtures", "calibration-parameter-map.md");
+
+        Assert.True(File.Exists(mapPath), $"Expected calibration parameter map at '{mapPath}'.");
+        var mapText = File.ReadAllText(mapPath);
+        foreach (var field in typeof(DiarizationCalibrationEnvironment).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+        {
+            if (field.Name.EndsWith("Variable", StringComparison.Ordinal) && field.GetValue(null) is string variableName)
+            {
+                Assert.Contains(variableName, mapText, StringComparison.Ordinal);
+            }
+        }
+
+        Assert.Contains("Every rollback is `unset`", mapText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TestDiarizationCalibrationScript_Runs_DryRun_MetadataOnly_And_Keeps_Defaults_When_Evidence_Is_Missing()
     {
         var repoRoot = GetRepoRoot();
