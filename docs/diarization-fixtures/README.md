@@ -82,3 +82,5 @@ recorded human sign-off, and rollback evidence. Until then the report must say
 
 Calibration variables are ignored by normal app and worker processes. The
 comparison script alone marks its child process as the calibration harness.
+See [the parameter map](calibration-parameter-map.md) for the typed range,
+default/fallback, runtime owner, and rollback rule for every allowed variable.
