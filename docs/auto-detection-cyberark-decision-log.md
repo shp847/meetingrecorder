@@ -915,6 +915,20 @@ As of 2026-07-20, executable-policy facts are:
 5. Investigate why the post-processing normalized WAV was rediscovered as
    dropped audio and queued for a second transcription.
 
+### 2026-10-13: Portable publish apphost property hardened
+- Trigger / observed symptom: an isolated installer build reported a missing `MeetingRecorder.App.exe` even though the project default resolved `UseAppHost` as true; a direct publish with an explicit apphost setting retained the required file.
+- Exact runtime or CyberArk evidence: no endpoint-control, executable-location, signing, or live-app change was made. The portable build then completed with ZIP `MeetingRecorder-v0.3-win-x64.zip` (88,751,481 bytes) and MSI `MeetingRecorderInstaller.msi` (76,369,920 bytes).
+- Hypothesis: inherited publish property state could suppress an apphost despite the project default.
+- APIs or signals added/removed: `Publish-Portable.ps1` now passes `-p:UseAppHost=true` on each portable `dotnet publish` invocation.
+- Positive behavior expected: portable WPF, deployment CLI, and worker payloads retain required apphosts before bundle integrity and installer construction.
+- False-positive/security boundary retained: no stable-apphost fallback, signer, path, or endpoint policy was changed; package build used an isolated build root and live app remained running.
+- Tests added and results: installer source regression now requires the explicit property; focused helper/fixture suite passed 38/38. Installer build completed.
+- Package status: ZIP and MSI rebuilt locally from current working tree.
+- Installed hash/version/signature status: not installed; signing unchanged.
+- Live-machine result: running Meeting Recorder process remained responsive throughout.
+- Outcome: retained in source.
+- Follow-up / removal condition: keep explicit property unless all portable projects move to a verified equivalent central publish contract.
+
 ### 2026-10-12: Published recordings re-imported by legacy output scan
 - Trigger / observed symptom: today’s meeting list contained paired imported sessions for published recordings, making recordings appear splintered.
 - Exact runtime or CyberArk evidence: seven normal capture manifests and seven matching `WatchedFolder` imported-source manifests were present. Each import source was a WAV under the configured recording-output directory. The live app’s startup and timer both called `RunExternalAudioImportCycleAsync`, which scanned that same directory. No CyberArk, executable-path, or audio-probe event was involved.

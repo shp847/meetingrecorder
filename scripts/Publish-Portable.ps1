@@ -122,6 +122,7 @@ function Invoke-DotnetPublish {
         "--force",
         "--self-contained",
         $selfContainedValue,
+        "-p:UseAppHost=true",
         "-p:RestoreIgnoreFailedSources=true",
         "-p:NuGetAudit=false",
         "-o",

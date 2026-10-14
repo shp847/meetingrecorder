@@ -11,6 +11,34 @@ internal sealed record LocalDiarizationHelperRequest(
     IReadOnlyList<TranscriptSegment> TranscriptSegments,
     string ProgressPath);
 
+internal sealed record LocalDiarizationHelperResult(
+    IReadOnlyList<TranscriptSegment> Segments,
+    bool AppliedSpeakerLabels,
+    string? Message,
+    IReadOnlyList<SpeakerIdentity>? Speakers,
+    IReadOnlyList<SpeakerTurn>? SpeakerTurns,
+    DiarizationMetadata? Metadata,
+    IReadOnlyList<SpeakerVoiceSample>? SpeakerVoiceSamples)
+{
+    public static LocalDiarizationHelperResult From(DiarizationResult result) => new(
+        result.Segments,
+        result.AppliedSpeakerLabels,
+        result.Message,
+        result.Speakers,
+        result.SpeakerTurns,
+        result.Metadata,
+        result.SpeakerVoiceSamples);
+
+    public DiarizationResult ToDiarizationResult() => new(
+        Segments,
+        AppliedSpeakerLabels,
+        Message,
+        Speakers,
+        SpeakerTurns,
+        Metadata,
+        SpeakerVoiceSamples);
+}
+
 /// <summary>
 /// Hosts the non-cancellable Sherpa call in a child process. A timeout therefore releases
 /// native resources while the parent worker can safely continue to publish the transcript.
@@ -84,9 +112,9 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             }
 
             var serializedResult = await File.ReadAllTextAsync(resultPath, cancellationToken);
-            var result = JsonSerializer.Deserialize<DiarizationResult>(serializedResult, JsonOptions)
+            var helperResult = JsonSerializer.Deserialize<LocalDiarizationHelperResult>(serializedResult, JsonOptions)
                 ?? throw new InvalidOperationException("Local speaker-labeling helper returned an empty result.");
-            return result;
+            return helperResult.ToDiarizationResult();
         }
         finally
         {
