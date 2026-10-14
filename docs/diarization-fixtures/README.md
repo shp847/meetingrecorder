@@ -63,6 +63,7 @@ Run a metadata-only candidate comparison:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-DiarizationCalibration.ps1 `
   -CatalogPath .\.artifacts\diarization-fixtures\fixture-catalog.local.json `
+  -TruthStorePath .\.artifacts\diarization-fixtures\fixture-truth-store.local.json `
   -CandidatePath .\.artifacts\diarization-fixtures\calibration-candidates.local.json `
   -ReportsRoot .\.artifacts\diarization-fixtures\reports
 ```

@@ -158,6 +158,7 @@ public sealed class DiarizationCalibrationScriptTests
             var manifestPath = Path.Combine(tempRoot, "manifest.json");
             var artifactPath = Path.Combine(tempRoot, "transcript.md");
             var catalogPath = Path.Combine(tempRoot, "catalog.json");
+            var truthStorePath = Path.Combine(tempRoot, "truth-store.json");
             var candidatePath = Path.Combine(tempRoot, "candidates.json");
             var reportPath = Path.Combine(tempRoot, "calibration-report.json");
             const string privateMarker = "PRIVATE_CALIBRATION_SENTINEL_DO_NOT_REPORT";
@@ -196,23 +197,45 @@ public sealed class DiarizationCalibrationScriptTests
                 JsonSerializer.Serialize(
                     new
                     {
-                        schemaVersion = 1,
+                        schemaVersion = 2,
                         fixtures = new[]
                         {
                             new
                             {
                                 id = "synthetic-two-speaker",
-                                title = "Synthetic two speaker",
+                                version = "1",
+                                contentHash = new string('a', 64),
                                 category = "two-speaker",
                                 mode = "stored-turn",
+                                scenarioTags = new[] { "two-speaker", "synthetic" },
+                                consentRecord = "CONSENT-SYNTHETIC",
+                                classification = "restricted-test",
+                                owner = "test-owner",
+                                expiresAtUtc = "2030-01-01T00:00:00Z",
                                 enabled = true,
+                                expectedOutcomeRef = "fixture/synthetic-two-speaker/v1",
+                                inputRoot = tempRoot,
                                 manifestPath,
                                 transcriptJsonPath = transcriptPath,
-                                expectedSpeakerCount = 2,
-                                expectedSpeakerNames = Array.Empty<string>(),
-                                expectedNameMode = "none",
                                 enableSpeakerNameMatching = false,
                                 protectedArtifactPaths = new[] { artifactPath },
+                            },
+                        },
+                    },
+                    JsonOptions));
+            File.WriteAllText(
+                truthStorePath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 1,
+                        outcomes = new[]
+                        {
+                            new
+                            {
+                                reference = "fixture/synthetic-two-speaker/v1",
+                                expectedSpeakerCount = 2,
+                                expectedSpeakerNames = Array.Empty<string>(),
                             },
                         },
                     },
@@ -243,6 +266,7 @@ public sealed class DiarizationCalibrationScriptTests
             var result = RunPowerShell(
                 scriptPath,
                 "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthStorePath,
                 "-CandidatePath", candidatePath,
                 "-DryRun",
                 "-ReportPath", reportPath);

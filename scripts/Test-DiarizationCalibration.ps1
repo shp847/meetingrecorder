@@ -1,6 +1,8 @@
 param(
     [string]$CatalogPath,
 
+    [string]$TruthStorePath,
+
     [string]$CandidatePath,
 
     [string[]]$CandidateName = @(),
@@ -511,6 +513,7 @@ function Invoke-CatalogRun {
     param(
         $Candidate,
         [string]$ResolvedCatalogPath,
+        [string]$ResolvedTruthStorePath,
         [string]$ResolvedReportsRoot,
         [string]$CatalogScriptPath
     )
@@ -527,6 +530,7 @@ function Invoke-CatalogRun {
         CalibrationRunName = [string]$Candidate.name
         CalibrationParametersJson = $parametersJson
     }
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTruthStorePath)) { $arguments.TruthStorePath = $ResolvedTruthStorePath }
     if ($FixtureId.Count -gt 0) { $arguments.FixtureId = $FixtureId }
     if ($Category.Count -gt 0) { $arguments.Category = $Category }
     if ($IncludeDisabled) { $arguments.IncludeDisabled = $true }
@@ -571,6 +575,12 @@ if ([string]::IsNullOrWhiteSpace($CatalogPath)) {
 }
 
 $resolvedCatalogPath = Resolve-RequiredFile -PathValue $CatalogPath -Description "Fixture catalog"
+$resolvedTruthStorePath = if ([string]::IsNullOrWhiteSpace($TruthStorePath)) {
+    $null
+}
+else {
+    Resolve-RequiredFile -PathValue $TruthStorePath -Description "Fixture truth store"
+}
 if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
     $localCandidatePath = Join-Path $script:RepoRoot ".artifacts\diarization-fixtures\calibration-candidates.local.json"
     $CandidatePath = if (Test-Path -LiteralPath $localCandidatePath -PathType Leaf) { $localCandidatePath } else { $null }
@@ -614,7 +624,7 @@ foreach ($candidate in $candidates) {
     }
 
     Write-Output ("Running calibration candidate: {0}" -f $candidate.name)
-    $runs += Invoke-CatalogRun -Candidate $candidate -ResolvedCatalogPath $resolvedCatalogPath -ResolvedReportsRoot $resolvedReportsRoot -CatalogScriptPath $catalogScriptPath
+    $runs += Invoke-CatalogRun -Candidate $candidate -ResolvedCatalogPath $resolvedCatalogPath -ResolvedTruthStorePath $resolvedTruthStorePath -ResolvedReportsRoot $resolvedReportsRoot -CatalogScriptPath $catalogScriptPath
 }
 
 $baselineRun = $runs | Where-Object { $_.isBaseline } | Select-Object -First 1
