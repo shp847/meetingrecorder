@@ -94,6 +94,9 @@ public sealed class DiarizationFixtureReplayTests
         Assert.Contains("Get-Command dotnet", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("runtimeWorkerDirectory", scriptContents, StringComparison.Ordinal);
         Assert.Contains("native Sherpa dependencies", scriptContents, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-r win-x64", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("sherpa-onnx-c-api.dll", scriptContents, StringComparison.Ordinal);
+        Assert.Contains("onnxruntime.dll", scriptContents, StringComparison.Ordinal);
         Assert.DoesNotContain("MeetingRecorder.App.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Build-Installer.ps1", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Stop-Process", scriptContents, StringComparison.OrdinalIgnoreCase);

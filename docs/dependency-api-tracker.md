@@ -1,6 +1,6 @@
 # Dependency And API Tracker
 
-Last checked: 2026-07-04
+Last checked: 2026-10-13
 
 This tracker is maintained during recurring repo maintenance. Keep it focused on
 direct dependencies, local/external contracts, source-of-truth docs, known update
@@ -23,6 +23,7 @@ risks, and verification commands. Do not record secrets or local key material.
 | `NAudio` | 2.2.1 | Windows audio capture and device/session probing. | NuGet package metadata and app audio tests. | 2.3.0 is available; deferred because audio capture is a broad user-facing surface. |
 | `Whisper.net` / `Whisper.net.Runtime` | 1.9.0 | Local Whisper transcription bindings/runtime. | NuGet package metadata and transcription tests. | 1.9.1 is available; deferred because transcription runtime updates need focused processing tests plus installer/release asset validation. |
 | `org.k2fsa.sherpa.onnx` | 1.12.17 | Optional speaker-labeling/diarization runtime. | NuGet package metadata, DirectML runtime docs, diarization tests. | 1.13.3 is available; deferred because diarization/native runtime behavior needs targeted validation. |
+| `org.k2fsa.sherpa.onnx.runtime.win-x64` | 1.12.17 | CPU Sherpa native payload for the Windows processing worker. | Worker project, NuGet runtime package, full-audio fixture check. | Pinned to match the managed Sherpa binding on 2026-10-13 after fixture evidence showed the managed wrapper alone did not copy CPU native DLLs. DirectML remains separately optional. Focused fixture tests and installer build passed. |
 | `WixToolset.Sdk` / `WixToolset.*.wixext` | 5.0.2 | Per-user MSI build. | `MeetingRecorder.Setup.wixproj`, `scripts\Build-Installer.ps1`. | 7.0.0 is available; deferred as a major installer migration. |
 | `Microsoft.NET.Test.Sdk` | 17.8.0 | xUnit test host. | NuGet package metadata and test projects. | 18.7.0 is available; deferred as test infrastructure churn. |
 | `xunit` / `xunit.runner.visualstudio` | 2.5.3 | Unit and integration tests. | NuGet package metadata and test projects. | xUnit 2.9.3 and runner 3.1.5 are available; deferred to avoid mixed runner migration during this pass. |
@@ -152,3 +153,10 @@ risks, and verification commands. Do not record secrets or local key material.
 - 2026-07-04: App-owned temp candidates under `%TEMP%\MeetingRecorder*` and
   `%LOCALAPPDATA%\MeetingRecorder\work` were rechecked. Recent installer,
   transcription, test, and work roots were present, so nothing was deleted.
+- 2026-10-13: Full-audio fixture evidence found `helper_native_runtime` while
+  the processing-worker build contained only the Sherpa managed wrapper. Added
+  the matching `org.k2fsa.sherpa.onnx.runtime.win-x64` 1.12.17 package so the
+  CPU native payload is copied with the worker. DirectML remains optional and
+  separately gated. Verification: focused deployment/fixture tests, worker
+  build output native-payload check, full-audio fixture rerun, and passing
+  installer rebuild.
