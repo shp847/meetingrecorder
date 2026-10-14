@@ -545,6 +545,7 @@ public sealed class AppPlatformDeploymentTests
         var projectXml = File.ReadAllText(projectPath);
 
         Assert.Contains("org.k2fsa.sherpa.onnx", projectXml, StringComparison.Ordinal);
+        Assert.Contains("org.k2fsa.sherpa.onnx.runtime.win-x64", projectXml, StringComparison.Ordinal);
         Assert.DoesNotContain("Microsoft.AI.DirectML", projectXml, StringComparison.Ordinal);
         Assert.DoesNotContain("DirectML.dll", projectXml, StringComparison.Ordinal);
     }

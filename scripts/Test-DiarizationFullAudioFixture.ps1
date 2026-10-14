@@ -249,15 +249,35 @@ $runtimeWorkerIsCurrent =
     (Test-Path -LiteralPath $runtimeWorkerDllPath -PathType Leaf) -and
     (Test-Path -LiteralPath $frameworkWorkerDllPath -PathType Leaf) -and
     ((Get-Item -LiteralPath $runtimeWorkerDllPath).LastWriteTimeUtc -ge (Get-Item -LiteralPath $frameworkWorkerDllPath).LastWriteTimeUtc)
-$workerDirectory = if ($runtimeWorkerIsCurrent) {
-    # The runtime-specific worker carries native Sherpa dependencies. Prefer
-    # it only when it is at least as current as the framework build; a leftover
-    # publish otherwise runs stale worker code during a -NoBuild fixture replay.
-    $runtimeWorkerDirectory
+
+if (-not $runtimeWorkerIsCurrent) {
+    # Full-audio fixtures need the RID-specific worker because it carries the
+    # native Sherpa dependencies, including the CPU payload. A normal framework build cannot satisfy that
+    # contract, so refresh the RID output rather than falling back to it.
+    $dotnetCommand = Get-Command dotnet -ErrorAction Stop
+    $workerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj"
+    & $dotnetCommand.Source build $workerProjectPath -c $Configuration -r win-x64 -p:UseAppHost=false -p:NuGetAudit=false
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to build the win-x64 processing worker required for full-audio fixture execution."
+    }
+
+    $runtimeWorkerIsCurrent =
+        (Test-Path -LiteralPath $runtimeWorkerDllPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $frameworkWorkerDllPath -PathType Leaf) -and
+        ((Get-Item -LiteralPath $runtimeWorkerDllPath).LastWriteTimeUtc -ge (Get-Item -LiteralPath $frameworkWorkerDllPath).LastWriteTimeUtc)
 }
-else {
-    $frameworkWorkerDirectory
+
+if (-not $runtimeWorkerIsCurrent) {
+    throw "Current win-x64 processing worker output is required for full-audio fixture execution."
 }
+
+foreach ($nativePayloadFile in @("sherpa-onnx-c-api.dll", "onnxruntime.dll")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $runtimeWorkerDirectory $nativePayloadFile) -PathType Leaf)) {
+        throw "Current win-x64 processing worker is missing required CPU diarization native payload."
+    }
+}
+
+$workerDirectory = $runtimeWorkerDirectory
 $workerAppHostPath = Join-Path $workerDirectory "MeetingRecorder.ProcessingWorker.exe"
 $workerDllPath = Join-Path $workerDirectory "MeetingRecorder.ProcessingWorker.dll"
 $workerArguments = @()
