@@ -61,6 +61,7 @@ What it does:
 - runs the safe serial build/test flow through `scripts\Test-All.ps1`
 - builds the installer assets through `scripts\Build-Installer.ps1`
 - publishes the WPF shell as a loose self-contained apphost plus `MeetingRecorder.App.dll`, `.deps.json`, and `.runtimeconfig.json` when the release is self-contained, while leaving `AppPlatform.Deployment.Cli`, `MeetingRecorder.ProcessingWorker`, scripts, and `MeetingRecorder.product.json` as external bundle assets
+- explicitly sets `UseAppHost=true` for every portable publish, so inherited build properties cannot silently omit required stable apphosts
 - copies the full `MeetingRecorder.ProcessingWorker` publish output into the portable bundle, including `MeetingRecorder.Core.dll` plus the worker `.deps.json` and `.runtimeconfig.json`, so the worker can still publish queued sessions after install/update
 - stages `AppPlatform.Deployment.Cli` into the portable bundle so the script wrappers and in-app updater can delegate install/apply work to one canonical executable
 - emits `bundle-integrity.json` into the portable bundle so the shared deployment CLI can validate required files before promoting a bundle

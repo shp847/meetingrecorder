@@ -261,7 +261,7 @@ internal static class Program
                 _ = TryWriteHelperProgress(request.ProgressPath, progress);
             };
             var result = await provider.ApplySpeakerLabelsAsync(request.AudioPath, request.TranscriptSegments, CancellationToken.None);
-            await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result));
+            await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(LocalDiarizationHelperResult.From(result)));
             return 0;
         }
         catch (Exception exception)

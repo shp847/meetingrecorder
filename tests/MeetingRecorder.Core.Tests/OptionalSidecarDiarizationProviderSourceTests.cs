@@ -123,6 +123,24 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.Empty(appHost.ArgumentList);
     }
 
+    [Fact]
+    public void BoundedWorker_Helper_Result_RoundTrips_Without_Ambiguous_Constructors()
+    {
+        var expected = new DiarizationResult(
+            [new TranscriptSegment(TimeSpan.Zero, TimeSpan.FromSeconds(1), null, "text")],
+            false,
+            "no labels");
+
+        var serialized = JsonSerializer.Serialize(LocalDiarizationHelperResult.From(expected), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var restored = JsonSerializer.Deserialize<LocalDiarizationHelperResult>(serialized, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(restored);
+        var roundTripped = restored.ToDiarizationResult();
+        Assert.Equal(expected.AppliedSpeakerLabels, roundTripped.AppliedSpeakerLabels);
+        Assert.Equal(expected.Message, roundTripped.Message);
+        Assert.Equal(expected.Segments, roundTripped.Segments);
+    }
+
     [Theory]
     [InlineData("Unable to load sherpa-onnx-c-api.dll", "native_runtime")]
     [InlineData("Sherpa model asset is unavailable", "model_or_asset")]

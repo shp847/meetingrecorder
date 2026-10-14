@@ -504,6 +504,7 @@ public sealed class InstallerScriptTests
         Assert.DoesNotContain("<PublishSingleFile", appProjectContents, StringComparison.Ordinal);
         Assert.DoesNotContain("<IncludeAllContentForSelfExtract", appProjectContents, StringComparison.Ordinal);
         Assert.DoesNotContain("<IncludeNativeLibrariesForSelfExtract", appProjectContents, StringComparison.Ordinal);
+        Assert.Contains("-p:UseAppHost=true", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.App.dll", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.App.deps.json", scriptContents, StringComparison.Ordinal);
         Assert.Contains("MeetingRecorder.App.runtimeconfig.json", scriptContents, StringComparison.Ordinal);
