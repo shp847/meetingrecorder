@@ -474,6 +474,25 @@ function Compare-CandidateReport {
     $regressed = @($fixtureComparisons | Where-Object { $_.status -eq "regressed" })
     $protectedRegressions = @($regressed | Where-Object { $ProtectedCategories -contains $_.category })
     $improvedCategories = @($improved | Select-Object -ExpandProperty category -Unique)
+    $baselineCoveredProtectedCategories = @(
+        ConvertTo-Array $BaselineReport.results |
+            Where-Object {
+                $ProtectedCategories -contains [string]$_.category -and
+                [string]$_.speakerCountStatus -notin @("dry_run", "skipped", "missing_data", "timed_out", "failed")
+            } |
+            ForEach-Object { [string]$_.category } |
+            Sort-Object -Unique)
+    $candidateCoveredProtectedCategories = @(
+        ConvertTo-Array $CandidateReport.results |
+            Where-Object {
+                $ProtectedCategories -contains [string]$_.category -and
+                [string]$_.speakerCountStatus -notin @("dry_run", "skipped", "missing_data", "timed_out", "failed")
+            } |
+            ForEach-Object { [string]$_.category } |
+            Sort-Object -Unique)
+    $missingProtectedCategories = @($ProtectedCategories | Where-Object {
+            $_ -notin $baselineCoveredProtectedCategories -or $_ -notin $candidateCoveredProtectedCategories
+        })
     $evidenceCount = @($fixtureComparisons | Where-Object {
             $_.status -ne "missing_baseline" -and
             $_.baselineSpeakerCountStatus -notin @("dry_run", "skipped", "missing_data") -and
@@ -485,6 +504,9 @@ function Compare-CandidateReport {
     }
     elseif ($protectedRegressions.Count -gt 0) {
         "rejected_protected_regression"
+    }
+    elseif ($missingProtectedCategories.Count -gt 0) {
+        "insufficient_protected_coverage"
     }
     elseif ($evidenceCount -eq 0) {
         "insufficient_evidence"
@@ -503,6 +525,7 @@ function Compare-CandidateReport {
         improvedCategories = $improvedCategories
         regressionCount = $regressed.Count
         protectedRegressionCount = $protectedRegressions.Count
+        missingProtectedCategories = $missingProtectedCategories
         falseAutoApplyCount = $candidateMetrics.falseAutoApplyCount
         comparableEvidenceCount = $evidenceCount
         fixtureComparisons = $fixtureComparisons

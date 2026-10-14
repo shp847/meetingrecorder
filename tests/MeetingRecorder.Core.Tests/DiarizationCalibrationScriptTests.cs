@@ -285,7 +285,11 @@ public sealed class DiarizationCalibrationScriptTests
             var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Calibration report was empty.");
             Assert.Equal("keep_current_defaults", (string?)report["recommendation"]?["action"]);
             Assert.Equal(2, report["runs"]?.AsArray().Count);
-            Assert.Single(report["comparisons"]?.AsArray() ?? []);
+            var comparison = Assert.Single(report["comparisons"]?.AsArray() ?? []);
+            Assert.Equal("insufficient_protected_coverage", (string?)comparison?["promotionStatus"]);
+            Assert.Contains(
+                comparison?["missingProtectedCategories"]?.AsArray() ?? [],
+                category => string.Equals((string?)category, "hybrid-shared-mic", StringComparison.Ordinal));
             Assert.Equal(1, (int?)report["runs"]?[0]?["metrics"]?["aggregateEvidence"]?["sampleSize"]);
             Assert.True((bool?)report["governance"]?["metadataOnly"]);
             Assert.True((bool?)report["governance"]?["humanReviewRequired"]);
