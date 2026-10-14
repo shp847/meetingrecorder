@@ -19,6 +19,11 @@ internal static class Program
             return await RunDirectMlProbeAsync(args);
         }
 
+        if (HasArgument(args, "--probe-diarization-cpu"))
+        {
+            return await RunCpuDiarizationProbeAsync(args);
+        }
+
         if (HasArgument(args, "--probe-transcription-cli"))
         {
             return await RunExternalProviderProbeAsync(args, ProviderProbeKind.Transcription);
@@ -143,6 +148,28 @@ internal static class Program
                 message: "DirectML probe failed.",
                 logger);
             Console.Error.WriteLine("DirectML probe failed.");
+            return 2;
+        }
+    }
+
+    private static async Task<int> RunCpuDiarizationProbeAsync(IReadOnlyList<string> args)
+    {
+        var configPath = TryGetOption(args, "--config") ?? AppDataPaths.GetConfigPath();
+        var logger = new FileLogWriter(AppDataPaths.GetGlobalLogPath());
+
+        try
+        {
+            var configStore = new AppConfigStore(configPath);
+            var config = await configStore.LoadOrCreateAsync();
+            var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
+            LocalSpeakerDiarizationProvider.ProbeCpu(config.DiarizationAssetPath, diarizationThreadCount, logger);
+            Console.WriteLine("CPU speaker-labeling probe succeeded.");
+            return 0;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.Log($"CPU speaker-labeling probe failed safely: {exception.GetType().Name}");
+            Console.Error.WriteLine("CPU speaker-labeling probe failed.");
             return 2;
         }
     }

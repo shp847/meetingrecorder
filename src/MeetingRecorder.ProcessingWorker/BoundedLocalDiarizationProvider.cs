@@ -46,7 +46,12 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         using var process = StartHelper(requestPath, resultPath);
         var helperErrorTask = process.StandardError.ReadToEndAsync();
         using var pollingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var pollingTask = PollProgressAsync(progressPath, process, pollingCts.Token);
+        string? lastObservedPhase = null;
+        var pollingTask = PollProgressAsync(
+            progressPath,
+            process,
+            pollingCts.Token,
+            progress => lastObservedPhase = progress.Phase);
         Publish("Launching helper", null, 0, null, null, null, "Starting bounded native speaker labeling.");
 
         try
@@ -75,7 +80,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             var helperError = await helperErrorTask;
             if (process.ExitCode != 0 || !File.Exists(resultPath))
             {
-                throw new InvalidOperationException($"Local speaker-labeling helper failed ({ClassifyHelperFailure(helperError)}).");
+                throw new InvalidOperationException($"Local speaker-labeling helper failed ({ClassifyHelperFailure(helperError, lastObservedPhase)}).");
             }
 
             var serializedResult = await File.ReadAllTextAsync(resultPath, cancellationToken);
@@ -128,7 +133,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Unable to start the local speaker-labeling helper.");
     }
 
-    internal static string ClassifyHelperFailure(string? error)
+    internal static string ClassifyHelperFailure(string? error, string? observedPhase = null)
     {
         if (string.IsNullOrWhiteSpace(error))
         {
@@ -164,7 +169,9 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         if (error.Contains("model", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("asset", StringComparison.OrdinalIgnoreCase))
         {
-            return "model_or_asset";
+            return string.Equals(observedPhase, "Native inference", StringComparison.Ordinal)
+                ? "native_inference_model_or_asset"
+                : "model_or_asset";
         }
 
         if (error.Contains("sherpa", StringComparison.OrdinalIgnoreCase) ||
@@ -221,7 +228,11 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         startInfo.ArgumentList.Add(entryAssemblyPath);
     }
 
-    private async Task PollProgressAsync(string progressPath, Process process, CancellationToken cancellationToken)
+    private async Task PollProgressAsync(
+        string progressPath,
+        Process process,
+        CancellationToken cancellationToken,
+        Action<DiarizationProgress>? onProgress)
     {
         DiarizationProgress? lastProgress = null;
         while (!cancellationToken.IsCancellationRequested && !process.HasExited)
@@ -234,6 +245,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
                     if (parsed is not null && parsed != lastProgress)
                     {
                         lastProgress = parsed;
+                        onProgress?.Invoke(parsed);
                         Publish(parsed.Phase, parsed.ExecutionProvider, parsed.Attempt, parsed.AttemptCount, parsed.InputDuration, parsed.InputBytes, parsed.Detail, parsed.WorkingSetBytes);
                     }
                 }

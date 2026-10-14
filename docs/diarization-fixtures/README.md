@@ -52,6 +52,12 @@ runner. A timeout writes a metadata-only `timed_out` result, terminates only the
 fixture child process tree, and drains rather than exposing its console output.
 Use `0` (the default) to rely on the worker's existing processing limit.
 
+Before a long CPU full-audio run, the worker supports the local
+`--probe-diarization-cpu --config <fixture-config>` preflight. It initializes
+the configured CPU diarizer and model bundle without reading fixture audio; it
+prints only a fixed success or failure result. A successful preflight proves
+asset/runtime admission, not speaker-count quality or real-audio inference.
+
 Run a metadata-only candidate comparison:
 
 ```powershell

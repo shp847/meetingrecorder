@@ -93,6 +93,19 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
     }
 
     [Fact]
+    public void Worker_Exposes_Cpu_Diarization_Model_Probe_Command()
+    {
+        var program = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "Program.cs"));
+        var provider = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "OptionalSidecarDiarizationProvider.cs"));
+
+        Assert.Contains("--probe-diarization-cpu", program, StringComparison.Ordinal);
+        Assert.Contains("ProbeCpu", program, StringComparison.Ordinal);
+        Assert.Contains("CPU speaker-labeling probe succeeded.", program, StringComparison.Ordinal);
+        Assert.Contains("internal static void ProbeCpu", provider, StringComparison.Ordinal);
+        Assert.Contains("\"cpu\"", provider, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BoundedWorker_Helper_Preserves_Dotnet_Entry_Assembly()
     {
         var dotnetHost = new ProcessStartInfo("C:\\Program Files\\dotnet\\dotnet.exe");
@@ -126,6 +139,14 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
     public void BoundedWorker_Helper_Redacts_Diagnostic_To_Fixed_Class(string error, string expected)
     {
         Assert.Equal(expected, BoundedLocalDiarizationProvider.ClassifyHelperFailure(error));
+    }
+
+    [Fact]
+    public void BoundedWorker_Helper_Uses_Observed_Native_Phase_For_Model_Diagnostics()
+    {
+        Assert.Equal(
+            "native_inference_model_or_asset",
+            BoundedLocalDiarizationProvider.ClassifyHelperFailure("native model failure", "Native inference"));
     }
 
     [Fact]

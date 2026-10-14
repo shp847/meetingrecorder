@@ -348,7 +348,7 @@ function Get-SafeDiarizationFailureKind {
         return "not_failed"
     }
 
-    if ($Message -match 'helper failed \((?<kind>(?:(?:audio_preparation|helper_startup|native_inference|runtime_status)_(?:file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown)|no_diagnostic|native_runtime|model_or_asset|input_or_file|unknown))\)') {
+    if ($Message -match 'helper failed \((?<kind>(?:(?:audio_preparation|helper_startup|native_inference|runtime_status)_(?:file_not_found|directory_not_found|access_denied|not_supported|audio_prepare_output|audio_inspect|audio_normalize_input|audio_open_decoder|audio_convert|invalid_operation|invalid_data|invalid_argument|format|type_load|naudio|com|external|io|cancelled|other|unknown|model_or_asset)|no_diagnostic|native_runtime|model_or_asset|input_or_file|unknown))\)') {
         return "helper_" + $Matches.kind
     }
 
