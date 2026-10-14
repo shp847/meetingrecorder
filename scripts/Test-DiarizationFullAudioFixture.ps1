@@ -256,15 +256,14 @@ if (-not $runtimeWorkerIsCurrent) {
     # contract, so refresh the RID output rather than falling back to it.
     $dotnetCommand = Get-Command dotnet -ErrorAction Stop
     $workerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj"
-    & $dotnetCommand.Source build $workerProjectPath -c $Configuration -r win-x64 -p:UseAppHost=false -p:NuGetAudit=false
+    & $dotnetCommand.Source build $workerProjectPath -t:Rebuild -c $Configuration -r win-x64 -p:UseAppHost=false -p:NuGetAudit=false
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to build the win-x64 processing worker required for full-audio fixture execution."
     }
 
-    $runtimeWorkerIsCurrent =
-        (Test-Path -LiteralPath $runtimeWorkerDllPath -PathType Leaf) -and
-        (Test-Path -LiteralPath $frameworkWorkerDllPath -PathType Leaf) -and
-        ((Get-Item -LiteralPath $runtimeWorkerDllPath).LastWriteTimeUtc -ge (Get-Item -LiteralPath $frameworkWorkerDllPath).LastWriteTimeUtc)
+    # A successful forced rebuild is the freshness authority. File timestamps
+    # are only the trigger: copy operations may preserve an older timestamp.
+    $runtimeWorkerIsCurrent = Test-Path -LiteralPath $runtimeWorkerDllPath -PathType Leaf
 }
 
 if (-not $runtimeWorkerIsCurrent) {

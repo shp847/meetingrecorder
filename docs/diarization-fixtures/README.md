@@ -42,7 +42,10 @@ The full-audio runner also supports a locally built worker launched through
 `dotnet Worker.dll`; bounded native labeling relaunches that same assembly.
 During `-NoBuild` replay, an older runtime-specific worker output is ignored in
 favor of the newer framework build, preventing a stale publish from masking
-current fixture behavior.
+current fixture behavior. If the runtime-specific output must be refreshed,
+the runner forces a `win-x64` rebuild and treats successful rebuild completion
+as freshness authority: copy operations may preserve timestamps, so timestamps
+are a refresh trigger rather than post-build proof.
 
 For bounded full-audio evidence, pass `-FixtureTimeoutSeconds` to the catalog
 runner. A timeout writes a metadata-only `timed_out` result, terminates only the

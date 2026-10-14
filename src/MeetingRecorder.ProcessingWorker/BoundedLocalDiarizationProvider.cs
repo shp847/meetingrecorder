@@ -161,17 +161,17 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             return "runtime_status_" + GetSafeHelperExceptionKind(error);
         }
 
+        if (error.Contains("model", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("asset", StringComparison.OrdinalIgnoreCase))
+        {
+            return "model_or_asset";
+        }
+
         if (error.Contains("sherpa", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("native", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("dll", StringComparison.OrdinalIgnoreCase))
         {
             return "native_runtime";
-        }
-
-        if (error.Contains("model", StringComparison.OrdinalIgnoreCase) ||
-            error.Contains("asset", StringComparison.OrdinalIgnoreCase))
-        {
-            return "model_or_asset";
         }
 
         if (error.Contains("file", StringComparison.OrdinalIgnoreCase) ||
