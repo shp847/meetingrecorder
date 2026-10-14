@@ -606,6 +606,26 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions().DefaultClusteringThreshold);
     }
 
+    internal static void ProbeCpu(
+        string diarizationAssetPath,
+        int threadCount,
+        FileLogWriter logger)
+    {
+        var assetCatalogService = new DiarizationAssetCatalogService();
+        var installedAssets = assetCatalogService.InspectInstalledAssets(diarizationAssetPath);
+        if (!installedAssets.IsReady)
+        {
+            throw new InvalidOperationException("Speaker-labeling assets are not ready.");
+        }
+
+        using var diarizer = CreateDiarizer(
+            installedAssets,
+            "cpu",
+            Math.Max(1, threadCount),
+            DiarizationCalibrationEnvironment.LoadDiarizationThresholdOptions().DefaultClusteringThreshold);
+        logger.Log("CPU speaker-labeling probe completed successfully.");
+    }
+
     internal static bool IsSherpaDirectMlRuntimeEnabled()
     {
         var sherpaNativePath = Path.Combine(AppContext.BaseDirectory, "sherpa-onnx-c-api.dll");
