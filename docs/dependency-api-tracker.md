@@ -160,3 +160,12 @@ risks, and verification commands. Do not record secrets or local key material.
   separately gated. Verification: focused deployment/fixture tests, worker
   build output native-payload check, full-audio fixture rerun, and passing
   installer rebuild.
+- 2026-10-13: The full-audio fixture runner now forces a `win-x64` worker
+  rebuild when the framework build is newer, because copied runtime outputs can
+  retain an older timestamp. A successful rebuild is the freshness authority;
+  native DLL presence remains required before dispatch. A deliberately
+  triggered private three-plus-speaker refresh reached a terminal path-free
+  timeout with no residual child process, rather than the former stale-worker
+  contract rejection. Helper diagnostics now classify model/asset failures
+  ahead of generic native-runtime wording. Focused fixture and helper-source
+  tests passed in an isolated build root while the live app remained running.

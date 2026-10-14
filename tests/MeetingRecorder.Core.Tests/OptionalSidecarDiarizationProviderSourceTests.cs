@@ -112,6 +112,7 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
 
     [Theory]
     [InlineData("Unable to load sherpa-onnx-c-api.dll", "native_runtime")]
+    [InlineData("Sherpa model asset is unavailable", "model_or_asset")]
     [InlineData("Diarization model bundle is unavailable", "model_or_asset")]
     [InlineData("Could not find part of path", "input_or_file")]
     [InlineData("helper_failure phase=audio_preparation exception=file_not_found", "audio_preparation_file_not_found")]
