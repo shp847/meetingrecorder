@@ -19,6 +19,20 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
     private const string SherpaDirectMlEnabledMarker = "Failed to enable DirectML";
     private const string UnsupportedClusterMessagePrefix =
         "Speaker labeling skipped because clustering detected";
+    private static readonly TimeSpan MaximumNativeInferenceWindowDuration = TimeSpan.FromMinutes(5);
+
+    internal sealed record NativeInferenceWindow(int Index, int StartSample, int SampleCount)
+    {
+        public int EndSample => checked(StartSample + SampleCount);
+    }
+
+    internal sealed record NormalizedWindowSpeakerTurns(
+        IReadOnlyList<SpeakerTurn> SpeakerTurns,
+        IReadOnlyDictionary<string, string> SpeakerIdMap);
+
+    private sealed record SpeakerTurnProcessingResult(
+        DiarizationClusterSelection Selection,
+        IReadOnlyList<SpeakerVoiceSample>? VoiceSamples);
 
     private readonly string _diarizationAssetPath;
     private readonly InferenceAccelerationPreference _accelerationPreference;
@@ -289,21 +303,23 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             ?? throw new InvalidOperationException("The diarization segmentation model file name could not be resolved.");
         var embeddingModelFileName = Path.GetFileName(installedAssets.EmbeddingModelPath)
             ?? throw new InvalidOperationException("The diarization embedding model file name could not be resolved.");
-        var clusterSelection = ProcessSpeakerTurns(
+        var turnProcessing = ProcessSpeakerTurns(
             preparedAudioPath,
             installedAssets,
             providerName,
             _threadCount,
             _clusterSelectionService,
             cancellationToken);
+        var clusterSelection = turnProcessing.Selection;
         var baseDiagnosticMessage = CombineDiagnosticMessages(
             diagnosticMessage,
             clusterSelection.DiagnosticMessage);
 
         var speakerTurns = clusterSelection.Candidate.SpeakerTurns;
-        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = Array.Empty<SpeakerVoiceSample>();
+        IReadOnlyList<SpeakerVoiceSample> speakerVoiceSamples = turnProcessing.VoiceSamples ?? Array.Empty<SpeakerVoiceSample>();
         string? voiceProfileDiagnosticMessage = null;
-        if (speakerTurns.Count > 0 &&
+        if (turnProcessing.VoiceSamples is null &&
+            speakerTurns.Count > 0 &&
             ShouldExtractSpeakerVoiceSamples(clusterSelection))
         {
             try
@@ -485,7 +501,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             .ToArray();
     }
 
-    private DiarizationClusterSelection ProcessSpeakerTurns(
+    private SpeakerTurnProcessingResult ProcessSpeakerTurns(
         string preparedAudioPath,
         DiarizationAssetInstallStatus installedAssets,
         string provider,
@@ -499,6 +515,22 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
         ReportProgress("Loading samples", provider, 0, null, reader.TotalTime, reader.Length, "Loading prepared PCM into one exact-size buffer.");
         var samples = ReadSamples(reader, cancellationToken);
         ReportProgress("Samples loaded", provider, 0, null, reader.TotalTime, reader.Length, "Starting native diarization inference.");
+        var windows = BuildNativeInferenceWindows(samples.Length, reader.WaveFormat.SampleRate);
+        if (windows.Count > 1)
+        {
+            return ProcessSpeakerTurnsInBoundedWindows(
+                preparedAudioPath,
+                samples,
+                reader.WaveFormat.SampleRate,
+                windows,
+                installedAssets,
+                provider,
+                threadCount,
+                thresholdOptions.DefaultClusteringThreshold,
+                clusterSelectionService,
+                cancellationToken);
+        }
+
         var candidates = new List<DiarizationClusterCandidate>();
 
         var defaultCandidate = BuildClusterCandidate(
@@ -515,7 +547,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
         if (defaultSelection.IsAutomaticSpeakerCountSupported &&
             defaultSelection.SupportedSpeakerCount <= selectionOptions.MaximumPreferredAutomaticSpeakerCount)
         {
-            return defaultSelection;
+            return new SpeakerTurnProcessingResult(defaultSelection, null);
         }
 
         var thresholds = defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount
@@ -540,11 +572,150 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             if (defaultSelection.SupportedSpeakerCount < DiarizationClusterSelectionService.MinimumAutomaticSpeakerCount &&
                 DiarizationClusterSelectionService.IsAutomaticSpeakerCountSupported(clusterSelectionService.CountSupportedSpeakers(candidate)))
             {
-                return clusterSelectionService.SelectBestCandidate(candidates);
+                return new SpeakerTurnProcessingResult(clusterSelectionService.SelectBestCandidate(candidates), null);
             }
         }
 
-        return clusterSelectionService.SelectBestCandidate(candidates);
+        return new SpeakerTurnProcessingResult(clusterSelectionService.SelectBestCandidate(candidates), null);
+    }
+
+    private SpeakerTurnProcessingResult ProcessSpeakerTurnsInBoundedWindows(
+        string preparedAudioPath,
+        float[] samples,
+        int preparedAudioSampleRate,
+        IReadOnlyList<NativeInferenceWindow> windows,
+        DiarizationAssetInstallStatus installedAssets,
+        string provider,
+        int threadCount,
+        float clusteringThreshold,
+        DiarizationClusterSelectionService clusterSelectionService,
+        CancellationToken cancellationToken)
+    {
+        var chunkedTurns = new List<SpeakerTurn>();
+        foreach (var window in windows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                "Native inference",
+                provider,
+                window.Index + 1,
+                windows.Count,
+                TimeSpan.FromSeconds(window.SampleCount / (double)Math.Max(1, preparedAudioSampleRate)),
+                null,
+                "Processing bounded native window.");
+            var windowTurns = ProcessSpeakerTurnsAtThreshold(
+                samples.AsSpan(window.StartSample, window.SampleCount).ToArray(),
+                preparedAudioSampleRate,
+                installedAssets,
+                provider,
+                threadCount,
+                clusteringThreshold);
+            chunkedTurns.AddRange(NamespaceWindowSpeakerTurns(windowTurns, window, preparedAudioSampleRate));
+        }
+
+        var rawCandidate = new DiarizationClusterCandidate(clusteringThreshold, chunkedTurns);
+        IReadOnlyList<SpeakerVoiceSample> rawVoiceSamples;
+        try
+        {
+            rawVoiceSamples = _speakerEmbeddingService.ExtractSpeakerVoiceSamples(
+                preparedAudioPath,
+                rawCandidate.SpeakerTurns,
+                installedAssets,
+                provider,
+                threadCount,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Bounded speaker-window embedding extraction skipped safely with {exception.GetType().Name}.");
+            return new SpeakerTurnProcessingResult(
+                clusterSelectionService.SelectBestCandidate([rawCandidate]),
+                Array.Empty<SpeakerVoiceSample>());
+        }
+
+        var merged = _speakerClusterMergeService.MergeSimilarClusters(rawCandidate.SpeakerTurns, rawVoiceSamples);
+        var mergedVoiceSamples = RemapVoiceSamples(rawVoiceSamples, merged.SpeakerIdMap);
+        var normalized = NormalizeWindowSpeakerTurns(merged.SpeakerTurns);
+        var normalizedVoiceSamples = RemapVoiceSamples(mergedVoiceSamples, normalized.SpeakerIdMap);
+        var selection = clusterSelectionService.SelectBestCandidate(
+            [new DiarizationClusterCandidate(clusteringThreshold, normalized.SpeakerTurns)]);
+        var selectedSpeakerIds = selection.Candidate.SpeakerTurns
+            .Select(static turn => turn.SpeakerId)
+            .ToHashSet(StringComparer.Ordinal);
+        return new SpeakerTurnProcessingResult(
+            selection,
+            normalizedVoiceSamples.Where(sample => selectedSpeakerIds.Contains(sample.SpeakerId)).ToArray());
+    }
+
+    internal static IReadOnlyList<NativeInferenceWindow> BuildNativeInferenceWindows(int sampleCount, int sampleRate)
+    {
+        if (sampleCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleCount));
+        }
+
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        var maximumWindowSamples = checked((int)Math.Round(MaximumNativeInferenceWindowDuration.TotalSeconds * sampleRate));
+        var windows = new List<NativeInferenceWindow>();
+        for (var startSample = 0; startSample < sampleCount; startSample += maximumWindowSamples)
+        {
+            windows.Add(new NativeInferenceWindow(
+                windows.Count,
+                startSample,
+                Math.Min(maximumWindowSamples, sampleCount - startSample)));
+        }
+
+        return windows;
+    }
+
+    internal static IReadOnlyList<SpeakerTurn> NamespaceWindowSpeakerTurns(
+        IReadOnlyList<SpeakerTurn> turns,
+        NativeInferenceWindow window,
+        int sampleRate)
+    {
+        ArgumentNullException.ThrowIfNull(turns);
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        var offset = TimeSpan.FromSeconds(window.StartSample / (double)sampleRate);
+        return turns
+            .Where(static turn => turn.End > turn.Start && !string.IsNullOrWhiteSpace(turn.SpeakerId))
+            .Select(turn => new SpeakerTurn(
+                $"chunk_{window.Index:000}_{turn.SpeakerId}",
+                turn.Start + offset,
+                turn.End + offset))
+            .ToArray();
+    }
+
+    internal static NormalizedWindowSpeakerTurns NormalizeWindowSpeakerTurns(IReadOnlyList<SpeakerTurn> turns)
+    {
+        ArgumentNullException.ThrowIfNull(turns);
+        var speakerIdMap = turns
+            .Where(static turn => turn.End > turn.Start && !string.IsNullOrWhiteSpace(turn.SpeakerId))
+            .GroupBy(static turn => turn.SpeakerId, StringComparer.Ordinal)
+            .OrderBy(group => group.Min(static turn => turn.Start))
+            .ThenByDescending(group => group.Sum(static turn => (turn.End - turn.Start).Ticks))
+            .ThenBy(static group => group.Key, StringComparer.Ordinal)
+            .Select((group, index) => new { group.Key, NormalizedId = $"speaker_{index:00}" })
+            .ToDictionary(static item => item.Key, static item => item.NormalizedId, StringComparer.Ordinal);
+        return new NormalizedWindowSpeakerTurns(
+            turns
+                .Where(static turn => turn.End > turn.Start && !string.IsNullOrWhiteSpace(turn.SpeakerId))
+                .Select(turn => speakerIdMap.TryGetValue(turn.SpeakerId, out var speakerId)
+                    ? turn with { SpeakerId = speakerId }
+                    : turn)
+                .OrderBy(static turn => turn.Start)
+                .ThenBy(static turn => turn.End)
+                .ThenBy(static turn => turn.SpeakerId, StringComparer.Ordinal)
+                .ToArray(),
+            speakerIdMap);
     }
 
     private DiarizationClusterCandidate BuildClusterCandidate(

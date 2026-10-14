@@ -202,6 +202,51 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.DoesNotContain("private-meeting-title", path, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Worker_Bounds_Long_Native_Inference_Into_Contiguous_Windows()
+    {
+        const int sampleRate = 16_000;
+        var windows = LocalSpeakerDiarizationProvider.BuildNativeInferenceWindows(
+            sampleRate * (5 * 60 * 2 + 3),
+            sampleRate);
+
+        Assert.Collection(
+            windows,
+            window => Assert.Equal(new LocalSpeakerDiarizationProvider.NativeInferenceWindow(0, 0, sampleRate * 5 * 60), window),
+            window => Assert.Equal(new LocalSpeakerDiarizationProvider.NativeInferenceWindow(1, sampleRate * 5 * 60, sampleRate * 5 * 60), window),
+            window => Assert.Equal(new LocalSpeakerDiarizationProvider.NativeInferenceWindow(2, sampleRate * 5 * 60 * 2, sampleRate * 3), window));
+        Assert.Equal(windows[0].EndSample, windows[1].StartSample);
+        Assert.Equal(windows[1].EndSample, windows[2].StartSample);
+    }
+
+    [Fact]
+    public void Worker_Namespaces_And_Normalizes_Window_Local_Speaker_Ids()
+    {
+        var namespaced = LocalSpeakerDiarizationProvider.NamespaceWindowSpeakerTurns(
+            [
+                new SpeakerTurn("speaker_00", TimeSpan.Zero, TimeSpan.FromSeconds(10)),
+                new SpeakerTurn("speaker_01", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20)),
+            ],
+            new LocalSpeakerDiarizationProvider.NativeInferenceWindow(2, 16_000 * 300 * 2, 16_000 * 300),
+            16_000);
+
+        Assert.Equal("chunk_002_speaker_00", namespaced[0].SpeakerId);
+        Assert.Equal(TimeSpan.FromMinutes(10), namespaced[0].Start);
+        Assert.Equal("chunk_002_speaker_01", namespaced[1].SpeakerId);
+
+        var normalized = LocalSpeakerDiarizationProvider.NormalizeWindowSpeakerTurns(
+            [
+                namespaced[1],
+                namespaced[0],
+                new SpeakerTurn("chunk_003_speaker_01", TimeSpan.FromMinutes(11), TimeSpan.FromMinutes(12)),
+            ]);
+
+        Assert.Equal("speaker_00", normalized.SpeakerIdMap["chunk_002_speaker_00"]);
+        Assert.Equal("speaker_01", normalized.SpeakerIdMap["chunk_002_speaker_01"]);
+        Assert.Equal("speaker_02", normalized.SpeakerIdMap["chunk_003_speaker_01"]);
+        Assert.Equal(new[] { "speaker_00", "speaker_01", "speaker_02" }, normalized.SpeakerTurns.Select(turn => turn.SpeakerId));
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]
