@@ -6,7 +6,7 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-11. **Total sprints:** 124. **Done:** 62.
+**Ledger reconciled:** 2026-10-14. **Total sprints:** 126. **Done:** 64.
 **Ready:** 34. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
@@ -62,6 +62,47 @@ independently testable, and preserve roadmap ordering unless a ledger row
 records an approved dependency change.
 
 ## Status Ledger
+
+### Browser Meeting Title Repair
+
+| Sprint | Status | Evidence or first expansion focus |
+| --- | --- | --- |
+| 1 — Edge Browser Title Normalization And Historical Repair | `Done` | 2026-10-14: Google Meet detection now removes an Edge workspace shell only when its exact suffix is present; a versioned published-artifact repair renames matched Meeting Recorder artifacts and updates their manifest, markdown, and JSON metadata together. |
+| 2 — Recording-Time Meetings Catalog Availability | `Done` | 2026-10-14: visible Meetings now loads its lightweight catalog during recording while full cleanup and attendee enrichment remain deferred. |
+
+#### Sprint 1 — Edge Browser Title Normalization And Historical Repair
+
+### Implementation Record
+
+- Status: `Done`
+- User outcome: active Google Meet recordings and prior published meetings show the meeting title, not `Meet -`, tab-count, workspace, or Microsoft Edge shell text.
+- Scope / non-goals: deterministic Google Meet/Edge title cleanup only; no audio, transcript body, capture, calendar, or other browser changes.
+- Dependencies and decisions: the exact ` - Microsoft Edge` suffix is required before any title is changed. Historical updates reuse the catalog rename contract so each artifact family stays aligned.
+- Authoritative files and contracts: `MeetingTitleNormalizer`, `MeetingDetectionEvaluator`, `PublishedMeetingRepairService`, and `MeetingOutputCatalogService.RenameMeetingAsync`.
+- Implementation slices:
+  1. Normalize Edge-decorated Google Meet window captions before detection persists them.
+  2. Run a one-time v9 historical repair for matching published Google Meet artifacts.
+- Tests and rendered checks: focused normalizer, evaluator, detector, and published-repair contracts passed 86/86; the broader Core runner retained unrelated installer/apphost fixture failures after its title-specific contracts passed.
+- Documentation / installer / release work: decision log records source and package boundary; installer rebuild follows focused verification.
+- Evidence and date: 2026-10-14: focused 86/86 passed; installer ZIP SHA-256 `DE0D48E5221C77BFF1B647E86F78B1F260CCBC9AEE8DDD1CC853077B5DB6103B` and MSI SHA-256 `765F123B56B8BEA12CBD18D60326AEB5BCC5F983FDCBBF8BF6B32A4499281233` built successfully.
+- Remaining gap or next action: deploy/restart the packaged build when the user is ready; startup runs the v9 historical repair once.
+
+#### Sprint 2 — Recording-Time Meetings Catalog Availability
+
+### Implementation Record
+
+- Status: `Done`
+- User outcome: opening Meetings during an active recording shows the existing meeting library instead of remaining indefinitely at `Loading meetings...`.
+- Scope / non-goals: allow the lightweight catalog baseline only. Cleanup suggestions, attendee enrichment, and other full-refresh work remain deferred until recording stops.
+- Dependencies and decisions: a visible Meetings tab is the required user intent. Refreshes while Home or Settings is visible remain deferred to protect foreground controls.
+- Authoritative files and contracts: `MainWindowInteractionLogic.ShouldDeferMeetingRefresh`, `MainWindow.RequestMeetingRefreshForCurrentContext`, and the fast/full catalog refresh contract.
+- Implementation slices:
+  1. Permit a visible Meetings catalog refresh while capture is active.
+  2. Downgrade full requests to fast during capture so expensive inspection does not compete with recording.
+- Tests and rendered checks: `MainWindowInteractionLogicTests` and `MainWindowStartupSourceTests` passed 168/168 focused contracts.
+- Documentation / installer / release work: installer rebuilt for this runtime change.
+- Evidence and date: 2026-10-14: focused 168/168 passed; installer ZIP SHA-256 `610B055D6D874DED7E85C1307891D2BFB1978BAB0D7C6B2244F11D0FFFC06866` and MSI SHA-256 `753A3E1813623942DE08256BBDD49A58E2E400FCC3B108D5BA64F18CCD05116B` built successfully.
+- Remaining gap or next action: deploy/restart the packaged build when the user is ready.
 
 ### Whole-App UX Simplification And Control Balance
 
@@ -207,6 +248,7 @@ records an approved dependency change.
 | 6 — Crash Root Cause And Callback Topology Hardening | `Done` | 2026-09-29: bounded metadata-only callback dispatcher now covers refresh, automatic/manual transitions, startup/recovery maintenance, and abrupt-loss trace proof; package and smoke gates pass. |
 | 7 — Heuristic Retirement And Rollout Controls | `Partial` | 2026-09-29: versioned local matcher/heal rollout settings preserve legacy opt-ins and fail invalid values closed; direct-authority retirement, review-only healer, and contribution gate remain. |
 | 8 — Packaging, Validation, And Support Readiness | `Ready` | Continuity acceptance matrix, clean package/recovery smoke, decision-log/support evidence, and authorized release boundary defined below. |
+| 8A — Durable Fragment Prevention And Auto-Repair | `Ready` | 2026-10-14: prioritize bounded matcher grace, v2 legacy migration, five-minute continuity-chain cleanup, and receipt-backed automatic repair before Sprint 8 package qualification. |
 
 ### Production Capture, Transcription, And Cleanup Remediation
 

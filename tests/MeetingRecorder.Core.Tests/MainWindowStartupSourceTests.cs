@@ -260,6 +260,8 @@ public sealed class MainWindowStartupSourceTests
         Assert.Contains("_hasPendingMeetingsRefreshRequest = true;", helperBlock);
         Assert.Contains("SchedulePendingMeetingsRefreshIfReady();", helperBlock);
         Assert.Contains("_hasCompletedFullMeetingsRefresh = false;", helperBlock);
+        Assert.Contains("var effectiveRefreshMode = _recordingCoordinator.IsRecording", helperBlock);
+        Assert.Contains("? MeetingRefreshMode.Fast", helperBlock);
         Assert.Contains("private void SchedulePendingMeetingsRefreshIfReady()", source);
     }
 

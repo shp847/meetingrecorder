@@ -227,7 +227,7 @@ public partial class App : Application
         if (publishedMeetingRepairResult is { AlreadyApplied: false } repairResult)
         {
             _logger?.Log(
-                $"Published meeting repair completed: mergedSplitPairCount={repairResult.MergedSplitPairCount}; archivedArtifactCount={repairResult.ArchivedArtifactCount}; queuedSpeakerLabelRepairCount={repairResult.QueuedSpeakerLabelRepairCount}; archiveDirectory='{repairResult.ArchiveDirectory}'.");
+                $"Published meeting repair completed: mergedSplitPairCount={repairResult.MergedSplitPairCount}; archivedArtifactCount={repairResult.ArchivedArtifactCount}; queuedSpeakerLabelRepairCount={repairResult.QueuedSpeakerLabelRepairCount}; repairedBrowserTitleCount={repairResult.RepairedBrowserTitleCount}; archiveDirectory='{repairResult.ArchiveDirectory}'.");
             if (repairResult.QueuedSpeakerLabelRepairCount > 0 && MainWindow is MainWindow mainWindow)
             {
                 await mainWindow.ResumePendingProcessingAfterMaintenanceAsync(CancellationToken.None);

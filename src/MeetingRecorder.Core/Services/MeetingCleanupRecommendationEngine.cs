@@ -316,7 +316,9 @@ internal static class MeetingCleanupRecommendationEngine
                 canApplyAutomatically: confidence == MeetingCleanupConfidence.High,
                 suggestedTitle: ChoosePreferredTitle(previous.Meeting.Title, current.Meeting.Title),
                 suggestedSplitPoint: null,
-                reasonCode: "merge-split-pair"));
+                reasonCode: confidence == MeetingCleanupConfidence.High
+                    ? "continuity-repair-v2-split-pair"
+                    : "merge-split-pair"));
         }
 
         return recommendations;
@@ -368,7 +370,7 @@ internal static class MeetingCleanupRecommendationEngine
                 canApplyAutomatically: true,
                 preferredTitle,
                 suggestedSplitPoint: null,
-                reasonCode: "merge-teams-recording-playback-fragments"));
+                reasonCode: "continuity-repair-v2-teams-playback"));
         }
 
         return recommendations;
@@ -402,29 +404,29 @@ internal static class MeetingCleanupRecommendationEngine
                 continue;
             }
 
-            if (!CanMergePlaybackGroup(members))
+            foreach (var chain in SplitContinuousTitleChains(members))
             {
-                continue;
+                if (chain.Count < 2 || !CanMergePlaybackGroup(chain))
+                {
+                    continue;
+                }
+                foreach (var member in chain)
+                {
+                    reservedStems.Add(member.Meeting.Stem);
+                }
+                var preferredTitle = ChoosePreferredTitle(chain.Select(member => member.Meeting.Title));
+                recommendations.Add(BuildRecommendation(
+                    chain[0].Meeting.Stem,
+                    MeetingCleanupAction.Merge,
+                    MeetingCleanupConfidence.High,
+                    "Merge historical Teams continuity fragments",
+                    $"{chain.Count} same-day Teams fragments share a non-generic title and are separated by no more than five minutes.",
+                    chain.Select(member => member.Meeting.Stem).ToArray(),
+                    canApplyAutomatically: true,
+                    preferredTitle,
+                    suggestedSplitPoint: null,
+                    reasonCode: "continuity-repair-v2-historical-title"));
             }
-
-            foreach (var member in members)
-            {
-                reservedStems.Add(member.Meeting.Stem);
-            }
-
-            var preferredTitle = ChoosePreferredTitle(members.Select(member => member.Meeting.Title));
-
-            recommendations.Add(BuildRecommendation(
-                members[0].Meeting.Stem,
-                MeetingCleanupAction.Merge,
-                MeetingCleanupConfidence.High,
-                "Merge historical Teams playback fragments",
-                $"{members.Length} same-day Teams fragments have the exact non-generic title '{members[0].Meeting.Title}' and are ready to consolidate.",
-                members.Select(member => member.Meeting.Stem).ToArray(),
-                canApplyAutomatically: true,
-                preferredTitle,
-                suggestedSplitPoint: null,
-                reasonCode: "merge-historical-same-day-teams-title"));
         }
 
         return recommendations;
@@ -501,7 +503,7 @@ internal static class MeetingCleanupRecommendationEngine
             canApplyAutomatically: true,
             preferredTitle,
             suggestedSplitPoint: null,
-            reasonCode: "merge-historical-google-meet-continuity-fragments"));
+            reasonCode: "continuity-repair-v2-google-meet-title"));
     }
 
     private static bool AreGoogleMeetFragmentsContinuous(
@@ -515,6 +517,24 @@ internal static class MeetingCleanupRecommendationEngine
 
         var gap = current.Meeting.StartedAtUtc - (previous.Meeting.StartedAtUtc + previousDuration);
         return gap >= -MaximumMergeOverlap && gap <= MaximumGoogleMeetFragmentMergeGap;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<MeetingInspectionRecord>> SplitContinuousTitleChains(
+        IReadOnlyList<MeetingInspectionRecord> members)
+    {
+        var chains = new List<IReadOnlyList<MeetingInspectionRecord>>();
+        var chain = new List<MeetingInspectionRecord>();
+        foreach (var member in members)
+        {
+            if (chain.Count > 0 && !AreGoogleMeetFragmentsContinuous(chain[^1], member))
+            {
+                chains.Add(chain.ToArray());
+                chain.Clear();
+            }
+            chain.Add(member);
+        }
+        if (chain.Count > 0) chains.Add(chain.ToArray());
+        return chains;
     }
 
     private static bool CanMergePlaybackGroup(IReadOnlyList<MeetingInspectionRecord> members)

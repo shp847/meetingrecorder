@@ -13,6 +13,36 @@ internal static partial class MeetingTitleNormalizer
     [GeneratedRegex("\\s+and\\s+\\d+\\s+more\\s+pages?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BrowserTabCountPattern();
 
+    public static string NormalizeGoogleMeetWindowTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return string.Empty;
+        }
+
+        var normalized = CollapseWhitespace(title.Trim());
+        const string edgeSuffix = " - Microsoft Edge";
+        if (!normalized.EndsWith(edgeSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        normalized = normalized[..^edgeSuffix.Length].TrimEnd();
+        foreach (var profileSuffix in new[] { " - Work", " - Personal" })
+        {
+            if (normalized.EndsWith(profileSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = normalized[..^profileSuffix.Length].TrimEnd();
+                break;
+            }
+        }
+
+        normalized = BrowserTabCountPattern().Replace(normalized, string.Empty).Trim();
+        return normalized.StartsWith("Meet - ", StringComparison.OrdinalIgnoreCase)
+            ? normalized["Meet - ".Length..].Trim()
+            : normalized;
+    }
+
     public static string NormalizeForComparison(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))

@@ -111,11 +111,22 @@ public sealed class ContinuityCutoverPolicy
     {
         var fingerprint = input.ObservedIdentity?.Fingerprint ?? "missing-identity";
         var existing = input.ExistingGrace;
-        if (existing is not null &&
-            existing.SessionRevision == input.SessionRevision &&
-            string.Equals(existing.EvidenceFingerprint, fingerprint, StringComparison.Ordinal) &&
-            nowUtc <= existing.DeadlineUtc)
+        if (existing is not null && existing.SessionRevision == input.SessionRevision)
         {
+            // Unknown observations must consume one session-bounded grace window.
+            // Device/window churn can change their fingerprint; allowing either a
+            // changed fingerprint or an expired receipt to start another window
+            // turns bounded grace into an endless recording.
+            if (nowUtc > existing.DeadlineUtc)
+            {
+                return new ContinuityCutoverDecision(
+                    ContinuityLifecycleAction.Stop,
+                    MeetingIdentityVerdict.Unknown,
+                    "unknown-identity-grace-expired",
+                    null,
+                    true);
+            }
+
             return new ContinuityCutoverDecision(
                 ContinuityLifecycleAction.Grace,
                 MeetingIdentityVerdict.Unknown,

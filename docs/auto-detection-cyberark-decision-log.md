@@ -107,6 +107,13 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Timeline
 
+### 2026-10-14: Continuity fragmentation remediation
+
+- Trigger: production evidence showed repeated automatic stop/start boundaries while endpoint selection changed, including same-title restarts within five minutes.
+- Source change: bound matcher Unknown grace to one five-minute receipt per session; expiry now stops rather than creating another grace window. Continuity rollout migration v2 promotes legacy installs to matcher continuity and ongoing healing without changing `AutoDetectEnabled`.
+- Cleanup change: only high-confidence, complete, five-minute continuity-chain merges carrying the `continuity-repair-v2` reason may bypass automatic mutation containment. Archive, generic merge, and transcript regeneration remain held.
+- Boundary: no process lookup, per-app audio-session enumeration, or UI Automation was added. Source/test/package/installed/live evidence remain separate; package and live validation are pending.
+
 ### 2026-10-11: Single-instance activation recovery
 
 - Trigger: installed Meeting Recorder process `25648` was responsive with a valid visible window handle, but the window was minimized and a `Local\\MeetingRecorder.Activate` signal did not acknowledge within three seconds. The foreground request therefore could not restore the user-visible app through normal single-instance activation.
@@ -942,6 +949,20 @@ As of 2026-07-20, executable-policy facts are:
 - Live-machine result: after confirming no active capture, the prior app was stopped, the managed install was refreshed at `C:\Users\psharm04\MeetingRecorder`, and the app relaunched responsive. Its local continuity matcher was enabled (`Matcher` rollout) for future identity-proven continuation. No live meeting was recorded for this check.
 - Outcome: retained in source and installed locally.
 - Follow-up / removal condition: keep automatic output-folder intake disabled permanently; only restore any automatic intake with a separate configured Inbox and durable receipt boundary.
+
+### 2026-10-14: Google Meet Edge-title normalization and historical repair
+- Trigger / observed symptom: Google Meet recordings could persist the raw Edge window caption, including the `Meet -` prefix and `and N more pages - Work - Microsoft Edge` shell text.
+- Exact runtime or CyberArk evidence: the live app screenshot showed a Google Meet page header with a clean meeting name while the Session title field held the decorated Edge caption. No CyberArk, audio-probe, executable, signing, or install-location event occurred.
+- Hypothesis: confirmed. Detection normalized that caption only for identity comparison; the evaluator then persisted the uncleaned signal value, and the existing one-time published repair had no title-only migration.
+- APIs or signals added/removed: no detector signal, audio probe, executable naming, signing, or install-location behavior changed. Google Meet session-title projection now removes only the exact Edge shell and a v9 repair applies the same rule to existing Meeting Recorder artifact families.
+- Positive behavior expected: matching current and historical Google Meet titles retain the meeting name while their internal audio, markdown, JSON, manifest, and filename references remain aligned.
+- False-positive/security boundary retained: a title is unchanged unless it has the exact ` - Microsoft Edge` suffix. No audio samples, transcript body text, calendar data, or non-Google-Meet records are modified.
+- Tests added and results: focused normalizer, detection-evaluator, detector, and published-repair contracts passed 86/86. The broader Core runner retained pre-existing installer/apphost fixture failures after title-specific contracts passed.
+- Package status: `Build-Installer.ps1` completed. ZIP SHA-256 `DE0D48E5221C77BFF1B647E86F78B1F260CCBC9AEE8DDD1CC853077B5DB6103B`; MSI SHA-256 `765F123B56B8BEA12CBD18D60326AEB5BCC5F983FDCBBF8BF6B32A4499281233`.
+- Installed hash/version/signature status: not changed by source repair.
+- Live-machine result: the user-owned live app remains running; no live recording was stopped or altered for this source change.
+- Outcome: retained in source and packaged; deployment is intentionally deferred while the user-owned live app is running.
+- Follow-up / removal condition: retain the narrow Edge signature; expand only with a separately observed browser-title format and a regression test.
 
 ## Entry Template
 

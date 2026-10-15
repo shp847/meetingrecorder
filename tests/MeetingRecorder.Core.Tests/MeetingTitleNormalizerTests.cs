@@ -5,6 +5,16 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class MeetingTitleNormalizerTests
 {
     [Theory]
+    [InlineData("Meet - Project planning and 17 more pages - Work - Microsoft Edge", "Project planning")]
+    [InlineData("Meet - Project planning - Microsoft Edge", "Project planning")]
+    [InlineData("Meet - Project planning", "Meet - Project planning")]
+    [InlineData("Project planning - Work - Microsoft Edge", "Project planning")]
+    public void NormalizeGoogleMeetWindowTitle_Removes_Only_Verified_Edge_Decoration(string title, string expected)
+    {
+        Assert.Equal(expected, MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(title));
+    }
+
+    [Theory]
     [InlineData("Meet - dbh-eecx-utm and 11 more pages - Work - Microsoft Edge")]
     [InlineData("Meet - dbh-eecx-utm and 1 more page - Work - Microsoft Edge")]
     [InlineData("Meet - dbh-eecx-utm - Camera and microphone recording - Memory usage - 437 MB")]

@@ -15,6 +15,16 @@ public static class AutomaticMutationContainmentPolicy
          MeetingCleanupAction.Merge or
          MeetingCleanupAction.RegenerateTranscript);
 
+    public static bool CanDispatch(MeetingCleanupRecommendation recommendation)
+    {
+        ArgumentNullException.ThrowIfNull(recommendation);
+        return recommendation.Action == MeetingCleanupAction.Merge
+            ? recommendation.CanApplyAutomatically &&
+              recommendation.Confidence == MeetingCleanupConfidence.High &&
+              recommendation.ReasonCode.StartsWith("continuity-repair-v2", StringComparison.Ordinal)
+            : CanDispatch(recommendation.Action);
+    }
+
     public static string GetReason(MeetingCleanupAction action) => CanDispatch(action)
         ? "This automatic action is outside the containment hold."
         : "Automatic archive, merge, and transcript regeneration are paused while recovery evidence is established. Review and apply this action manually if appropriate.";

@@ -11,7 +11,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
     private const int CurrentSummaryModelProxyContractMigrationVersion = 1;
     private const int CurrentMeetingsViewPresetMigrationVersion = 1;
     private const int CurrentBacklogAccelerationProfileMigrationVersion = 1;
-    private const int CurrentContinuityRolloutMigrationVersion = 1;
+    private const int CurrentContinuityRolloutMigrationVersion = 2;
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -186,7 +186,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             AutoDetectSecurityPromptMigrationApplied = true,
             MeetingIdentityContinuityEnabled = true,
             ContinuityEngineRolloutMode = ContinuityEngineRolloutMode.Matcher,
-            OngoingMeetingHealRolloutMode = OngoingMeetingHealRolloutMode.Off,
+            OngoingMeetingHealRolloutMode = OngoingMeetingHealRolloutMode.Live,
             ContinuityRolloutMigrationVersion = CurrentContinuityRolloutMigrationVersion,
             CalendarTitleFallbackEnabled = false,
             MeetingAttendeeEnrichmentEnabled = true,
@@ -340,12 +340,11 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             OngoingMeetingHealRolloutMode.Off);
         if (continuityRolloutMigrationVersion < CurrentContinuityRolloutMigrationVersion)
         {
-            continuityEngineRolloutMode = config.MeetingIdentityContinuityEnabled
-                ? ContinuityEngineRolloutMode.Matcher
-                : ContinuityEngineRolloutMode.Legacy;
-            ongoingMeetingHealRolloutMode = config.OngoingMeetingAutoHealEnabled
-                ? OngoingMeetingHealRolloutMode.Live
-                : OngoingMeetingHealRolloutMode.Off;
+            // v2 fixes bounded matcher grace and makes the proven continuity
+            // path the installed default. Automatic recording itself remains
+            // governed by AutoDetectEnabled.
+            continuityEngineRolloutMode = ContinuityEngineRolloutMode.Matcher;
+            ongoingMeetingHealRolloutMode = OngoingMeetingHealRolloutMode.Live;
             continuityRolloutMigrationVersion = CurrentContinuityRolloutMigrationVersion;
         }
         var diarizationAccelerationSecurityPromptMigrationApplied =

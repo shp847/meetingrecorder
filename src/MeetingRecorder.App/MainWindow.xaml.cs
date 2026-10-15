@@ -1300,15 +1300,19 @@ public partial class MainWindow : Window
         string reason,
         string? selectedStem = null)
     {
-        if (refreshMode == MeetingRefreshMode.Full)
+        var effectiveRefreshMode = _recordingCoordinator.IsRecording &&
+            refreshMode == MeetingRefreshMode.Full
+            ? MeetingRefreshMode.Fast
+            : refreshMode;
+        if (effectiveRefreshMode == MeetingRefreshMode.Full)
         {
             _hasCompletedFullMeetingsRefresh = false;
         }
 
         _hasPendingMeetingsRefreshRequest = true;
-        if (refreshMode > _pendingMeetingsRefreshMode)
+        if (effectiveRefreshMode > _pendingMeetingsRefreshMode)
         {
-            _pendingMeetingsRefreshMode = refreshMode;
+            _pendingMeetingsRefreshMode = effectiveRefreshMode;
         }
 
         if (!string.IsNullOrWhiteSpace(selectedStem))
@@ -1321,7 +1325,7 @@ public partial class MainWindow : Window
             _recordingCoordinator.IsRecording,
             isMeetingsTabSelected);
         _logger.Log(
-            $"Queued meeting list refresh request. reason='{reason}', mode='{refreshMode}', " +
+            $"Queued meeting list refresh request. reason='{reason}', requestedMode='{refreshMode}', mode='{effectiveRefreshMode}', " +
             $"selectedStem='{selectedStem ?? string.Empty}', deferred={shouldDefer}, " +
             $"isRecording={_recordingCoordinator.IsRecording}, meetingsTabSelected={isMeetingsTabSelected}.");
         UpdateMeetingsRefreshStateText();
@@ -13174,7 +13178,7 @@ public partial class MainWindow : Window
 
     private bool IsScheduledIncrementalRecommendation(MeetingCleanupRecommendation recommendation)
     {
-        if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation.Action))
+        if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation))
         {
             _meetingCleanupWorkLedgerService.RecordContainmentHold(
                 recommendation.Fingerprint,
@@ -13429,13 +13433,31 @@ public partial class MainWindow : Window
 
                 var orderedMergeMeetings = mergeMeetings.Select(meeting => meeting!).ToArray();
 
-                await _meetingCleanupExecutionService.MergeMeetingsAsync(
+                var mergeResult = await _meetingCleanupExecutionService.MergeMeetingsAsync(
                     orderedMergeMeetings,
                     recommendation.SuggestedTitle ?? orderedMergeMeetings[0].Title,
                     _liveConfig.Current.AudioOutputDir,
                     _liveConfig.Current.TranscriptOutputDir,
                     archiveDirectory,
                     cancellationToken);
+                if (!string.IsNullOrWhiteSpace(cleanupFingerprint) &&
+                    recommendation.ReasonCode.StartsWith("continuity-repair-v2", StringComparison.Ordinal))
+                {
+                    // Receipt is local, immutable audit context for an automatic
+                    // continuity merge. Source artifacts are retained in the
+                    // merge archive by the shared executor.
+                    var receiptPath = Path.Combine(mergeResult.ArchiveDirectory, $"{cleanupFingerprint}.continuity-repair.json");
+                    var receipt = new
+                    {
+                        schemaVersion = 1,
+                        fingerprint = cleanupFingerprint,
+                        reasonCode = recommendation.ReasonCode,
+                        sourceStems = orderedMergeMeetings.Select(meeting => meeting.Stem).ToArray(),
+                        survivingStem = mergeResult.SurvivingStem,
+                        completedAtUtc = DateTimeOffset.UtcNow,
+                    };
+                    await File.WriteAllTextAsync(receiptPath, JsonSerializer.Serialize(receipt), CancellationToken.None);
+                }
                 return;
 
             case MeetingCleanupAction.Rename:

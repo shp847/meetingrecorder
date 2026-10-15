@@ -66,7 +66,7 @@ public sealed class MeetingDetectionEvaluator
                 normalized.StartsWith("meet -", StringComparison.Ordinal))
             {
                 meetConfidence += signal.Weight;
-                title ??= CleanTitle(signal.Value, "Google Meet");
+                title ??= MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(signal.Value);
             }
         }
 

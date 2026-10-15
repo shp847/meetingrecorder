@@ -38,7 +38,8 @@ public sealed class ContinuityCutoverPolicyTests
         Assert.Equal(ContinuityLifecycleAction.Grace, first.Action);
         Assert.Equal(first.GraceReceipt?.DeadlineUtc, second.GraceReceipt?.DeadlineUtc);
         Assert.Equal(2, second.GraceReceipt?.ObservationCount);
-        Assert.NotEqual(first.GraceReceipt?.DeadlineUtc, expired.GraceReceipt?.DeadlineUtc);
+        Assert.Equal(ContinuityLifecycleAction.Stop, expired.Action);
+        Assert.Null(expired.GraceReceipt);
     }
 
     [Fact]

@@ -5,8 +5,8 @@ namespace MeetingRecorder.Core.Services;
 
 public static partial class PublishedMeetingRepairService
 {
-    private const string RepairMarkerFileName = "published-meeting-repair-v8.done";
-    private const string RepairArchiveDirectoryName = "published-meeting-repair-v8";
+    private const string RepairMarkerFileName = "published-meeting-repair-v9.done";
+    private const string RepairArchiveDirectoryName = "published-meeting-repair-v9";
     private const string EchoRepairReportFileName = "echo-repair-report.txt";
     private const string EchoRepairPublishMessage = "Published audio was republished after one-time echo repair v6.";
     private static readonly TimeSpan MaximumRepeatedSplitChainGap = TimeSpan.FromMinutes(5);
@@ -52,6 +52,12 @@ public static partial class PublishedMeetingRepairService
         var archivedEditorArtifactCount = 0;
         var archivedShortGenericTeamsMeetingCount = 0;
         var queuedSpeakerLabelRepairCount = 0;
+        var repairedBrowserTitleCount = await RepairPublishedGoogleMeetBrowserTitlesAsync(
+            catalog,
+            audioOutputDir,
+            transcriptOutputDir,
+            workDir,
+            cancellationToken);
         var echoRepairResult = EchoRepairPassResult.Empty;
 
         foreach (var splitChain in FindRepeatedSplitChains(meetings))
@@ -182,7 +188,7 @@ public static partial class PublishedMeetingRepairService
         Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
         await File.WriteAllTextAsync(
             markerPath,
-            $"mergedSplitPairCount={mergedSplitPairCount};archivedMeetingCount={archivedMeetingCount};archivedEditorArtifactCount={archivedEditorArtifactCount};archivedShortGenericTeamsMeetingCount={archivedShortGenericTeamsMeetingCount};queuedSpeakerLabelRepairCount={queuedSpeakerLabelRepairCount};echoRepairedCount={echoRepairResult.RepairedCount};echoSkippedCount={echoRepairResult.SkippedCount}",
+            $"mergedSplitPairCount={mergedSplitPairCount};archivedMeetingCount={archivedMeetingCount};archivedEditorArtifactCount={archivedEditorArtifactCount};archivedShortGenericTeamsMeetingCount={archivedShortGenericTeamsMeetingCount};queuedSpeakerLabelRepairCount={queuedSpeakerLabelRepairCount};repairedBrowserTitleCount={repairedBrowserTitleCount};echoRepairedCount={echoRepairResult.RepairedCount};echoSkippedCount={echoRepairResult.SkippedCount}",
             cancellationToken);
 
         return new PublishedMeetingRepairResult(
@@ -193,7 +199,45 @@ public static partial class PublishedMeetingRepairService
             archivedEditorArtifactCount,
             archivedShortGenericTeamsMeetingCount,
             false,
-            queuedSpeakerLabelRepairCount);
+            queuedSpeakerLabelRepairCount,
+            repairedBrowserTitleCount);
+    }
+
+    private static async Task<int> RepairPublishedGoogleMeetBrowserTitlesAsync(
+        MeetingOutputCatalogService catalog,
+        string audioOutputDir,
+        string transcriptOutputDir,
+        string workDir,
+        CancellationToken cancellationToken)
+    {
+        var repairedCount = 0;
+        var meetings = catalog.ListMeetings(audioOutputDir, transcriptOutputDir, workDir)
+            .Where(meeting => meeting.Platform == MeetingPlatform.GoogleMeet)
+            .OrderBy(meeting => meeting.StartedAtUtc)
+            .ThenBy(meeting => meeting.Stem, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var meeting in meetings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var repairedTitle = MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(meeting.Title);
+            if (string.Equals(repairedTitle, meeting.Title, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            await catalog.RenameMeetingAsync(
+                audioOutputDir,
+                transcriptOutputDir,
+                meeting.Stem,
+                repairedTitle,
+                workDir,
+                cancellationToken);
+            repairedCount++;
+        }
+
+        return repairedCount;
     }
 
     private static bool HasPreviousEchoRepairMarker(string repairsDirectory)
@@ -708,4 +752,5 @@ public sealed record PublishedMeetingRepairResult(
     int ArchivedEditorArtifactCount,
     int ArchivedShortGenericTeamsMeetingCount,
     bool AlreadyApplied,
-    int QueuedSpeakerLabelRepairCount = 0);
+    int QueuedSpeakerLabelRepairCount = 0,
+    int RepairedBrowserTitleCount = 0);

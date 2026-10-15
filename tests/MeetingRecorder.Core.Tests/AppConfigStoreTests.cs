@@ -62,8 +62,8 @@ public sealed class AppConfigStoreTests
         Assert.True(config.AutoDetectEnabled);
         Assert.True(config.AutoDetectSecurityPromptMigrationApplied);
         Assert.Equal(ContinuityEngineRolloutMode.Matcher, config.ContinuityEngineRolloutMode);
-        Assert.Equal(OngoingMeetingHealRolloutMode.Off, config.OngoingMeetingHealRolloutMode);
-        Assert.Equal(1, config.ContinuityRolloutMigrationVersion);
+        Assert.Equal(OngoingMeetingHealRolloutMode.Live, config.OngoingMeetingHealRolloutMode);
+        Assert.Equal(2, config.ContinuityRolloutMigrationVersion);
         Assert.True(config.MeetingIdentityContinuityEnabled);
         Assert.False(config.CalendarTitleFallbackEnabled);
         Assert.True(config.MeetingAttendeeEnrichmentEnabled);
@@ -146,7 +146,7 @@ public sealed class AppConfigStoreTests
     }
 
     [Fact]
-    public async Task SaveAsync_Migrates_Legacy_Continuity_OptIns_And_Fails_Closed_For_Invalid_Rollout_Values()
+    public async Task SaveAsync_Migrates_Legacy_Continuity_To_Durable_Defaults_And_Fails_Closed_For_Invalid_Rollout_Values()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var store = new AppConfigStore(
@@ -157,8 +157,8 @@ public sealed class AppConfigStoreTests
         var migrated = await store.SaveAsync(defaults with
         {
             ContinuityRolloutMigrationVersion = 0,
-            MeetingIdentityContinuityEnabled = true,
-            OngoingMeetingAutoHealEnabled = true,
+            MeetingIdentityContinuityEnabled = false,
+            OngoingMeetingAutoHealEnabled = false,
         });
         var safe = await store.SaveAsync(migrated with
         {

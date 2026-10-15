@@ -551,7 +551,10 @@ internal static class MainWindowInteractionLogic
         // A catalog refresh still applies an ItemsSource and workspace view on the
         // WPF dispatcher. Keep that work out of Home and Settings, where it can
         // otherwise stall foreground controls for large meeting histories.
-        return isRecording || !isMeetingsTabSelected;
+        // When Meetings is visible, a fast catalog refresh is safe during
+        // recording. The caller downgrades the expensive full scan until capture
+        // stops, rather than leaving the only meeting-library surface blank.
+        return !isMeetingsTabSelected;
     }
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(

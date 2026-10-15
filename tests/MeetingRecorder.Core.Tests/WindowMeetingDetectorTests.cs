@@ -898,7 +898,7 @@ public sealed class WindowMeetingDetectorTests
         Assert.NotNull(result);
         Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
         Assert.True(result.ShouldStart);
-        Assert.Equal("Meet - vwt-vyrn-bas and 14 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Equal("vwt-vyrn-bas", result.SessionTitle);
         Assert.Null(result.DetectedAudioSource);
     }
 
@@ -928,7 +928,7 @@ public sealed class WindowMeetingDetectorTests
         Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
         Assert.False(result.ShouldStart);
         Assert.True(result.ShouldKeepRecording);
-        Assert.Equal("Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Equal("jbz-oabg-rpe", result.SessionTitle);
         Assert.Null(result.DetectedAudioSource);
     }
 

@@ -307,7 +307,7 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
 
         var recommendation = Assert.Single(MeetingCleanupRecommendationEngine.Analyze(inspections));
 
-        Assert.Equal("merge-teams-recording-playback-fragments", recommendation.ReasonCode);
+        Assert.Equal("continuity-repair-v2-teams-playback", recommendation.ReasonCode);
         Assert.True(recommendation.CanApplyAutomatically);
         Assert.Equal(3, recommendation.RelatedStems.Count);
     }
@@ -357,7 +357,7 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
-    public async Task Analyze_Merges_Historical_SameDay_Exact_NonGeneric_Teams_Titles()
+    public async Task Analyze_Does_Not_Merge_Historical_Teams_Titles_Across_Large_Gap()
     {
         var firstStem = "2026-08-15_140000_teams_alignbridge";
         var secondStem = "2026-08-15_180000_teams_alignbridge";
@@ -370,15 +370,13 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         await File.WriteAllTextAsync(firstMarkdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
         await File.WriteAllTextAsync(secondMarkdownPath, "# Alignbridge" + Environment.NewLine + Environment.NewLine + "## Transcript");
 
-        var recommendation = Assert.Single(MeetingCleanupRecommendationEngine.Analyze(
+        var recommendations = MeetingCleanupRecommendationEngine.Analyze(
         [
             CreateInspection(firstStem, "Alignbridge - sandbox access and demo", DateTimeOffset.Parse("2026-08-15T14:00:00-04:00"), MeetingPlatform.Teams, TimeSpan.FromSeconds(2), firstAudioPath, firstMarkdownPath),
             CreateInspection(secondStem, "Alignbridge - sandbox access and demo", DateTimeOffset.Parse("2026-08-15T18:00:00-04:00"), MeetingPlatform.Teams, TimeSpan.FromSeconds(2), secondAudioPath, secondMarkdownPath),
-        ]));
+        ]);
 
-        Assert.Equal("merge-historical-same-day-teams-title", recommendation.ReasonCode);
-        Assert.True(recommendation.CanApplyAutomatically);
-        Assert.Equal([firstStem, secondStem], recommendation.RelatedStems);
+        Assert.DoesNotContain(recommendations, recommendation => recommendation.Action == MeetingCleanupAction.Merge);
     }
 
     [Fact]
@@ -428,7 +426,7 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
 
         var recommendation = Assert.Single(
             MeetingCleanupRecommendationEngine.Analyze(inspections),
-            item => item.ReasonCode == "merge-historical-google-meet-continuity-fragments");
+            item => item.ReasonCode == "continuity-repair-v2-google-meet-title");
 
         Assert.True(recommendation.CanApplyAutomatically);
         Assert.Equal(stems, recommendation.RelatedStems);
