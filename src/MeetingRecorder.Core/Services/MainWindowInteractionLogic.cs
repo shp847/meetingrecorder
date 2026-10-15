@@ -2309,14 +2309,19 @@ internal static class MainWindowInteractionLogic
         int blockedSummaryCount,
         int disabledCleanupCount,
         int manualReviewCount,
-        string schedulerDetail)
+        string schedulerDetail,
+        int containmentHeldCount = 0,
+        int retryableFailedCount = 0)
     {
+        var reviewDetail = containmentHeldCount > 0 || retryableFailedCount > 0
+            ? $" {containmentHeldCount} destructive item(s) stay manual; {retryableFailedCount} failed safe item(s) can be retried from review."
+            : string.Empty;
         return
             $"Found {recommendationCount} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
             $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
             $"{eligibleNowCount} eligible now; {queuedCount} queued; {processingCount} processing. " +
             $"{disabledSpeakerLabelCount} speaker-label fix(es) disabled; {blockedSummaryCount} summary fix(es) blocked; " +
-            $"{disabledCleanupCount} other safe fix(es) disabled; {manualReviewCount} need manual review. {schedulerDetail}";
+            $"{disabledCleanupCount} other safe fix(es) disabled; {manualReviewCount} need manual review.{reviewDetail} {schedulerDetail}";
     }
 
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)

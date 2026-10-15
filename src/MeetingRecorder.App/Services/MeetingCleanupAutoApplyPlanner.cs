@@ -12,12 +12,14 @@ internal sealed record CleanupSchedulerStatus(
     int DisabledSpeakerLabelCount,
     int BlockedSummaryCount,
     int DisabledCleanupCount,
-    int ManualReviewCount)
+    int ManualReviewCount,
+    int ContainmentHeldCount = 0,
+    int RetryableFailedCount = 0)
 {
     public string PrimaryBlocker => DisabledSpeakerLabelCount > 0
         ? $"{DisabledSpeakerLabelCount} speaker-label fix(es) are disabled by the work plan."
         : BlockedSummaryCount > 0
-            ? $"{BlockedSummaryCount} summary fix(es) need an enabled, validated provider."
+            ? $"{BlockedSummaryCount} summary fix(es) need a current provider health check in Settings."
             : DisabledCleanupCount > 0
                 ? $"{DisabledCleanupCount} safe cleanup fix(es) are disabled by the work plan."
                 : string.Empty;
@@ -57,7 +59,8 @@ internal static class MeetingCleanupAutoApplyPlanner
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
         MeetingCleanupWorkLedgerService ledger,
         Func<MeetingCleanupRecommendation, bool> isScheduled,
-        Func<MeetingCleanupRecommendation, bool> isSummaryBlocked)
+        Func<MeetingCleanupRecommendation, bool> isSummaryBlocked,
+        IReadOnlySet<string>? activeManifestPaths = null)
     {
         ArgumentNullException.ThrowIfNull(isScheduled);
         ArgumentNullException.ThrowIfNull(isSummaryBlocked);
@@ -68,12 +71,25 @@ internal static class MeetingCleanupAutoApplyPlanner
             .ToArray();
         var ledgerEntries = ledger.GetEntries()
             .ToArray();
+        var activePaths = activeManifestPaths ?? new HashSet<string>(StringComparer.Ordinal);
+        var processingEntries = ledgerEntries
+            .Where(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing)
+            .ToArray();
+        var activeEntries = processingEntries
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.ManifestPath) && activePaths.Contains(entry.ManifestPath))
+            .ToArray();
+        var containmentHeld = ledgerEntries.Count(entry =>
+            entry.State == CleanupWorkState.ManualReview &&
+            (entry.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript));
+        var retryableFailed = ledgerEntries.Count(entry =>
+            entry.State == CleanupWorkState.Failed &&
+            (entry.Action is MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary));
 
         return new CleanupSchedulerStatus(
             safeFixes.Count,
             GetEligibleScheduledRecommendations(recommendations, ledger, isScheduled).Count,
-            ledgerEntries.Count(entry => entry.State == CleanupWorkState.Queued),
-            ledgerEntries.Count(entry => entry.State == CleanupWorkState.Processing),
+            processingEntries.Count(entry => entry.State == CleanupWorkState.Queued && !activeEntries.Contains(entry)),
+            processingEntries.Count(entry => entry.State == CleanupWorkState.Processing || activeEntries.Contains(entry)),
             pendingSafeFixes.Count(recommendation => IsSpeakerLabelAction(recommendation.Action) && !isScheduled(recommendation)),
             recommendations.Count(recommendation =>
                 recommendation.Action == MeetingCleanupAction.GenerateSummary &&
@@ -81,7 +97,9 @@ internal static class MeetingCleanupAutoApplyPlanner
                 isSummaryBlocked(recommendation)),
             pendingSafeFixes.Count(recommendation =>
                 !IsSpeakerLabelAction(recommendation.Action) && !isScheduled(recommendation)),
-            ledgerEntries.Count(entry => entry.State is CleanupWorkState.ManualReview or CleanupWorkState.Failed));
+            ledgerEntries.Count(entry => entry.State is CleanupWorkState.ManualReview or CleanupWorkState.Failed),
+            containmentHeld,
+            retryableFailed);
     }
 
     public static IReadOnlyList<MeetingCleanupRecommendation> GetNextAutomaticBatch(

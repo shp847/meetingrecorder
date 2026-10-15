@@ -263,6 +263,115 @@ internal sealed class MeetingCleanupWorkLedgerService
         return reconciledCount;
     }
 
+    /// <summary>
+    /// Reconciles durable cleanup receipts with the queue's complete active set.
+    /// A queue status exposes one display item, but several cleanup workers can
+    /// process concurrently. Keep every active receipt truthful without
+    /// guessing a result for unreadable or missing manifests.
+    /// </summary>
+    public async Task<int> ReconcileLiveManifestStatesAsync(
+        SessionManifestStore manifestStore,
+        IReadOnlySet<string>? activeManifestPaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(manifestStore);
+        var activePaths = activeManifestPaths ?? new HashSet<string>(StringComparer.Ordinal);
+        CleanupWorkLedgerEntry[] entries;
+        lock (_gate)
+        {
+            entries = Load().Values
+                .Where(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing)
+                .ToArray();
+        }
+
+        var reconciledCount = 0;
+        foreach (var entry in entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(entry.ManifestPath))
+            {
+                Record(
+                    entry.Fingerprint,
+                    CleanupWorkState.ManualReview,
+                    detail: "Cleanup work has no durable manifest. Review source work before retrying.");
+                reconciledCount++;
+                continue;
+            }
+
+            var manifestPath = entry.ManifestPath;
+            try
+            {
+                var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
+                var targetState = manifest.State switch
+                {
+                    SessionState.Published => CleanupWorkState.Completed,
+                    SessionState.Failed => CleanupWorkState.Failed,
+                    _ when activePaths.Contains(manifestPath) => CleanupWorkState.Processing,
+                    SessionState.Queued => CleanupWorkState.Queued,
+                    _ => entry.State,
+                };
+                if (targetState != entry.State)
+                {
+                    Record(entry.Fingerprint, targetState, manifestPath);
+                    reconciledCount++;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                Record(
+                    entry.Fingerprint,
+                    CleanupWorkState.ManualReview,
+                    manifestPath,
+                    "Cleanup work manifest is unavailable. Review source work before retrying.");
+                reconciledCount++;
+            }
+        }
+
+        return reconciledCount;
+    }
+
+    public int ReleaseFailedSafeWork(IEnumerable<string> fingerprints)
+    {
+        ArgumentNullException.ThrowIfNull(fingerprints);
+        var released = 0;
+        lock (_gate)
+        {
+            foreach (var fingerprint in fingerprints.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal))
+            {
+                if (!Load().TryGetValue(fingerprint.Trim(), out var entry) ||
+                    entry.State != CleanupWorkState.Failed ||
+                    !IsRetryableSafeAction(entry.Action))
+                {
+                    continue;
+                }
+
+                _entries![fingerprint.Trim()] = entry with
+                {
+                    State = CleanupWorkState.Pending,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    Detail = "Explicit retry requested after a prior safe-work failure.",
+                };
+                released++;
+            }
+
+            if (released > 0)
+            {
+                Save();
+            }
+        }
+
+        return released;
+    }
+
+    private static bool IsRetryableSafeAction(MeetingCleanupAction? action) => action is
+        MeetingCleanupAction.GenerateSpeakerLabels or
+        MeetingCleanupAction.RepairSpeakerLabels or
+        MeetingCleanupAction.GenerateSummary;
+
     public void MigrateLegacyEntries(IEnumerable<MeetingCleanupAutoApplyEntry> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);

@@ -112,6 +112,7 @@ public partial class MainWindow : Window
     private readonly TeamsDetectionArbitrator _teamsDetectionArbitrator;
     private readonly ISummarySecretStore _summarySecretStore;
     private readonly SummaryProviderValidationService _summaryProviderValidationService;
+    private readonly SummarySchedulerApprovalService _summarySchedulerApprovalService;
     private readonly PublishedMeetingSummaryService _publishedMeetingSummaryService;
     private readonly HttpClient _summaryProviderHttpClient;
     private readonly ModelProxyClient _summaryModelCatalogClient;
@@ -153,6 +154,7 @@ public partial class MainWindow : Window
     private bool _isRefreshingModelProxySummaryModels;
     private bool _isRefreshingOpenAiSummaryModels;
     private bool _summaryProviderValidationIsCurrent;
+    private int _cleanupLiveLedgerReconciliationInProgress;
     private bool _isSynchronizingSummaryModelSelectors;
     private IReadOnlyList<ModelProxyModelInfo> _modelProxySummaryModels = Array.Empty<ModelProxyModelInfo>();
     private IReadOnlyList<ModelProxyModelInfo> _openAiSummaryModels = Array.Empty<ModelProxyModelInfo>();
@@ -376,6 +378,7 @@ public partial class MainWindow : Window
         _summaryProviderValidationService = new SummaryProviderValidationService(
             summaryChatClient,
             _summaryModelCatalogClient);
+        _summarySchedulerApprovalService = new SummarySchedulerApprovalService();
         _publishedMeetingSummaryService = new PublishedMeetingSummaryService(
             new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient, _summaryModelCatalogClient),
             _manifestStore);
@@ -701,6 +704,7 @@ public partial class MainWindow : Window
             await _meetingCleanupWorkLedgerService.ReconcileTerminalManifestStatesAsync(
                 _manifestStore,
                 _lifetimeCts.Token);
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
             RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler startup");
             await RunExternalAudioImportCycleAsync("startup", _lifetimeCts.Token);
             await RunAutomaticUpdateCycleAsync("startup", AppUpdateCheckTrigger.Startup, _lifetimeCts.Token);
@@ -900,6 +904,7 @@ public partial class MainWindow : Window
         {
             _meetingCleanupWorkLedgerService.RecordProcessingForManifest(snapshot.CurrentManifestPath);
         }
+        ScheduleCleanupLedgerReconciliation(snapshot);
         UpdateProcessingQueueStatusUi();
         UpdateProcessingQueueStatusTimerState();
         UpdateUpdateActionButtons();
@@ -922,6 +927,44 @@ public partial class MainWindow : Window
         ApplyProcessingQueueStatusSnapshot(_processingQueue.GetStatusSnapshot());
         UpdateProcessingQueueStatusUi();
         UpdateProcessingQueueStatusTimerState();
+    }
+
+    private void ScheduleCleanupLedgerReconciliation(ProcessingQueueStatusSnapshot snapshot)
+    {
+        if (IsShutdownRequested ||
+            Interlocked.CompareExchange(ref _cleanupLiveLedgerReconciliationInProgress, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _ = ReconcileCleanupLedgerFromQueueAsync(snapshot);
+    }
+
+    private async Task ReconcileCleanupLedgerFromQueueAsync(ProcessingQueueStatusSnapshot snapshot)
+    {
+        try
+        {
+            await _meetingCleanupWorkLedgerService.ReconcileLiveManifestStatesAsync(
+                _manifestStore,
+                snapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal),
+                _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Shutdown cancels optional status reconciliation.
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Cleanup ledger live reconciliation failed: {exception.GetType().Name}.");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _cleanupLiveLedgerReconciliationInProgress, 0);
+            if (!IsShutdownRequested)
+            {
+                _ = Dispatcher.BeginInvoke(new Action(UpdateMeetingCleanupReviewBanner), DispatcherPriority.Background);
+            }
+        }
     }
 
     private void UpdateProcessingQueueStatusTimerState()
@@ -3466,6 +3509,38 @@ public partial class MainWindow : Window
             _isApplyingSafeMeetingCleanupFixes = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async void RetryFailedSafeMeetingCleanupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (IsMeetingActionInProgress())
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Wait for current meeting work before retrying failed safe work.";
+            return;
+        }
+
+        var recommendationsByFingerprint = _meetingCleanupRecommendations.ToDictionary(
+            recommendation => recommendation.Fingerprint,
+            StringComparer.Ordinal);
+        var retryable = _meetingCleanupWorkLedgerService.GetEntries()
+            .Where(entry => entry.State == CleanupWorkState.Failed &&
+                (entry.Action is MeetingCleanupAction.GenerateSpeakerLabels or
+                    MeetingCleanupAction.RepairSpeakerLabels or
+                    MeetingCleanupAction.GenerateSummary))
+            .Where(entry => recommendationsByFingerprint.TryGetValue(entry.Fingerprint, out var recommendation) &&
+                IsScheduledIncrementalRecommendation(recommendation))
+            .Select(entry => entry.Fingerprint)
+            .ToArray();
+        var released = _meetingCleanupWorkLedgerService.ReleaseFailedSafeWork(retryable);
+        if (released == 0)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "No failed safe work is ready to retry. Check provider and speaker-label setup first.";
+            return;
+        }
+
+        MeetingCleanupRecommendationsStatusTextBlock.Text = $"Queued {released} failed safe item(s) for a fresh readiness check.";
+        AppendActivity($"Released {released} failed safe cleanup item(s) for explicit retry.");
+        await RefreshMeetingListAsync(MeetingRefreshMode.Full);
     }
 
     private async void ApplySelectedMeetingCleanupRecommendationsButton_OnClick(object sender, RoutedEventArgs e)
@@ -6016,6 +6091,10 @@ public partial class MainWindow : Window
                 return;
             }
 
+            await _meetingCleanupWorkLedgerService.ReconcileLiveManifestStatesAsync(
+                _manifestStore,
+                _latestProcessingQueueStatusSnapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal),
+                cancellationToken);
             await ReconcileLegacyCleanupLedgerAsync(records, visibleRecommendations, cancellationToken);
             _meetingCleanupRecommendations = visibleRecommendations;
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
@@ -8930,6 +9009,9 @@ public partial class MainWindow : Window
         ApplySafeMeetingCleanupFixesButton.IsEnabled =
             MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations).Count > 0 &&
             !isMeetingActionInProgress;
+        RetryFailedSafeMeetingCleanupButton.IsEnabled =
+            GetCleanupSchedulerStatus().RetryableFailedCount > 0 &&
+            !isMeetingActionInProgress;
         ReviewMeetingCleanupSuggestionsButton.IsEnabled = !isMeetingActionInProgress;
         _meetingDetailWindow?.SetMaintenanceBusy(isMeetingActionInProgress);
         UpdateMeetingsContextMenuState();
@@ -9954,6 +10036,14 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             _summaryProviderValidationIsCurrent = result.Success;
             _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+            }
+            else
+            {
+                _summarySchedulerApprovalService.Clear();
+            }
             ConfigModelProxyValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(
                 result,
                 UserActionIntent.ValidateLocalSummaryProvider);
@@ -10010,6 +10100,14 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             _summaryProviderValidationIsCurrent = result.Success;
             _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+            }
+            else
+            {
+                _summarySchedulerApprovalService.Clear();
+            }
             ConfigOpenAiValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(
                 result,
                 UserActionIntent.ValidateHostedSummaryProvider);
@@ -10039,6 +10137,81 @@ public partial class MainWindow : Window
             _isValidatingOpenAiSummaryProvider = false;
             UpdateSummaryProviderValidationActionState();
             UpdateDashboardReadiness();
+        }
+    }
+
+    private async Task RefreshSummarySchedulerApprovalAsync(CancellationToken cancellationToken)
+    {
+        var config = _liveConfig.Current;
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled ||
+            !config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries))
+        {
+            _summaryProviderValidationIsCurrent = false;
+            return;
+        }
+
+        try
+        {
+            var result = await ValidateScheduledSummaryProviderAsync(config, cancellationToken);
+            _summaryProviderValidationIsCurrent = result.Success;
+            _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+                _logger.Log($"Summary scheduler provider check succeeded. provider={result.ProviderKind}.");
+                return;
+            }
+
+            _summarySchedulerApprovalService.Clear();
+            _logger.Log($"Summary scheduler provider check did not succeed. provider={result.ProviderKind}.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _summaryProviderValidationIsCurrent = false;
+        }
+        catch (Exception exception)
+        {
+            _summaryProviderValidationIsCurrent = false;
+            _summarySchedulerApprovalService.Clear();
+            _logger.Log($"Summary scheduler provider check failed: {exception.GetType().Name}.");
+        }
+    }
+
+    private async Task<SummaryProviderValidationResult> ValidateScheduledSummaryProviderAsync(
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        async Task<SummaryProviderValidationResult> ValidateModelProxyAsync()
+        {
+            var apiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, cancellationToken);
+            return await _summaryProviderValidationService.ValidateModelProxyAsync(config, apiKey, cancellationToken);
+        }
+
+        async Task<SummaryProviderValidationResult> ValidateOpenAiAsync()
+        {
+            if (config.SummaryHostedRouteConsentVersion < 1)
+            {
+                return SummaryProviderValidationResult.NotConfigured(
+                    SummaryChatProviderKind.OpenAi,
+                    "Hosted summary consent is not current.");
+            }
+
+            var apiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.OpenAi, cancellationToken);
+            return await _summaryProviderValidationService.ValidateOpenAiAsync(config, apiKey, cancellationToken);
+        }
+
+        return config.SummaryProviderPreference switch
+        {
+            MeetingSummaryProviderPreference.LocalOnly => await ValidateModelProxyAsync(),
+            MeetingSummaryProviderPreference.OpenAiOnly => await ValidateOpenAiAsync(),
+            MeetingSummaryProviderPreference.LocalThenOpenAi => await ValidateLocalThenHostedAsync(),
+            _ => await ValidateModelProxyAsync(),
+        };
+
+        async Task<SummaryProviderValidationResult> ValidateLocalThenHostedAsync()
+        {
+            var localResult = await ValidateModelProxyAsync();
+            return localResult.Success ? localResult : await ValidateOpenAiAsync();
         }
     }
 
@@ -13025,9 +13198,9 @@ public partial class MainWindow : Window
             : !string.IsNullOrWhiteSpace(GetAutomaticCleanupSchedulerBlockerReason())
                 ? GetAutomaticCleanupSchedulerBlockerReason()!
             : schedulerStatus.ProcessingCount > 0
-                ? "Automatic cleanup resumes after the current cleanup worker completes."
+                ? $"{schedulerStatus.ProcessingCount} cleanup job(s) are working; {schedulerStatus.QueuedCount} waiting within the current batch. Native speaker labeling reports activity without a countdown."
                 : schedulerStatus.QueuedCount > 0
-                    ? $"Automatic cleanup is queued behind processing. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
+                    ? $"{schedulerStatus.QueuedCount} cleanup job(s) are waiting. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
                     : !string.IsNullOrWhiteSpace(schedulerStatus.PrimaryBlocker)
                         ? schedulerStatus.PrimaryBlocker
                         : !string.IsNullOrWhiteSpace(_lastCleanupSchedulerDispatchDetail)
@@ -13047,7 +13220,9 @@ public partial class MainWindow : Window
             schedulerStatus.BlockedSummaryCount,
             schedulerStatus.DisabledCleanupCount,
             schedulerStatus.ManualReviewCount,
-            schedulerDetail);
+            schedulerDetail,
+            schedulerStatus.ContainmentHeldCount,
+            schedulerStatus.RetryableFailedCount);
     }
 
     private CleanupSchedulerStatus GetCleanupSchedulerStatus()
@@ -13056,7 +13231,8 @@ public partial class MainWindow : Window
             _meetingCleanupRecommendations,
             _meetingCleanupWorkLedgerService,
             IsScheduledIncrementalRecommendation,
-            IsSummaryBlockedBySchedule);
+            IsSummaryBlockedBySchedule,
+            _latestProcessingQueueStatusSnapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal));
     }
 
     private bool IsSummaryBlockedBySchedule(MeetingCleanupRecommendation recommendation)
@@ -13194,7 +13370,8 @@ public partial class MainWindow : Window
                 plan.HasFlag(IncrementalWorkPlan.DeferredSpeakerLabels),
             MeetingCleanupAction.GenerateSummary =>
                 plan.HasFlag(IncrementalWorkPlan.MissingAiSummaries) &&
-                _summaryProviderValidationIsCurrent,
+                _summaryProviderValidationIsCurrent &&
+                _summarySchedulerApprovalService.IsApproved(_liveConfig.Current),
             _ => plan.HasFlag(IncrementalWorkPlan.SafeCleanup) &&
                 MainWindowInteractionLogic.IsSafeMeetingCleanupRecommendation(recommendation),
         };

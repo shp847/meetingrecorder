@@ -6,8 +6,8 @@ dependency on another section.
 
 # Sprint Delivery Tracker
 
-**Ledger reconciled:** 2026-10-14. **Total sprints:** 126. **Done:** 64.
-**Ready:** 34. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
+**Ledger reconciled:** 2026-10-15. **Total sprints:** 127. **Done:** 64.
+**Ready:** 35. **Partial:** 25. **Blocked:** 3. **Planned:** 0. This is a source-and-test-evidence baseline,
 not release approval. A feature-shaped class, XAML control, or unverified local
 change can justify `Partial`; only complete acceptance evidence can justify
 `Done`.
@@ -260,6 +260,7 @@ records an approved dependency change.
 | 3 — Durable Cleanup and Atomic Publishing | `Ready` | Lease/retry state machine, journaled atomic promotion/rollback, storage preflight, and conservative derived-merge plan defined below. |
 | 4 — Pilot and Rebuild History | `Ready` | Conservative source inventory/classification, approval-gated pilot, journaled resumable rebuild, and no-loss lineage/validation plan defined below. |
 | 5 — Verification and Release Gates | `Ready` | Layered deterministic/package/authorized-live canary matrix, explicit no-go/rollback criteria, and evidence-segregated release plan defined below. |
+| 9B — Cleanup Scheduler Recovery And Truthful Status | `Ready` | 2026-10-15: reconcile every live cleanup manifest, persist non-secret provider approval, surface safe retry/manual holds, and complete package qualification. |
 
 ### Unified Local Meeting Intelligence
 
@@ -7517,6 +7518,24 @@ Defaults are locked: hybrid provisional capture, private local 25-clip corpus, 6
 - Run corpus regression and worker-load smoke before profile approval; exercise Teams endpoint switch, silent start, long call, storage pressure, OneDrive lock/hydration, and interrupted promotion journeys.
 - Canary requires ten approved pilot records and five live meetings: zero duplicate automatic sessions, zero header-only publishes, zero silent model/provider downgrade, zero unreconciled lease, and zero partial artifact exposure.
 - Before shipment run full product tests, AppPlatform tests, installer build, packaged-release smoke, and architecture/setup/support/retention/recovery documentation updates.
+
+## Sprint 9B: Cleanup Scheduler Recovery And Truthful Status
+
+### Implementation Record
+
+- Status: `Ready`
+- Status history: `Ready` (2026-10-15: implementation started; release gates remain open while live processing is active).
+- User outcome: Meetings shows truthful cleanup capacity and remediation rather than a misleading single-worker or permanently blocked summary state.
+- Scope / non-goals: reconcile live and terminal manifests, persist only non-secret summary-provider approval, allow explicit retry for failed non-destructive work, and preserve manual containment for archive, ordinary merge, and transcript regeneration. Do not auto-run held destructive work, store keys or meeting text in approval state, or invent a diarization ETA.
+- Implementation slices:
+  1. Project every active manifest into processing state; reconcile published and failed terminal states on status updates, refreshes, and restart recovery; put unreadable or missing manifests into manual review.
+  2. Report separate active, queued, provider-blocked, containment-held, and retryable-failed counts, with capacity language that covers all active workers.
+  3. Persist a route/model/consent/timeout approval fingerprint. At startup, run the existing synthetic local-first provider health check; use hosted fallback only with existing consent and credentials; invalidate on provider setting changes.
+  4. Permit an explicit readiness-gated retry only for failed label and summary work. Keep archive, ordinary merge, and transcript regeneration in manual review.
+- Tests and release gates: cover multi-worker and terminal reconciliation, unreadable/missing manifests, provider approval migration/health/fallback/invalidation/no-data-leakage, retry containment, and banner copy. Run focused tests, `scripts\Test-All.ps1`, installer build, and packaged installed-app smoke after active processing stops.
+- Documentation / installer / release work: document status semantics, synthetic provider approval, safe retry, and remaining containment. Rebuild installer assets and mark `Done` only after package and installed-app evidence is complete.
+- Evidence and date: 2026-10-15 source changes and focused tests cover ledger reconciliation, scheduler counts, approval fingerprinting, and retry containment. Full test, installer, and installed-app gates are intentionally pending while native diarization workers are active.
+- Remaining gap or next action: wait for active recording and processing to stop, then run full suite, installer build, packaged smoke, and update this record to `Done` only if every gate passes.
 
 ## Assumptions
 

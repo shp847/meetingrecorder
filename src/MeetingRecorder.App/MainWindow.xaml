@@ -1090,6 +1090,12 @@
                                                 Margin="0,0,10,0"
                                                 Click="ReviewMeetingCleanupSuggestionsButton_OnClick"
                                                 Content="Review Suggestions" />
+                                        <Button x:Name="RetryFailedSafeMeetingCleanupButton"
+                                                Width="168"
+                                                Height="34"
+                                                Margin="0,0,10,0"
+                                                Click="RetryFailedSafeMeetingCleanupButton_OnClick"
+                                                Content="Retry Failed Safe Work" />
                                         <Button x:Name="ApplySafeMeetingCleanupFixesButton"
                                                 Width="150"
                                                 Height="34"

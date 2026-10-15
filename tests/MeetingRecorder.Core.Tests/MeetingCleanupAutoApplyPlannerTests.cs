@@ -239,6 +239,30 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Projects_All_Active_Queue_Manifests_And_Separates_Holds_From_Retryable_Failures()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        ledger.Record("active-one", CleanupWorkState.Queued, "C:\\work\\one.json", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("active-two", CleanupWorkState.Queued, "C:\\work\\two.json", action: MeetingCleanupAction.RepairSpeakerLabels);
+        ledger.Record("waiting", CleanupWorkState.Queued, "C:\\work\\three.json", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("merge-hold", CleanupWorkState.ManualReview, action: MeetingCleanupAction.Merge);
+        ledger.Record("failed-summary", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSummary);
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            Array.Empty<MeetingCleanupRecommendation>(),
+            ledger,
+            _ => false,
+            _ => false,
+            new HashSet<string>(["C:\\work\\one.json", "C:\\work\\two.json"], StringComparer.Ordinal));
+
+        Assert.Equal(2, status.ProcessingCount);
+        Assert.Equal(1, status.QueuedCount);
+        Assert.Equal(1, status.ContainmentHeldCount);
+        Assert.Equal(1, status.RetryableFailedCount);
+    }
+
+    [Fact]
     public void GetNextAutomaticBatch_Keeps_At_Most_Five_Attempts_Per_Batch()
     {
         var recommendations = Enumerable.Range(1, 10)
