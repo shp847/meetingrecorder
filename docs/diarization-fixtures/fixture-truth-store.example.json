@@ -1,10 +1,14 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "outcomes": [
     {
       "reference": "truth-two-speaker-synthetic",
       "expectedSpeakerCount": 2,
-      "expectedSpeakerNames": []
+      "expectedSpeakerNames": [],
+      "expectedTurns": [
+        { "speakerId": "truth-speaker-01", "startMilliseconds": 0, "endMilliseconds": 1200 },
+        { "speakerId": "truth-speaker-02", "startMilliseconds": 1200, "endMilliseconds": 2400 }
+      ]
     }
   ]
 }

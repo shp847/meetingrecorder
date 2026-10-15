@@ -373,6 +373,28 @@ $speakerNames = @($speakers | ForEach-Object {
         }
         $names
     } | Select-Object -Unique)
+$safeSpeakerIds = @{}
+$safeSpeakerTurnIndex = 0
+$safeSpeakerTurns = @($turns | ForEach-Object {
+        $sourceSpeakerId = [string]$_.speakerId
+        if ([string]::IsNullOrWhiteSpace($sourceSpeakerId)) {
+            return
+        }
+        if (-not $safeSpeakerIds.ContainsKey($sourceSpeakerId)) {
+            $safeSpeakerTurnIndex++
+            $safeSpeakerIds[$sourceSpeakerId] = ('detected-{0:D2}' -f $safeSpeakerTurnIndex)
+        }
+        $start = [TimeSpan]$_.start
+        $end = [TimeSpan]$_.end
+        if ($end -le $start) {
+            return
+        }
+        [ordered]@{
+            speakerId = $safeSpeakerIds[$sourceSpeakerId]
+            startMilliseconds = [long]$start.TotalMilliseconds
+            endMilliseconds = [long]$end.TotalMilliseconds
+        }
+    })
 $missingExpectedSpeakerNames = @($ExpectedSpeakerName | Where-Object {
         $expectedName = $_
         -not ($speakerNames | Where-Object { $_ -eq $expectedName })
@@ -401,6 +423,7 @@ $result = [pscustomobject]@{
     HasSpeakerLabels = [bool]$updatedManifest.processingMetadata.hasSpeakerLabels
     SpeakerCount = $speakers.Count
     SpeakerTurnCount = $turns.Count
+    SpeakerTurns = $safeSpeakerTurns
     VoiceSampleCount = $samples.Count
     SpeakerNames = $speakerNames
     ExpectedSpeakerCount = if ($ExpectedSpeakerCount -eq 0) { $null } else { $ExpectedSpeakerCount }

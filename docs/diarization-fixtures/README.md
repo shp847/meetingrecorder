@@ -7,7 +7,7 @@ ignored `.artifacts/diarization-fixtures` folder. Fixture IDs must be opaque.
 The corpus never ships with the application.
 
 New governed catalogs use `fixture-catalog-v2.schema.json`. Keep inputs and
-governance metadata in the private catalog; keep count/name expectations in a
+governance metadata in the private catalog; keep count/name/opaque-turn expectations in a
 separate restricted truth-store file outside source control. Pass it only to
 the catalog runner with `-TruthStorePath`; runner reads truth after worker or
 replay output is immutable and never forwards it to those processes.
@@ -19,7 +19,7 @@ For VTT or Fireflies timestamped Markdown transcripts, use
 `New-DiarizationVttFixture.ps1` with exactly one of `-VttPath` or
 `-TranscriptMarkdownPath`. It copies one approved audio input into a private
 fixture root and produces its manifest, transcript snapshot, restricted
-count-only truth record, and v2 catalog. Speaker labels remain only in the
+count-and-opaque-turn truth record, and v2 catalog. Speaker labels remain only in the
 private source transcript; count taxonomy is inferred and speaker-name matching
 stays disabled. Builder console output contains only opaque fixture ID,
 category, and count—not input paths. To add another approved fixture to an
@@ -31,6 +31,25 @@ the form `**speaker** *[m:ss]*: text`. Point-timestamp end times derive from
 the next segment; the final or non-monotonic point receives a one-second
 private snapshot interval. This normalization stays inside the private fixture
 root and never enters catalog, truth, console, or report data.
+
+For an approved local corpus, use `New-DiarizationCorpusFixtureCatalog.ps1`.
+It inventories every supported source under an opaque hash-derived ID and
+preserves its hash before and after intake. It admits a full-audio fixture only
+for an exact normalized-stem pair or a unique same-day/duration pair, where the
+duration tolerance is the larger of two minutes or ten percent of audio length.
+Ties, missing counterparts, unreadable media, unsupported transcript formats,
+and weak matches stay held in the private intake report; no pair is guessed.
+The report contains aggregate counts, opaque IDs, and dispositions only.
+
+Truth-store schema v2 adds `expectedTurns`, containing only `truth-speaker-##`
+tokens and millisecond ranges. The catalog runner reads them after worker output
+is immutable and separately reports opaque turn alignment, over-segmentation,
+and under-segmentation. Schema v1 remains readable; appending a fixture upgrades
+the local truth store to v2.
+
+Natural similar-voice, overlap, and shared-microphone topology are optional
+informational tags. Transcript labels never establish physical capture topology,
+and these categories do not block corpus completion or threshold promotion.
 
 When an approved source does not exist for a required category, use
 `Add-DiarizationFixtureCoverageBlock.ps1` with an opaque ID and one of its

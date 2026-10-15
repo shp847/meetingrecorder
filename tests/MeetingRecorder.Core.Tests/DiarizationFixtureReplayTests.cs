@@ -649,6 +649,8 @@ public sealed class DiarizationFixtureReplayTests
 
             var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
             Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+            Assert.Equal(2, truth["outcomes"]?[0]?["expectedTurns"]?.AsArray().Count);
+            Assert.Equal("truth-speaker-01", (string?)truth["outcomes"]?[0]?["expectedTurns"]?[0]?["speakerId"]);
             var snapshotText = File.ReadAllText(Path.Combine(fixtureRoot, "fx-vtt-synthetic", "processing", "transcription.snapshot.json"));
             Assert.Contains(privateText, snapshotText, StringComparison.Ordinal);
 
@@ -717,6 +719,53 @@ public sealed class DiarizationFixtureReplayTests
             Assert.DoesNotContain(privateText, truthText, StringComparison.Ordinal);
             var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
             Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CorpusFixtureBuilder_Uses_Opaque_Deterministic_Pairs_And_Holds_No_Source_Data_In_Report()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationCorpusFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-corpus-fixture-test-" + Guid.NewGuid().ToString("N"));
+        var audioRoot = Path.Combine(tempRoot, "audio");
+        var transcriptRoot = Path.Combine(tempRoot, "transcripts");
+        var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+        const string privateText = "PRIVATE_CORPUS_TRANSCRIPT_SENTINEL";
+        Directory.CreateDirectory(audioRoot);
+        Directory.CreateDirectory(transcriptRoot);
+
+        try
+        {
+            WriteSilentWave(Path.Combine(audioRoot, "shared-session.wav"));
+            File.WriteAllText(
+                Path.Combine(transcriptRoot, "shared-session.md"),
+                $"[00:00:00 - 00:00:01] **PRIVATE_SPEAKER_A:** {privateText}{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioRoot", audioRoot,
+                "-TranscriptRoot", transcriptRoot,
+                "-FixtureRoot", fixtureRoot,
+                "-NoCreateFixtures");
+
+            Assert.True(result.ExitCode == 0, $"Corpus fixture builder failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(audioRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var reportText = File.ReadAllText(Path.Combine(fixtureRoot, "corpus-intake-report.local.json"));
+            Assert.DoesNotContain(audioRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(transcriptRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(privateText, reportText, StringComparison.Ordinal);
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Corpus report JSON was empty.");
+            Assert.Equal(true, (bool?)report["sourceHashesUnchanged"]);
+            Assert.Equal(1, (int?)report["summary"]?["matched"]);
+            Assert.Equal("planned", (string?)report["fixtures"]?[0]?["state"]);
         }
         finally
         {
@@ -1017,6 +1066,33 @@ public sealed class DiarizationFixtureReplayTests
         var assemblyDirectory = Path.GetDirectoryName(typeof(DiarizationFixtureReplayTests).Assembly.Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
         return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+    }
+
+    private static void WriteSilentWave(string path)
+    {
+        const int sampleRate = 16_000;
+        const short channels = 1;
+        const short bitsPerSample = 16;
+        const int sampleCount = sampleRate;
+        var blockAlign = (short)(channels * (bitsPerSample / 8));
+        var byteRate = sampleRate * blockAlign;
+        var dataLength = sampleCount * blockAlign;
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        writer.Write("RIFF"u8.ToArray());
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8.ToArray());
+        writer.Write("fmt "u8.ToArray());
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write(blockAlign);
+        writer.Write(bitsPerSample);
+        writer.Write("data"u8.ToArray());
+        writer.Write(dataLength);
+        writer.Write(new byte[dataLength]);
     }
 
     private static PowerShellRunResult RunPowerShell(string scriptPath, params string[] arguments)

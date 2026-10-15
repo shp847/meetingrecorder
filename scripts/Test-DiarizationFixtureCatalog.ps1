@@ -147,8 +147,9 @@ function Get-TruthOutcome {
     }
 
     $truthStore = Get-Content -LiteralPath $script:ResolvedTruthStorePath -Raw | ConvertFrom-Json
-    if ([int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0) -ne 1) {
-        throw "Restricted fixture truth store schemaVersion must be 1."
+    $truthSchemaVersion = [int](Get-PropertyValue -Object $truthStore -Name "schemaVersion" -DefaultValue 0)
+    if ($truthSchemaVersion -notin @(1, 2)) {
+        throw "Restricted fixture truth store schemaVersion must be 1 or 2."
     }
 
     $outcomes = @{}
@@ -173,6 +174,100 @@ function Get-TruthOutcome {
     }
 
     return $outcomes[$reference]
+}
+
+function Get-ValidatedTruthTurns {
+    param($Outcome)
+
+    $turns = @()
+    foreach ($turn in @(ConvertTo-Array (Get-PropertyValue -Object $Outcome -Name "expectedTurns"))) {
+        $speakerId = [string](Get-PropertyValue -Object $turn -Name "speakerId")
+        $start = Get-PropertyValue -Object $turn -Name "startMilliseconds"
+        $end = Get-PropertyValue -Object $turn -Name "endMilliseconds"
+        $parsedStart = 0L
+        $parsedEnd = 0L
+        if ($speakerId -notmatch '^truth-speaker-[0-9]{2}$' -or
+            -not [long]::TryParse([string]$start, [ref]$parsedStart) -or
+            -not [long]::TryParse([string]$end, [ref]$parsedEnd) -or
+            $parsedStart -lt 0 -or $parsedEnd -le $parsedStart) {
+            throw 'Restricted fixture truth store has an invalid opaque expected turn.'
+        }
+        $turns += [pscustomobject]@{ speakerId = $speakerId; startMilliseconds = $parsedStart; endMilliseconds = $parsedEnd }
+    }
+
+    if (@($turns | ForEach-Object { $_.speakerId } | Select-Object -Unique).Count -gt 16) {
+        throw 'Restricted fixture truth store expected turns may contain at most 16 speakers.'
+    }
+
+    return $turns
+}
+
+function Get-TurnEvidenceMetrics {
+    param(
+        [object[]]$ExpectedTurns,
+        [object[]]$DetectedTurns,
+        [string]$Configuration
+    )
+
+    if ($ExpectedTurns.Count -eq 0) {
+        return [ordered]@{
+            expectedTurnCount = 0
+            detectedTurnCount = $DetectedTurns.Count
+            alignedMilliseconds = 0
+            expectedCoverage = $null
+            detectedCoverage = $null
+            overSegmentationCount = $null
+            underSegmentationCount = $null
+            status = 'not_asserted'
+        }
+    }
+
+    $coreAssemblyPath = Join-Path $script:RepoRoot ("src\\MeetingRecorder.Core\\bin\\{0}\\net8.0-windows\\MeetingRecorder.Core.dll" -f $Configuration)
+    if (-not (Test-Path -LiteralPath $coreAssemblyPath -PathType Leaf)) {
+        throw 'Turn metrics require the locally built core assembly.'
+    }
+    $assembly = [Reflection.Assembly]::LoadFrom($coreAssemblyPath)
+    $turnType = $assembly.GetType('MeetingRecorder.Core.Services.DiarizationEvidenceTurn', $true)
+    $evaluatorType = $assembly.GetType('MeetingRecorder.Core.Services.DiarizationTurnEvidenceMetricsEvaluator', $true)
+    $turnListType = [System.Collections.Generic.List``1].MakeGenericType($turnType)
+    $expected = [Activator]::CreateInstance($turnListType)
+    $detected = [Activator]::CreateInstance($turnListType)
+
+    foreach ($turn in $ExpectedTurns) {
+        [void]$expected.Add([Activator]::CreateInstance($turnType, @(
+                    [string]$turn.speakerId,
+                    [TimeSpan]::FromMilliseconds([double]$turn.startMilliseconds),
+                    [TimeSpan]::FromMilliseconds([double]$turn.endMilliseconds))))
+    }
+    foreach ($turn in $DetectedTurns) {
+        $speakerId = [string](Get-PropertyValue -Object $turn -Name 'speakerId')
+        $start = Get-PropertyValue -Object $turn -Name 'startMilliseconds'
+        $end = Get-PropertyValue -Object $turn -Name 'endMilliseconds'
+        $parsedStart = 0L
+        $parsedEnd = 0L
+        if ($speakerId -notmatch '^detected-[0-9]{2}$' -or
+            -not [long]::TryParse([string]$start, [ref]$parsedStart) -or
+            -not [long]::TryParse([string]$end, [ref]$parsedEnd) -or
+            $parsedStart -lt 0 -or $parsedEnd -le $parsedStart) {
+            continue
+        }
+        [void]$detected.Add([Activator]::CreateInstance($turnType, @(
+                    $speakerId,
+                    [TimeSpan]::FromMilliseconds([double]$parsedStart),
+                    [TimeSpan]::FromMilliseconds([double]$parsedEnd))))
+    }
+
+    $metrics = $evaluatorType.GetMethod('Evaluate').Invoke($null, @($expected, $detected))
+    return [ordered]@{
+        expectedTurnCount = [int]$metrics.ExpectedTurnCount
+        detectedTurnCount = [int]$metrics.DetectedTurnCount
+        alignedMilliseconds = [long]$metrics.AlignedMilliseconds
+        expectedCoverage = [double]$metrics.ExpectedCoverage
+        detectedCoverage = [double]$metrics.DetectedCoverage
+        overSegmentationCount = [int]$metrics.OverSegmentationCount
+        underSegmentationCount = [int]$metrics.UnderSegmentationCount
+        status = [string]$metrics.Status
+    }
 }
 
 function Test-PathUnder {
@@ -487,6 +582,16 @@ function New-BaseResult {
         voiceSampleCount = $null
         diarizationState = $null
         diarizationFailureKind = $null
+        turnMetrics = [ordered]@{
+            expectedTurnCount = 0
+            detectedTurnCount = 0
+            alignedMilliseconds = 0
+            expectedCoverage = $null
+            detectedCoverage = $null
+            overSegmentationCount = $null
+            underSegmentationCount = $null
+            status = "not_run"
+        }
         speakerNameMetrics = [ordered]@{
             enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enableSpeakerNameMatching" -DefaultValue $false)
             expectedNameCount = @(ConvertTo-Array (Get-PropertyValue -Object $Fixture -Name "expectedSpeakerNames")).Count
@@ -860,11 +965,13 @@ function Invoke-Fixture {
         $failureStage = "fixture-truth-evaluation"
         $expectedOutcome = Get-TruthOutcome -Fixture $Fixture
         $expectedNames = @(Apply-ExpectedOutcome -Result $result -Fixture $Fixture -Outcome $expectedOutcome)
+        $expectedTurns = @(Get-ValidatedTruthTurns -Outcome $expectedOutcome)
         if ($expectedNames.Count -gt 0 -and -not $result.speakerNameMetrics.enabled) {
             throw "Fixture '$($result.fixtureId)' supplies expected speaker names but enableSpeakerNameMatching is false."
         }
 
         $result.speakerCountStatus = Get-SpeakerCountStatus -ExpectedSpeakerCount $result.expectedSpeakerCount -DetectedSpeakerCount $result.detectedSpeakerCount -FallbackStatus "completed"
+        $result.turnMetrics = Get-TurnEvidenceMetrics -ExpectedTurns $expectedTurns -DetectedTurns @(ConvertTo-Array $childResult.SpeakerTurns) -Configuration $Configuration
         $result.status = if ($result.speakerCountStatus -eq "pass" -or $result.speakerCountStatus -eq "not_asserted") { "completed" } else { $result.speakerCountStatus }
         if (-not $result.artifactSafety.allUnchanged) {
             $result.status = "failed"
@@ -991,6 +1098,9 @@ $summary = [ordered]@{
     timedOut = @($results | Where-Object { $_.status -eq "timed_out" }).Count
     failed = @($results | Where-Object { $_.status -eq "failed" }).Count
     dryRun = @($results | Where-Object { $_.status -eq "dry_run" }).Count
+    turnMetricsCompleted = @($results | Where-Object { $_.turnMetrics.status -eq "completed" }).Count
+    turnOverSegmentationCount = [int](@($results | ForEach-Object { if ($null -ne $_.turnMetrics.overSegmentationCount) { [int]$_.turnMetrics.overSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
+    turnUnderSegmentationCount = [int](@($results | ForEach-Object { if ($null -ne $_.turnMetrics.underSegmentationCount) { [int]$_.turnMetrics.underSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
     elapsedMilliseconds = [int64]$runStopwatch.ElapsedMilliseconds
 }
 
@@ -1027,6 +1137,7 @@ Write-Output "  Missing data: $($summary.missingData)"
 Write-Output "  Skipped: $($summary.skipped)"
 Write-Output "  Timed out: $($summary.timedOut)"
 Write-Output "  Failed: $($summary.failed)"
+Write-Output "  Turn metrics completed: $($summary.turnMetricsCompleted)"
 if ($DryRun) {
     Write-Output "  Dry run: $($summary.dryRun)"
 }
