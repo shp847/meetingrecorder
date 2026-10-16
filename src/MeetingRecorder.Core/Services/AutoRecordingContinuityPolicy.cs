@@ -19,6 +19,59 @@ public sealed class AutoRecordingContinuityPolicy
     private static readonly TimeSpan RecentAutoStopRecoveryWindow = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan QuietSpecificMeetingAutoStartDelay = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// Classifies only whether this scan can speak for the active record. A
+    /// different specific meeting is intentionally not a rollover order: it
+    /// begins bounded identity-loss handling for the old record.
+    /// </summary>
+    public MeetingIdentityVerdict GetActiveSessionOwnershipVerdict(
+        DetectionDecision? decision,
+        MeetingPlatform activePlatform,
+        string? activeSessionTitle)
+    {
+        if (decision is null || activePlatform == MeetingPlatform.Unknown)
+        {
+            return MeetingIdentityVerdict.Unknown;
+        }
+
+        if (decision.Platform == MeetingPlatform.Teams && HasOfficialTeamsNoCurrentMatchSignal(decision))
+        {
+            return MeetingIdentityVerdict.DifferentMeeting;
+        }
+
+        if (decision.Platform == activePlatform &&
+            HasSpecificMeetingTitleMatch(decision, activeSessionTitle))
+        {
+            return MeetingIdentityVerdict.SameMeeting;
+        }
+
+        var normalizedCandidate = NormalizeMeetingTitle(decision.SessionTitle);
+        if (decision.Platform == MeetingPlatform.Unknown ||
+            IsGenericMeetingTitle(normalizedCandidate, decision.Platform) ||
+            !HasMeetingIdentityEvidence(decision))
+        {
+            return MeetingIdentityVerdict.Unknown;
+        }
+
+        return MeetingIdentityVerdict.DifferentMeeting;
+    }
+
+    internal bool ShouldAutoStartStableSuccessor(
+        DetectionDecision? decision,
+        DateTimeOffset firstObservedUtc,
+        DateTimeOffset nowUtc)
+    {
+        if (decision is null ||
+            decision.Platform == MeetingPlatform.Unknown ||
+            IsGenericMeetingTitle(NormalizeMeetingTitle(decision.SessionTitle), decision.Platform) ||
+            !HasMeetingIdentityEvidence(decision))
+        {
+            return false;
+        }
+
+        return nowUtc - firstObservedUtc >= QuietSpecificMeetingAutoStartDelay;
+    }
+
     public TimeSpan GetAutoStopTimeout(
         DetectionDecision? decision,
         MeetingPlatform activePlatform,

@@ -249,6 +249,15 @@ records an approved dependency change.
 | 7 — Heuristic Retirement And Rollout Controls | `Partial` | 2026-09-29: versioned local matcher/heal rollout settings preserve legacy opt-ins and fail invalid values closed; direct-authority retirement, review-only healer, and contribution gate remain. |
 | 8 — Packaging, Validation, And Support Readiness | `Ready` | Continuity acceptance matrix, clean package/recovery smoke, decision-log/support evidence, and authorized release boundary defined below. |
 | 8A — Durable Fragment Prevention And Auto-Repair | `Ready` | 2026-10-14: prioritize bounded matcher grace, v2 legacy migration, five-minute continuity-chain cleanup, and receipt-backed automatic repair before Sprint 8 package qualification. |
+| 8B — Active Session Ownership And Bounded Stop | `Ready` | 2026-10-15: prevent unrelated candidates/shared endpoint activity from extending or renaming matcher-owned recordings; use one non-renewable 90-second identity-loss grace, then admit a separately stable successor. |
+
+#### Sprint 8B — Active Session Ownership And Bounded Stop
+
+- Status: `Ready` — mark `Done` only after focused lifecycle/replay checks, `Test-All.ps1`, installer build, and installed-app synthetic smoke all pass.
+- User outcome: every recording remains owned by its original meeting title. Different Teams or shared endpoint activity may be observed for a possible next meeting, but cannot prolong, rename, or choose a capture endpoint for the current record.
+- Contract: evaluate matcher continuity once per detection cycle; exact active identity continues; generic/unavailable or different evidence consumes one 90-second session-bounded grace; expiry finalizes the original session. Different specific meetings become successor candidates and must be stable through the existing 20-second admission window before a separate automatic start.
+- Boundary: manual stop remains authoritative; no active-session policy migration; no retroactive split/deletion of the previously stopped long artifact; diagnostics are metadata-only.
+- Required checks: device swaps, repeated scans, app restart, stale snapshots, same-title continuation, generic shell grace, different-meeting stop/rollover, manual stop, capture-source isolation, and package/install lifecycle replay.
 
 ### Production Capture, Transcription, And Cleanup Remediation
 

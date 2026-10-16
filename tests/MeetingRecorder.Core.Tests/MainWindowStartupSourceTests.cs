@@ -108,7 +108,7 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Active_Session_Reclassifies_Before_Auto_Stop_Logic_Runs_While_Auto_Stop_Uses_Meeting_Lifecycle_Management()
+    public void Active_Session_Ownership_Is_Evaluated_Once_Before_Auto_Stop_Logic_Runs()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -116,15 +116,31 @@ public sealed class MainWindowStartupSourceTests
         var detectionEnd = source.IndexOf("var activeSessionForMicPrompt = _recordingCoordinator.ActiveSession;", detectionStart, StringComparison.Ordinal);
         var detectionBlock = source[detectionStart..detectionEnd];
 
-        var reclassifyIndex = detectionBlock.IndexOf("TryReclassifyActiveSessionAsync(", StringComparison.Ordinal);
+        var ownershipIndex = detectionBlock.IndexOf("ContinuityCutoverDecision? activeContinuityDecision", StringComparison.Ordinal);
         var refreshIndex = detectionBlock.IndexOf("_autoRecordingContinuityPolicy.ShouldRefreshLastPositiveSignal(", StringComparison.Ordinal);
         var lifecycleManagedIndex = detectionBlock.IndexOf("var activeMeetingManagedSession = _recordingCoordinator.ActiveSession is { MeetingLifecycleManaged: true } reclassifiedSession", StringComparison.Ordinal);
-        var stopIndex = detectionBlock.IndexOf("AppendAutoStopStatus($\"Auto-stop triggered after", StringComparison.Ordinal);
+        var stopIndex = detectionBlock.IndexOf("AppendAutoStopStatus(identityLossGrace is null", StringComparison.Ordinal);
 
-        Assert.True(reclassifyIndex >= 0, "Expected active session reclassification hook in detection loop.");
-        Assert.True(refreshIndex > reclassifyIndex, "Reclassification should happen before the positive-signal continuity check.");
-        Assert.True(lifecycleManagedIndex > reclassifyIndex, "Meeting lifecycle gating should be evaluated only after any reclassification completes.");
-        Assert.True(stopIndex > reclassifyIndex, "Reclassification should happen before the auto-stop branch.");
+        Assert.True(ownershipIndex >= 0, "Expected one active-session ownership decision in the detection loop.");
+        Assert.True(refreshIndex > ownershipIndex, "Ownership should be evaluated before the legacy positive-signal helper.");
+        Assert.True(lifecycleManagedIndex > ownershipIndex, "Meeting lifecycle gating should be evaluated after ownership is captured.");
+        Assert.True(stopIndex > ownershipIndex, "Ownership should be evaluated before the auto-stop branch.");
+    }
+
+    [Fact]
+    public void Matcher_Managed_Active_Session_Uses_One_Immutable_Cutover_And_Gates_Detector_Selected_Endpoints()
+    {
+        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var source = File.ReadAllText(sourcePath);
+        var detectionStart = source.IndexOf("private async void DetectionTimer_OnTick", StringComparison.Ordinal);
+        var start = source.IndexOf("var activeSession = _recordingCoordinator.ActiveSession;", detectionStart, StringComparison.Ordinal);
+        var end = source.IndexOf("var activeSessionForMicPrompt = _recordingCoordinator.ActiveSession;", start, StringComparison.Ordinal);
+        var block = source[start..end];
+
+        Assert.Equal(1, CountOccurrences(block, "_continuityCutoverPolicy.Evaluate("));
+        Assert.Contains("activeContinuityDecision.Action == ContinuityLifecycleAction.Continue", block, StringComparison.Ordinal);
+        Assert.Contains("UpdatePendingSuccessorCandidate(", block, StringComparison.Ordinal);
+        Assert.Contains("Meeting identity loss grace expired.", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -357,7 +373,7 @@ public sealed class MainWindowStartupSourceTests
     }
 
     [Fact]
-    public void Matcher_Mode_Gates_Reclassification_And_Rollover_Before_Legacy_Action_Selection()
+    public void Matcher_Mode_Prevents_Reclassification_And_Rollover_For_Active_Managed_Sessions()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
@@ -365,11 +381,9 @@ public sealed class MainWindowStartupSourceTests
         var methodEnd = source.IndexOf("private void RecordReclassificationShadow", methodStart, StringComparison.Ordinal);
         var methodBlock = source[methodStart..methodEnd];
 
-        var matcherIndex = methodBlock.IndexOf("ContinuityCutoverMode.Matcher", StringComparison.Ordinal);
-        var transitionIndex = methodBlock.IndexOf("MainWindowInteractionLogic.GetEligibleActiveSessionTransition(", StringComparison.Ordinal);
-        Assert.True(matcherIndex >= 0, "Expected matcher authority before an active-session split action.");
-        Assert.True(transitionIndex > matcherIndex, "Legacy mechanics may select action only after matcher verdict permits DifferentMeeting.");
-        Assert.Contains("matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("active-session-ownership-managed", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("_liveConfig.Current.MeetingIdentityContinuityEnabled && activeSession.MeetingLifecycleManaged", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContinuityCutoverMode.Matcher", methodBlock, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -603,5 +617,18 @@ public sealed class MainWindowStartupSourceTests
         }.Concat(segments).ToArray();
 
         return Path.GetFullPath(Path.Combine(pathSegments));
+    }
+
+    private static int CountOccurrences(string value, string token)
+    {
+        var count = 0;
+        var start = 0;
+        while ((start = value.IndexOf(token, start, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            start += token.Length;
+        }
+
+        return count;
     }
 }

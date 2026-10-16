@@ -242,6 +242,8 @@ public partial class MainWindow : Window
     private DateTimeOffset? _quietTeamsAutoStartFirstObservedUtc;
     private string? _quietGoogleMeetAutoStartFingerprint;
     private DateTimeOffset? _quietGoogleMeetAutoStartFirstObservedUtc;
+    private string? _pendingSuccessorFingerprint;
+    private DateTimeOffset? _pendingSuccessorFirstObservedUtc;
     private DateTimeOffset? _recordingStorageBackoffUntilUtc;
     private string? _lastTeamsProbeBaselineSummary;
     private string? _pendingMeetingsRefreshSelectedStem;
@@ -1233,6 +1235,7 @@ public partial class MainWindow : Window
                 DateTimeOffset.UtcNow);
         _recentAutoStopContext = null;
         _continuityGraceReceipt = null;
+        ResetPendingSuccessorCandidate();
         try
         {
             await StopCurrentRecordingAsync("Manual stop requested.");
@@ -1998,6 +2001,7 @@ public partial class MainWindow : Window
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
+                var shouldStartPendingSuccessor = ShouldAutoStartPendingSuccessor(decision, nowUtc);
                 if (_liveConfig.Current.MeetingIdentityContinuityEnabled &&
                     _recentAutoStopContext is { } recentAutoStop)
                 {
@@ -2029,7 +2033,9 @@ public partial class MainWindow : Window
                     nowUtc < storageBackoffUntilUtc;
                 if (!shouldSuppressManualRestart &&
                     !isRecordingStorageBackoffActive &&
-                    (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))
+                    (shouldStartPendingSuccessor ||
+                     (!HasPendingSuccessorCandidate() &&
+                      (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))))
                 {
                     var callbackIntent = TryBeginRecordingTransitionCallback("automatic-start");
                     if (callbackIntent is null)
@@ -2052,6 +2058,7 @@ public partial class MainWindow : Window
                             _lastPositiveDetectionUtc = nowUtc;
                             _recentAutoStopContext = null;
                             _manualStopSuppressionContext = null;
+                            ResetPendingSuccessorCandidate();
                             _recordingStorageBackoffUntilUtc = null;
                             _lastAutoStopFingerprint = null;
                             UpdateCurrentMeetingEditor();
@@ -2063,6 +2070,8 @@ public partial class MainWindow : Window
                             AppendActivity(
                                 shouldRecoverFromRecentAutoStop && !decision.ShouldStart
                                     ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
+                                    : shouldStartPendingSuccessor
+                                        ? "Started a separately confirmed successor meeting after the prior recording finalized."
                                     : shouldAutoStartQuietTeamsMeeting
                                         ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
                                         : shouldAutoStartQuietGoogleMeet
@@ -2082,10 +2091,51 @@ public partial class MainWindow : Window
             {
                 ResetQuietTeamsAutoStartCandidate();
                 ResetQuietGoogleMeetAutoStartCandidate();
+                ResetPendingSuccessorCandidate();
             }
 
             var activeSession = _recordingCoordinator.ActiveSession;
+            ContinuityCutoverDecision? activeContinuityDecision = null;
+            if (activeSession is { MeetingLifecycleManaged: true } &&
+                _liveConfig.Current.MeetingIdentityContinuityEnabled)
+            {
+                var ownershipVerdict = _autoRecordingContinuityPolicy.GetActiveSessionOwnershipVerdict(
+                    decision,
+                    activeSession.Manifest.Platform,
+                    activeSession.Manifest.DetectedTitle);
+                activeContinuityDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
+                    ContinuityCutoverMode.Matcher,
+                    (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                    _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                    decision is null
+                        ? null
+                        : _manifestStore.CreateIdentitySnapshotForComparison(
+                            decision.Platform,
+                            decision.SessionTitle,
+                            decision.DetectedAudioSource,
+                            nowUtc),
+                    ownershipVerdict,
+                    IsManualStop: _manualStopSuppressionContext is not null,
+                    _continuityGraceReceipt,
+                    nowUtc,
+                    ownershipVerdict));
+                _continuityGraceReceipt = activeContinuityDecision.GraceReceipt;
+                UpdatePendingSuccessorCandidate(
+                    activeContinuityDecision.Verdict == MeetingIdentityVerdict.DifferentMeeting
+                        ? decision
+                        : null,
+                    nowUtc);
+            }
+            else
+            {
+                _continuityGraceReceipt = null;
+                ResetPendingSuccessorCandidate();
+            }
+
+            // Matcher-managed recordings are title-owned. Legacy sessions retain
+            // the previous reclassification path until their next safe restart.
             if (activeSession is not null &&
+                !_liveConfig.Current.MeetingIdentityContinuityEnabled &&
                 await TryReclassifyActiveSessionAsync(
                     activeSession,
                     decision,
@@ -2105,7 +2155,9 @@ public partial class MainWindow : Window
             {
                 var loopbackRefresh = await _recordingCoordinator.RefreshLoopbackCaptureAsync(
                     activeSession.Manifest.Platform,
-                    decision?.DetectedAudioSource,
+                    (activeContinuityDecision is null || activeContinuityDecision.Action == ContinuityLifecycleAction.Continue)
+                        ? decision?.DetectedAudioSource
+                        : null,
                     _lifetimeCts.Token);
                 if (!string.IsNullOrWhiteSpace(loopbackRefresh.StatusMessage) &&
                     (loopbackRefresh.SwapPerformed || loopbackRefresh.SwapFailed))
@@ -2145,31 +2197,17 @@ public partial class MainWindow : Window
                      activeMeetingManagedSession.Manifest.DetectedTitle,
                      hasRecentLoopbackActivity,
                      hasRecentMicrophoneActivity));
-            if (activeMeetingManagedSession is not null && _liveConfig.Current.MeetingIdentityContinuityEnabled)
+            if (activeMeetingManagedSession is not null &&
+                _liveConfig.Current.MeetingIdentityContinuityEnabled &&
+                activeContinuityDecision is not null)
             {
-                var legacyVerdict = shouldRefreshLastPositiveSignal
-                    ? MeetingIdentityVerdict.SameMeeting
-                    : MeetingIdentityVerdict.Unknown;
-                var cutover = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
-                    ContinuityCutoverMode.Matcher,
-                    (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
-                    _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
-                    decision is null
-                        ? null
-                        : _manifestStore.CreateIdentitySnapshotForComparison(
-                            decision.Platform,
-                            decision.SessionTitle,
-                            decision.DetectedAudioSource,
-                            nowUtc),
-                    legacyVerdict,
-                    IsManualStop: _manualStopSuppressionContext is not null,
-                    _continuityGraceReceipt,
-                    nowUtc));
-                _continuityGraceReceipt = cutover.GraceReceipt;
-                shouldRefreshLastPositiveSignal = cutover.Action is ContinuityLifecycleAction.Continue or ContinuityLifecycleAction.Grace;
-                shouldClearAutoStopCountdown = shouldRefreshLastPositiveSignal;
+                // The immutable decision calculated above is the only matcher
+                // evaluation for this detector cycle. In particular, do not
+                // clear an expired receipt and create another grace below.
+                shouldRefreshLastPositiveSignal = activeContinuityDecision.Action == ContinuityLifecycleAction.Continue;
+                shouldClearAutoStopCountdown = activeContinuityDecision.Action == ContinuityLifecycleAction.Continue;
             }
-            else
+            else if (activeMeetingManagedSession is null || !_liveConfig.Current.MeetingIdentityContinuityEnabled)
             {
                 _continuityGraceReceipt = null;
             }
@@ -2192,18 +2230,27 @@ public partial class MainWindow : Window
                      activeMeetingManagedSession is not null)
             {
                 var activePlatform = activeMeetingManagedSession.Manifest.Platform;
-                var elapsedSincePositive = _lastPositiveDetectionUtc.HasValue
-                    ? nowUtc - _lastPositiveDetectionUtc.Value
+                var identityLossGrace = activeContinuityDecision is { Action: ContinuityLifecycleAction.Grace } matcherGrace
+                    ? matcherGrace.GraceReceipt
+                    : null;
+                var identityLossExpired = activeContinuityDecision?.Action == ContinuityLifecycleAction.Stop &&
+                    _liveConfig.Current.MeetingIdentityContinuityEnabled;
+                var lastPositiveUtc = identityLossExpired
+                    ? nowUtc - ContinuityCutoverPolicy.MaximumGrace
+                    : identityLossGrace?.StartedAtUtc ?? _lastPositiveDetectionUtc;
+                var elapsedSincePositive = lastPositiveUtc.HasValue
+                    ? nowUtc - lastPositiveUtc.Value
                     : (TimeSpan?)null;
-                var lastPositiveUtc = _lastPositiveDetectionUtc;
 
                 if (elapsedSincePositive.HasValue && lastPositiveUtc.HasValue)
                 {
-                    var stopTimeout = _autoRecordingContinuityPolicy.GetAutoStopTimeout(
-                        decision,
-                        activePlatform,
-                        activeMeetingManagedSession.Manifest.DetectedTitle,
-                        TimeSpan.FromSeconds(_liveConfig.Current.MeetingStopTimeoutSeconds));
+                    var stopTimeout = identityLossGrace is not null || identityLossExpired
+                        ? ContinuityCutoverPolicy.MaximumGrace
+                        : _autoRecordingContinuityPolicy.GetAutoStopTimeout(
+                            decision,
+                            activePlatform,
+                            activeMeetingManagedSession.Manifest.DetectedTitle,
+                            TimeSpan.FromSeconds(_liveConfig.Current.MeetingStopTimeoutSeconds));
                     var remaining = stopTimeout - elapsedSincePositive.Value;
                     if (remaining <= TimeSpan.Zero)
                     {
@@ -2215,13 +2262,17 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _recentAutoStopContext = new RecentAutoStopContext(
-                                activePlatform,
-                                nowUtc,
-                                _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
-                                (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue));
+                            _recentAutoStopContext = identityLossGrace is null && !identityLossExpired
+                                ? new RecentAutoStopContext(
+                                    activePlatform,
+                                    nowUtc,
+                                    _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
+                                    (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue))
+                                : null;
                             _continuityGraceReceipt = null;
-                            AppendAutoStopStatus($"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal.");
+                            AppendAutoStopStatus(identityLossGrace is null && !identityLossExpired
+                                ? $"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal."
+                                : "Auto-stop triggered: the original meeting identity was not confirmed within 90 seconds.");
                             _isRecordingTransitionInProgress = true;
                             _isAutoStopTransitionInProgress = true;
                             ClearAutoStopVisualState();
@@ -2231,7 +2282,9 @@ public partial class MainWindow : Window
                             UpdateAudioCaptureGraph();
                             try
                             {
-                                await StopCurrentRecordingAsync("Meeting signals expired after the configured timeout.");
+                                await StopCurrentRecordingAsync(identityLossGrace is null && !identityLossExpired
+                                    ? "Meeting signals expired after the configured timeout."
+                                    : "Meeting identity loss grace expired.");
                             }
                             finally
                             {
@@ -2248,8 +2301,11 @@ public partial class MainWindow : Window
                     else
                     {
                         SetAutoStopCountdown(remaining);
-                        AppendAutoStopStatus(
-                            $"Auto-stop countdown active: {Math.Ceiling(remaining.TotalSeconds)} seconds remaining. Last strong meeting signal was at {lastPositiveUtc.Value:O}.");
+                        AppendAutoStopStatus(identityLossGrace is not null
+                            ? activeContinuityDecision?.Verdict == MeetingIdentityVerdict.DifferentMeeting
+                                ? $"A different meeting is being observed. This recording will stop in {Math.Ceiling(remaining.TotalSeconds)} seconds and will not be renamed."
+                                : $"The original meeting is no longer confirmed. Auto-stop in {Math.Ceiling(remaining.TotalSeconds)} seconds."
+                            : $"Auto-stop countdown active: {Math.Ceiling(remaining.TotalSeconds)} seconds remaining. Last strong meeting signal was at {lastPositiveUtc.Value:O}.");
                     }
                 }
             }
@@ -2259,8 +2315,10 @@ public partial class MainWindow : Window
                 RecordContinuationShadow(
                     activeMeetingManagedSession,
                     decision,
-                    shouldRefreshLastPositiveSignal ? MeetingIdentityVerdict.SameMeeting : MeetingIdentityVerdict.Unknown,
-                    shouldRefreshLastPositiveSignal ? "legacy-continuation" : "legacy-continuation-unknown",
+                    activeContinuityDecision?.Verdict ??
+                        (shouldRefreshLastPositiveSignal ? MeetingIdentityVerdict.SameMeeting : MeetingIdentityVerdict.Unknown),
+                    activeContinuityDecision?.ReasonCode ??
+                        (shouldRefreshLastPositiveSignal ? "legacy-continuation" : "legacy-continuation-unknown"),
                     nowUtc);
             }
 
@@ -2349,6 +2407,76 @@ public partial class MainWindow : Window
     {
         _quietTeamsAutoStartFingerprint = null;
         _quietTeamsAutoStartFirstObservedUtc = null;
+    }
+
+    private bool HasPendingSuccessorCandidate() =>
+        !string.IsNullOrWhiteSpace(_pendingSuccessorFingerprint) &&
+        _pendingSuccessorFirstObservedUtc.HasValue;
+
+    private void UpdatePendingSuccessorCandidate(DetectionDecision? decision, DateTimeOffset nowUtc)
+    {
+        if (!TryGetSpecificMeetingFingerprint(decision, out var fingerprint))
+        {
+            ResetPendingSuccessorCandidate();
+            return;
+        }
+
+        if (!string.Equals(_pendingSuccessorFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _pendingSuccessorFingerprint = fingerprint;
+            _pendingSuccessorFirstObservedUtc = nowUtc;
+        }
+    }
+
+    private bool ShouldAutoStartPendingSuccessor(DetectionDecision decision, DateTimeOffset nowUtc)
+    {
+        if (!HasPendingSuccessorCandidate())
+        {
+            return false;
+        }
+
+        if (!TryGetSpecificMeetingFingerprint(decision, out var fingerprint))
+        {
+            ResetPendingSuccessorCandidate();
+            return false;
+        }
+
+        if (!string.Equals(_pendingSuccessorFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _pendingSuccessorFingerprint = fingerprint;
+            _pendingSuccessorFirstObservedUtc = nowUtc;
+            return false;
+        }
+
+        return _autoRecordingContinuityPolicy.ShouldAutoStartStableSuccessor(
+            decision,
+            _pendingSuccessorFirstObservedUtc!.Value,
+            nowUtc);
+    }
+
+    private static bool TryGetSpecificMeetingFingerprint(DetectionDecision? decision, out string fingerprint)
+    {
+        fingerprint = string.Empty;
+        if (decision is null || decision.Platform == MeetingPlatform.Unknown)
+        {
+            return false;
+        }
+
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(decision.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedTitle) ||
+            normalizedTitle is "meeting" or "detected meeting" or "teams" or "microsoft teams" or "google meet")
+        {
+            return false;
+        }
+
+        fingerprint = $"{decision.Platform}|{normalizedTitle}";
+        return true;
+    }
+
+    private void ResetPendingSuccessorCandidate()
+    {
+        _pendingSuccessorFingerprint = null;
+        _pendingSuccessorFirstObservedUtc = null;
     }
 
     private bool ShouldAutoStartQuietGoogleMeet(DetectionDecision? decision, DateTimeOffset nowUtc)
@@ -2479,32 +2607,18 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (_liveConfig.Current.MeetingIdentityContinuityEnabled)
+        if (_liveConfig.Current.MeetingIdentityContinuityEnabled && activeSession.MeetingLifecycleManaged)
         {
-            var matcherDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
-                ContinuityCutoverMode.Matcher,
-                (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
-                _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
-                _manifestStore.CreateIdentitySnapshotForComparison(
-                    decision.Platform,
-                    decision.SessionTitle,
-                    decision.DetectedAudioSource,
-                    nowUtc),
+            // Matcher-owned active sessions are finalized by the one per-scan
+            // ownership decision in DetectionTimer_OnTick. Never evaluate
+            // grace here or rename a recording to a different meeting.
+            RecordReclassificationShadow(
+                activeSession,
+                decision,
                 MeetingIdentityVerdict.Unknown,
-                IsManualStop: _manualStopSuppressionContext is not null,
-                _continuityGraceReceipt,
-                nowUtc));
-            _continuityGraceReceipt = matcherDecision.GraceReceipt;
-            if (matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting)
-            {
-                RecordReclassificationShadow(
-                    activeSession,
-                    decision,
-                    matcherDecision.Verdict,
-                    matcherDecision.ReasonCode,
-                    nowUtc);
-                return false;
-            }
+                "active-session-ownership-managed",
+                nowUtc);
+            return false;
         }
 
         var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(

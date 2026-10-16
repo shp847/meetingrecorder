@@ -31,7 +31,8 @@ public sealed record ContinuityCutoverInput(
     MeetingIdentityVerdict LegacyVerdict,
     bool IsManualStop,
     ContinuityGraceReceipt? ExistingGrace,
-    DateTimeOffset NowUtc);
+    DateTimeOffset NowUtc,
+    MeetingIdentityVerdict OwnershipVerdict = MeetingIdentityVerdict.Unknown);
 
 public sealed record ContinuityCutoverDecision(
     ContinuityLifecycleAction Action,
@@ -47,7 +48,7 @@ public sealed record ContinuityCutoverDecision(
 /// </summary>
 public sealed class ContinuityCutoverPolicy
 {
-    public static readonly TimeSpan MaximumGrace = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaximumGrace = TimeSpan.FromSeconds(90);
     private readonly MeetingContinuityMatcher _matcher;
 
     public ContinuityCutoverPolicy(MeetingContinuityMatcher? matcher = null)
@@ -79,21 +80,27 @@ public sealed class ContinuityCutoverPolicy
             input.ObservedIdentity,
             MeetingIdentityComparisonMode.RuntimeToRuntime,
             nowUtc);
-        return match.Verdict switch
+        // The active session's normalized title is a local ownership signal. It
+        // is deliberately evaluated once by the caller for this scan, so an
+        // expired snapshot cannot make a still-visible original meeting look
+        // Unknown merely because the snapshot's comparison TTL elapsed.
+        var verdict = input.OwnershipVerdict is MeetingIdentityVerdict.SameMeeting or MeetingIdentityVerdict.DifferentMeeting
+            ? input.OwnershipVerdict
+            : match.Verdict;
+        return verdict switch
         {
             MeetingIdentityVerdict.SameMeeting => new ContinuityCutoverDecision(
                 ContinuityLifecycleAction.Continue,
-                match.Verdict,
-                match.ReasonCode,
+                verdict,
+                input.OwnershipVerdict == MeetingIdentityVerdict.SameMeeting ? "active-session-identity-match" : match.ReasonCode,
                 null,
                 true),
-            MeetingIdentityVerdict.DifferentMeeting => new ContinuityCutoverDecision(
-                ContinuityLifecycleAction.DifferentMeeting,
-                match.Verdict,
-                match.ReasonCode,
-                null,
-                true),
-            _ => CreateGrace(input, nowUtc, match.ReasonCode),
+            MeetingIdentityVerdict.DifferentMeeting => CreateGrace(
+                input,
+                nowUtc,
+                "different-meeting-identity-loss-grace",
+                verdict),
+            _ => CreateGrace(input, nowUtc, match.ReasonCode, MeetingIdentityVerdict.Unknown),
         };
     }
 
@@ -107,7 +114,8 @@ public sealed class ContinuityCutoverPolicy
     private static ContinuityCutoverDecision CreateGrace(
         ContinuityCutoverInput input,
         DateTimeOffset nowUtc,
-        string reasonCode)
+        string reasonCode,
+        MeetingIdentityVerdict verdict)
     {
         var fingerprint = input.ObservedIdentity?.Fingerprint ?? "missing-identity";
         var existing = input.ExistingGrace;
@@ -117,19 +125,21 @@ public sealed class ContinuityCutoverPolicy
             // Device/window churn can change their fingerprint; allowing either a
             // changed fingerprint or an expired receipt to start another window
             // turns bounded grace into an endless recording.
-            if (nowUtc > existing.DeadlineUtc)
+            if (nowUtc >= existing.DeadlineUtc)
             {
                 return new ContinuityCutoverDecision(
                     ContinuityLifecycleAction.Stop,
-                    MeetingIdentityVerdict.Unknown,
-                    "unknown-identity-grace-expired",
+                    verdict,
+                    verdict == MeetingIdentityVerdict.DifferentMeeting
+                        ? "different-meeting-identity-loss-grace-expired"
+                        : "unknown-identity-grace-expired",
                     null,
                     true);
             }
 
             return new ContinuityCutoverDecision(
                 ContinuityLifecycleAction.Grace,
-                MeetingIdentityVerdict.Unknown,
+                verdict,
                 reasonCode,
                 existing with { ObservationCount = existing.ObservationCount + 1 },
                 true);
@@ -143,7 +153,7 @@ public sealed class ContinuityCutoverPolicy
             1);
         return new ContinuityCutoverDecision(
             ContinuityLifecycleAction.Grace,
-            MeetingIdentityVerdict.Unknown,
+            verdict,
             reasonCode,
             receipt,
             true);

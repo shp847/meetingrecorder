@@ -16,7 +16,7 @@ public sealed class RecordingStopPipelineSourceTests
         var transitionIndex = branchBlock.IndexOf("_isRecordingTransitionInProgress = true;", StringComparison.Ordinal);
         var dispatcherIndex = branchBlock.IndexOf("TryBeginRecordingTransitionCallback(\"automatic-stop\")", StringComparison.Ordinal);
         var uiIndex = branchBlock.IndexOf("UpdateUi(\"Auto-stopping recording.\"", StringComparison.Ordinal);
-        var stopIndex = branchBlock.IndexOf("await StopCurrentRecordingAsync(\"Meeting signals expired after the configured timeout.\");", StringComparison.Ordinal);
+        var stopIndex = branchBlock.IndexOf("await StopCurrentRecordingAsync(identityLossGrace is null && !identityLossExpired", StringComparison.Ordinal);
 
         Assert.True(dispatcherIndex >= 0, "Expected auto-stop timeout branch to acquire the serialized transition callback.");
         Assert.True(transitionIndex >= 0, "Expected auto-stop timeout branch to enter a recording transition state.");

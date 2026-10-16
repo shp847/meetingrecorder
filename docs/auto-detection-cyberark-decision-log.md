@@ -964,6 +964,20 @@ As of 2026-07-20, executable-policy facts are:
 - Outcome: retained in source and packaged; deployment is intentionally deferred while the user-owned live app is running.
 - Follow-up / removal condition: retain the narrow Edge signature; expand only with a separately observed browser-title format and a regression test.
 
+### 2026-10-15: Sprint 8B active-session ownership and bounded stop
+- Trigger / observed symptom: a managed Teams recording continued for hours after its original meeting identity disappeared because unrelated Teams windows and shared endpoint audio repeatedly deferred its stop.
+- Exact runtime or CyberArk evidence: incident logs show a manually stopped 3:18:54 Teams artifact with repeated endpoint recovery and unrelated specific Teams candidates. Source audit found two matcher evaluations in one detector cycle: the first expired and cleared the grace receipt, while the second created a fresh grace window. No CyberArk, process-inspection, or executable-path event caused the overrun.
+- Hypothesis: confirmed source lifecycle ownership gap. The active session must own its title/identity; a different meeting is a successor candidate, never evidence that can refresh or rename the old session.
+- APIs or signals added/removed: no external detector, Windows audio-probe, process, UI Automation, signing, executable naming, or install-location signal is added. The implementation will evaluate matcher continuity once per scan, use one non-renewable 90-second identity-loss grace, retain only safe capture recovery during loss, and admit a separately stable successor only after finalizing the old session.
+- Positive behavior expected: a matching original identity continues; unknown or different evidence gets one visible 90-second countdown; expiry finalizes the original record without changing its title; a different stable meeting may later start as a distinct record.
+- False-positive/security boundary retained: manual stop remains authoritative; shared endpoint activity and unrelated candidates cannot extend, rename, or choose a capture endpoint for the active record. The prior 3:18:54 artifact is preserved unchanged. No raw window titles, transcript data, API data, or audio is added to diagnostics.
+- Tests added and results: pending implementation.
+- Package status: pending implementation.
+- Installed hash/version/signature status: unchanged pending package verification.
+- Live-machine result: incident establishes the pre-fix failure only; corrected behavior awaits synthetic/package and future live evidence.
+- Outcome: implementation in progress.
+- Follow-up / removal condition: retain the ownership boundary until production evidence shows a stronger, privacy-safe original-meeting identity signal that can safely shorten the bounded grace.
+
 ## Entry Template
 
 Append future entries with all fields:
