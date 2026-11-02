@@ -61,6 +61,8 @@ internal sealed class ProcessingQueueService : IDisposable
     internal event Action<ProcessingQueueStatusSnapshot>? StatusChanged;
     internal event Action<ProcessingWorkCompletion>? WorkCompleted;
 
+    internal IdleCpuCapacitySnapshot ResourceCapacitySnapshot => _resourceCapacityMonitor.Snapshot;
+
     public ProcessingQueueService(
         LiveAppConfig config,
         SessionManifestStore manifestStore,

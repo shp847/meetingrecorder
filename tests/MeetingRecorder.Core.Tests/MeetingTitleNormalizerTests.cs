@@ -6,10 +6,13 @@ public sealed class MeetingTitleNormalizerTests
 {
     [Theory]
     [InlineData("Meet - Project planning and 17 more pages - Work - Microsoft Edge", "Project planning")]
+    [InlineData("Meet - Project planning and 17 more pages - Work", "Project planning")]
+    [InlineData("Meet - Project planning and 17 more pages", "Project planning")]
     [InlineData("Meet - Project planning - Microsoft Edge", "Project planning")]
     [InlineData("Meet - Project planning", "Meet - Project planning")]
+    [InlineData("Meet - Project planning - Work", "Meet - Project planning - Work")]
     [InlineData("Project planning - Work - Microsoft Edge", "Project planning")]
-    public void NormalizeGoogleMeetWindowTitle_Removes_Only_Verified_Edge_Decoration(string title, string expected)
+    public void NormalizeGoogleMeetWindowTitle_Removes_Only_Verified_Browser_Decoration(string title, string expected)
     {
         Assert.Equal(expected, MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(title));
     }

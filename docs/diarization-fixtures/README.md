@@ -39,7 +39,17 @@ for an exact normalized-stem pair or a unique same-day/duration pair, where the
 duration tolerance is the larger of two minutes or ten percent of audio length.
 Ties, missing counterparts, unreadable media, unsupported transcript formats,
 and weak matches stay held in the private intake report; no pair is guessed.
-The report contains aggregate counts, opaque IDs, and dispositions only.
+The report contains aggregate counts, opaque IDs, and dispositions only. Its
+hash status distinguishes verified readable inputs from an
+`incomplete_unreadable_inputs` check, so a held source is never misreported as
+a changed source.
+
+Use PowerShell 7 (`pwsh`) for corpus roots that contain long paths. Windows
+PowerShell 5 can report otherwise readable long-path sources as unavailable;
+that is a host limitation, not evidence about a source. The bounded full-audio
+child also prefers `pwsh` when available so it uses the same long-path-capable
+host as intake. The builder still holds any genuinely inaccessible source and
+never promotes it to a fixture.
 
 Truth-store schema v2 adds `expectedTurns`, containing only `truth-speaker-##`
 tokens and millisecond ranges. The catalog runner reads them after worker output
@@ -65,11 +75,29 @@ current fixture behavior. If the runtime-specific output must be refreshed,
 the runner forces a `win-x64` rebuild and treats successful rebuild completion
 as freshness authority: copy operations may preserve timestamps, so timestamps
 are a refresh trigger rather than post-build proof.
+The full-audio runner selects a command only after it verifies that it exposes
+a usable .NET SDK. It prefers the current user's `.dotnet` SDK, then
+`DOTNET_ROOT`, before an arbitrary PATH entry; a runtime-only `dotnet` cannot
+silently turn every fixture into a launch failure.
 
 For bounded full-audio evidence, pass `-FixtureTimeoutSeconds` to the catalog
 runner. A timeout writes a metadata-only `timed_out` result, terminates only the
 fixture child process tree, and drains rather than exposing its console output.
 Use `0` (the default) to rely on the worker's existing processing limit.
+
+Every catalog run writes an opaque `.checkpoint.json` beside its requested
+final report after each terminal fixture. An in-progress checkpoint has
+`runState: running`; a terminal checkpoint and final report have
+`runState: complete`. They contain requested and terminal counts plus only the
+existing redacted aggregate/result fields; replacement is atomic.
+This makes interruption visible without exposing corpus paths, names, text, or
+worker output. To continue a matching governed run, pass
+`-ResumeCheckpointPath <checkpoint>` with the same catalog/truth/filter,
+timeout, calibration settings, and harness. The runner verifies one combined
+opaque identity (including fixture scripts and non-generated product source)
+plus every fixture content hash and terminal state before it reuses a result.
+Any catalog, truth-store, harness, build-mode, run-setting, duplicate, or
+fixture-content mismatch is rejected; it never silently reuses old evidence.
 
 Before a long CPU full-audio run, the worker supports the local
 `--probe-diarization-cpu --config <fixture-config>` preflight. It initializes

@@ -110,6 +110,59 @@ public sealed class WpfRenderedShellHarnessTests
     }
 
     [Fact]
+    public void External_Audio_Import_Review_Renders_A_Source_Retained_Setup_Blocked_Row()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.ImportReviewSetupBlocked,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("ExternalAudioImportReviewBorder", automationTrace);
+        Assert.Contains("External audio import review: source, status, retention, and recovery", automationTrace);
+        Assert.Contains("Import privacy and consent notice", automationTrace);
+        Assert.Contains("Queue valid imported audio", automationTrace);
+        Assert.Contains("Focus: External audio import review: source, status, retention, and recovery", keyboardTrace);
+        Assert.Contains("Focus: Meeting title for selected import row", keyboardTrace);
+    }
+
+    [Fact]
+    public void External_Audio_Import_Review_Renders_A_Ready_Row_Without_Setup_Recovery()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.ImportReviewReady,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+
+        Assert.Contains("ExternalAudioImportReviewBorder", automationTrace);
+        Assert.Contains("1 import row(s): 1 ready, 0 setup blocked", automationTrace);
+    }
+
+    [Fact]
+    public void External_Audio_Import_Review_Renders_A_Terminal_Preflight_Row_With_Safe_Recovery()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.ImportReviewInvalid,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+
+        Assert.Contains("1 import row(s): 0 ready, 0 setup blocked", automationTrace);
+        Assert.DoesNotContain(evidence.RootDirectory, automationTrace, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Empty_Healthy_Shell_Renders_A_Ready_Synthetic_Model_State()
     {
         var evidence = WpfRenderHarness.CaptureEmptyHealthyShell();
@@ -196,6 +249,25 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Edit: Use Outlook calendar as a fallback meeting title =", keyboardTrace);
         Assert.Contains("Save: Config saved and applied to the running app.", keyboardTrace);
         Assert.Contains("Escape: Open Settings", keyboardTrace);
+    }
+
+    [Fact]
+    public void Import_Inbox_Settings_Render_The_Disabled_Safe_Default_And_Focus_The_OptIn()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.SettingsImportInbox,
+            logicalWidth: 1280,
+            logicalHeight: 800,
+            rasterScale: 1.25d);
+
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
+        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
+
+        Assert.Contains("SettingsFilesAndUpdatesSectionButton", automationTrace);
+        Assert.Contains("Enable Import Inbox scanning", automationTrace);
+        Assert.Contains("Rescan Inbox", automationTrace);
+        Assert.Contains("Focus: Enable Import Inbox scanning", keyboardTrace);
     }
 
     [Fact]

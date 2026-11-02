@@ -1,3 +1,4 @@
+using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Services;
 using System.Text.Json;
 
@@ -203,6 +204,12 @@ internal static class Program
         FileLogWriter logger,
         string configPath)
     {
+        if (config.SpeakerLabelingModelProfilePreference == SpeakerLabelingModelProfilePreference.Disabled)
+        {
+            logger.Log("Speaker labeling is disabled by local configuration; publishing transcripts without labels.");
+            return DisabledDiarizationProvider.Instance;
+        }
+
         if (config.DiarizationProviderPreference == MeetingRecorder.Core.Configuration.DiarizationProviderPreference.LocalCli &&
             CliProviderProcess.HasCurrentSuccessfulProbe(config.DiarizationCliPath, config.DiarizationCliProviderProbe) &&
             CliProviderProcess.ProbeExecutable(config.DiarizationCliPath, "Diarization", logger))

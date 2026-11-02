@@ -209,7 +209,7 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
-    public void Analyze_Returns_Manual_GenerateSummary_For_Missing_Summary_With_Readable_Transcript()
+    public void Analyze_Returns_Automatic_GenerateSummary_For_Missing_Summary_With_Readable_Transcript()
     {
         var recommendation = AnalyzeSingle(
             CreateInspection(
@@ -231,8 +231,8 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                 hasReadableStructuredTranscript: true));
 
         Assert.Equal(MeetingCleanupAction.GenerateSummary, recommendation.Action);
-        Assert.Equal(MeetingCleanupConfidence.Medium, recommendation.Confidence);
-        Assert.False(recommendation.CanApplyAutomatically);
+        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
+        Assert.True(recommendation.CanApplyAutomatically);
         Assert.Equal("generate-missing-ai-summary", recommendation.ReasonCode);
     }
 

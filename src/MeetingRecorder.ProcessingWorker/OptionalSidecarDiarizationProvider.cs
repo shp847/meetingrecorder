@@ -877,7 +877,7 @@ internal sealed class LocalSpeakerDiarizationProvider : IDiarizationProvider, ID
             attemptCount,
             inputDuration,
             inputBytes,
-            Environment.WorkingSet,
+            null,
             detail,
             DateTimeOffset.UtcNow));
     }

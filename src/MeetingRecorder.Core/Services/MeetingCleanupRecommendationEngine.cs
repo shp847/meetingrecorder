@@ -845,13 +845,13 @@ internal static class MeetingCleanupRecommendationEngine
         return BuildRecommendation(
             inspection.Meeting.Stem,
             MeetingCleanupAction.GenerateSummary,
-            MeetingCleanupConfidence.Medium,
+            MeetingCleanupConfidence.High,
             failedPreviously ? "Retry failed AI summary" : "Generate missing AI summary",
             failedPreviously
                 ? $"'{inspection.Meeting.Title}' has a failed AI summary and can be retried from its published transcript."
                 : $"'{inspection.Meeting.Title}' has a readable published transcript but no AI summary yet.",
             [inspection.Meeting.Stem],
-            canApplyAutomatically: false,
+            canApplyAutomatically: true,
             suggestedTitle: null,
             suggestedSplitPoint: null,
             reasonCode: failedPreviously ? "retry-failed-ai-summary" : "generate-missing-ai-summary");

@@ -444,6 +444,12 @@ public sealed record AppConfig
         IncrementalWorkPlan.SafeCleanup;
 
     /// <summary>
+    /// Master authority for unattended, containment-approved cleanup. Individual
+    /// work-plan flags and provider consent still constrain what can run.
+    /// </summary>
+    public bool SmartCleanupEnabled { get; init; } = true;
+
+    /// <summary>
     /// Tracks one-time defaults for incremental work without overriding a later user opt-out.
     /// </summary>
     public int IncrementalWorkPlanMigrationVersion { get; init; }

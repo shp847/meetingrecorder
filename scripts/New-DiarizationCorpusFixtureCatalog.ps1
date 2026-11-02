@@ -51,6 +51,10 @@ function Get-TextSha256([string]$Value) {
     finally { $sha256.Dispose() }
 }
 
+function Get-TextHashHex([string]$Value) {
+    return [BitConverter]::ToString((Get-TextSha256 $Value)).Replace('-', '').ToLowerInvariant()
+}
+
 function Normalize-Stem([string]$Value) {
     return (($Value.ToLowerInvariant() -replace '[^a-z0-9]+', '-') -replace '(^-+|-+$)', '')
 }
@@ -153,6 +157,36 @@ function New-SourceRecord([IO.FileInfo]$File, [string]$Kind) {
     }
 }
 
+function New-HeldSourceRecord([IO.FileInfo]$File, [string]$Kind) {
+    # The source is private, may be temporarily offline, and must never make the
+    # full corpus intake fail. Derive a stable opaque ID from local metadata only;
+    # no path, name, or error text is emitted into the intake report or console.
+    try { $length = $File.Length } catch { $length = -1 }
+    try { $lastWriteTicks = $File.LastWriteTimeUtc.Ticks } catch { $lastWriteTicks = 0 }
+    $metadataHash = Get-TextHashHex "$Kind|$($File.FullName)|$length|$lastWriteTicks"
+    return [pscustomobject]@{
+        id = Get-OpaqueId "$Kind-unreadable" $metadataHash; kind = $Kind; hash = $null; path = $File.FullName
+        normalizedStem = Normalize-Stem $File.BaseName; dateKeys = Get-DateKeys $File.BaseName; durationMilliseconds = $null
+        speakerCount = $null; extension = $File.Extension.ToLowerInvariant(); state = "held_unreadable_$Kind"
+    }
+}
+
+function Get-SourceRecords([string]$Root, [string[]]$Extensions, [string]$Kind) {
+    $records = [System.Collections.Generic.List[object]]::new()
+    $files = @(Get-ChildItem -LiteralPath $Root -File -Recurse |
+        Where-Object { $Extensions -contains $_.Extension.ToLowerInvariant() } |
+        Sort-Object -Property FullName)
+    foreach ($file in $files) {
+        try {
+            $records.Add((New-SourceRecord $file $Kind))
+        }
+        catch {
+            $records.Add((New-HeldSourceRecord $file $Kind))
+        }
+    }
+    return @($records)
+}
+
 $resolvedAudioRoot = Resolve-Directory $AudioRoot 'Audio root'
 $resolvedTranscriptRoot = Resolve-Directory $TranscriptRoot 'Transcript root'
 $resolvedFixtureRoot = [IO.Path]::GetFullPath($FixtureRoot)
@@ -165,8 +199,8 @@ if (-not (Test-Path -LiteralPath $resolvedFixtureRoot)) { New-Item -ItemType Dir
 if ((Get-Item -LiteralPath $resolvedFixtureRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'FixtureRoot cannot be a reparse point.' }
 
 Import-NAudio
-$audio = @(Get-ChildItem -LiteralPath $resolvedAudioRoot -File -Recurse | Where-Object { $audioExtensions -contains $_.Extension.ToLowerInvariant() } | ForEach-Object { New-SourceRecord $_ 'audio' })
-$transcripts = @(Get-ChildItem -LiteralPath $resolvedTranscriptRoot -File -Recurse | Where-Object { $transcriptExtensions -contains $_.Extension.ToLowerInvariant() } | ForEach-Object { New-SourceRecord $_ 'transcript' })
+$audio = @(Get-SourceRecords $resolvedAudioRoot $audioExtensions 'audio')
+$transcripts = @(Get-SourceRecords $resolvedTranscriptRoot $transcriptExtensions 'transcript')
 
 $paired = [System.Collections.Generic.List[object]]::new()
 $audioByStem = @{}; foreach ($item in $audio) { if (-not $audioByStem.ContainsKey($item.normalizedStem)) { $audioByStem[$item.normalizedStem] = @() }; $audioByStem[$item.normalizedStem] += $item }
@@ -174,7 +208,7 @@ $transcriptsByStem = @{}; foreach ($item in $transcripts) { if (-not $transcript
 foreach ($stem in $audioByStem.Keys) {
     if ($transcriptsByStem.ContainsKey($stem) -and $audioByStem[$stem].Count -eq 1 -and $transcriptsByStem[$stem].Count -eq 1) {
         $a = $audioByStem[$stem][0]; $t = $transcriptsByStem[$stem][0]
-        if ($t.speakerCount -gt 0 -and $t.extension -in @('.md', '.vtt')) { $paired.Add([pscustomobject]@{ audio = $a; transcript = $t; method = 'exact_stem' }); $a.state = 'matched'; $t.state = 'matched' }
+        if ($null -ne $a.durationMilliseconds -and $t.speakerCount -gt 0 -and $t.extension -in @('.md', '.vtt')) { $paired.Add([pscustomobject]@{ audio = $a; transcript = $t; method = 'exact_stem' }); $a.state = 'matched'; $t.state = 'matched' }
     }
 }
 foreach ($a in @($audio | Where-Object state -eq 'pending')) {
@@ -212,9 +246,15 @@ foreach ($pair in $paired) {
     catch { $buildResults.Add([pscustomobject]@{ fixtureId = $fixtureId; state = 'held_build_failed' }) }
 }
 
-$sourceHashesUnchanged = @($audio + $transcripts | ForEach-Object { (Get-Sha256 $_.path) -eq $_.hash } | Where-Object { -not $_ }).Count -eq 0
+$hashableInputs = @($audio + $transcripts | Where-Object { -not [string]::IsNullOrWhiteSpace($_.hash) })
+$unhashableInputCount = @($audio + $transcripts | Where-Object { [string]::IsNullOrWhiteSpace($_.hash) }).Count
+$sourceHashesUnchanged = @($hashableInputs | ForEach-Object {
+    try { return (Get-Sha256 $_.path) -eq $_.hash }
+    catch { return $false }
+} | Where-Object { -not $_ }).Count -eq 0
+$sourceHashVerification = if ($unhashableInputCount -eq 0) { 'verified' } else { 'incomplete_unreadable_inputs' }
 $report = [ordered]@{
-    schemaVersion = 1; generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); sourceHashesUnchanged = $sourceHashesUnchanged
+    schemaVersion = 1; generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o'); sourceHashesUnchanged = $sourceHashesUnchanged; sourceHashVerification = $sourceHashVerification; unhashableInputCount = $unhashableInputCount
     summary = [ordered]@{ audio = $audio.Count; transcripts = $transcripts.Count; matched = $paired.Count; exactStem = @($paired | Where-Object method -eq 'exact_stem').Count; dateDuration = @($paired | Where-Object method -eq 'date_duration').Count; held = @($audio + $transcripts | Where-Object { $_.state -ne 'matched' }).Count; created = @($buildResults | Where-Object state -eq 'created').Count; existing = @($buildResults | Where-Object state -eq 'existing').Count; buildHeld = @($buildResults | Where-Object state -eq 'held_build_failed').Count }
     inputs = @($audio + $transcripts | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; state = $_.state } })
     pairs = @($paired | ForEach-Object { [ordered]@{ audioId = $_.audio.id; transcriptId = $_.transcript.id; method = $_.method } })

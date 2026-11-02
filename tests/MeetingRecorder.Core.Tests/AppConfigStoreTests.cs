@@ -81,6 +81,7 @@ public sealed class AppConfigStoreTests
             IncrementalWorkPlan.SafeCleanup,
             config.IncrementalWorkPlan);
         Assert.Equal(1, config.IncrementalWorkPlanMigrationVersion);
+        Assert.True(config.SmartCleanupEnabled);
         Assert.Equal("22:00", config.OvernightDrainStartLocal);
         Assert.Equal("06:00", config.OvernightDrainEndLocal);
         Assert.Equal(SpeakerNameLearningMode.LocalAutoLearn, config.SpeakerNameLearningMode);
@@ -117,6 +118,21 @@ public sealed class AppConfigStoreTests
         Assert.Equal(120, config.SummaryRequestTimeoutSeconds);
         Assert.Equal(6000, config.SummaryTranscriptChunkTokenTarget);
         Assert.Equal(250, config.SummaryTranscriptChunkOverlapTokens);
+    }
+
+    [Fact]
+    public async Task LoadOrCreateAsync_Preserves_Explicit_SmartCleanup_OptOut()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, Path.Combine(root, "documents"));
+
+        var config = await store.LoadOrCreateAsync();
+        await store.SaveAsync(config with { SmartCleanupEnabled = false });
+
+        var reloaded = await store.LoadOrCreateAsync();
+
+        Assert.False(reloaded.SmartCleanupEnabled);
     }
 
     [Fact]

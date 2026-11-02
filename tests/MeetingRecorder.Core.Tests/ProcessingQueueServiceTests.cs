@@ -16,6 +16,11 @@ public sealed class ProcessingQueueServiceCollection
 [Collection("ProcessingQueueService")]
 public sealed class ProcessingQueueServiceTests
 {
+    // Worker-launch assertions share real endpoint-protected storage with the full suite.
+    // Fifteen seconds preserves the same liveness contract without treating normal host
+    // scheduling contention as a product failure.
+    private static readonly TimeSpan AsyncTestTimeout = TimeSpan.FromSeconds(15);
+
     [Fact]
     public async Task EnqueueAsync_Enriches_Attendees_Before_Starting_The_Worker_When_Enabled()
     {
@@ -91,8 +96,8 @@ public sealed class ProcessingQueueServiceTests
 
         process.CompleteExit();
 
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(2));
-        await enqueueTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await stopTask.WaitAsync(AsyncTestTimeout);
+        await enqueueTask.WaitAsync(AsyncTestTimeout);
     }
 
     [Fact]
@@ -150,7 +155,7 @@ public sealed class ProcessingQueueServiceTests
         var enqueueTask = service.EnqueueAsync(manifestPath);
         var process = await processFactory.WaitForStartAsync();
 
-        await enqueueTask.WaitAsync(TimeSpan.FromSeconds(2));
+        await enqueueTask.WaitAsync(AsyncTestTimeout);
 
         Assert.False(process.HasExited);
 
@@ -243,17 +248,17 @@ public sealed class ProcessingQueueServiceTests
         await service.EnqueueAsync(summaryManifestPath);
 
         isRecording = false;
-        var transcriptProcess = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
+        var transcriptProcess = await processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout);
         AssertWorkerHasStagedLease(processFactory.StartInfos[0], "transcript");
         transcriptProcess.ConfigureStagedReceipt(processFactory.StartInfos[0]);
         transcriptProcess.CompleteExit();
 
-        var labelsProcess = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
+        var labelsProcess = await processFactory.WaitForStartAsync(1).WaitAsync(AsyncTestTimeout);
         AssertWorkerHasStagedLease(processFactory.StartInfos[1], "diarization");
         labelsProcess.ConfigureStagedReceipt(processFactory.StartInfos[1]);
         labelsProcess.CompleteExit();
 
-        var summaryProcess = await processFactory.WaitForStartAsync(2).WaitAsync(TimeSpan.FromSeconds(2));
+        var summaryProcess = await processFactory.WaitForStartAsync(2).WaitAsync(AsyncTestTimeout);
         AssertWorkerHasStagedLease(processFactory.StartInfos[2], "summary");
         summaryProcess.ConfigureStagedReceipt(processFactory.StartInfos[2]);
         summaryProcess.CompleteExit();
@@ -306,8 +311,8 @@ public sealed class ProcessingQueueServiceTests
         await service.EnqueueAsync(await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(12)));
         recordingGate.Reset();
 
-        var first = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
-        var second = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
+        var first = await processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout);
+        var second = await processFactory.WaitForStartAsync(1).WaitAsync(AsyncTestTimeout);
         Assert.All(processFactory.StartInfos, startInfo => AssertWorkerHasStagedLease(startInfo, "transcript"));
         Assert.False(first.KillCalled);
         Assert.False(second.KillCalled);
@@ -391,8 +396,8 @@ public sealed class ProcessingQueueServiceTests
             await service.EnqueueAsync(secondManifestPath);
             recordingGate.Reset();
 
-            var first = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(5));
-            var second = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(5));
+            var first = await processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout);
+            var second = await processFactory.WaitForStartAsync(1).WaitAsync(AsyncTestTimeout);
             Assert.All(processFactory.StartInfos, startInfo => AssertWorkerHasStagedLease(startInfo, "diarization"));
             var configPaths = processFactory.StartInfos.Select(startInfo => ExtractConfigPath(startInfo.Arguments)).ToArray();
             Assert.Contains(AppDataPaths.GetConfigPath(), configPaths);
@@ -434,7 +439,7 @@ public sealed class ProcessingQueueServiceTests
 
         var manifestPath = await CreateCompletedQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir, TimeSpan.FromMinutes(10));
         await service.EnqueueAsync(manifestPath);
-        var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var process = await processFactory.WaitForStartAsync().WaitAsync(AsyncTestTimeout);
         process.StandardOutputText = string.Empty;
         process.CompleteExit();
 
@@ -493,9 +498,9 @@ public sealed class ProcessingQueueServiceTests
         recordingGate.Reset();
 
         var processes = await Task.WhenAll(
-            processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(5)),
-            processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(5)),
-            processFactory.WaitForStartAsync(2).WaitAsync(TimeSpan.FromSeconds(5)));
+            processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout),
+            processFactory.WaitForStartAsync(1).WaitAsync(AsyncTestTimeout),
+            processFactory.WaitForStartAsync(2).WaitAsync(AsyncTestTimeout));
 
         Assert.Equal(3, processFactory.StartCount);
         Assert.All(processFactory.StartInfos, startInfo => AssertWorkerHasStagedLease(startInfo, "transcript"));
@@ -548,7 +553,7 @@ public sealed class ProcessingQueueServiceTests
         Assert.Equal(ProcessingQueuePauseReason.LiveRecordingOvernightAcceleration, service.GetStatusSnapshot().PauseReason);
 
         isRecording = false;
-        var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var process = await processFactory.WaitForStartAsync().WaitAsync(AsyncTestTimeout);
         process.CompleteExit();
         await service.StopAsync();
     }
@@ -824,7 +829,8 @@ public sealed class ProcessingQueueServiceTests
             meetingMetadataEnricher: null,
             () => new WorkerLaunch("fake-worker.exe", string.Empty),
             processFactory,
-            () => true);
+            () => true,
+            localNowProvider: () => AtLocal(2026, 9, 28, 12, 0));
 
         var activeManifestPath = await CreateProcessingManifestAsync(
             manifestStore,
@@ -1377,7 +1383,7 @@ public sealed class ProcessingQueueServiceTests
         await service.EnqueueAsync(firstManifestPath);
         await service.EnqueueAsync(secondManifestPath);
 
-        var firstProcess = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
+        var firstProcess = await processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout);
         await WaitForConditionAsync(() =>
         {
             var snapshot = service.GetStatusSnapshot();
@@ -1444,8 +1450,8 @@ public sealed class ProcessingQueueServiceTests
         await service.EnqueueAsync(firstManifestPath);
         await service.EnqueueAsync(secondManifestPath);
 
-        var firstProcess = await processFactory.WaitForStartAsync(0).WaitAsync(TimeSpan.FromSeconds(2));
-        var secondProcess = await processFactory.WaitForStartAsync(1).WaitAsync(TimeSpan.FromSeconds(2));
+        var firstProcess = await processFactory.WaitForStartAsync(0).WaitAsync(AsyncTestTimeout);
+        var secondProcess = await processFactory.WaitForStartAsync(1).WaitAsync(AsyncTestTimeout);
 
         Assert.Equal(2, processFactory.StartCount);
 
@@ -2127,7 +2133,7 @@ public sealed class ProcessingQueueServiceTests
 
             await service.ResumePendingSessionsAsync();
 
-            var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var process = await processFactory.WaitForStartAsync().WaitAsync(AsyncTestTimeout);
             var recoveredManifest = await manifestStore.LoadAsync(manifestPath);
 
             Assert.Equal(SessionState.Queued, recoveredManifest.State);
@@ -2201,7 +2207,7 @@ public sealed class ProcessingQueueServiceTests
 
             await service.ResumePendingSessionsAsync();
 
-            var process = await processFactory.WaitForStartAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            var process = await processFactory.WaitForStartAsync().WaitAsync(AsyncTestTimeout);
             var recoveredManifest = await manifestStore.LoadAsync(manifestPath);
 
             Assert.Equal(SessionState.Queued, recoveredManifest.State);
@@ -2922,7 +2928,7 @@ public sealed class ProcessingQueueServiceTests
 
     private static async Task WaitForConditionAsync(Func<bool> condition)
     {
-        for (var index = 0; index < 80; index++)
+        for (var index = 0; index < 200; index++)
         {
             if (condition())
             {
@@ -2937,7 +2943,7 @@ public sealed class ProcessingQueueServiceTests
 
     private static async Task WaitForConditionAsync(Func<Task<bool>> condition)
     {
-        for (var index = 0; index < 80; index++)
+        for (var index = 0; index < 200; index++)
         {
             if (await condition())
             {

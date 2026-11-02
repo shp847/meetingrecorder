@@ -503,6 +503,7 @@ public sealed class AppConfigStore : IConfigStore<AppConfig>
             InitialProcessingStrategy = initialProcessingStrategy,
             OvernightInitialProcessingStrategy = overnightInitialProcessingStrategy,
             IncrementalWorkPlan = incrementalWorkPlan,
+            SmartCleanupEnabled = config.SmartCleanupEnabled,
             IncrementalWorkPlanMigrationVersion = incrementalWorkPlanMigrationVersion,
             SpeakerNameLearningMode = NormalizeEnum(config.SpeakerNameLearningMode, defaults.SpeakerNameLearningMode),
             SummaryGenerationMode = NormalizeEnum(config.SummaryGenerationMode, defaults.SummaryGenerationMode),

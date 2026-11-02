@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using MeetingRecorder.Core.Domain;
 
@@ -37,7 +38,10 @@ public sealed record SpeakerCorrectionReceipt(
 public sealed class SpeakerCorrectionReceiptStore
 {
     private const int MaximumReceipts = 200;
+    private const int ReplaceAttemptCount = 4;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> WriteLocks =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly string _path;
 
     public SpeakerCorrectionReceiptStore(string? path = null)
@@ -70,25 +74,54 @@ public sealed class SpeakerCorrectionReceiptStore
             throw new ArgumentException("Speaker correction receipt is incomplete.", nameof(receipt));
         }
 
-        var receipts = (await LoadAsync(cancellationToken))
-            .Where(existing => !string.Equals(existing.OperationId, receipt.OperationId, StringComparison.Ordinal))
-            .Append(receipt)
-            .OrderBy(entry => entry.RecordedAtUtc)
-            .TakeLast(MaximumReceipts)
-            .ToArray();
-        var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("Receipt store has no directory.");
-        Directory.CreateDirectory(directory);
-        var temporaryPath = _path + ".tmp-" + Guid.NewGuid().ToString("N");
+        var writeLock = WriteLocks.GetOrAdd(_path, static _ => new SemaphoreSlim(1, 1));
+        await writeLock.WaitAsync(cancellationToken);
         try
         {
-            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(receipts, JsonOptions), cancellationToken);
-            File.Move(temporaryPath, _path, overwrite: true);
+            // Read after taking the path lock so parallel correction actions do
+            // not overwrite each other's receipt. Windows scanners can briefly
+            // hold the destination, so promotion is boundedly retried below.
+            var receipts = (await LoadAsync(cancellationToken))
+                .Where(existing => !string.Equals(existing.OperationId, receipt.OperationId, StringComparison.Ordinal))
+                .Append(receipt)
+                .OrderBy(entry => entry.RecordedAtUtc)
+                .TakeLast(MaximumReceipts)
+                .ToArray();
+            var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("Receipt store has no directory.");
+            Directory.CreateDirectory(directory);
+            var temporaryPath = _path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(receipts, JsonOptions), cancellationToken);
+                await PromoteTemporaryFileAsync(temporaryPath, cancellationToken);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
         }
         finally
         {
-            if (File.Exists(temporaryPath))
+            writeLock.Release();
+        }
+    }
+
+    private async Task PromoteTemporaryFileAsync(string temporaryPath, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                File.Delete(temporaryPath);
+                File.Move(temporaryPath, _path, overwrite: true);
+                return;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException && attempt < ReplaceAttemptCount)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), cancellationToken);
             }
         }
     }

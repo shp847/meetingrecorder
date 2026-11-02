@@ -124,7 +124,18 @@ internal sealed class RecordingSessionCoordinator
 
         var currentConfig = _config.Current;
         EnsureRecordingStorageAvailable(currentConfig.WorkDir);
-        var initialManifest = await _manifestStore.CreateAsync(currentConfig.WorkDir, platform, title, detectionEvidence, cancellationToken);
+        var normalizedTitle = NormalizeDetectedTitle(platform, title);
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            throw new ArgumentException("A meeting title is required.", nameof(title));
+        }
+
+        var initialManifest = await _manifestStore.CreateAsync(
+            currentConfig.WorkDir,
+            platform,
+            normalizedTitle,
+            detectionEvidence,
+            cancellationToken);
         if (detectedAudioSource is not null)
         {
             initialManifest = initialManifest with
@@ -209,7 +220,7 @@ internal sealed class RecordingSessionCoordinator
                 ? "none"
                 : string.Join("; ", detectionEvidence.Select(signal => $"{signal.Source}='{signal.Value}' w={signal.Weight:0.00}"));
             _logger.Log(
-                $"Recording started for session '{manifest.SessionId}' ({platform}). Title='{title}'. AutoStarted={autoStarted}. " +
+                $"Recording started for session '{manifest.SessionId}' ({platform}). Title='{manifest.DetectedTitle}'. AutoStarted={autoStarted}. " +
                 $"Loopback='{loopbackSelection.FriendlyName}' ({loopbackSelection.Role}). " +
                 $"Microphone='{activeMicrophoneSelection?.FriendlyName ?? "disabled"}'. DetectionEvidence={evidence}.");
         }
@@ -485,7 +496,7 @@ internal sealed class RecordingSessionCoordinator
             return false;
         }
 
-        var trimmedTitle = newTitle.Trim();
+        var trimmedTitle = NormalizeDetectedTitle(ActiveSession.Manifest.Platform, newTitle);
         if (string.IsNullOrWhiteSpace(trimmedTitle))
         {
             throw new ArgumentException("A meeting title is required.", nameof(newTitle));
@@ -559,7 +570,7 @@ internal sealed class RecordingSessionCoordinator
             return false;
         }
 
-        var trimmedDetectedTitle = detectedTitle.Trim();
+        var trimmedDetectedTitle = NormalizeDetectedTitle(platform, detectedTitle);
         if (string.IsNullOrWhiteSpace(trimmedDetectedTitle))
         {
             throw new ArgumentException("A detected meeting title is required.", nameof(detectedTitle));
@@ -1091,6 +1102,14 @@ internal sealed class RecordingSessionCoordinator
     {
         activeSession.PendingMicrophoneSelection = null;
         activeSession.PendingMicrophoneSelectionStableCount = 0;
+    }
+
+    private static string NormalizeDetectedTitle(MeetingPlatform platform, string title)
+    {
+        var trimmedTitle = title.Trim();
+        return platform == MeetingPlatform.GoogleMeet
+            ? MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(trimmedTitle)
+            : trimmedTitle;
     }
 
     private static long GetAudioFileLength(string path)

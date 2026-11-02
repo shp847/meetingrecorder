@@ -1771,6 +1771,33 @@ public sealed class AutoRecordingContinuityPolicyTests
         Assert.Equal(ManualStopSuppressionDisposition.ReleaseSuppression, disposition);
     }
 
+    [Fact]
+    public void ShouldAutoStartStableSuccessor_Allows_Native_Zoom_Meeting_Surface_After_Confirmation()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Zoom,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Zoom Meeting",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Zoom Meeting | Zoom", 0.85d, now),
+                new DetectionSignal("zoom-native-host", "Zoom", 0.15d, now),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.230; status=active", 0.10d, now),
+            ],
+            Reason: "Native Zoom in-meeting surface and endpoint audio were active.");
+
+        var allowed = policy.ShouldAutoStartStableSuccessor(
+            decision,
+            now.AddSeconds(-20),
+            now);
+
+        Assert.True(allowed);
+    }
+
     private static DetectionDecision CreateZoomDecision(string title, DateTimeOffset timestamp)
     {
         return new DetectionDecision(

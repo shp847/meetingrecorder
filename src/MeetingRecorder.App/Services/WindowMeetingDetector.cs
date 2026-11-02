@@ -26,6 +26,7 @@ internal sealed class WindowMeetingDetector
         "Chrome_WidgetWin_0",
         "Chrome_WidgetWin_1",
         "TeamsWebView",
+        "ConfMultiTabContentWndClass",
     ];
 
     private readonly LiveAppConfig _config;
@@ -404,6 +405,7 @@ internal sealed class WindowMeetingDetector
         var now = DateTimeOffset.UtcNow;
         var signals = new List<DetectionSignal>();
         var isGoogleMeetCandidate = LooksLikeGoogleMeetWindowTitle(title);
+        var isZoomNativeMeetingCandidate = LooksLikeZoomNativeMeetingWindowClass(candidateWindow.WindowClassName);
         audioMatch = MatchAudioSource(candidateWindow, detectionTitle, audioAttribution);
 
         if (isGoogleMeetCandidate)
@@ -452,6 +454,19 @@ internal sealed class WindowMeetingDetector
                     0d,
                     now));
             }
+        }
+
+        if (isZoomNativeMeetingCandidate)
+        {
+            // Zoom's native in-meeting window commonly has the generic title
+            // "Zoom Meeting". The documented in-meeting class is the identity
+            // evidence; endpoint render activity remains the start gate.
+            signals.Add(new DetectionSignal(
+                "window-title",
+                $"{title} | Zoom",
+                0.85d,
+                now));
+            signals.Add(new DetectionSignal("zoom-native-host", "Zoom", 0.15d, now));
         }
 
         if (audioMatch is not null)
@@ -508,7 +523,8 @@ internal sealed class WindowMeetingDetector
         var titles = new List<CandidateDetectionTitle>();
 
         if (LooksLikeGoogleMeetWindowTitle(candidateWindow.MainWindowTitle) ||
-            LooksLikeTeamsMeetingSurface(candidateWindow, candidateWindow.MainWindowTitle))
+            LooksLikeTeamsMeetingSurface(candidateWindow, candidateWindow.MainWindowTitle) ||
+            LooksLikeZoomNativeMeetingWindowClass(candidateWindow.WindowClassName))
         {
             titles.Add(new CandidateDetectionTitle(candidateWindow.MainWindowTitle, false));
         }
@@ -531,6 +547,9 @@ internal sealed class WindowMeetingDetector
 
         return titles;
     }
+
+    private static bool LooksLikeZoomNativeMeetingWindowClass(string windowClassName) =>
+        string.Equals(windowClassName, "ConfMultiTabContentWndClass", StringComparison.OrdinalIgnoreCase);
 
     private AudioSourceAttributionSnapshot TryCaptureAudioAttribution()
     {

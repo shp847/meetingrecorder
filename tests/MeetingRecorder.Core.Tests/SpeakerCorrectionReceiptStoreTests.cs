@@ -30,6 +30,19 @@ public sealed class SpeakerCorrectionReceiptStoreTests : IDisposable
         Assert.Null(await new SpeakerCorrectionReceiptStore(path).FindAsync("operation-1"));
     }
 
+    [Fact]
+    public async Task AppendOrReplaceAsync_Preserves_Parallel_Operations_For_The_Same_Store()
+    {
+        var store = new SpeakerCorrectionReceiptStore(Path.Combine(_root, "receipts.json"));
+
+        await Task.WhenAll(
+            store.AppendOrReplaceAsync(Receipt("operation-1", SpeakerCorrectionLearningDisposition.Completed)),
+            store.AppendOrReplaceAsync(Receipt("operation-2", SpeakerCorrectionLearningDisposition.Completed)));
+
+        Assert.NotNull(await store.FindAsync("operation-1"));
+        Assert.NotNull(await store.FindAsync("operation-2"));
+    }
+
     private static SpeakerCorrectionReceipt Receipt(string operationId, SpeakerCorrectionLearningDisposition disposition) => new(
         SpeakerCorrectionReceipt.CurrentSchemaVersion,
         operationId,

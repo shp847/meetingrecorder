@@ -23,6 +23,8 @@ param(
 
     [string]$ReportPath,
 
+    [string]$ResumeCheckpointPath,
+
     [string]$CalibrationRunName,
 
     [string]$CalibrationParametersJson
@@ -394,6 +396,71 @@ function Get-FileSha256 {
     }
 }
 
+function Get-TextSha256 {
+    param([string]$Value)
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ($algorithm.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+    }
+    finally {
+        $algorithm.Dispose()
+        [Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
+function Get-HarnessSha256 {
+    param(
+        [string]$StoredReplayScript,
+        [string]$FullAudioScript,
+        [string]$RepoRoot
+    )
+
+    $inputs = @($PSCommandPath, $StoredReplayScript, $FullAudioScript)
+    $sourceFiles = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "src") -Recurse -File |
+        Where-Object {
+            $_.Extension -in @(".cs", ".csproj", ".props", ".targets") -and
+            $_.FullName -notmatch "[\\/](bin|obj)[\\/]"
+        } |
+        Sort-Object FullName)
+    $parts = @($inputs | ForEach-Object { "script/$(Split-Path -Path $_ -Leaf)=$(Get-FileSha256 -PathValue $_)" })
+    $parts += @($sourceFiles | ForEach-Object {
+        $relativePath = $_.FullName.Substring($RepoRoot.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        "source/$relativePath=$(Get-FileSha256 -PathValue $_.FullName)"
+    })
+    return Get-TextSha256 -Value ($parts -join "`n")
+}
+
+function Get-RunIdentitySha256 {
+    param(
+        [object[]]$Fixtures,
+        [string]$CatalogSha256,
+        [string]$TruthStoreSha256,
+        [string]$HarnessSha256
+    )
+
+    $fixtureIdentity = @($Fixtures | ForEach-Object {
+        "{0}|{1}" -f [string](Get-PropertyValue -Object $_ -Name "id"), [string](Get-PropertyValue -Object $_ -Name "contentHash")
+    } | Sort-Object)
+    $identity = [ordered]@{
+        catalogSha256 = $CatalogSha256
+        truthStoreSha256 = $TruthStoreSha256
+        harnessSha256 = $HarnessSha256
+        dryRun = [bool]$DryRun
+        configuration = $Configuration
+        noBuild = [bool]$NoBuild
+        calibrationRunName = $CalibrationRunName
+        calibrationParametersJson = $CalibrationParametersJson
+        fixtureTimeoutSeconds = $FixtureTimeoutSeconds
+        includeDisabled = [bool]$IncludeDisabled
+        fixtureIds = @($FixtureId | Sort-Object)
+        categories = @($Category | Sort-Object)
+        fixtures = $fixtureIdentity
+    }
+    return Get-TextSha256 -Value ($identity | ConvertTo-Json -Depth 8 -Compress)
+}
+
 function Get-SafeReportMessage {
     param([string]$Message)
 
@@ -565,6 +632,7 @@ function New-BaseResult {
     $expectedSpeakerCount = Get-PropertyValue -Object $Fixture -Name "expectedSpeakerCount"
     return [ordered]@{
         fixtureId = [string](Get-PropertyValue -Object $Fixture -Name "id")
+        fixtureContentHash = [string](Get-PropertyValue -Object $Fixture -Name "contentHash")
         category = [string](Get-PropertyValue -Object $Fixture -Name "category")
         mode = [string](Get-PropertyValue -Object $Fixture -Name "mode")
         enabled = [bool](Get-PropertyValue -Object $Fixture -Name "enabled" -DefaultValue $true)
@@ -740,7 +808,14 @@ function Invoke-FullAudioFixtureScript {
         return [pscustomobject]@{ TimedOut = $false; ExitCode = 0 }
     }
 
-    $powerShellPath = (Get-Command powershell.exe -ErrorAction Stop).Source
+    # The catalog may have accepted long private paths under PowerShell 7.
+    # Keep the timed child on that host when available; Windows PowerShell 5
+    # can misclassify otherwise readable inputs before the worker starts.
+    $powerShellCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($null -eq $powerShellCommand) {
+        $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
+    }
+    $powerShellPath = $powerShellCommand.Source
     $startInfo = [Diagnostics.ProcessStartInfo]::new($powerShellPath)
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -776,10 +851,21 @@ function Invoke-FullAudioFixtureScript {
             # handles, allowing the drain below to complete deterministically.
             & taskkill.exe /PID $process.Id /T /F | Out-Null
             $process.WaitForExit()
-            return [pscustomobject]@{ TimedOut = $true; ExitCode = $null }
+            # `Invoke-Fixture` returns its report object from inside a try/finally.
+            # Capture the configured bounded duration here so that a timeout
+            # receipt cannot be materialized with the default zero elapsed time.
+            return [pscustomobject]@{
+                TimedOut = $true
+                ExitCode = $null
+                ElapsedMilliseconds = [int64]$TimeoutSeconds * 1000
+            }
         }
 
-        return [pscustomobject]@{ TimedOut = $false; ExitCode = $process.ExitCode }
+        return [pscustomobject]@{
+            TimedOut = $false
+            ExitCode = $process.ExitCode
+            ElapsedMilliseconds = $null
+        }
     }
     finally {
         # Drain output so a private child-script diagnostic cannot block the
@@ -909,6 +995,7 @@ function Invoke-Fixture {
                 if ($fullAudioExecution.TimedOut) {
                     $failureStage = "full-audio-timeout-cleanup"
                     $result.status = "timed_out"
+                    $result.elapsedMilliseconds = [int64]$fullAudioExecution.ElapsedMilliseconds
                     $result.message = "Fixture execution reached its configured timeout."
                     $result.speakerCountStatus = "timed_out"
                     $result.speakerNameMetrics.status = "timed_out"
@@ -1074,11 +1161,151 @@ if (-not $IncludeDisabled) {
 
 $storedReplayScript = Join-Path $script:RepoRoot "scripts\Test-DiarizationFixture.ps1"
 $fullAudioScript = Join-Path $script:RepoRoot "scripts\Test-DiarizationFullAudioFixture.ps1"
-$results = @()
+$script:CatalogSha256 = Get-FileSha256 -PathValue $resolvedCatalogPath
+$script:TruthStoreSha256 = if ($script:ResolvedTruthStorePath) { Get-FileSha256 -PathValue $script:ResolvedTruthStorePath } else { $null }
+$script:HarnessSha256 = Get-HarnessSha256 -StoredReplayScript $storedReplayScript -FullAudioScript $fullAudioScript -RepoRoot $script:RepoRoot
+$script:RunIdentitySha256 = Get-RunIdentitySha256 -Fixtures $fixtures -CatalogSha256 $script:CatalogSha256 -TruthStoreSha256 $script:TruthStoreSha256 -HarnessSha256 $script:HarnessSha256
+
+function Get-CheckpointResults {
+    param(
+        [string]$PathValue,
+        [object[]]$Fixtures
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return @()
+    }
+
+    $checkpointPath = Assert-AllowedOutputPath -PathValue $PathValue -Description "Resume checkpoint"
+    $checkpointPath = Resolve-RequiredFile -PathValue $checkpointPath -Description "Resume checkpoint"
+    $checkpoint = Get-Content -LiteralPath $checkpointPath -Raw | ConvertFrom-Json
+    if ([int](Get-PropertyValue -Object $checkpoint -Name "schemaVersion" -DefaultValue 0) -ne 2 -or
+        [string](Get-PropertyValue -Object $checkpoint -Name "runIdentitySha256") -ne $script:RunIdentitySha256) {
+        throw "Resume checkpoint does not match the current catalog, truth store, harness, or run settings."
+    }
+
+    $fixtureHashes = @{}
+    foreach ($fixture in $Fixtures) {
+        $id = [string](Get-PropertyValue -Object $fixture -Name "id")
+        $hash = [string](Get-PropertyValue -Object $fixture -Name "contentHash")
+        if ([string]::IsNullOrWhiteSpace($hash)) {
+            throw "Resume is available only for governed v2 fixtures with content hashes."
+        }
+        $fixtureHashes[$id] = $hash
+    }
+
+    $terminalStatuses = @("completed", "missing_data", "skipped", "timed_out", "failed", "dry_run")
+    $completedIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $results = @()
+    foreach ($result in @(ConvertTo-Array (Get-PropertyValue -Object $checkpoint -Name "results"))) {
+        $fixtureId = [string](Get-PropertyValue -Object $result -Name "fixtureId")
+        $fixtureHash = [string](Get-PropertyValue -Object $result -Name "fixtureContentHash")
+        $status = [string](Get-PropertyValue -Object $result -Name "status")
+        if (-not $fixtureHashes.ContainsKey($fixtureId) -or
+            $fixtureHashes[$fixtureId] -ne $fixtureHash -or
+            $status -notin $terminalStatuses -or
+            -not $completedIds.Add($fixtureId)) {
+            throw "Resume checkpoint contains an invalid, changed, duplicated, or non-terminal result."
+        }
+        $results += $result
+    }
+
+    return @($results)
+}
+
+$results = @(Get-CheckpointResults -PathValue $ResumeCheckpointPath -Fixtures $fixtures)
+$resumedFixtureCount = $results.Count
 $runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-foreach ($fixture in $fixtures) {
+
+function New-CatalogSummary {
+    param(
+        [object[]]$Results,
+        [int64]$ElapsedMilliseconds
+    )
+
+    return [ordered]@{
+        total = $Results.Count
+        completed = @($Results | Where-Object { $_.status -eq "completed" }).Count
+        passed = @($Results | Where-Object { $_.speakerCountStatus -eq "pass" }).Count
+        tooFew = @($Results | Where-Object { $_.speakerCountStatus -eq "too_few" }).Count
+        tooMany = @($Results | Where-Object { $_.speakerCountStatus -eq "too_many" }).Count
+        missingData = @($Results | Where-Object { $_.status -eq "missing_data" }).Count
+        skipped = @($Results | Where-Object { $_.status -eq "skipped" }).Count
+        timedOut = @($Results | Where-Object { $_.status -eq "timed_out" }).Count
+        failed = @($Results | Where-Object { $_.status -eq "failed" }).Count
+        dryRun = @($Results | Where-Object { $_.status -eq "dry_run" }).Count
+        turnMetricsCompleted = @($Results | Where-Object { $_.turnMetrics.status -eq "completed" }).Count
+        turnOverSegmentationCount = [int](@($Results | ForEach-Object { if ($null -ne $_.turnMetrics.overSegmentationCount) { [int]$_.turnMetrics.overSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
+        turnUnderSegmentationCount = [int](@($Results | ForEach-Object { if ($null -ne $_.turnMetrics.underSegmentationCount) { [int]$_.turnMetrics.underSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
+        elapsedMilliseconds = $ElapsedMilliseconds
+    }
+}
+
+function Write-CatalogReport {
+    param(
+        [object[]]$Results,
+        [int]$RequestedFixtureCount,
+        [int]$ResumedFixtureCount,
+        [bool]$IsComplete,
+        [string]$OutputPath
+    )
+
+    # The checkpoint uses exactly the same redacted schema as the final report.
+    # It is rewritten atomically after each terminal fixture so an interrupted
+    # private run still has a path-free, aggregate-only progress receipt.
+    $summary = New-CatalogSummary -Results $Results -ElapsedMilliseconds ([int64]$runStopwatch.ElapsedMilliseconds)
+    $report = [ordered]@{
+        schemaVersion = 2
+        generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        runState = if ($IsComplete) { "complete" } else { "running" }
+        requestedFixtureCount = $RequestedFixtureCount
+        terminalResultCount = $Results.Count
+        resumedFixtureCount = $ResumedFixtureCount
+        newlyExecutedFixtureCount = $Results.Count - $ResumedFixtureCount
+        runIdentitySha256 = $script:RunIdentitySha256
+        harnessSha256 = $script:HarnessSha256
+        catalogSha256 = $script:CatalogSha256
+        dryRun = [bool]$DryRun
+        calibration = [ordered]@{
+            runName = if ([string]::IsNullOrWhiteSpace($CalibrationRunName)) { "current-defaults" } else { $CalibrationRunName }
+            parameters = if ([string]::IsNullOrWhiteSpace($CalibrationParametersJson)) { $null } else { $CalibrationParametersJson | ConvertFrom-Json }
+        }
+        filters = [ordered]@{
+            fixtureId = $FixtureId
+            category = $Category
+            includeDisabled = [bool]$IncludeDisabled
+            fixtureTimeoutSeconds = $FixtureTimeoutSeconds
+        }
+        truthStoreSha256 = $script:TruthStoreSha256
+        summary = $summary
+        results = $Results
+    }
+
+    $temporaryPath = "$OutputPath.$([Guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+        Move-Item -LiteralPath $temporaryPath -Destination $OutputPath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+
+    return $summary
+}
+
+$checkpointPath = [System.IO.Path]::ChangeExtension($resolvedReportPath, ".checkpoint.json")
+if ($resumedFixtureCount -gt 0 -and $resumedFixtureCount -lt $fixtures.Count) {
+    [void](Write-CatalogReport -Results $results -RequestedFixtureCount $fixtures.Count -ResumedFixtureCount $resumedFixtureCount -IsComplete $false -OutputPath $checkpointPath)
+}
+
+$resumedFixtureIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($result in $results) { [void]$resumedFixtureIds.Add([string]$result.fixtureId) }
+foreach ($fixture in @($fixtures | Where-Object { -not $resumedFixtureIds.Contains([string](Get-PropertyValue -Object $_ -Name "id")) })) {
     $result = Invoke-Fixture -Fixture $fixture -StoredReplayScript $storedReplayScript -FullAudioScript $fullAudioScript
     $results += $result
+    [void](Write-CatalogReport -Results $results -RequestedFixtureCount $fixtures.Count -ResumedFixtureCount $resumedFixtureCount -IsComplete $false -OutputPath $checkpointPath)
 
     Write-Output ("{0}: {1}" -f $result.fixtureId, $result.status)
     if ($result.status -eq "failed" -and -not [string]::IsNullOrWhiteSpace($result.message)) {
@@ -1087,44 +1314,8 @@ foreach ($fixture in $fixtures) {
 }
 
 $runStopwatch.Stop()
-$summary = [ordered]@{
-    total = $results.Count
-    completed = @($results | Where-Object { $_.status -eq "completed" }).Count
-    passed = @($results | Where-Object { $_.speakerCountStatus -eq "pass" }).Count
-    tooFew = @($results | Where-Object { $_.speakerCountStatus -eq "too_few" }).Count
-    tooMany = @($results | Where-Object { $_.speakerCountStatus -eq "too_many" }).Count
-    missingData = @($results | Where-Object { $_.status -eq "missing_data" }).Count
-    skipped = @($results | Where-Object { $_.status -eq "skipped" }).Count
-    timedOut = @($results | Where-Object { $_.status -eq "timed_out" }).Count
-    failed = @($results | Where-Object { $_.status -eq "failed" }).Count
-    dryRun = @($results | Where-Object { $_.status -eq "dry_run" }).Count
-    turnMetricsCompleted = @($results | Where-Object { $_.turnMetrics.status -eq "completed" }).Count
-    turnOverSegmentationCount = [int](@($results | ForEach-Object { if ($null -ne $_.turnMetrics.overSegmentationCount) { [int]$_.turnMetrics.overSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
-    turnUnderSegmentationCount = [int](@($results | ForEach-Object { if ($null -ne $_.turnMetrics.underSegmentationCount) { [int]$_.turnMetrics.underSegmentationCount } else { 0 } } | Measure-Object -Sum).Sum)
-    elapsedMilliseconds = [int64]$runStopwatch.ElapsedMilliseconds
-}
-
-$report = [ordered]@{
-    schemaVersion = 2
-    generatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    catalogSha256 = Get-FileSha256 -PathValue $resolvedCatalogPath
-    dryRun = [bool]$DryRun
-    calibration = [ordered]@{
-        runName = if ([string]::IsNullOrWhiteSpace($CalibrationRunName)) { "current-defaults" } else { $CalibrationRunName }
-        parameters = if ([string]::IsNullOrWhiteSpace($CalibrationParametersJson)) { $null } else { $CalibrationParametersJson | ConvertFrom-Json }
-    }
-    filters = [ordered]@{
-        fixtureId = $FixtureId
-        category = $Category
-        includeDisabled = [bool]$IncludeDisabled
-        fixtureTimeoutSeconds = $FixtureTimeoutSeconds
-    }
-    truthStoreSha256 = if ($script:ResolvedTruthStorePath) { Get-FileSha256 -PathValue $script:ResolvedTruthStorePath } else { $null }
-    summary = $summary
-    results = $results
-}
-
-$report | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $resolvedReportPath -Encoding UTF8
+$summary = Write-CatalogReport -Results $results -RequestedFixtureCount $fixtures.Count -ResumedFixtureCount $resumedFixtureCount -IsComplete $true -OutputPath $resolvedReportPath
+[void](Write-CatalogReport -Results $results -RequestedFixtureCount $fixtures.Count -ResumedFixtureCount $resumedFixtureCount -IsComplete $true -OutputPath $checkpointPath)
 
 Write-Output ""
 Write-Output "Diarization fixture catalog summary:"

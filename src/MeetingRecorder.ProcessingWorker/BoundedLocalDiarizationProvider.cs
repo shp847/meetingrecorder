@@ -274,7 +274,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
                     {
                         lastProgress = parsed;
                         onProgress?.Invoke(parsed);
-                        Publish(parsed.Phase, parsed.ExecutionProvider, parsed.Attempt, parsed.AttemptCount, parsed.InputDuration, parsed.InputBytes, parsed.Detail, parsed.WorkingSetBytes);
+                        Publish(parsed.Phase, parsed.ExecutionProvider, parsed.Attempt, parsed.AttemptCount, parsed.InputDuration, parsed.InputBytes, parsed.Detail);
                     }
                 }
 
@@ -285,8 +285,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
                     lastProgress?.AttemptCount,
                     lastProgress?.InputDuration,
                     lastProgress?.InputBytes,
-                    lastProgress?.Detail ?? "Native speaker labeling is still running.",
-                    process.WorkingSet64);
+                    lastProgress?.Detail ?? "Native speaker labeling is still running.");
             }
             catch (IOException)
             {
@@ -308,8 +307,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
         int? attemptCount,
         TimeSpan? inputDuration,
         long? inputBytes,
-        string? detail,
-        long? workingSetBytes = null)
+        string? detail)
     {
         ProgressChanged?.Invoke(new DiarizationProgress(
             phase,
@@ -318,7 +316,7 @@ internal sealed class BoundedLocalDiarizationProvider : IDiarizationProvider, ID
             attemptCount,
             inputDuration,
             inputBytes,
-            workingSetBytes,
+            null,
             detail,
             DateTimeOffset.UtcNow));
     }

@@ -83,6 +83,34 @@ function Resolve-ExistingDirectory {
     return $resolved.ProviderPath
 }
 
+function Resolve-DotNetSdkCommand {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $candidates.Add((Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:DOTNET_ROOT)) {
+        $candidates.Add((Join-Path $env:DOTNET_ROOT 'dotnet.exe'))
+    }
+
+    $pathCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        $candidates.Add($pathCommand.Source)
+    }
+
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            continue
+        }
+
+        $sdkList = & $candidate --list-sdks 2>$null
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($sdkList -join ''))) {
+            return $candidate
+        }
+    }
+
+    throw 'A usable .NET SDK is required to build the current processing worker for a full-audio fixture.'
+}
+
 function Get-ResolvedArtifactHashes {
     param([string[]]$Paths)
 
@@ -254,9 +282,9 @@ if (-not $runtimeWorkerIsCurrent) {
     # Full-audio fixtures need the RID-specific worker because it carries the
     # native Sherpa dependencies, including the CPU payload. A normal framework build cannot satisfy that
     # contract, so refresh the RID output rather than falling back to it.
-    $dotnetCommand = Get-Command dotnet -ErrorAction Stop
+    $dotnetCommand = Resolve-DotNetSdkCommand
     $workerProjectPath = Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj"
-    & $dotnetCommand.Source build $workerProjectPath -t:Rebuild -c $Configuration -r win-x64 -p:UseAppHost=false -p:NuGetAudit=false
+    & $dotnetCommand build $workerProjectPath -t:Rebuild -c $Configuration -r win-x64 -p:UseAppHost=false -p:NuGetAudit=false
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to build the win-x64 processing worker required for full-audio fixture execution."
     }
@@ -284,8 +312,7 @@ if (Test-Path -LiteralPath $workerAppHostPath -PathType Leaf) {
     $workerCommandPath = Resolve-RequiredFile -PathValue $workerAppHostPath -Description "Processing worker apphost"
 }
 elseif (Test-Path -LiteralPath $workerDllPath -PathType Leaf) {
-    $dotnetCommand = Get-Command dotnet -ErrorAction Stop
-    $workerCommandPath = $dotnetCommand.Source
+    $workerCommandPath = Resolve-DotNetSdkCommand
     $workerArguments += (Resolve-RequiredFile -PathValue $workerDllPath -Description "Processing worker assembly")
 }
 else {

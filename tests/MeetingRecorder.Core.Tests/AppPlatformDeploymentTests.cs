@@ -1,6 +1,5 @@
 using AppPlatform.Abstractions;
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using InstallPathProcessManager = AppPlatform.Deployment.InstallPathProcessManager;
@@ -71,9 +70,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void PlatformPortableBundleInstaller_Silent_Update_Path_Skips_Shortcut_Repair_And_Revalidates_The_Promoted_Install()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var installerPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment", "PortableBundleInstaller.cs");
 
         Assert.True(File.Exists(installerPath), $"Expected deployment installer source at '{installerPath}'.");
@@ -105,9 +102,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void PlatformPortableBundleInstaller_Repairs_Taskbar_Pin_Even_When_Update_Skips_Desktop_And_StartMenu_Shortcuts()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var installerPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment", "PortableBundleInstaller.cs");
 
         Assert.True(File.Exists(installerPath), $"Expected deployment installer source at '{installerPath}'.");
@@ -516,9 +511,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void PlatformInstallPathController_Avoids_Process_Inspection_And_Control_APIs()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var controllerPath = Path.Combine(repoRoot, "src", "AppPlatform.Deployment", "InstallPathProcessManager.cs");
 
         Assert.True(File.Exists(controllerPath), $"Expected deployment controller source at '{controllerPath}'.");
@@ -535,9 +528,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void ProcessingWorkerProject_Does_Not_Ship_A_Standalone_DirectMl_Redist_Without_A_DirectMl_Sherpa_Runtime()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var projectPath = Path.Combine(repoRoot, "src", "MeetingRecorder.ProcessingWorker", "MeetingRecorder.ProcessingWorker.csproj");
 
         Assert.True(File.Exists(projectPath), $"Expected processing worker project at '{projectPath}'.");
@@ -553,9 +544,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void PublishPortable_Bundles_DirectMl_Sherpa_Runtime_When_Release_Asset_Is_Present()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var publishScriptPath = Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1");
 
         Assert.True(File.Exists(publishScriptPath), $"Expected portable publish script at '{publishScriptPath}'.");
@@ -576,9 +565,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void BundledDirectMlSherpaRuntimeManifest_Lists_Required_Shipping_Files()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var manifestPath = Path.Combine(repoRoot, "assets", "native", "sherpa-onnx-directml", "win-x64", "sherpa-directml-runtime.json");
         var gitAttributesPath = Path.Combine(repoRoot, ".gitattributes");
 
@@ -605,9 +592,7 @@ public sealed class AppPlatformDeploymentTests
     [Fact]
     public void BuildSherpaDirectMlRuntimeScript_Builds_And_Validates_A_DirectMl_Enabled_Sherpa_Runtime()
     {
-        var assemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)
-            ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
-        var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var repoRoot = TestRepositoryPaths.FindRoot();
         var scriptPath = Path.Combine(repoRoot, "scripts", "Build-SherpaDirectMlRuntime.ps1");
         var workflowPath = Path.Combine(repoRoot, ".github", "workflows", "build-sherpa-directml-runtime.yml");
 

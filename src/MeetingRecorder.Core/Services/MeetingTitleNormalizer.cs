@@ -13,6 +13,9 @@ internal static partial class MeetingTitleNormalizer
     [GeneratedRegex("\\s+and\\s+\\d+\\s+more\\s+pages?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BrowserTabCountPattern();
 
+    [GeneratedRegex("\\s+and\\s+\\d+\\s+more\\s+pages?(?:\\s+-\\s+(?:Work|Personal))?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BrowserTabCountWithProfilePattern();
+
     public static string NormalizeGoogleMeetWindowTitle(string? title)
     {
         if (string.IsNullOrWhiteSpace(title))
@@ -22,25 +25,57 @@ internal static partial class MeetingTitleNormalizer
 
         var normalized = CollapseWhitespace(title.Trim());
         const string edgeSuffix = " - Microsoft Edge";
-        if (!normalized.EndsWith(edgeSuffix, StringComparison.OrdinalIgnoreCase))
+        var hadEdgeSuffix = normalized.EndsWith(edgeSuffix, StringComparison.OrdinalIgnoreCase);
+        if (hadEdgeSuffix)
+        {
+            normalized = normalized[..^edgeSuffix.Length].TrimEnd();
+        }
+
+        // A Google Meet caption is authoritative even when a browser omits its
+        // final product suffix. Remove only the known tab-count/profile tail;
+        // do not trim an ordinary meeting name that merely ends in "- Work".
+        if (normalized.StartsWith("Meet - ", StringComparison.OrdinalIgnoreCase))
+        {
+            var titleBeforeTabTailRemoval = normalized;
+            normalized = BrowserTabCountWithProfilePattern().Replace(normalized, string.Empty).Trim();
+            var hadBrowserTabTail = !string.Equals(
+                titleBeforeTabTailRemoval,
+                normalized,
+                StringComparison.Ordinal);
+            if (hadEdgeSuffix)
+            {
+                normalized = RemoveBrowserProfileSuffix(normalized);
+            }
+
+            if (!hadEdgeSuffix && !hadBrowserTabTail)
+            {
+                return normalized;
+            }
+
+            return normalized["Meet - ".Length..].Trim();
+        }
+
+        if (!hadEdgeSuffix)
         {
             return normalized;
         }
 
-        normalized = normalized[..^edgeSuffix.Length].TrimEnd();
+        normalized = RemoveBrowserProfileSuffix(normalized);
+        normalized = BrowserTabCountPattern().Replace(normalized, string.Empty).Trim();
+        return normalized;
+    }
+
+    private static string RemoveBrowserProfileSuffix(string value)
+    {
         foreach (var profileSuffix in new[] { " - Work", " - Personal" })
         {
-            if (normalized.EndsWith(profileSuffix, StringComparison.OrdinalIgnoreCase))
+            if (value.EndsWith(profileSuffix, StringComparison.OrdinalIgnoreCase))
             {
-                normalized = normalized[..^profileSuffix.Length].TrimEnd();
-                break;
+                return value[..^profileSuffix.Length].TrimEnd();
             }
         }
 
-        normalized = BrowserTabCountPattern().Replace(normalized, string.Empty).Trim();
-        return normalized.StartsWith("Meet - ", StringComparison.OrdinalIgnoreCase)
-            ? normalized["Meet - ".Length..].Trim()
-            : normalized;
+        return value;
     }
 
     public static string NormalizeForComparison(string? title)

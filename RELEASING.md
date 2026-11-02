@@ -297,6 +297,7 @@ Important local verification note:
 - `scripts\Publish-Portable.ps1`, `scripts\Build-Installer.ps1`, and `scripts\Build-Release.ps1` create fresh artifacts under `.artifacts` by default, but they do not replace the live app already installed under `%USERPROFILE%\MeetingRecorder`
 - `Publish-Portable.ps1` and `Build-Installer.ps1 -PublishOutputRoot <path> -PackageRoot <path>` accept dedicated absolute artifact roots and reject a filesystem root or repository root. Use them only for a non-live directory backed by current endpoint-retention evidence; each build may clear its package/staging contents.
 - When an endpoint removes generated publish apphosts but existing stable apphosts are byte-identical to current intermediate build apphosts, explicit `-StableAppHostPath`, `-StableDeploymentCliAppHostPath`, and `-StableWorkerAppHostPath` values permit hash-verified local restores. They reject missing or mismatched sources and must never be treated as signing, security-policy bypass, or proof of an installed release.
+- If the endpoint also removes the current intermediate apphost, pass `-TrustedStableAppHostManifestPath .\scripts\stable-apphosts.win-x64.json`. The fallback accepts only that source-controlled manifest, its exact `win-x64` project/file entry, and its pinned SHA-256. Update its hashes only after a separately verified generated-host build; an unknown executable still fails closed.
 - if you want to refresh the canonical managed install root for local development after a rebuild, use the repo-local deploy shortcut:
 
 ```powershell

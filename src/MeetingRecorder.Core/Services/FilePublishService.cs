@@ -52,6 +52,10 @@ public sealed class FilePublishService
         var jsonDestination = Path.Combine(sidecarTranscriptDir, $"{stem}{Path.GetExtension(jsonPath)}");
         var readyDestination = Path.Combine(sidecarTranscriptDir, $"{stem}.ready");
 
+        // A ready marker is the reader-visible completion contract. Remove any
+        // prior marker before changing a current run's artifacts, then create
+        // it only after every replacement has promoted successfully.
+        DeleteIfPresent(readyDestination);
         PublishFile(markdownPath, markdownDestination, cancellationToken);
         PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
         PublishFile(jsonPath, jsonDestination, cancellationToken);
@@ -61,7 +65,7 @@ public sealed class FilePublishService
             throw new IOException("Not all required artifacts were published successfully.");
         }
 
-        File.WriteAllText(readyDestination, "ready");
+        WriteReadyMarker(readyDestination, cancellationToken);
 
         return Task.FromResult(new PublishedArtifactSet(
             audioDestination,
@@ -115,14 +119,16 @@ public sealed class FilePublishService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var tempPath = $"{destinationPath}.tmp";
-        if (File.Exists(tempPath))
+        var tempPath = $"{destinationPath}.{Guid.NewGuid():N}.tmp";
+        try
         {
-            File.Delete(tempPath);
+            File.Copy(sourcePath, tempPath, overwrite: false);
+            File.Move(tempPath, destinationPath, overwrite: true);
         }
-
-        File.Copy(sourcePath, tempPath, overwrite: true);
-        File.Move(tempPath, destinationPath, overwrite: true);
+        finally
+        {
+            DeleteIfPresent(tempPath);
+        }
     }
 
     private static void PreservePriorSegmentAttributionOverrides(string existingJsonPath, string nextJsonPath)
@@ -233,31 +239,49 @@ public sealed class FilePublishService
         }
     }
 
+    private static void WriteReadyMarker(string readyDestination, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var temporaryMarker = $"{readyDestination}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temporaryMarker, "ready");
+            File.Move(temporaryMarker, readyDestination, overwrite: true);
+        }
+        finally
+        {
+            DeleteIfPresent(temporaryMarker);
+        }
+    }
+
     private void PublishSpeechOptimizedAudio(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var tempPath = $"{destinationPath}.tmp";
-        if (File.Exists(tempPath))
-        {
-            File.Delete(tempPath);
-        }
+        var tempPath = $"{destinationPath}.{Guid.NewGuid():N}.tmp";
 
-        _publishedAudioPreparer.PrepareAsync(sourcePath, tempPath, cancellationToken)
-            .GetAwaiter()
-            .GetResult();
-
-        using (var reader = new WaveFileReader(tempPath))
+        try
         {
-            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm ||
-                reader.WaveFormat.SampleRate != TranscriptionAudioPreparer.WhisperSampleRate ||
-                reader.WaveFormat.Channels != TranscriptionAudioPreparer.WhisperChannelCount ||
-                reader.WaveFormat.BitsPerSample != TranscriptionAudioPreparer.WhisperBitsPerSample)
+            _publishedAudioPreparer.PrepareAsync(sourcePath, tempPath, cancellationToken)
+                .GetAwaiter()
+                .GetResult();
+
+            using (var reader = new WaveFileReader(tempPath))
             {
-                throw new IOException("Published audio did not match the expected speech-optimized WAV format.");
+                if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm ||
+                    reader.WaveFormat.SampleRate != TranscriptionAudioPreparer.WhisperSampleRate ||
+                    reader.WaveFormat.Channels != TranscriptionAudioPreparer.WhisperChannelCount ||
+                    reader.WaveFormat.BitsPerSample != TranscriptionAudioPreparer.WhisperBitsPerSample)
+                {
+                    throw new IOException("Published audio did not match the expected speech-optimized WAV format.");
+                }
             }
-        }
 
-        File.Move(tempPath, destinationPath, overwrite: true);
+            File.Move(tempPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            DeleteIfPresent(tempPath);
+        }
     }
 }

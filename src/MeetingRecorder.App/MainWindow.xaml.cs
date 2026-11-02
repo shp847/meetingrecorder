@@ -181,6 +181,8 @@ public partial class MainWindow : Window
     private bool _isDispatchingPendingMeetingCleanupWork;
     private DateTimeOffset? _meetingCleanupSchedulerFailureBackoffUntilUtc;
     private DateTimeOffset? _lastMeetingCleanupSchedulerRefreshUtc;
+    private DateTimeOffset? _nextSummarySchedulerHealthCheckUtc;
+    private int? _lastCleanupLibraryFindingCount;
     private DateTimeOffset? _lastImportInboxReconciliationUtc;
     private string? _lastCleanupSchedulerStatusLog;
     private string? _lastCleanupSchedulerDispatchDetail;
@@ -2464,7 +2466,7 @@ public partial class MainWindow : Window
 
         var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(decision.SessionTitle);
         if (string.IsNullOrWhiteSpace(normalizedTitle) ||
-            normalizedTitle is "meeting" or "detected meeting" or "teams" or "microsoft teams" or "google meet")
+            normalizedTitle is "meeting" or "detected meeting" or "teams" or "microsoft teams" or "google meet" or "zoom" or "zoom meeting" or "zoom workplace")
         {
             return false;
         }
@@ -2891,6 +2893,14 @@ public partial class MainWindow : Window
 
         UpdateUpdateActionButtons();
         TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
+        if (!_recordingCoordinator.IsRecording &&
+            !_summaryProviderValidationIsCurrent &&
+            _nextSummarySchedulerHealthCheckUtc is { } nextHealthCheckUtc &&
+            DateTimeOffset.UtcNow >= nextHealthCheckUtc)
+        {
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
+            UpdateMeetingCleanupReviewBanner();
+        }
         if (!_lastMeetingCleanupSchedulerRefreshUtc.HasValue ||
             DateTimeOffset.UtcNow - _lastMeetingCleanupSchedulerRefreshUtc.Value >= TimeSpan.FromMinutes(5))
         {
@@ -2903,9 +2913,7 @@ public partial class MainWindow : Window
 
     private void TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset nowUtc)
     {
-        var maximumOutstanding = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current)
-            ? MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
-            : 1;
+        var maximumOutstanding = GetMaximumOutstandingCleanupWorkCount();
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         if (IsAutomaticCleanupSchedulerBlocked() ||
@@ -2925,6 +2933,11 @@ public partial class MainWindow : Window
 
     private string? GetAutomaticCleanupSchedulerBlockerReason()
     {
+        if (!_liveConfig.Current.SmartCleanupEnabled)
+        {
+            return "Smart cleanup is paused.";
+        }
+
         if (IsShutdownRequested)
         {
             return "Automatic cleanup is stopping because the app is shutting down.";
@@ -2952,6 +2965,26 @@ public partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    private int GetMaximumOutstandingCleanupWorkCount()
+    {
+        var config = _liveConfig.Current;
+        if (!config.SmartCleanupEnabled)
+        {
+            return 0;
+        }
+
+        if (BackgroundProcessingPolicy.IsOvernightDrainWindowActive(config))
+        {
+            return MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch;
+        }
+
+        var hasIdleCapacity = BacklogAccelerationProfileResolver.IsIdleCapacityEnabled(config) &&
+            _processingQueue.ResourceCapacitySnapshot.IsAvailable &&
+            WindowsUserIdleProbe.TryGetIdleDuration(out var idleDuration) &&
+            idleDuration >= TimeSpan.FromMinutes(5);
+        return hasIdleCapacity ? 2 : 1;
     }
 
     private void RecordCleanupSchedulerDispatchDetail(string detail)
@@ -3622,6 +3655,50 @@ public partial class MainWindow : Window
         {
             _isApplyingSafeMeetingCleanupFixes = false;
             UpdateMeetingActionState();
+        }
+    }
+
+    private async void RunReadyMeetingCleanupWorkButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker()))
+        {
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
+            if (!_summaryProviderValidationIsCurrent)
+            {
+                OpenSettingsSurface(SettingsWindowSection.Summaries);
+            }
+
+            UpdateMeetingCleanupReviewBanner();
+            return;
+        }
+
+        if (IsMeetingActionInProgress() || _recordingCoordinator.IsRecording)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Cleanup will resume when current meeting work is idle.";
+            return;
+        }
+
+        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "run ready cleanup work");
+        MeetingCleanupRecommendationsStatusTextBlock.Text = "Checking current safe work before cleanup dispatch.";
+    }
+
+    private async void ToggleSmartCleanupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (IsMeetingActionInProgress())
+        {
+            return;
+        }
+
+        var nextEnabled = !_liveConfig.Current.SmartCleanupEnabled;
+        await _liveConfig.SaveAsync(_liveConfig.Current with { SmartCleanupEnabled = nextEnabled }, _lifetimeCts.Token);
+        MeetingCleanupRecommendationsStatusTextBlock.Text = nextEnabled
+            ? "Smart cleanup resumed. Safe work will refill after current checks."
+            : "Smart cleanup paused. Active work was left unchanged.";
+        UpdateMeetingCleanupReviewBanner();
+        UpdateMeetingActionState();
+        if (nextEnabled)
+        {
+            TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
         }
     }
 
@@ -8551,8 +8628,7 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
             RefreshOpenMeetingDetailWindow();
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.RefreshLocalNameSuggestions).SuccessText);
+            _meetingDetailWindow?.SetMaintenanceStatus(MainWindowInteractionLogic.BuildPastRematchStatusText(result));
             AppendActivity(result.Outcome is PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested
                 ? $"Rematched local speaker names for '{row.Title}'."
                 : result.Warning ?? result.PlanItem.Reason);
@@ -8586,7 +8662,7 @@ public partial class MainWindow : Window
             UserActionIntent.UndoProfileNames).ProgressText);
         try
         {
-            await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
+            var result = await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
                 row.Source,
                 DateTimeOffset.UtcNow,
                 Guid.NewGuid().ToString("N"),
@@ -8594,9 +8670,11 @@ public partial class MainWindow : Window
             await RefreshMeetingListAsync(row.Source.Stem);
             await RefreshVoiceProfileSettingsAsync();
             RefreshOpenMeetingDetailWindow();
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.UndoProfileNames).SuccessText);
-            AppendActivity($"Profile-applied names were removed for '{row.Title}'.");
+            var status = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(result);
+            _meetingDetailWindow?.SetMaintenanceStatus(status);
+            AppendActivity(result.UpdatedSpeakerCount > 0
+                ? $"Profile-applied names were removed for '{row.Title}'."
+                : $"No profile-applied names needed undo for '{row.Title}'.");
         }
         catch (Exception exception)
         {
@@ -9054,7 +9132,13 @@ public partial class MainWindow : Window
             : "Dismiss Selected Recommendation(s)";
         ApplySafeMeetingCleanupFixesButton.Content = _isApplyingSafeMeetingCleanupFixes
             ? "Applying..."
-            : "Apply Safe Fixes";
+            : !string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker())
+                ? "Fix Summaries"
+                : "Run Ready Work";
+        ToggleSmartCleanupButton.Content = _liveConfig.Current.SmartCleanupEnabled
+            ? "Pause Smart Cleanup"
+            : "Resume Smart Cleanup";
+        ToggleSmartCleanupButton.IsEnabled = !isMeetingActionInProgress;
         LegacyMeetingCleanupReviewBorder.Visibility = workspaceToolState.ShowCleanupTray ? Visibility.Visible : Visibility.Collapsed;
         LegacyMeetingActionDraftsBorder.Visibility = Visibility.Collapsed;
         LegacyMeetingActionDraftsExpander.IsExpanded = false;
@@ -9121,7 +9205,7 @@ public partial class MainWindow : Window
         DismissSelectedMeetingCleanupRecommendationsButton.IsEnabled = selectedRecommendationRows.Length > 0 && !isMeetingActionInProgress;
         OpenRelatedMeetingCleanupRecommendationsButton.IsEnabled = selectedRecommendationRows.Length > 0 && !isMeetingActionInProgress;
         ApplySafeMeetingCleanupFixesButton.IsEnabled =
-            MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations).Count > 0 &&
+            (!string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker()) || GetCleanupSchedulerStatus().EligibleNowCount > 0) &&
             !isMeetingActionInProgress;
         RetryFailedSafeMeetingCleanupButton.IsEnabled =
             GetCleanupSchedulerStatus().RetryableFailedCount > 0 &&
@@ -10261,6 +10345,7 @@ public partial class MainWindow : Window
             !config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries))
         {
             _summaryProviderValidationIsCurrent = false;
+            _nextSummarySchedulerHealthCheckUtc = null;
             return;
         }
 
@@ -10272,21 +10357,25 @@ public partial class MainWindow : Window
             if (result.Success)
             {
                 _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+                _nextSummarySchedulerHealthCheckUtc = null;
                 _logger.Log($"Summary scheduler provider check succeeded. provider={result.ProviderKind}.");
                 return;
             }
 
             _summarySchedulerApprovalService.Clear();
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
             _logger.Log($"Summary scheduler provider check did not succeed. provider={result.ProviderKind}.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _summaryProviderValidationIsCurrent = false;
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
         }
         catch (Exception exception)
         {
             _summaryProviderValidationIsCurrent = false;
             _summarySchedulerApprovalService.Clear();
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
             _logger.Log($"Summary scheduler provider check failed: {exception.GetType().Name}.");
         }
     }
@@ -13297,6 +13386,11 @@ public partial class MainWindow : Window
         {
             MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;
             MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
+            MeetingCleanupHeadlineTextBlock.Text = string.Empty;
+            MeetingCleanupQueueTextBlock.Text = string.Empty;
+            MeetingCleanupSecondaryTextBlock.Text = string.Empty;
+            MeetingCleanupAttentionTextBlock.Text = string.Empty;
+            MeetingCleanupLibraryTextBlock.Text = string.Empty;
             return;
         }
 
@@ -13306,37 +13400,95 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;
-        var overnight = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current);
+        var summaryBlocker = GetSummarySchedulerBlocker();
+        var schedulerBlocker = GetAutomaticCleanupSchedulerBlockerReason();
         var schedulerDetail = _recordingCoordinator.IsRecording
-            ? "Automatic cleanup is paused by the live recording."
-            : !string.IsNullOrWhiteSpace(GetAutomaticCleanupSchedulerBlockerReason())
-                ? GetAutomaticCleanupSchedulerBlockerReason()!
-            : schedulerStatus.ProcessingCount > 0
-                ? $"{schedulerStatus.ProcessingCount} cleanup job(s) are working; {schedulerStatus.QueuedCount} waiting within the current batch. Native speaker labeling reports activity without a countdown."
-                : schedulerStatus.QueuedCount > 0
-                    ? $"{schedulerStatus.QueuedCount} cleanup job(s) are waiting. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
-                    : !string.IsNullOrWhiteSpace(schedulerStatus.PrimaryBlocker)
-                        ? schedulerStatus.PrimaryBlocker
-                        : !string.IsNullOrWhiteSpace(_lastCleanupSchedulerDispatchDetail)
-                            ? _lastCleanupSchedulerDispatchDetail
-                        : overnight
-                        ? "Eligible work can run in overnight batches of up to 5 items."
-                        : "Eligible work runs one item after normal work.";
+            ? "Paused by live recording."
+            : !string.IsNullOrWhiteSpace(schedulerBlocker)
+                ? schedulerBlocker!
+                : !string.IsNullOrWhiteSpace(summaryBlocker)
+                    ? summaryBlocker!
+                    : schedulerStatus.ProcessingCount > 0
+                        ? "Work is active. Native speaker labeling reports a heartbeat, not an ETA."
+                        : schedulerStatus.RetryableFailedCount > 0
+                            ? "Failed safe work can be retried after its readiness check."
+                            : schedulerStatus.ContainmentHeldCount > 0
+                                ? "Protected archive, merge, and transcript work needs review."
+                                : "Ready work will refill as capacity opens.";
         LogCleanupSchedulerStatus(schedulerStatus, schedulerDetail);
-        MeetingCleanupReviewBannerTextBlock.Text = MainWindowInteractionLogic.BuildMeetingCleanupSchedulerBannerText(
-            _meetingCleanupRecommendations.Length,
-            impactedMeetingCount,
-            schedulerStatus.SafeFixCount,
-            schedulerStatus.EligibleNowCount,
-            schedulerStatus.QueuedCount,
-            schedulerStatus.ProcessingCount,
-            schedulerStatus.DisabledSpeakerLabelCount,
-            schedulerStatus.BlockedSummaryCount,
-            schedulerStatus.DisabledCleanupCount,
-            schedulerStatus.ManualReviewCount,
-            schedulerDetail,
-            schedulerStatus.ContainmentHeldCount,
-            schedulerStatus.RetryableFailedCount);
+        MeetingCleanupHeadlineTextBlock.Text = _recordingCoordinator.IsRecording || !string.IsNullOrWhiteSpace(schedulerBlocker)
+            ? "Cleanup paused"
+            : schedulerStatus.ProcessingCount + schedulerStatus.QueuedCount > 0
+                ? "Cleanup working"
+                : !string.IsNullOrWhiteSpace(summaryBlocker) || schedulerStatus.RetryableFailedCount > 0 || schedulerStatus.ContainmentHeldCount > 0
+                    ? "Cleanup needs attention"
+                    : "Cleanup ready";
+        MeetingCleanupQueueTextBlock.Text =
+            $"RUNNING {schedulerStatus.ProcessingCount}   QUEUED {schedulerStatus.QueuedCount}   READY {schedulerStatus.EligibleNowCount}   PROVIDER BLOCKED {schedulerStatus.ProviderBlockedCount}";
+        MeetingCleanupSecondaryTextBlock.Text =
+            $"SCHEDULED LATER {schedulerStatus.DeferredCount}   RETRYABLE {schedulerStatus.RetryableFailedCount}   REVIEW REQUIRED {schedulerStatus.ReviewRequiredCount}";
+        MeetingCleanupAttentionTextBlock.Text = schedulerDetail;
+        var previousLibraryCount = _lastCleanupLibraryFindingCount;
+        _lastCleanupLibraryFindingCount = _meetingCleanupRecommendations.Length;
+        var catalogDelta = previousLibraryCount.HasValue
+            ? _meetingCleanupRecommendations.Length - previousLibraryCount.Value
+            : 0;
+        var catalogDeltaText = catalogDelta == 0
+            ? "UNCHANGED"
+            : catalogDelta > 0
+                ? $"+{catalogDelta} FOUND"
+                : $"{catalogDelta} CLEARED";
+        MeetingCleanupLibraryTextBlock.Text =
+            $"LIBRARY {_meetingCleanupRecommendations.Length} / {impactedMeetingCount} meetings · {catalogDeltaText} · {schedulerStatus.ResolvedCount} resolved";
+        MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
+        ApplySafeMeetingCleanupFixesButton.Content = !string.IsNullOrWhiteSpace(summaryBlocker)
+            ? "Fix Summaries"
+            : "Run Ready Work";
+        ToggleSmartCleanupButton.Content = _liveConfig.Current.SmartCleanupEnabled
+            ? "Pause Smart Cleanup"
+            : "Resume Smart Cleanup";
+        ReviewMeetingCleanupSuggestionsButton.Content = schedulerStatus.ContainmentHeldCount > 0
+            ? "Review Protected Changes"
+            : schedulerStatus.ProcessingCount > 0
+                ? "View Activity"
+                : "Review Suggestions";
+    }
+
+    private string? GetSummarySchedulerBlocker()
+    {
+        if (!_meetingCleanupRecommendations.Any(recommendation => recommendation.Action == MeetingCleanupAction.GenerateSummary))
+        {
+            return null;
+        }
+
+        var config = _liveConfig.Current;
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled)
+        {
+            return "AI summaries are disabled in Settings.";
+        }
+
+        if (!config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries))
+        {
+            return "Scheduled summaries are paused in Advanced Settings.";
+        }
+
+        if (!_summaryProviderValidationIsCurrent)
+        {
+            var reason = config.SummaryProviderPreference switch
+            {
+                MeetingSummaryProviderPreference.LocalOnly => "Local summary route needs a synthetic health check; no transcript work is queued.",
+                MeetingSummaryProviderPreference.OpenAiOnly when config.SummaryHostedRouteConsentVersion < 1 => "Hosted summary consent needs review; no transcript work is queued.",
+                MeetingSummaryProviderPreference.OpenAiOnly => "Hosted summary route needs a synthetic health check; no transcript work is queued.",
+                _ => "Summary provider needs a synthetic local-first health check; no transcript work is queued.",
+            };
+            return _nextSummarySchedulerHealthCheckUtc is { } retryAt
+                ? $"{reason} Next safe retry: {retryAt.ToLocalTime():t}."
+                : reason;
+        }
+
+        return !_summarySchedulerApprovalService.IsApproved(config)
+            ? "Summary provider approval needs refresh; no transcript work is queued."
+            : null;
     }
 
     private CleanupSchedulerStatus GetCleanupSchedulerStatus()
@@ -13352,7 +13504,7 @@ public partial class MainWindow : Window
     private bool IsSummaryBlockedBySchedule(MeetingCleanupRecommendation recommendation)
     {
         return recommendation.Action == MeetingCleanupAction.GenerateSummary &&
-               !IsScheduledIncrementalRecommendation(recommendation);
+               !string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker());
     }
 
     private void LogCleanupSchedulerStatus(CleanupSchedulerStatus status, string schedulerDetail)
@@ -13378,9 +13530,7 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken,
         AutomationCatalogSnapshot automationSnapshot)
     {
-        var maximumOutstanding = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current)
-            ? MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
-            : 1;
+        var maximumOutstanding = GetMaximumOutstandingCleanupWorkCount();
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         var queueIsIdle = _processingQueue.GetStatusSnapshot().RunState == ProcessingQueueRunState.Idle;
@@ -13468,6 +13618,11 @@ public partial class MainWindow : Window
 
     private bool IsScheduledIncrementalRecommendation(MeetingCleanupRecommendation recommendation)
     {
+        if (!_liveConfig.Current.SmartCleanupEnabled)
+        {
+            return false;
+        }
+
         if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation))
         {
             _meetingCleanupWorkLedgerService.RecordContainmentHold(

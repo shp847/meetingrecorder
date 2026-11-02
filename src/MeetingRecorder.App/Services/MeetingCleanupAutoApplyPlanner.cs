@@ -14,7 +14,11 @@ internal sealed record CleanupSchedulerStatus(
     int DisabledCleanupCount,
     int ManualReviewCount,
     int ContainmentHeldCount = 0,
-    int RetryableFailedCount = 0)
+    int RetryableFailedCount = 0,
+    int ResolvedCount = 0,
+    int DeferredCount = 0,
+    int ReviewRequiredCount = 0,
+    int ProviderBlockedCount = 0)
 {
     public string PrimaryBlocker => DisabledSpeakerLabelCount > 0
         ? $"{DisabledSpeakerLabelCount} speaker-label fix(es) are disabled by the work plan."
@@ -84,6 +88,14 @@ internal static class MeetingCleanupAutoApplyPlanner
         var retryableFailed = ledgerEntries.Count(entry =>
             entry.State == CleanupWorkState.Failed &&
             (entry.Action is MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary));
+        var providerBlocked = pendingSafeFixes.Count(isSummaryBlocked);
+        var deferred = pendingSafeFixes.Count(recommendation =>
+            !isScheduled(recommendation) &&
+            !isSummaryBlocked(recommendation));
+        var reviewRequired = ledgerEntries.Count(entry =>
+            entry.State == CleanupWorkState.ManualReview ||
+            (entry.State == CleanupWorkState.Failed &&
+             entry.Action is not (MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary)));
 
         return new CleanupSchedulerStatus(
             safeFixes.Count,
@@ -99,7 +111,11 @@ internal static class MeetingCleanupAutoApplyPlanner
                 !IsSpeakerLabelAction(recommendation.Action) && !isScheduled(recommendation)),
             ledgerEntries.Count(entry => entry.State is CleanupWorkState.ManualReview or CleanupWorkState.Failed),
             containmentHeld,
-            retryableFailed);
+            retryableFailed,
+            ledgerEntries.Count(entry => entry.State == CleanupWorkState.Completed),
+            deferred,
+            reviewRequired,
+            providerBlocked);
     }
 
     public static IReadOnlyList<MeetingCleanupRecommendation> GetNextAutomaticBatch(

@@ -443,6 +443,27 @@ internal static class MainWindowInteractionLogic
         };
     }
 
+    public static string BuildPastRematchStatusText(PastRematchResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.Warning))
+        {
+            return result.Warning;
+        }
+
+        return result.Outcome switch
+        {
+            PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested =>
+                BuildSpeakerNameRefreshStatusText(new SpeakerNameRefreshResult(result.Predictions, null)),
+            PastRematchOutcome.Unchanged =>
+                "Refreshed speaker names. No eligible voice-profile matches were found.",
+            PastRematchOutcome.Skipped =>
+                "Speaker-name refresh was skipped. No meeting names were changed.",
+            PastRematchOutcome.Cancelled =>
+                "Speaker-name refresh was cancelled. No meeting names were changed.",
+            _ => "Speaker-name refresh could not complete. Reload the meeting and try again.",
+        };
+    }
+
     public static string BuildSpeakerNameUndoStatusText(SpeakerNameUndoResult result)
     {
         if (result.UpdatedSpeakerCount == 0)
@@ -2261,7 +2282,7 @@ internal static class MainWindowInteractionLogic
     {
         return recommendation.CanApplyAutomatically &&
                recommendation.Confidence == MeetingCleanupConfidence.High &&
-               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
+               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary;
     }
 
     public static IReadOnlyList<(InitialProcessingStrategy Value, string Label)> BuildInitialProcessingStrategyOptions()

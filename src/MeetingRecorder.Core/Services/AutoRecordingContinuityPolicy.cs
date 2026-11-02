@@ -47,7 +47,7 @@ public sealed class AutoRecordingContinuityPolicy
 
         var normalizedCandidate = NormalizeMeetingTitle(decision.SessionTitle);
         if (decision.Platform == MeetingPlatform.Unknown ||
-            IsGenericMeetingTitle(normalizedCandidate, decision.Platform) ||
+            (IsGenericMeetingTitle(normalizedCandidate, decision.Platform) && !HasZoomNativeHostEvidence(decision)) ||
             !HasMeetingIdentityEvidence(decision))
         {
             return MeetingIdentityVerdict.Unknown;
@@ -63,7 +63,7 @@ public sealed class AutoRecordingContinuityPolicy
     {
         if (decision is null ||
             decision.Platform == MeetingPlatform.Unknown ||
-            IsGenericMeetingTitle(NormalizeMeetingTitle(decision.SessionTitle), decision.Platform) ||
+            (IsGenericMeetingTitle(NormalizeMeetingTitle(decision.SessionTitle), decision.Platform) && !HasZoomNativeHostEvidence(decision)) ||
             !HasMeetingIdentityEvidence(decision))
         {
             return false;
@@ -707,11 +707,15 @@ public sealed class AutoRecordingContinuityPolicy
             MeetingPlatform.Teams => HasWindowTitleEvidence(decision) && HasTeamsHostEvidence(decision),
             MeetingPlatform.GoogleMeet => HasWindowTitleEvidence(decision) || HasBrowserSurfaceEvidence(decision),
             MeetingPlatform.Zoom => HasWindowTitleEvidence(decision) &&
-                HasBrowserSurfaceEvidence(decision) &&
-                HasCalendarZoomEvidence(decision),
+                ((HasBrowserSurfaceEvidence(decision) && HasCalendarZoomEvidence(decision)) ||
+                 HasZoomNativeHostEvidence(decision)),
             _ => false,
         };
     }
+
+    private static bool HasZoomNativeHostEvidence(DetectionDecision decision) =>
+        decision.Signals.Any(signal =>
+            string.Equals(signal.Source, "zoom-native-host", StringComparison.OrdinalIgnoreCase));
 
     private static bool HasCalendarZoomEvidence(DetectionDecision decision)
     {
@@ -910,6 +914,7 @@ public sealed class AutoRecordingContinuityPolicy
             MeetingPlatform.Teams => normalized is "microsoft teams" or "teams" or "ms teams" ||
                 normalized.StartsWith("sharing control bar", StringComparison.Ordinal),
             MeetingPlatform.GoogleMeet => IsGenericGoogleMeetTitle(normalized),
+            MeetingPlatform.Zoom => normalized is "zoom" or "zoom meeting" or "zoom workplace",
             _ => false,
         };
     }
