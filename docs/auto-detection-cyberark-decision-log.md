@@ -107,6 +107,13 @@ As of 2026-07-20, executable-policy facts are:
 
 ## Timeline
 
+### 2026-10-14: Continuity fragmentation remediation
+
+- Trigger: production evidence showed repeated automatic stop/start boundaries while endpoint selection changed, including same-title restarts within five minutes.
+- Source change: bound matcher Unknown grace to one five-minute receipt per session; expiry now stops rather than creating another grace window. Continuity rollout migration v2 promotes legacy installs to matcher continuity and ongoing healing without changing `AutoDetectEnabled`.
+- Cleanup change: only high-confidence, complete, five-minute continuity-chain merges carrying the `continuity-repair-v2` reason may bypass automatic mutation containment. Archive, generic merge, and transcript regeneration remain held.
+- Boundary: no process lookup, per-app audio-session enumeration, or UI Automation was added. Source/test/package/installed/live evidence remain separate; package and live validation are pending.
+
 ### 2026-10-11: Single-instance activation recovery
 
 - Trigger: installed Meeting Recorder process `25648` was responsive with a valid visible window handle, but the window was minimized and a `Local\\MeetingRecorder.Activate` signal did not acknowledge within three seconds. The foreground request therefore could not restore the user-visible app through normal single-instance activation.
@@ -942,6 +949,135 @@ As of 2026-07-20, executable-policy facts are:
 - Live-machine result: after confirming no active capture, the prior app was stopped, the managed install was refreshed at `C:\Users\psharm04\MeetingRecorder`, and the app relaunched responsive. Its local continuity matcher was enabled (`Matcher` rollout) for future identity-proven continuation. No live meeting was recorded for this check.
 - Outcome: retained in source and installed locally.
 - Follow-up / removal condition: keep automatic output-folder intake disabled permanently; only restore any automatic intake with a separate configured Inbox and durable receipt boundary.
+
+### 2026-10-14: Google Meet Edge-title normalization and historical repair
+- Trigger / observed symptom: Google Meet recordings could persist the raw Edge window caption, including the `Meet -` prefix and `and N more pages - Work - Microsoft Edge` shell text.
+- Exact runtime or CyberArk evidence: the live app screenshot showed a Google Meet page header with a clean meeting name while the Session title field held the decorated Edge caption. No CyberArk, audio-probe, executable, signing, or install-location event occurred.
+- Hypothesis: confirmed. Detection normalized that caption only for identity comparison; the evaluator then persisted the uncleaned signal value, and the existing one-time published repair had no title-only migration.
+- APIs or signals added/removed: no detector signal, audio probe, executable naming, signing, or install-location behavior changed. Google Meet session-title projection now removes only the exact Edge shell and a v9 repair applies the same rule to existing Meeting Recorder artifact families.
+- Positive behavior expected: matching current and historical Google Meet titles retain the meeting name while their internal audio, markdown, JSON, manifest, and filename references remain aligned.
+- False-positive/security boundary retained: a title is unchanged unless it has the exact ` - Microsoft Edge` suffix. No audio samples, transcript body text, calendar data, or non-Google-Meet records are modified.
+- Tests added and results: focused normalizer, detection-evaluator, detector, and published-repair contracts passed 86/86. The broader Core runner retained pre-existing installer/apphost fixture failures after title-specific contracts passed.
+- Package status: `Build-Installer.ps1` completed. ZIP SHA-256 `DE0D48E5221C77BFF1B647E86F78B1F260CCBC9AEE8DDD1CC853077B5DB6103B`; MSI SHA-256 `765F123B56B8BEA12CBD18D60326AEB5BCC5F983FDCBBF8BF6B32A4499281233`.
+- Installed hash/version/signature status: not changed by source repair.
+- Live-machine result: the user-owned live app remains running; no live recording was stopped or altered for this source change.
+- Outcome: retained in source and packaged; deployment is intentionally deferred while the user-owned live app is running.
+- Follow-up / removal condition: retain the narrow Edge signature; expand only with a separately observed browser-title format and a regression test.
+
+### 2026-10-15: Sprint 8B active-session ownership and bounded stop
+- Trigger / observed symptom: a managed Teams recording continued for hours after its original meeting identity disappeared because unrelated Teams windows and shared endpoint audio repeatedly deferred its stop.
+- Exact runtime or CyberArk evidence: incident logs show a manually stopped 3:18:54 Teams artifact with repeated endpoint recovery and unrelated specific Teams candidates. Source audit found two matcher evaluations in one detector cycle: the first expired and cleared the grace receipt, while the second created a fresh grace window. No CyberArk, process-inspection, or executable-path event caused the overrun.
+- Hypothesis: confirmed source lifecycle ownership gap. The active session must own its title/identity; a different meeting is a successor candidate, never evidence that can refresh or rename the old session.
+- APIs or signals added/removed: no external detector, Windows audio-probe, process, UI Automation, signing, executable naming, or install-location signal is added. The implementation will evaluate matcher continuity once per scan, use one non-renewable 90-second identity-loss grace, retain only safe capture recovery during loss, and admit a separately stable successor only after finalizing the old session.
+- Positive behavior expected: a matching original identity continues; unknown or different evidence gets one visible 90-second countdown; expiry finalizes the original record without changing its title; a different stable meeting may later start as a distinct record.
+- False-positive/security boundary retained: manual stop remains authoritative; shared endpoint activity and unrelated candidates cannot extend, rename, or choose a capture endpoint for the active record. The prior 3:18:54 artifact is preserved unchanged. No raw window titles, transcript data, API data, or audio is added to diagnostics.
+- Tests added and results: pending implementation.
+- Package status: pending implementation.
+- Installed hash/version/signature status: unchanged pending package verification.
+- Live-machine result: incident establishes the pre-fix failure only; corrected behavior awaits synthetic/package and future live evidence.
+- Outcome: implementation in progress.
+- Follow-up / removal condition: retain the ownership boundary until production evidence shows a stronger, privacy-safe original-meeting identity signal that can safely shorten the bounded grace.
+
+### 2026-10-16: Full-audio fixture SDK launch selection
+- Trigger / observed symptom: every approved private full-audio fixture failed before native diarization because the fixture child selected a PATH `dotnet` that exposed a runtime but no SDK.
+- Exact runtime or CyberArk evidence: no endpoint-control, executable location, signing, or installed-app behavior changed. The PATH `dotnet --list-sdks` reported no SDK; the current-user `.dotnet` command exposed the required SDK. A bounded retry reached CPU-native diarization and timed out cleanly at its configured cap.
+- Hypothesis: confirmed. Full-audio replay must choose a verified SDK for its required RID worker rebuild, rather than treating any PATH `dotnet` as build-capable.
+- APIs or signals added/removed: fixture-only launch selection now probes `.dotnet`, `DOTNET_ROOT`, then PATH and accepts only a command with an SDK. The timed catalog child prefers PowerShell 7 for the same long-path behavior as corpus intake. Production app, detector, capture, audio probes, executable names, signing, and installation paths are unchanged.
+- Positive behavior expected: a full-audio fixture either rebuilds/runs the current worker through a usable SDK or emits one explicit safe setup error, never a misleading generic failure for every corpus entry.
+- False-positive/security boundary retained: source audio, transcript text, truth values, profile data, and private paths remain outside source control and catalog reports. The worker still runs from a unique disposable probe root, has a bounded timeout, and does not target the live app.
+- Tests added and results: focused fixture/calibration/promotion contracts pass 24/24. One opaque full-audio retry produced a redacted `timed_out` receipt; CPU preflight exited successfully. A first full-corpus launch was stopped before completion after a broad process query was found to include its own PowerShell observer. The corrected executable-only query found no active native helper, and no user process was terminated.
+- Package status: not applicable; fixture-script-only change. No installer rebuild while the user-owned live app remains active.
+- Installed hash/version/signature status: unchanged.
+- Live-machine result: the user-owned installed app remained running with no active-recording marker; no installed process was stopped or modified.
+- Outcome: retained in source.
+- Follow-up / removal condition: retain SDK verification while a runtime-only PATH command is possible; remove only after all supported build environments reliably expose an SDK through the standard command.
+
+### 2026-10-16: Sprint 8B source and focused-contract correction
+- Trigger / observed symptom: the prior Sprint 8B entry still stated that implementation and tests were pending after the source change landed.
+- Exact runtime or CyberArk evidence: no CyberArk, executable-location, signing, process-inspection, or Windows audio-probe event is involved. Commit `e387791` implements one decision evaluation per scan, session-owned identity loss, a non-renewable 90-second grace, successor stability admission, and capture-source isolation. Focused continuity/cleanup lifecycle contracts passed 166/166.
+- Hypothesis: source behavior now satisfies the synthetic lifecycle boundary; package and installed evidence are still required before treating the production incident as released.
+- APIs or signals added/removed: none beyond the internal metadata-only continuity ownership/state transitions already documented. No new external detector, process, UI Automation, or endpoint-control signal was added.
+- Positive behavior expected: unrelated specific meeting candidates and shared endpoint activity cannot extend, rename, or select capture input for an active original record; a stable successor starts only after the old record safely stops.
+- False-positive/security boundary retained: manual stop remains authoritative; raw titles, transcript text, API data, audio, and device identifiers remain excluded from diagnostics.
+- Tests added and results: `AutoRecordingContinuityPolicyTests`, cutover, source, stop-pipeline, chain-heal, recommendation, and containment contracts passed 166/166.
+- Package status: pending. Normal apphost creation is currently denied and a user-owned installed app plus private replay worker remain active, so no package build was attempted for this correction.
+- Installed hash/version/signature status: unchanged.
+- Live-machine result: pre-fix incident remains preserved unchanged; corrected installed/live behavior is not claimed.
+- Outcome: retained in source with focused synthetic evidence; release qualification remains pending.
+- Follow-up / removal condition: package and installed synthetic lifecycle smoke must pass after the active app and private replay worker stop.
+
+### 2026-10-16: Fail-closed stable-apphost package fallback
+- Trigger / observed symptom: endpoint policy removes newly generated `.exe` apphosts in isolated build roots, preventing installer qualification even though the existing installed and release apphosts have verified matching SHA-256 values.
+- Exact runtime or CyberArk evidence: the three known stable apphost hashes match their previously verified `win-x64` project hosts. Fresh generated hosts remain unavailable under the endpoint policy. No installed executable, active app, capture source, or Windows audio probe was changed.
+- Hypothesis: a source-controlled, project-specific apphost manifest can permit only the known stable host after current-host verification is unavailable, without treating arbitrary executables as trusted.
+- APIs or signals added/removed: portable and installer scripts now accept an explicit manifest path only when it resolves to `scripts\\stable-apphosts.win-x64.json`. It validates schema, runtime, target framework, exact project/file entry, and SHA-256; if a current host exists, the manifest must also match it.
+- Positive behavior expected: packaging can restore only the three manifest-pinned stable hosts when publish output lacks them and current generated hosts are unavailable.
+- False-positive/security boundary retained: no automatic fallback, no external manifest, no unsigned arbitrary executable, no signing-policy bypass, and no installed-app modification. A hash mismatch, invalid manifest, or absent configured stable host fails the package.
+- Tests added and results: PowerShell parser checks and `InstallerScriptTests` passed 55/55.
+- Package status: not run; the user-owned installed app and authorized private corpus replay remain active.
+- Installed hash/version/signature status: unchanged.
+- Live-machine result: the user-owned installed app was not stopped, restarted, or modified.
+- Outcome: retained in source; release qualification remains pending.
+- Follow-up / removal condition: after active work stops, run full tests, installer build using the three verified stable-host paths plus the manifest, then packaged smoke. Refresh manifest hashes only from a separately verified generated-host build.
+
+### 2026-10-16: Stable-host migration preservation and isolated release gate
+- Trigger / observed symptom: legacy auto-update migration could request a preserved apphost from an existing install but resolve its source only through a discovered legacy-root list. Endpoint protection also denied reused temporary apphost paths during release checks.
+- Exact runtime or CyberArk evidence: `CreateAppHost` was denied only under the reused `MeetingRecorderBuild` temporary path. A fresh per-run intermediate root built successfully. No live app, capture source, Windows audio probe, executable name, signing policy, or install location was changed.
+- Hypothesis: confirmed. Preservation must use the explicitly requested existing auto-update root before legacy-root discovery; release validation must use a fresh proven intermediate root when endpoint protection holds a stale apphost.
+- APIs or signals added/removed: no detector, audio-probe, process, UI Automation, signing, executable-name, or install-location signal changed. `PortableBundleInstaller` now resolves an existing requested auto-update root as the preservation source.
+- Positive behavior expected: a legacy install can supply its preserved stable apphost during canonical-root migration; stale temporary apphost locks do not prevent a clean source/test gate when a fresh isolated build root is used.
+- False-positive/security boundary retained: preservation is limited to an existing explicitly requested auto-update root and still requires the requested preserved payload declaration. No apphost is regenerated, replaced, or trusted without existing package checks.
+- Tests added and results: migration preservation test passed; `AppPlatformDeploymentTests` passed 27/27; full `Test-All.ps1` passed Core 1,807/1,807 and Integration 8/8 using a fresh isolated intermediate root.
+- Package status: `Build-Installer.ps1` passed using the manifest-pinned stable hosts. ZIP SHA-256 `0A6502BA92E82466C961E05E9A1580C7799ED14A022BA53E70D994DE955BBE84`; MSI SHA-256 `65530F93D6D580BFA71EF6ECBAFE4313047D94930F5E37C6CDF261D06AD6BC29`.
+- Installed hash/version/signature status: `Smoke-Test-Release.ps1 -Runtime win-x64` passed portable startup, MSI installation, and MSI-installed-app startup. Signature policy was not changed.
+- Live-machine result: no live app or recording process was present during validation; smoke left no Meeting Recorder process running.
+- Outcome: retained and release-qualified for the stated package gates.
+- Follow-up / removal condition: retain the preservation lookup and fresh intermediate-root practice while endpoint protection can hold stale apphosts; remove only after verified policy behavior changes.
+
+### 2026-10-26: Native Zoom in-meeting auto-start recovery
+
+- Trigger / observed symptom: a live Zoom call was visible while automatic detection was enabled, but Meeting Recorder remained idle and reported that it was waiting for supported meeting audio.
+- Exact runtime or CyberArk evidence: read-only visible-window inspection found the active native Zoom in-meeting surface under `ConfMultiTabContentWndClass`. The detector admitted only Chromium and Teams window classes, so native Zoom never reached candidate evaluation. No process lookup, per-app audio-session enumeration, or UI Automation was used.
+- Hypothesis: confirmed source admission gap. Native Zoom needs its documented in-meeting window class as identity evidence, while endpoint render activity remains the start gate.
+- APIs or signals added/removed: add exact `ConfMultiTabContentWndClass` admission and metadata-only `zoom-native-host` evidence. No process, browser automation, session-owner, executable, signing, or install-location behavior changes.
+- Positive behavior expected: a visible native Zoom in-meeting surface plus active endpoint render audio automatically starts a Zoom recording. Quiet endpoint audio still does not start recording.
+- False-positive/security boundary retained: no arbitrary Zoom-titled window qualifies; only the exact native in-meeting class qualifies. The class alone cannot start a recording; active endpoint audio is still required. Generic native title is permitted only because the in-meeting class supplies the identity evidence.
+- Tests added and results: native Zoom active-audio start, quiet-audio no-start, and stable-successor admission added. Focused detector/continuity suite passed 122/122 with `UseAppHost=false`; normal test build encountered the known protected temporary `apphost.exe` denial.
+- Package status: `Build-Installer.ps1` completed with zero warnings/errors. Portable ZIP and MSI were rebuilt from the corrected source.
+- Installed hash/version/signature status: local direct deployment completed to the managed install root. Signature policy is unchanged.
+- Live-machine result: packaged smoke passed for portable bundle, MSI installation, and MSI-installed app. The corrected app was then relaunched during the same active Zoom call and automatically created exactly one fresh recording session. No duplicate active session was observed.
+- Outcome: retained, packaged, installed, and live-validated.
+- Follow-up / removal condition: retain exact class admission and endpoint-audio gate unless a separately observed native Zoom class is confirmed with regression coverage.
+
+### 2026-10-27: Google Meet browser-shell title boundary repair
+
+- Trigger / observed symptom: an active Google Meet displayed in Meeting Recorder as a browser caption with `Meet -`, a tab-count tail, profile, and Edge product text instead of its clean in-page title.
+- Exact runtime or CyberArk evidence: the Meet page header supplied the clean meeting name while the recorder stored a variant with the `Meet -` prefix and `and N more pages` tail. The existing normalizer removed decoration only when the full Microsoft Edge suffix survived. No CyberArk, process lookup, UI Automation, audio-probe, executable, signing, or install-location behavior was used or changed.
+- Hypothesis: confirmed source boundary gap. Browser caption components can disappear between window detection and session persistence, leaving a partial but still recognizable shell title that bypasses the prior exact-suffix cleanup.
+- APIs or signals added/removed: no new detector signal. Google Meet session start, automatic rename, and active reclassification now normalize known browser shell forms before persisting. Manual metadata edits remain unmodified.
+- Positive behavior expected: `Meet - <title> and <count> more pages - Work` resolves to `<title>` even when the Edge suffix is absent; full Edge forms remain clean; ordinary `Meet - <title>` and titles ending in `- Work` without a verified shell tail remain unchanged.
+- False-positive/security boundary retained: only recognized Google Meet decoration is removed. Manual title edits, raw audio, transcript data, API data, and new diagnostics are not touched.
+- Tests added and results: title normalization variants and coordinator persistence coverage added; focused suite passed 34/34.
+- Package status: `Build-Installer.ps1` passed with zero warnings and zero errors; portable ZIP and MSI rebuilt.
+- Installed hash/version/signature status: unchanged pending package verification and deployment after the user-owned live recording ends.
+- Live-machine result: current recording is left untouched; corrected installed behavior is not claimed during it.
+- Outcome: retained in source.
+- Follow-up / removal condition: retain partial browser-shell cleanup while supported browser captions can omit their final product suffix; remove only after detector input guarantees canonical meeting titles.
+
+### 2026-10-29: CyberArk-safe speaker-labeling containment
+
+- Trigger / observed symptom: CyberArk EPM displayed `Restricted Access` for `MeetingRecorder.ProcessingWorker.exe` attempting `Process Memory (C:\Windows\System32\svchost.exe)`.
+- Exact runtime or CyberArk evidence: CyberArk identifies the unsigned worker and `svchost.exe` target. Windows Application events record repeated `System.AccessViolationException` crashes in the same profile-deployed worker while optional native speaker labeling ran. No event identifies the exact native API or library that addressed `svchost.exe`; managed source contains no direct `OpenProcess` or `ReadProcessMemory` call.
+- Hypothesis: optional nested Sherpa/ONNX speaker labeling is the failing and policy-blocked path; transcript recognition and publication are separate. The prior crash-recovery path ran only after the initial restricted operation, and could miss an access violation with no stderr detail.
+- APIs or signals added/removed: the worker now honors the existing Disabled speaker-labeling profile before creating any helper; parent and helper progress stop querying working-set memory. No detector, audio probe, executable name, signing, install location, process lookup, or UI Automation behavior changed.
+- Positive behavior expected: disabled speaker labeling publishes transcripts without starting native diarization or requesting process-memory telemetry. The current installed configuration has both a Disabled profile and an empty diarization asset path, so its queue treats speaker labeling as unavailable until a replacement package is installed.
+- False-positive/security boundary retained: no CyberArk policy exception, signing-policy bypass, protected-process access, recording deletion, transcript rewrite, or historical reprocessing was performed. Speaker labels remain explicitly opt-in after EPM-safe qualification.
+- Tests added and results: added a worker-source contract for disabled-label path and absence of managed working-set inspection. An isolated .NET 8 build compiled the worker and test assembly with `UseAppHost=false`; xUnit execution was blocked when CyberArk denied the isolated `testhost.exe` startup. Static source inspection passed.
+- Package status: `Build-Installer.ps1` completed in an isolated checkout with a 88,772,973-byte portable ZIP and a 76,390,400-byte MSI. The package provenance is intentionally dirty because it contains this uncommitted source fix; smoke testing, release qualification, and deployment were not performed.
+- Installed hash/version/signature status: source is packaged but not installed. The package has no new signing approval. The live configuration has Disabled speaker labeling and an empty diarization asset path; existing queue logic treats the feature as unavailable.
+- Live-machine result: no active/nonterminal session, recording marker, or processing worker was observed. The existing app accepted normal close/restart from the same managed path so its queue loaded the empty-asset containment. No live recording, audio artifact, transcript, or manifest was changed.
+- Outcome: retained in source; runtime containment staged. Exact native `svchost.exe` call remains unproven pending EPM audit telemetry or a controlled packaged test.
+- Follow-up / removal condition: retain speaker labeling disabled until a signed/approved package is tested on an EPM-controlled machine without a restricted-access event; then re-enable only through a pilot with worker and EPM telemetry captured.
 
 ## Entry Template
 

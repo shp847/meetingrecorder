@@ -121,6 +121,7 @@ function Read-VttSegments {
                     end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
                     speakerId = $null
                     speakerLabel = $null
+                    sourceSpeakerToken = $speaker
                     text = $text
                 })
         }
@@ -133,10 +134,7 @@ function Read-VttSegments {
         throw 'Transcript speaker count must be from 1 through 16.'
     }
 
-    return [pscustomobject]@{
-        Segments = $segments
-        SpeakerCount = $speakerTokens.Count
-    }
+    return ConvertTo-PrivateFixtureTranscript -Segments $segments -SpeakerTokens $speakerTokens
 }
 
 function Read-MarkdownSegments {
@@ -164,6 +162,7 @@ function Read-MarkdownSegments {
                     end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
                     speakerId = $null
                     speakerLabel = $null
+                    sourceSpeakerToken = $speaker
                     text = $text
                 })
             continue
@@ -179,6 +178,7 @@ function Read-MarkdownSegments {
             [void]$speakerTokens.Add($speaker)
             $pointTimestampSegments.Add([pscustomobject]@{
                     start = ConvertTo-VttTimeSpan -Value $Matches.start
+                    speaker = $speaker
                     text = $text
                 })
         }
@@ -202,6 +202,7 @@ function Read-MarkdownSegments {
                     end = $end.ToString('c', [Globalization.CultureInfo]::InvariantCulture)
                     speakerId = $null
                     speakerLabel = $null
+                    sourceSpeakerToken = $pointTimestampSegments[$index].speaker
                     text = $pointTimestampSegments[$index].text
                 })
         }
@@ -214,9 +215,46 @@ function Read-MarkdownSegments {
         throw 'Transcript Markdown speaker count must be from 1 through 16.'
     }
 
+    return ConvertTo-PrivateFixtureTranscript -Segments $segments -SpeakerTokens $speakerTokens
+}
+
+function ConvertTo-PrivateFixtureTranscript {
+    param(
+        [System.Collections.IEnumerable]$Segments,
+        [System.Collections.Generic.HashSet[string]]$SpeakerTokens
+    )
+
+    $orderedTokens = @($SpeakerTokens | Sort-Object)
+    $opaqueTokenMap = @{}
+    for ($index = 0; $index -lt $orderedTokens.Count; $index++) {
+        $opaqueTokenMap[$orderedTokens[$index]] = ('truth-speaker-{0:D2}' -f ($index + 1))
+    }
+
+    $snapshotSegments = [System.Collections.Generic.List[object]]::new()
+    $expectedTurns = [System.Collections.Generic.List[object]]::new()
+    foreach ($segment in $Segments) {
+        $snapshotSegments.Add([ordered]@{
+                start = $segment.start
+                end = $segment.end
+                speakerId = $null
+                speakerLabel = $null
+                text = $segment.text
+            })
+
+        $sourceSpeakerToken = [string]$segment.sourceSpeakerToken
+        if (-not [string]::IsNullOrWhiteSpace($sourceSpeakerToken) -and $opaqueTokenMap.ContainsKey($sourceSpeakerToken)) {
+            $expectedTurns.Add([ordered]@{
+                    speakerId = $opaqueTokenMap[$sourceSpeakerToken]
+                    startMilliseconds = [long]([TimeSpan]::Parse($segment.start, [Globalization.CultureInfo]::InvariantCulture).TotalMilliseconds)
+                    endMilliseconds = [long]([TimeSpan]::Parse($segment.end, [Globalization.CultureInfo]::InvariantCulture).TotalMilliseconds)
+                })
+        }
+    }
+
     return [pscustomobject]@{
-        Segments = $segments
-        SpeakerCount = $speakerTokens.Count
+        Segments = $snapshotSegments
+        SpeakerCount = $orderedTokens.Count
+        ExpectedTurns = $expectedTurns
     }
 }
 
@@ -340,12 +378,13 @@ $outcome = [ordered]@{
             reference = $truthReference
             expectedSpeakerCount = $parsed.SpeakerCount
             expectedSpeakerNames = @()
+            expectedTurns = @($parsed.ExpectedTurns)
 }
 
 if ($Append) {
     $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
     $truthStore = Get-Content -LiteralPath $truthStorePath -Raw | ConvertFrom-Json
-    if ($catalog.schemaVersion -ne 2 -or $truthStore.schemaVersion -ne 1) {
+    if ($catalog.schemaVersion -ne 2 -or $truthStore.schemaVersion -notin @(1, 2)) {
         throw 'Unsupported fixture catalog or truth-store schema.'
     }
     if (@($catalog.fixtures | Where-Object { $_.id -eq $FixtureId }).Count -gt 0) {
@@ -356,6 +395,7 @@ if ($Append) {
     }
     $catalog.fixtures = @($catalog.fixtures) + @([pscustomobject]$fixture)
     $truthStore.outcomes = @($truthStore.outcomes) + @([pscustomobject]$outcome)
+    $truthStore.schemaVersion = 2
 }
 else {
     $catalog = [ordered]@{
@@ -363,7 +403,7 @@ else {
         fixtures = @($fixture)
     }
     $truthStore = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         outcomes = @($outcome)
     }
 }

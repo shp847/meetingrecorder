@@ -5,6 +5,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$testRuntimeRoot = Join-Path (Split-Path -Parent $repoRoot) "MeetingRecorder-TestRuntime"
+New-Item -ItemType Directory -Force -Path $testRuntimeRoot | Out-Null
+
+# Windows endpoint protection can quarantine deliberately fake .exe payloads
+# under shared system Temp. Installer tests keep their GUID-scoped fixtures in
+# this non-source-controlled sibling runtime root for this script invocation only.
+$env:TEMP = $testRuntimeRoot
+$env:TMP = $testRuntimeRoot
 
 function Invoke-DotnetStep {
     param(
@@ -32,4 +40,5 @@ Invoke-DotnetStep -Arguments @("test", (Join-Path $repoRoot "tests\MeetingRecord
 Invoke-DotnetStep -Arguments @("build-server", "shutdown")
 
 Write-Host ""
+Write-Host "Using isolated test runtime root: $testRuntimeRoot"
 Write-Host "Full clean build and test pass completed successfully."

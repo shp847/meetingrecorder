@@ -13,14 +13,15 @@ consented, classified, owned, expiry-bound, and hash-checked locally.
 
 - `SameMeeting`: only compatible strong stable identity can continue a session.
   This does not authorize an automatic merge.
-- `DifferentMeeting`: contradictory strong stable identity wins.
-- `UnknownGrace`: weak or medium evidence plus recent capture can preserve a
-  bounded five-minute tail. It never starts a new capture or auto-merges.
+- `DifferentMeeting`: contradictory specific identity starts identity-loss handling
+  for the active record; it never renames or extends that record.
+- `UnknownGrace`: weak, missing, or different runtime evidence can preserve one
+  bounded 90-second tail. It never starts a new capture or auto-merges.
 - `ManualReview`: manual stop, missing evidence, expired grace, invalid data,
   or unsupported schema halt automatic action. A user stop always wins.
 
 False merge is highest severity. False split is second. Bounded tail capture is
-acceptable only while respecting the five-minute cap and storage/capture
+acceptable only while respecting the 90-second cap and storage/capture
 limits. Missing labels never count as correct.
 
 ## Corpus and metrics
@@ -151,18 +152,20 @@ explicit post-publish pass governed by its own receipt and eligibility checks.
 `ContinuityEngineRolloutMode` is local and versioned. New configurations use
 `Matcher`; migrated configurations retain their prior local continuity choice;
 malformed or future values fail closed to `Legacy`. In `Matcher` mode,
-`ContinuityCutoverPolicy` is the sole verdict authority for active continuation,
-recent auto-stop recovery, reclassification, and rollover. Only its
-`DifferentMeeting` result can pass into the legacy mechanics that choose the
-safe transition shape. The retained `AutoRecordingContinuityPolicy` branches
-are evidence and safety extractors for the rollback-only `Legacy` mode; they
+`ContinuityCutoverPolicy` is the sole verdict authority for active continuation
+and recent auto-stop recovery. Matcher-managed records are title-owned: a
+`DifferentMeeting` result consumes the same non-renewable 90-second grace as
+unknown evidence, then finalizes the original record. A separately stable
+successor follows ordinary auto-start admission only after that finalization.
+The retained `AutoRecordingContinuityPolicy` branches are evidence and safety
+extractors for the rollback-only `Legacy` mode; they
 must not create a matcher-mode verdict.
 
 | Retained branch | Matcher-mode role | Deletion condition |
 | --- | --- | --- |
 | `ShouldRefreshLastPositiveSignal` | Supplies capture/activity evidence only; matcher selects Continue or bounded grace. | Remove after equivalent normalized activity evidence is owned by the matcher adapter. |
 | `ShouldRecoverFromRecentAutoStop` | Legacy fallback only; matcher compares persisted/observed identity when context exists. | Remove after recovery corpus and installed synthetic journey prove matcher-only recovery. |
-| `GetEligibleActiveSessionTransition` and rollover/reclassify helpers | Choose transition mechanics only after matcher returns `DifferentMeeting`. | Remove or reduce after matcher owns transition selection without altering manual-stop protections. |
+| `GetEligibleActiveSessionTransition` and rollover/reclassify helpers | Legacy-only transition mechanics; matcher-managed records never reclassify. | Remove or reduce after legacy rollout retirement without altering manual-stop protections. |
 | `OngoingMeetingHealEligibilityResolver` | Uses the shared matcher directly for manifest-to-manifest eligibility. | Retain as the post-publish admission adapter; it contains no title-only verdict. |
 
 `OngoingMeetingHealRolloutMode` is also local and versioned: `Off`,

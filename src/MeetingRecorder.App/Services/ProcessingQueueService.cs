@@ -61,6 +61,8 @@ internal sealed class ProcessingQueueService : IDisposable
     internal event Action<ProcessingQueueStatusSnapshot>? StatusChanged;
     internal event Action<ProcessingWorkCompletion>? WorkCompleted;
 
+    internal IdleCpuCapacitySnapshot ResourceCapacitySnapshot => _resourceCapacityMonitor.Snapshot;
+
     public ProcessingQueueService(
         LiveAppConfig config,
         SessionManifestStore manifestStore,
@@ -3086,7 +3088,11 @@ internal sealed class ProcessingQueueService : IDisposable
             currentStageStatus?.Message,
             stagedBarrier is null
                 ? null
-                : BuildBackgroundPolicyStatusText(stagedBarrier.Value, overnightDecision, activeItems.Length));
+                : BuildBackgroundPolicyStatusText(stagedBarrier.Value, overnightDecision, activeItems.Length),
+            activeItems
+                .Select(item => item.Summary.ManifestPath)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray());
     }
 
     private string BuildBackgroundPolicyStatusText(
@@ -3259,7 +3265,15 @@ internal sealed class ProcessingQueueService : IDisposable
         ProcessingQueueStatusSnapshot previous,
         ProcessingQueueStatusSnapshot current)
     {
-        return previous with { LastUpdatedAtUtc = current.LastUpdatedAtUtc } == current;
+        var previousWithoutTimestampOrActivePaths = previous with
+        {
+            LastUpdatedAtUtc = current.LastUpdatedAtUtc,
+            ActiveManifestPaths = current.ActiveManifestPaths
+        };
+
+        return previousWithoutTimestampOrActivePaths == current &&
+               (previous.ActiveManifestPaths ?? Array.Empty<string>())
+               .SequenceEqual(current.ActiveManifestPaths ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
     }
 
     private void PublishStatusSnapshot(ProcessingQueueStatusSnapshot? snapshot)

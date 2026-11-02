@@ -20,12 +20,14 @@ public sealed class MeetingDetectionEvaluator
 
         var teamsConfidence = 0d;
         var meetConfidence = 0d;
+        var zoomConfidence = 0d;
         string? title = null;
         var hasAudioActivity = false;
         var hasAttributedAudioActivity = false;
         var hasUnverifiedBrowserAudio = false;
         var suppressedTeamsWindowDetected = false;
         var genericTeamsShellDetected = false;
+        var nativeZoomMeetingDetected = false;
 
         foreach (var signal in signals)
         {
@@ -38,6 +40,13 @@ public sealed class MeetingDetectionEvaluator
             if (string.Equals(signal.Source, "audio-browser-unverified", StringComparison.OrdinalIgnoreCase))
             {
                 hasUnverifiedBrowserAudio = true;
+            }
+
+            if (string.Equals(signal.Source, "zoom-native-host", StringComparison.OrdinalIgnoreCase))
+            {
+                zoomConfidence += signal.Weight;
+                nativeZoomMeetingDetected = true;
+                continue;
             }
 
             var normalized = signal.Value.ToLowerInvariant();
@@ -66,28 +75,37 @@ public sealed class MeetingDetectionEvaluator
                 normalized.StartsWith("meet -", StringComparison.Ordinal))
             {
                 meetConfidence += signal.Weight;
-                title ??= CleanTitle(signal.Value, "Google Meet");
+                title ??= MeetingTitleNormalizer.NormalizeGoogleMeetWindowTitle(signal.Value);
+            }
+
+            if (normalized.Contains("zoom", StringComparison.Ordinal))
+            {
+                zoomConfidence += signal.Weight;
+                title ??= CleanTitle(signal.Value, "Zoom");
             }
         }
 
-        var platform = meetConfidence >= teamsConfidence && meetConfidence > 0d
+        var platform = meetConfidence >= teamsConfidence && meetConfidence >= zoomConfidence && meetConfidence > 0d
             ? MeetingPlatform.GoogleMeet
-                : teamsConfidence > 0d
+                : teamsConfidence >= zoomConfidence && teamsConfidence > 0d
                     ? MeetingPlatform.Teams
-                    : MeetingPlatform.Unknown;
+                    : zoomConfidence > 0d
+                        ? MeetingPlatform.Zoom
+                        : MeetingPlatform.Unknown;
 
         var sessionTitle = title ?? "Detected meeting";
         genericTeamsShellDetected |=
             platform == MeetingPlatform.Teams &&
             LooksLikeEmailAddress(sessionTitle) &&
             !hasAttributedAudioActivity;
-        var confidence = Math.Min(1d, Math.Max(meetConfidence, teamsConfidence));
+        var confidence = Math.Min(1d, Math.Max(zoomConfidence, Math.Max(meetConfidence, teamsConfidence)));
         if (platform == MeetingPlatform.Teams && genericTeamsShellDetected)
         {
             confidence = 0.74d;
         }
 
-        var requiresAttributedAudioForStart = IsGenericMeetingTitle(platform, sessionTitle);
+        var requiresAttributedAudioForStart = IsGenericMeetingTitle(platform, sessionTitle) &&
+            !(platform == MeetingPlatform.Zoom && nativeZoomMeetingDetected);
         var shouldKeepRecording = confidence >= 0.75d &&
             platform != MeetingPlatform.Unknown &&
             !suppressedTeamsWindowDetected &&
@@ -203,6 +221,7 @@ public sealed class MeetingDetectionEvaluator
             MeetingPlatform.GoogleMeet =>
                 normalized is "google meet" or "meet" ||
                 normalized.StartsWith("google meet ", StringComparison.Ordinal),
+            MeetingPlatform.Zoom => normalized is "zoom" or "zoom meeting" or "zoom workplace",
             _ => false,
         };
     }

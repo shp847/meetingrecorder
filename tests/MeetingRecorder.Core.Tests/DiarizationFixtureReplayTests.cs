@@ -92,6 +92,9 @@ public sealed class DiarizationFixtureReplayTests
         Assert.Contains("MeetingRecorder.ProcessingWorker.exe", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MeetingRecorder.ProcessingWorker.dll", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Get-Command dotnet", scriptContents, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("function Resolve-DotNetSdkCommand", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("--list-sdks", scriptContents, StringComparison.Ordinal);
+            Assert.Contains(".dotnet\\dotnet.exe", scriptContents, StringComparison.Ordinal);
         Assert.Contains("runtimeWorkerDirectory", scriptContents, StringComparison.Ordinal);
         Assert.Contains("native Sherpa dependencies", scriptContents, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("-r win-x64", scriptContents, StringComparison.Ordinal);
@@ -255,9 +258,19 @@ public sealed class DiarizationFixtureReplayTests
             Assert.DoesNotContain("sk-", reportText, StringComparison.OrdinalIgnoreCase);
 
             var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Report JSON was empty.");
+            var checkpointPath = Path.ChangeExtension(reportPath, ".checkpoint.json");
+            Assert.True(File.Exists(checkpointPath), "Expected terminal catalog checkpoint to be written.");
+            var checkpointText = File.ReadAllText(checkpointPath);
+            Assert.DoesNotContain(privateMarker, checkpointText, StringComparison.Ordinal);
+            var checkpoint = JsonNode.Parse(checkpointText) ?? throw new InvalidOperationException("Checkpoint JSON was empty.");
             Assert.Equal(2, (int?)report["summary"]?["total"]);
             Assert.Equal(1, (int?)report["summary"]?["skipped"]);
             Assert.Equal(1, (int?)report["summary"]?["dryRun"]);
+            Assert.Equal("complete", (string?)report["runState"]);
+            Assert.Equal(2, (int?)report["requestedFixtureCount"]);
+            Assert.Equal(2, (int?)report["terminalResultCount"]);
+            Assert.Equal("complete", (string?)checkpoint["runState"]);
+            Assert.Equal(2, (int?)checkpoint["terminalResultCount"]);
 
             var enabledResult = report["results"]?.AsArray()
                 .OfType<JsonObject>()
@@ -286,8 +299,16 @@ public sealed class DiarizationFixtureReplayTests
             Assert.Contains("function Get-SafeDiarizationState", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Get-SafeDiarizationFailureKind", scriptContents, StringComparison.Ordinal);
             Assert.Contains("FixtureTimeoutSeconds", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("function Write-CatalogReport", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("checkpointPath", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Move-Item -LiteralPath $temporaryPath -Destination $OutputPath -Force", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("runState", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("terminalResultCount", scriptContents, StringComparison.Ordinal);
             Assert.Contains("function Invoke-FullAudioFixtureScript", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Get-Command pwsh.exe", scriptContents, StringComparison.Ordinal);
             Assert.Contains("taskkill.exe /PID $process.Id /T /F", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("ElapsedMilliseconds = [int64]$TimeoutSeconds * 1000", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("$result.elapsedMilliseconds = [int64]$fullAudioExecution.ElapsedMilliseconds", scriptContents, StringComparison.Ordinal);
             Assert.Contains("Fixture execution reached its configured timeout.", scriptContents, StringComparison.Ordinal);
             Assert.Contains("no_diagnostic", scriptContents, StringComparison.Ordinal);
             Assert.Contains("return \"helper_\" + $Matches.kind", scriptContents, StringComparison.Ordinal);
@@ -465,10 +486,34 @@ public sealed class DiarizationFixtureReplayTests
             Assert.NotNull((string?)report["truthStoreSha256"]);
             Assert.Equal(2, (int?)report["results"]?[0]?["expectedSpeakerCount"]);
             Assert.Equal(1, (int?)report["results"]?[0]?["speakerNameMetrics"]?["expectedNameCount"]);
+            Assert.Equal(new string('a', 64), (string?)report["results"]?[0]?["fixtureContentHash"]);
+            Assert.NotNull((string?)report["runIdentitySha256"]);
+
+            var checkpointPath = Path.ChangeExtension(reportPath, ".checkpoint.json");
+            var resumedReportPath = Path.Combine(tempRoot, "resumed-report.json");
+            var resumed = RunPowerShell(
+                scriptPath,
+                "-CatalogPath", catalogPath,
+                "-TruthStorePath", truthPath,
+                "-DryRun",
+                "-ReportPath", resumedReportPath,
+                "-ResumeCheckpointPath", checkpointPath);
+
+            Assert.True(
+                resumed.ExitCode == 0,
+                $"Resumed V2 catalog runner failed.{Environment.NewLine}stdout:{Environment.NewLine}{resumed.StandardOutput}{Environment.NewLine}stderr:{Environment.NewLine}{resumed.StandardError}");
+            var resumedReportText = File.ReadAllText(resumedReportPath);
+            Assert.DoesNotContain(restrictedName, resumedReportText, StringComparison.Ordinal);
+            var resumedReport = JsonNode.Parse(resumedReportText) ?? throw new InvalidOperationException("Resumed report JSON was empty.");
+            Assert.Equal(1, (int?)resumedReport["resumedFixtureCount"]);
+            Assert.Equal(0, (int?)resumedReport["newlyExecutedFixtureCount"]);
+            Assert.Equal("complete", (string?)resumedReport["runState"]);
 
             var scriptContents = File.ReadAllText(scriptPath);
             Assert.DoesNotContain("$arguments.ExpectedSpeakerName", scriptContents, StringComparison.Ordinal);
             Assert.DoesNotContain("$arguments.ExpectedSpeakerCount", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("ResumeCheckpointPath", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Resume checkpoint does not match the current catalog, truth store, harness, or run settings.", scriptContents, StringComparison.Ordinal);
 
             var outsideInputRoot = Path.Combine(tempRoot, "allowlisted-inputs-only");
             Directory.CreateDirectory(outsideInputRoot);
@@ -649,6 +694,8 @@ public sealed class DiarizationFixtureReplayTests
 
             var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
             Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+            Assert.Equal(2, truth["outcomes"]?[0]?["expectedTurns"]?.AsArray().Count);
+            Assert.Equal("truth-speaker-01", (string?)truth["outcomes"]?[0]?["expectedTurns"]?[0]?["speakerId"]);
             var snapshotText = File.ReadAllText(Path.Combine(fixtureRoot, "fx-vtt-synthetic", "processing", "transcription.snapshot.json"));
             Assert.Contains(privateText, snapshotText, StringComparison.Ordinal);
 
@@ -717,6 +764,102 @@ public sealed class DiarizationFixtureReplayTests
             Assert.DoesNotContain(privateText, truthText, StringComparison.Ordinal);
             var truth = JsonNode.Parse(truthText) ?? throw new InvalidOperationException("Truth JSON was empty.");
             Assert.Equal(2, (int?)truth["outcomes"]?[0]?["expectedSpeakerCount"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CorpusFixtureBuilder_Uses_Opaque_Deterministic_Pairs_And_Holds_No_Source_Data_In_Report()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationCorpusFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-corpus-fixture-test-" + Guid.NewGuid().ToString("N"));
+        var audioRoot = Path.Combine(tempRoot, "audio");
+        var transcriptRoot = Path.Combine(tempRoot, "transcripts");
+        var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+        const string privateText = "PRIVATE_CORPUS_TRANSCRIPT_SENTINEL";
+        Directory.CreateDirectory(audioRoot);
+        Directory.CreateDirectory(transcriptRoot);
+
+        try
+        {
+            WriteSilentWave(Path.Combine(audioRoot, "shared-session.wav"));
+            File.WriteAllText(
+                Path.Combine(transcriptRoot, "shared-session.md"),
+                $"[00:00:00 - 00:00:01] **PRIVATE_SPEAKER_A:** {privateText}{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioRoot", audioRoot,
+                "-TranscriptRoot", transcriptRoot,
+                "-FixtureRoot", fixtureRoot,
+                "-NoCreateFixtures");
+
+            Assert.True(result.ExitCode == 0, $"Corpus fixture builder failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(audioRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var reportText = File.ReadAllText(Path.Combine(fixtureRoot, "corpus-intake-report.local.json"));
+            Assert.DoesNotContain(audioRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(transcriptRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(privateText, reportText, StringComparison.Ordinal);
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Corpus report JSON was empty.");
+            Assert.Equal(true, (bool?)report["sourceHashesUnchanged"]);
+            Assert.Equal(1, (int?)report["summary"]?["matched"]);
+            Assert.Equal("planned", (string?)report["fixtures"]?[0]?["state"]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CorpusFixtureBuilder_Holds_Unreadable_Audio_Without_Aborting_Intake()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-DiarizationCorpusFixtureCatalog.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-corpus-unreadable-" + Guid.NewGuid().ToString("N"));
+        var audioRoot = Path.Combine(tempRoot, "audio");
+        var transcriptRoot = Path.Combine(tempRoot, "transcripts");
+        var fixtureRoot = Path.Combine(tempRoot, "fixtures");
+        const string privateText = "PRIVATE_UNREADABLE_CORPUS_SENTINEL";
+        Directory.CreateDirectory(audioRoot);
+        Directory.CreateDirectory(transcriptRoot);
+
+        try
+        {
+            var audioPath = Path.Combine(audioRoot, "locked-session.wav");
+            File.WriteAllBytes(audioPath, []);
+            File.WriteAllText(
+                Path.Combine(transcriptRoot, "locked-session.md"),
+                $"[00:00:00 - 00:00:01] **PRIVATE_SPEAKER_A:** {privateText}{Environment.NewLine}");
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-AudioRoot", audioRoot,
+                "-TranscriptRoot", transcriptRoot,
+                "-FixtureRoot", fixtureRoot,
+                "-NoCreateFixtures");
+
+            Assert.True(result.ExitCode == 0, $"Corpus fixture builder failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            Assert.DoesNotContain(audioRoot, result.StandardOutput, StringComparison.OrdinalIgnoreCase);
+            var reportText = File.ReadAllText(Path.Combine(fixtureRoot, "corpus-intake-report.local.json"));
+            Assert.DoesNotContain(audioRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(privateText, reportText, StringComparison.Ordinal);
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Corpus report JSON was empty.");
+            Assert.Equal(true, (bool?)report["sourceHashesUnchanged"]);
+            Assert.Equal(0, (int?)report["summary"]?["matched"]);
+            Assert.Contains(report["inputs"]!.AsArray(), item =>
+                string.Equals((string?)item?["kind"], "audio", StringComparison.Ordinal) &&
+                string.Equals((string?)item?["state"], "held_unreadable_audio", StringComparison.Ordinal));
         }
         finally
         {
@@ -905,6 +1048,89 @@ public sealed class DiarizationFixtureReplayTests
         }
     }
 
+    [Fact]
+    public void RecoveryQualityCorpusRegisterScript_Writes_Only_Opaque_Aggregates()
+    {
+        var repoRoot = GetRepoRoot();
+        var scriptPath = Path.Combine(repoRoot, "scripts", "New-RecoveryQualityCorpusRegister.ps1");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "meeting-recorder-recovery-corpus-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var catalogPath = Path.Combine(tempRoot, "fixture-catalog.local.json");
+            var registryPath = Path.Combine(tempRoot, "recovery-register.local.json");
+            var reportPath = Path.Combine(tempRoot, "aggregate.json");
+            const string privateMarker = "RECOVERY_PRIVATE_OWNER_DO_NOT_REPORT";
+            File.WriteAllText(
+                catalogPath,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        schemaVersion = 2,
+                        fixtures = new object[]
+                        {
+                            new
+                            {
+                                id = "fx-recovery-long",
+                                contentHash = new string('a', 64),
+                                category = "long-call",
+                                enabled = true,
+                                consentRecord = "test-consent",
+                                owner = privateMarker,
+                                version = "1",
+                                expiresAtUtc = "2030-01-01T00:00:00Z",
+                            },
+                            new
+                            {
+                                id = "fx-recovery-expired",
+                                contentHash = new string('b', 64),
+                                category = "short-call",
+                                enabled = true,
+                                consentRecord = "test-consent",
+                                owner = privateMarker,
+                                version = "1",
+                                expiresAtUtc = "2000-01-01T00:00:00Z",
+                            },
+                        },
+                    },
+                    JsonOptions));
+
+            var result = RunPowerShell(
+                scriptPath,
+                "-FixtureCatalogPath", catalogPath,
+                "-RegistryPath", registryPath,
+                "-AggregateReportPath", reportPath,
+                "-MinimumEligibleCount", "1",
+                "-RequiredClassification", "long-call");
+
+            Assert.True(result.ExitCode == 0, $"Recovery corpus register failed.{Environment.NewLine}stderr:{Environment.NewLine}{result.StandardError}");
+            var reportText = File.ReadAllText(reportPath);
+            Assert.DoesNotContain(privateMarker, reportText, StringComparison.Ordinal);
+            Assert.DoesNotContain(tempRoot, reportText, StringComparison.OrdinalIgnoreCase);
+            var report = JsonNode.Parse(reportText) ?? throw new InvalidOperationException("Aggregate report JSON was empty.");
+            Assert.Equal("covered", (string?)report["coverageState"]);
+            Assert.Equal(2, (int?)report["totalClipCount"]);
+            Assert.Equal(1, (int?)report["eligibleClipCount"]);
+            Assert.Equal(1, (int?)report["excludedClipCount"]);
+            Assert.Equal(1, (int?)report["eligibleByClassification"]?["long-call"]);
+
+            var scriptContents = File.ReadAllText(scriptPath);
+            Assert.Contains("Private corpus register cannot be stored in source control or Meeting Recorder app data.", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Write-AtomicJson", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("missingRequiredClassifications", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("LongCallMinimumMinutes", scriptContents, StringComparison.Ordinal);
+            Assert.Contains("Get-ApprovedAudioDurationMinutes", scriptContents, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
     private static DiarizationFixtureReplayFixture LoadFixture(string transcriptJsonPath, string? manifestPath)
     {
         var resolvedTranscriptPath = ResolveRequiredPath(transcriptJsonPath, "Transcript JSON");
@@ -1017,6 +1243,33 @@ public sealed class DiarizationFixtureReplayTests
         var assemblyDirectory = Path.GetDirectoryName(typeof(DiarizationFixtureReplayTests).Assembly.Location)
             ?? throw new InvalidOperationException("Unable to locate the test assembly directory.");
         return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+    }
+
+    private static void WriteSilentWave(string path)
+    {
+        const int sampleRate = 16_000;
+        const short channels = 1;
+        const short bitsPerSample = 16;
+        const int sampleCount = sampleRate;
+        var blockAlign = (short)(channels * (bitsPerSample / 8));
+        var byteRate = sampleRate * blockAlign;
+        var dataLength = sampleCount * blockAlign;
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        writer.Write("RIFF"u8.ToArray());
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8.ToArray());
+        writer.Write("fmt "u8.ToArray());
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write(blockAlign);
+        writer.Write(bitsPerSample);
+        writer.Write("data"u8.ToArray());
+        writer.Write(dataLength);
+        writer.Write(new byte[dataLength]);
     }
 
     private static PowerShellRunResult RunPowerShell(string scriptPath, params string[] arguments)

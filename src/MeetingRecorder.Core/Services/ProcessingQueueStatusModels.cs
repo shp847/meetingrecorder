@@ -44,4 +44,5 @@ internal sealed record ProcessingQueueStatusSnapshot(
     bool IsRushPauseBypassActive = false,
     bool HasPreemptedItem = false,
     string? CurrentStageMessage = null,
-    string? BackgroundPolicyStatusText = null);
+    string? BackgroundPolicyStatusText = null,
+    IReadOnlyList<string>? ActiveManifestPaths = null);

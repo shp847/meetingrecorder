@@ -443,6 +443,27 @@ internal static class MainWindowInteractionLogic
         };
     }
 
+    public static string BuildPastRematchStatusText(PastRematchResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.Warning))
+        {
+            return result.Warning;
+        }
+
+        return result.Outcome switch
+        {
+            PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested =>
+                BuildSpeakerNameRefreshStatusText(new SpeakerNameRefreshResult(result.Predictions, null)),
+            PastRematchOutcome.Unchanged =>
+                "Refreshed speaker names. No eligible voice-profile matches were found.",
+            PastRematchOutcome.Skipped =>
+                "Speaker-name refresh was skipped. No meeting names were changed.",
+            PastRematchOutcome.Cancelled =>
+                "Speaker-name refresh was cancelled. No meeting names were changed.",
+            _ => "Speaker-name refresh could not complete. Reload the meeting and try again.",
+        };
+    }
+
     public static string BuildSpeakerNameUndoStatusText(SpeakerNameUndoResult result)
     {
         if (result.UpdatedSpeakerCount == 0)
@@ -551,7 +572,10 @@ internal static class MainWindowInteractionLogic
         // A catalog refresh still applies an ItemsSource and workspace view on the
         // WPF dispatcher. Keep that work out of Home and Settings, where it can
         // otherwise stall foreground controls for large meeting histories.
-        return isRecording || !isMeetingsTabSelected;
+        // When Meetings is visible, a fast catalog refresh is safe during
+        // recording. The caller downgrades the expensive full scan until capture
+        // stops, rather than leaving the only meeting-library surface blank.
+        return !isMeetingsTabSelected;
     }
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
@@ -2258,7 +2282,7 @@ internal static class MainWindowInteractionLogic
     {
         return recommendation.CanApplyAutomatically &&
                recommendation.Confidence == MeetingCleanupConfidence.High &&
-               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
+               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary;
     }
 
     public static IReadOnlyList<(InitialProcessingStrategy Value, string Label)> BuildInitialProcessingStrategyOptions()
@@ -2306,14 +2330,19 @@ internal static class MainWindowInteractionLogic
         int blockedSummaryCount,
         int disabledCleanupCount,
         int manualReviewCount,
-        string schedulerDetail)
+        string schedulerDetail,
+        int containmentHeldCount = 0,
+        int retryableFailedCount = 0)
     {
+        var reviewDetail = containmentHeldCount > 0 || retryableFailedCount > 0
+            ? $" {containmentHeldCount} destructive item(s) stay manual; {retryableFailedCount} failed safe item(s) can be retried from review."
+            : string.Empty;
         return
             $"Found {recommendationCount} cleanup suggestion(s) across {impactedMeetingCount} meeting(s). " +
             $"{safeRecommendationCount} row(s) are marked Safe Fix. " +
             $"{eligibleNowCount} eligible now; {queuedCount} queued; {processingCount} processing. " +
             $"{disabledSpeakerLabelCount} speaker-label fix(es) disabled; {blockedSummaryCount} summary fix(es) blocked; " +
-            $"{disabledCleanupCount} other safe fix(es) disabled; {manualReviewCount} need manual review. {schedulerDetail}";
+            $"{disabledCleanupCount} other safe fix(es) disabled; {manualReviewCount} need manual review.{reviewDetail} {schedulerDetail}";
     }
 
     public static string BuildMeetingCleanupSafetyLabel(MeetingCleanupRecommendation recommendation)

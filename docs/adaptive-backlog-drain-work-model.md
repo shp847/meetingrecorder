@@ -148,3 +148,37 @@ transcript-reader, and publish tests passed 43 cases on 2026-09-28. The full
 suite then passed 1,475 core and 8 integration tests, and the installer bundle
 and MSI rebuilt successfully. Packaged startup smoke remains intentionally
 unrun because a user-owned installed app instance is active.
+
+## Smart cleanup status and admission
+
+Sprint 9C keeps cleanup in the app process. It creates no scheduled task or
+background daemon. While the app is open, Smart Cleanup admits only
+containment-approved work: label work, summaries after a synthetic provider
+health check, and integrity-gated continuity repair merges. Archive, ordinary
+merge, and transcript regeneration remain review actions.
+
+Missing summaries with a readable structured transcript are high-confidence
+safe work only after the scheduler's current synthetic provider approval. Until
+then they count as provider-blocked and no transcript is dispatched. The
+summary route, consent, credentials, and live worker capacity remain separate
+gates.
+
+The Meetings control well separates **Library findings** from actionable queue
+state. Running, queued, ready, provider-blocked, retryable, protected-review,
+and resolved receipts are distinct states; a discovery total is never presented
+as remaining work. A summary health check contains no meeting transcript.
+
+Admission remains recording-safe and below the worker queue's own limits: one
+outstanding job during ordinary daytime use, two only after local AC/CPU and
+five-minute input-idle evidence, and five during the existing 22:00–06:00 local
+window. Failed local capacity or input sampling falls back to one job. The
+master Smart Cleanup pause stops new dispatches without altering active work.
+
+## Windows test runtime root
+
+`scripts/Test-All.ps1` routes `TEMP` and `TMP` to the isolated sibling
+`C:\code\MeetingRecorder-TestRuntime` root for its lifetime. This avoids endpoint-protection
+quarantine of deliberately fake installer payloads under shared Windows Temp.
+The root remains outside source control and Meeting Recorder app data, so
+private-fixture tests retain their isolation boundary. Production install,
+update, and recording paths stay unchanged.

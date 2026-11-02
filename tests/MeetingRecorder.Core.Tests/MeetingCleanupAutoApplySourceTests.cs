@@ -161,7 +161,13 @@ public sealed class MeetingCleanupAutoApplySourceTests
         var methodBlock = source[methodStart..methodEnd];
 
         Assert.Contains("Visibility=\"Collapsed\"", bannerBlock, StringComparison.Ordinal);
-        Assert.Contains("MinHeight=\"88\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MinHeight=\"104\"", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupHeadlineTextBlock", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupQueueTextBlock", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupSecondaryTextBlock", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("MeetingCleanupLibraryTextBlock", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("RunReadyMeetingCleanupWorkButton_OnClick", bannerBlock, StringComparison.Ordinal);
+        Assert.Contains("Review Protected Changes", bannerBlock, StringComparison.Ordinal);
         Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;", methodBlock, StringComparison.Ordinal);
         Assert.Contains("MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;", methodBlock, StringComparison.Ordinal);
     }
@@ -176,6 +182,12 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("IsUserMeetingMaintenanceInProgress()", source, StringComparison.Ordinal);
         Assert.Contains("IsAutomaticCleanupSchedulerBlocked()", source, StringComparison.Ordinal);
         Assert.Contains("GetCleanupSchedulerStatus()", source, StringComparison.Ordinal);
+        Assert.Contains("GetMaximumOutstandingCleanupWorkCount()", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsUserIdleProbe.TryGetIdleDuration", source, StringComparison.Ordinal);
+        Assert.Contains("SmartCleanupEnabled", source, StringComparison.Ordinal);
+        Assert.Contains("PROVIDER BLOCKED", source, StringComparison.Ordinal);
+        Assert.Contains("SettingsWindowSection.Summaries", source, StringComparison.Ordinal);
+        Assert.Contains("CLEARED", source, StringComparison.Ordinal);
         Assert.Contains("disabledLabels=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IsMeetingActionInProgress() ||\r\n            outstandingCleanupCount", source, StringComparison.Ordinal);
     }
@@ -195,17 +207,31 @@ public sealed class MeetingCleanupAutoApplySourceTests
 
     private static string GetPath(params string[] segments)
     {
-        var pathSegments = new[]
-        {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-        }.Concat(segments).ToArray();
+        var repositoryRoot = FindRepositoryRoot();
+        return Path.Combine([repositoryRoot, .. segments]);
+    }
 
-        return Path.GetFullPath(Path.Combine(pathSegments));
+    private static string FindRepositoryRoot()
+    {
+        var configuredRoot = Environment.GetEnvironmentVariable("MEETINGRECORDER_REPOSITORY_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredRoot) &&
+            File.Exists(Path.Combine(configuredRoot, "MeetingRecorder.sln")))
+        {
+            return Path.GetFullPath(configuredRoot);
+        }
+
+        foreach (var origin in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            for (var directory = new DirectoryInfo(origin); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "MeetingRecorder.sln")))
+                {
+                    return directory.FullName;
+                }
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the Meeting Recorder repository root.");
     }
 
 }

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "runtime": "win-x64",
+  "targetFramework": "net8.0-windows",
+  "appHosts": [
+    {
+      "project": "MeetingRecorder.App",
+      "fileName": "MeetingRecorder.App.exe",
+      "sha256": "C5A27692134C7C774D3287EAF0ED2BC3DF82A61F78566E99DAC121A6C95B0BD6"
+    },
+    {
+      "project": "AppPlatform.Deployment.Cli",
+      "fileName": "AppPlatform.Deployment.Cli.exe",
+      "sha256": "3FB8E5B9FCA5DACB219BB08EF490C314C7C5E0B9659FC9B2093F28BBF42618A6"
+    },
+    {
+      "project": "MeetingRecorder.ProcessingWorker",
+      "fileName": "MeetingRecorder.ProcessingWorker.exe",
+      "sha256": "5C1F252A651CE4647018A5FE7D3578F5FE3976626AD290F264440F0E4DE38608"
+    }
+  ]
+}

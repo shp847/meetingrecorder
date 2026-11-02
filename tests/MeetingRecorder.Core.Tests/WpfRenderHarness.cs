@@ -4,6 +4,7 @@ using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -225,39 +226,57 @@ internal static class WpfRenderHarness
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
             var stateToken = state switch
             {
+                SyntheticShellState.ImportReviewSetupBlocked => "import-review-setup-blocked",
+                SyntheticShellState.ImportReviewReady => "import-review-ready",
+                SyntheticShellState.ImportReviewInvalid => "import-review-invalid",
                 SyntheticShellState.MeetingDetailClosed => "meeting-detail-closed",
                 SyntheticShellState.VoiceProfileDeleteCancelled => "voice-profile-delete-cancelled",
                 SyntheticShellState.HostedSummaryConsentCancelled => "hosted-summary-consent-cancelled",
                 SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
                 SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
                 SyntheticShellState.SettingsRecording => "settings-recording",
+                SyntheticShellState.SettingsImportInbox => "settings-import-inbox",
                 SyntheticShellState.Processing => "processing",
                 SyntheticShellState.SelectionActive => "selection-active",
                 SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
-                RequireElement<Button>(window, "RefreshMeetingsButton").RaiseEvent(
-                    new RoutedEventArgs(Button.ClickEvent));
-                WaitForMeetingRows(window);
-                WriteProgress(progressPath, "meeting-rows-loaded");
-                if (state == SyntheticShellState.SelectionActive)
+                if (state is not (SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid))
                 {
-                    var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
-                    meetings.SelectedItem = meetings.Items[0];
-                    window.UpdateLayout();
-                    FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
-                }
+                    RequireElement<Button>(window, "RefreshMeetingsButton").RaiseEvent(
+                        new RoutedEventArgs(Button.ClickEvent));
+                    WaitForMeetingRows(window);
+                    WriteProgress(progressPath, "meeting-rows-loaded");
+                    if (state == SyntheticShellState.SelectionActive)
+                    {
+                        var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
+                        meetings.SelectedItem = meetings.Items[0];
+                        window.UpdateLayout();
+                        FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
+                    }
 
-                if (state == SyntheticShellState.CleanupRecommendation)
-                {
-                    WaitForCleanupRecommendation(window);
-                    WriteProgress(progressPath, "cleanup-recommendation-loaded");
+                    if (state == SyntheticShellState.CleanupRecommendation)
+                    {
+                        WaitForCleanupRecommendation(window);
+                        WriteProgress(progressPath, "cleanup-recommendation-loaded");
+                    }
                 }
+            }
+
+            if (state is SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
+            {
+                return CaptureExternalAudioImportReview(
+                    window,
+                    logicalWidth,
+                    logicalHeight,
+                    rasterScale,
+                    rootDirectory,
+                    state);
             }
 
             if (state == SyntheticShellState.PermanentDeleteCancelled)
@@ -281,7 +300,7 @@ internal static class WpfRenderHarness
             }
 
             IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
-            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.HostedSummaryConsentCancelled or SyntheticShellState.VoiceProfileDeleteCancelled)
+            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.SettingsImportInbox or SyntheticShellState.HostedSummaryConsentCancelled or SyntheticShellState.VoiceProfileDeleteCancelled)
             {
                 if (!settingsAction.Focus())
                 {
@@ -311,6 +330,17 @@ internal static class WpfRenderHarness
                 if (state == SyntheticShellState.VoiceProfileDeleteCancelled)
                 {
                     return CaptureVoiceProfileDeleteCancellation(
+                        window,
+                        settingsWindow,
+                        logicalWidth,
+                        logicalHeight,
+                        rasterScale,
+                        rootDirectory);
+                }
+
+                if (state == SyntheticShellState.SettingsImportInbox)
+                {
+                    return CaptureImportInboxSettings(
                         window,
                         settingsWindow,
                         logicalWidth,
@@ -387,7 +417,7 @@ internal static class WpfRenderHarness
         AppConfig config,
         SyntheticShellState state)
     {
-        if (state == SyntheticShellState.EmptyHealthy)
+        if (state is SyntheticShellState.EmptyHealthy or SyntheticShellState.ImportReviewReady)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(config.TranscriptionModelPath)!);
             using var model = File.Create(config.TranscriptionModelPath);
@@ -491,6 +521,192 @@ internal static class WpfRenderHarness
         }
         window.UpdateLayout();
         FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
+    }
+
+    private static WpfRenderEvidence CaptureExternalAudioImportReview(
+        Window window,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory,
+        SyntheticShellState state)
+    {
+        var sourcePath = Path.Combine(rootDirectory, "synthetic-import.wav");
+        if (state == SyntheticShellState.ImportReviewInvalid)
+        {
+            File.WriteAllBytes(sourcePath, []);
+        }
+        else
+        {
+            WriteSyntheticWaveFile(sourcePath);
+        }
+        File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddMinutes(-1));
+
+        var addImports = typeof(MainWindow).GetMethod(
+            "AddExternalAudioImportsAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Import review action is unavailable to the WPF harness.");
+        var addTask = addImports.Invoke(
+            window,
+            [new[] { sourcePath }, ExternalAudioImportMethod.FilePicker]) as Task
+            ?? throw new InvalidOperationException("Import review action did not return a task.");
+        WaitForCondition(window.Dispatcher, () => addTask.IsCompleted, TimeSpan.FromSeconds(10));
+        addTask.GetAwaiter().GetResult();
+
+        var reviewBorder = RequireElement<Border>(window, "ExternalAudioImportReviewBorder");
+        var reviewGrid = RequireElement<DataGrid>(window, "ExternalAudioImportDataGrid");
+        var reviewSummary = RequireElement<TextBlock>(window, "ExternalAudioImportSummaryTextBlock");
+        var privacyNotice = RequireElement<TextBlock>(window, "ExternalAudioImportPrivacyNoticeTextBlock");
+        var queueButton = RequireElement<Button>(window, "QueueExternalAudioImportsButton");
+        var titleEditor = RequireElement<TextBox>(window, "ExternalAudioImportTitleTextBox");
+        WaitForCondition(
+            window.Dispatcher,
+            () => reviewBorder.Visibility == Visibility.Visible && reviewGrid.Items.Count == 1,
+            TimeSpan.FromSeconds(10));
+        var expectQueueEnabled = state != SyntheticShellState.ImportReviewInvalid;
+        if (reviewBorder.Visibility != Visibility.Visible ||
+            reviewGrid.Items.Count != 1 ||
+            queueButton.IsEnabled != expectQueueEnabled)
+        {
+            throw new InvalidOperationException("Synthetic import review must show one safely stageable row.");
+        }
+
+        var expectedSummary = state switch
+        {
+            SyntheticShellState.ImportReviewSetupBlocked => "1 import row(s): 0 ready, 1 setup blocked",
+            SyntheticShellState.ImportReviewReady => "1 import row(s): 1 ready, 0 setup blocked",
+            SyntheticShellState.ImportReviewInvalid => "1 import row(s): 0 ready, 0 setup blocked",
+            _ => throw new InvalidOperationException("Unsupported import review fixture state."),
+        };
+        if (!reviewSummary.Text.StartsWith(expectedSummary, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Synthetic import review did not show its expected safe preflight state.");
+        }
+
+        if (reviewGrid.Columns.Count != 8 || reviewGrid.Columns.Any(column => column.ActualWidth < 85d))
+        {
+            throw new InvalidOperationException("Import review columns must retain readable widths at the supported viewport.");
+        }
+
+        if (!privacyNotice.Text.Contains("Original files stay in place", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Import review must visibly state the source-retention boundary.");
+        }
+
+        window.UpdateLayout();
+        FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var stateToken = state switch
+        {
+            SyntheticShellState.ImportReviewSetupBlocked => "import-review-setup-blocked",
+            SyntheticShellState.ImportReviewReady => "import-review-ready",
+            SyntheticShellState.ImportReviewInvalid => "import-review-invalid",
+            _ => throw new InvalidOperationException("Unsupported import review fixture state."),
+        };
+        var screenshotPath = Path.Combine(rootDirectory, $"{stateToken}-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"{stateToken}-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"{stateToken}-keyboard-trace-{scaleToken}.txt");
+        SaveScreenshot(window, screenshotPath, rasterScale);
+        var automationTrace = CreateAutomationTrace(
+            reviewBorder,
+            reviewGrid,
+            reviewSummary,
+            privacyNotice,
+            queueButton,
+            titleEditor);
+        if (automationTrace.Any(line => line.Contains(rootDirectory, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("Import review evidence must not expose the synthetic source locator.");
+        }
+
+        File.WriteAllLines(automationTracePath, automationTrace);
+        if (!reviewGrid.Focus())
+        {
+            throw new InvalidOperationException("Import review grid must accept keyboard focus after adding a file.");
+        }
+
+        var keyboardTrace = new List<string> { "Focus: " + GetFocusedName() };
+        if (!titleEditor.Focus())
+        {
+            throw new InvalidOperationException("Import review title editor must accept keyboard focus.");
+        }
+
+        keyboardTrace.Add("Focus: " + GetFocusedName());
+        File.WriteAllLines(keyboardTracePath, keyboardTrace);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
+    private static WpfRenderEvidence CaptureImportInboxSettings(
+        Window window,
+        Window settingsWindow,
+        int logicalWidth,
+        int logicalHeight,
+        double rasterScale,
+        string rootDirectory)
+    {
+        var filesSection = RequireElement<Button>(settingsWindow, "SettingsFilesAndUpdatesSectionButton");
+        filesSection.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var inboxEnabled = RequireElement<CheckBox>(window, "ConfigImportInboxEnabledCheckBox");
+        var inboxPath = RequireElement<TextBox>(window, "ConfigImportInboxDirTextBox");
+        var rescan = RequireElement<Button>(window, "RescanImportInboxButton");
+        var status = RequireElement<TextBlock>(window, "ConfigImportInboxStatusTextBlock");
+        WaitForCondition(
+            settingsWindow.Dispatcher,
+            () => inboxEnabled.IsVisible && inboxPath.IsVisible && status.IsVisible,
+            TimeSpan.FromSeconds(10));
+        if (!inboxEnabled.IsVisible || inboxEnabled.IsChecked == true ||
+            !status.Text.StartsWith("Paused.", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Synthetic Inbox settings must show the disabled-safe default and clear recovery copy.");
+        }
+
+        settingsWindow.UpdateLayout();
+        FlushDispatcher(settingsWindow.Dispatcher, DispatcherPriority.Render);
+        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
+        var screenshotPath = Path.Combine(rootDirectory, $"settings-import-inbox-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
+        var automationTracePath = Path.Combine(rootDirectory, $"settings-import-inbox-automation-tree-{scaleToken}.txt");
+        var keyboardTracePath = Path.Combine(rootDirectory, $"settings-import-inbox-keyboard-trace-{scaleToken}.txt");
+        SaveScreenshot(settingsWindow, screenshotPath, rasterScale);
+        var automationTrace = CreateAutomationTrace(filesSection, inboxEnabled, inboxPath, rescan, status);
+        if (automationTrace.Any(line => line.Contains(rootDirectory, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException("Import Inbox settings evidence must not expose the synthetic path.");
+        }
+
+        File.WriteAllLines(automationTracePath, automationTrace);
+        if (!inboxEnabled.Focus())
+        {
+            throw new InvalidOperationException("Import Inbox opt-in must accept keyboard focus.");
+        }
+
+        File.WriteAllLines(keyboardTracePath, ["Focus: " + GetFocusedName()]);
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+    }
+
+    private static void WriteSyntheticWaveFile(string path)
+    {
+        const int sampleRate = 16_000;
+        const short channels = 1;
+        const short bitsPerSample = 16;
+        const int durationSeconds = 1;
+        var byteRate = sampleRate * channels * bitsPerSample / 8;
+        var dataLength = byteRate * durationSeconds;
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + dataLength);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write((short)(channels * bitsPerSample / 8));
+        writer.Write(bitsPerSample);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+        writer.Write(dataLength);
+        writer.Write(new byte[dataLength]);
     }
 
     private static void WriteProgress(string path, string stage)
@@ -1125,8 +1341,12 @@ internal static class WpfRenderHarness
         SelectionActive,
         CleanupRecommendation,
         EmptyHealthy,
+        ImportReviewSetupBlocked,
+        ImportReviewReady,
+        ImportReviewInvalid,
         SettingsRecording,
         SettingsRecordingSaved,
+        SettingsImportInbox,
         PermanentDeleteCancelled,
         HostedSummaryConsentCancelled,
         VoiceProfileDeleteCancelled,

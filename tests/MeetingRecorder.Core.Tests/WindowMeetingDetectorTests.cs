@@ -898,7 +898,7 @@ public sealed class WindowMeetingDetectorTests
         Assert.NotNull(result);
         Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
         Assert.True(result.ShouldStart);
-        Assert.Equal("Meet - vwt-vyrn-bas and 14 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Equal("vwt-vyrn-bas", result.SessionTitle);
         Assert.Null(result.DetectedAudioSource);
     }
 
@@ -928,7 +928,7 @@ public sealed class WindowMeetingDetectorTests
         Assert.Equal(MeetingPlatform.GoogleMeet, result.Platform);
         Assert.False(result.ShouldStart);
         Assert.True(result.ShouldKeepRecording);
-        Assert.Equal("Meet - jbz-oabg-rpe and 4 more pages - Work - Microsoft Edge", result.SessionTitle);
+        Assert.Equal("jbz-oabg-rpe", result.SessionTitle);
         Assert.Null(result.DetectedAudioSource);
     }
 
@@ -1106,6 +1106,49 @@ public sealed class WindowMeetingDetectorTests
         Assert.Equal("Quarterly Review | Partner", result.SessionTitle);
         Assert.True(result.ShouldStart);
         Assert.Contains(result.Signals, signal => signal.Source == "calendar-zoom");
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Starts_Native_Zoom_Meeting_Surface_With_Active_Endpoint_Audio()
+    {
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate(string.Empty, "Zoom Meeting", "ConfMultiTabContentWndClass")],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0.23d,
+                true,
+                "active",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Zoom, result.Platform);
+        Assert.Equal("Zoom Meeting", result.SessionTitle);
+        Assert.True(result.ShouldStart);
+        Assert.Contains(result.Signals, signal => signal.Source == "zoom-native-host");
+    }
+
+    [Fact]
+    public async Task DetectBestCandidate_Does_Not_Start_Native_Zoom_Meeting_Surface_When_Endpoint_Audio_Is_Quiet()
+    {
+        var detector = await CreateDetectorAsync(
+            [new MeetingWindowCandidate(string.Empty, "Zoom Meeting", "ConfMultiTabContentWndClass")],
+            new StubAudioActivityProbe(new AudioSourceAttributionSnapshot(
+                "Speakers",
+                0d,
+                false,
+                "below-threshold",
+                Array.Empty<AudioSourceSessionSnapshot>(),
+                null)));
+
+        var result = detector.DetectBestCandidate();
+
+        Assert.NotNull(result);
+        Assert.Equal(MeetingPlatform.Zoom, result.Platform);
+        Assert.True(result.ShouldKeepRecording);
+        Assert.False(result.ShouldStart);
     }
 
     [Fact]

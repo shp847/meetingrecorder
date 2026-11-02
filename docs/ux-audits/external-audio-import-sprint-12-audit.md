@@ -1,13 +1,24 @@
-# External Audio Import Sprint 12 Visual Audit
+# External Audio Import Sprint 0 Visual Audit
 
 Date: 2026-09-27
 
 ## Capture status
 
-Blocked. The current computer-use inventory exposed no Meeting Recorder native
-window, so no screenshot was captured or accepted. A running installed process
-must not be interrupted for this audit. This record makes no rendered-layout,
-high-contrast, screen-reader, or DPI compliance claim.
+Complete for Sprint 0. The test-only WPF harness rendered one synthetic,
+setup-blocked import review at 1280×800/125% without opening the installed app,
+acquiring its mutex, loading its profile, or accessing capture devices. The
+reviewed raster SHA-256 is
+`4e6dbbbbc4ca4d40015c5c9301fb0d57a30703352c2d0c3393c690e3e0c7e43e`.
+
+The fixture checks one settled disposable WAV through the real review action:
+the original stays in place, one setup-blocked row is visible, queueing remains
+available for safe staging, the privacy notice is visible, eight columns retain
+readable widths, the source locator is absent from the automation trace, and
+focus moves from review grid to title editor. `WpfRenderedShellHarnessTests`
+passed 18/18 on 2026-10-16.
+
+This is synthetic layout and keyboard evidence only. It makes no high-contrast,
+Narrator, packaged-app, or real-source claim.
 
 ## Static safety checks completed
 
@@ -21,10 +32,8 @@ high-contrast, screen-reader, or DPI compliance claim.
 3. Add-files focus — healthy in source tests. After candidates enter review,
    focus moves to the selected review row.
 
-## Required follow-up capture
+## Follow-up owned by later sprints
 
-With a synthetic audio file and an exposed test window, capture at 1280x800
-and 1440x900 at 100% and 125% DPI: ready, setup-blocked, retryable, duplicate,
-and Inbox-disabled states. Recheck keyboard order, polite status announcements,
-long strings, high contrast, and no full local locator in the visible review or
-published provenance.
+Inbox lifecycle, retry/duplicate, packaged-app, high-contrast, and assistive
+technology coverage remain owned by their corresponding import and release
+sprints. This audit does not require a live-app interruption.

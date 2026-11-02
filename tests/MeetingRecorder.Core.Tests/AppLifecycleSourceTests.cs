@@ -7,7 +7,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Update_Handoff_Requests_A_Full_Application_Shutdown_Instead_Of_Closing_Only_The_Main_Window()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var handoffStart = source.IndexOf("private async Task InstallDownloadedUpdateCoreAsync", StringComparison.Ordinal);
         var handoffEnd = source.IndexOf("private void LaunchDownloadedUpdateInstaller", handoffStart, StringComparison.Ordinal);
@@ -21,7 +21,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void App_OnExit_Does_Not_Block_The_Ui_Thread_Waiting_For_Signal_Monitor_Tasks()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var onExitStart = source.IndexOf("protected override void OnExit", StringComparison.Ordinal);
         var onExitEnd = source.IndexOf("private void StartInstallerShutdownMonitor", onExitStart, StringComparison.Ordinal);
@@ -36,7 +36,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Callback_Trace_Save_Does_Not_Resume_On_A_Blocking_Wpf_Dispatcher()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.Core", "Services", "CallbackIntentDispatcher.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.Core", "Services", "CallbackIntentDispatcher.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains("File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(trace), cancellationToken)", source);
@@ -46,7 +46,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Dispatcher_Unhandled_Exception_Path_Requests_Fatal_Shutdown()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var handlerStart = source.IndexOf("private void App_OnDispatcherUnhandledException", StringComparison.Ordinal);
         var handlerEnd = source.IndexOf("private void CurrentDomain_OnUnhandledException", handlerStart, StringComparison.Ordinal);
@@ -61,7 +61,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Activation_Monitor_Acknowledges_Only_After_A_Window_Is_Surfaced()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var monitorStart = source.IndexOf("private async Task MonitorActivationRequestsAsync", StringComparison.Ordinal);
         var monitorEnd = source.IndexOf("private async Task MonitorInstallerShutdownAsync", monitorStart, StringComparison.Ordinal);
@@ -78,7 +78,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Pending_Startup_Activation_Is_Acknowledged_After_Main_Window_Show()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var showIndex = source.IndexOf("mainWindow.Show();", StringComparison.Ordinal);
         var acknowledgeIndex = source.IndexOf("TryAcknowledgeActivationRequest(_activationSignal)", showIndex, StringComparison.Ordinal);
@@ -94,7 +94,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void Main_Window_Fatal_Ui_Shutdown_Skips_Shutdown_Update_Check()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains("internal void RequestFatalUiShutdown()", source, StringComparison.Ordinal);
@@ -105,7 +105,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void App_Startup_Runs_The_Versioned_Published_Meeting_Repair_Against_The_App_Data_Root()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains("PublishedMeetingRepairService.RepairKnownIssuesAsync(", source);
@@ -117,7 +117,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void App_Startup_Shows_The_Main_Window_Before_Running_Long_Post_Window_Repair_Work()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
 
         var showIndex = source.IndexOf("mainWindow.Show();", StringComparison.Ordinal);
@@ -138,7 +138,7 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void App_Startup_Offloads_Post_Window_Published_Meeting_Repair_Work_From_The_Dispatcher()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var methodStart = source.IndexOf("private async Task RunPostWindowStartupMaintenanceAsync", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("protected override void OnExit", methodStart, StringComparison.Ordinal);
@@ -151,25 +151,11 @@ public sealed class AppLifecycleSourceTests
     [Fact]
     public void App_Startup_Repairs_Missing_Install_Provenance_Before_Creating_The_Live_Config()
     {
-        var sourcePath = GetPath("src", "MeetingRecorder.App", "App.xaml.cs");
+        var sourcePath = TestRepositoryPaths.FromRoot("src", "MeetingRecorder.App", "App.xaml.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains("InstalledProvenanceRepairService.TryRepairMissingInstallProvenance(", source);
         Assert.Contains("Repaired missing install provenance", source);
     }
 
-    private static string GetPath(params string[] segments)
-    {
-        var pathSegments = new[]
-        {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-        }.Concat(segments).ToArray();
-
-        return Path.GetFullPath(Path.Combine(pathSegments));
-    }
 }

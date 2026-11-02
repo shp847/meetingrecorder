@@ -6,6 +6,56 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class AutoRecordingContinuityPolicyTests
 {
     [Fact]
+    public void Active_Session_Ownership_Requires_The_Original_Specific_Title()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var matching = SpecificTeamsDecision("Original meeting", now);
+        var different = SpecificTeamsDecision("Different meeting", now);
+
+        Assert.Equal(
+            MeetingIdentityVerdict.SameMeeting,
+            policy.GetActiveSessionOwnershipVerdict(matching, MeetingPlatform.Teams, "Original meeting"));
+        Assert.Equal(
+            MeetingIdentityVerdict.DifferentMeeting,
+            policy.GetActiveSessionOwnershipVerdict(different, MeetingPlatform.Teams, "Original meeting"));
+    }
+
+    [Fact]
+    public void Active_Session_Ownership_Treats_Generic_Surface_As_Unknown()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var generic = new DetectionDecision(
+            MeetingPlatform.Teams,
+            ShouldStart: false,
+            ShouldKeepRecording: true,
+            Confidence: 0.8d,
+            SessionTitle: "Microsoft Teams",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Microsoft Teams", 0.8d, now),
+                new DetectionSignal("teams-host", "TeamsWebView", 0.2d, now),
+            ],
+            Reason: "generic shell");
+
+        Assert.Equal(
+            MeetingIdentityVerdict.Unknown,
+            policy.GetActiveSessionOwnershipVerdict(generic, MeetingPlatform.Teams, "Original meeting"));
+    }
+
+    [Fact]
+    public void Stable_Successor_Requires_The_Existing_Twenty_Second_Confirmation_Window()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var candidate = SpecificTeamsDecision("Successor meeting", now);
+
+        Assert.False(policy.ShouldAutoStartStableSuccessor(candidate, now, now.AddSeconds(19)));
+        Assert.True(policy.ShouldAutoStartStableSuccessor(candidate, now, now.AddSeconds(20)));
+    }
+
+    [Fact]
     public void GetAutoStopTimeout_Returns_Extended_Timeout_For_Weak_Same_Platform_Signal()
     {
         var policy = new AutoRecordingContinuityPolicy();
@@ -1721,6 +1771,33 @@ public sealed class AutoRecordingContinuityPolicyTests
         Assert.Equal(ManualStopSuppressionDisposition.ReleaseSuppression, disposition);
     }
 
+    [Fact]
+    public void ShouldAutoStartStableSuccessor_Allows_Native_Zoom_Meeting_Surface_After_Confirmation()
+    {
+        var policy = new AutoRecordingContinuityPolicy();
+        var now = DateTimeOffset.UtcNow;
+        var decision = new DetectionDecision(
+            MeetingPlatform.Zoom,
+            ShouldStart: true,
+            ShouldKeepRecording: true,
+            Confidence: 1d,
+            SessionTitle: "Zoom Meeting",
+            Signals:
+            [
+                new DetectionSignal("window-title", "Zoom Meeting | Zoom", 0.85d, now),
+                new DetectionSignal("zoom-native-host", "Zoom", 0.15d, now),
+                new DetectionSignal("audio-activity", "Speakers; peak=0.230; status=active", 0.10d, now),
+            ],
+            Reason: "Native Zoom in-meeting surface and endpoint audio were active.");
+
+        var allowed = policy.ShouldAutoStartStableSuccessor(
+            decision,
+            now.AddSeconds(-20),
+            now);
+
+        Assert.True(allowed);
+    }
+
     private static DetectionDecision CreateZoomDecision(string title, DateTimeOffset timestamp)
     {
         return new DetectionDecision(
@@ -2258,4 +2335,17 @@ public sealed class AutoRecordingContinuityPolicyTests
 
         Assert.False(shouldStart);
     }
+
+    private static DetectionDecision SpecificTeamsDecision(string title, DateTimeOffset now) => new(
+        MeetingPlatform.Teams,
+        ShouldStart: true,
+        ShouldKeepRecording: true,
+        Confidence: 1d,
+        SessionTitle: title,
+        Signals:
+        [
+            new DetectionSignal("window-title", title, 0.8d, now),
+            new DetectionSignal("teams-host", "TeamsWebView", 0.2d, now),
+        ],
+        Reason: "specific Teams meeting");
 }

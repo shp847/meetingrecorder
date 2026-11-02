@@ -1065,36 +1065,70 @@
                             <Border x:Name="MeetingCleanupReviewBannerBorder"
                                     Grid.Row="0"
                                     Grid.ColumnSpan="3"
-                                    MinHeight="88"
-                                    Padding="14"
+                                    MinHeight="104"
+                                    Padding="12"
                                     CornerRadius="4"
-                                    Background="#FFF6E5"
-                                     Visibility="Collapsed">
+                                    Background="{StaticResource AppCardBrush}"
+                                    BorderBrush="{StaticResource AppOutlineBrush}"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="MeetingCleanupReviewBannerTextBlock"
-                                               MinHeight="48"
-                                               VerticalAlignment="Center"
-                                               Foreground="#5A3A00"
-                                               TextWrapping="Wrap" />
+                                    <StackPanel VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="MeetingCleanupHeadlineTextBlock"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="16"
+                                                       Text="Cleanup" />
+                                            <TextBlock x:Name="MeetingCleanupLibraryTextBlock"
+                                                       Margin="12,3,0,0"
+                                                       FontFamily="Cascadia Mono, Consolas"
+                                                       Foreground="{StaticResource AppMutedTextBrush}" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="MeetingCleanupQueueTextBlock"
+                                                   Margin="0,6,0,0"
+                                                   FontFamily="Cascadia Mono, Consolas" />
+                                        <TextBlock x:Name="MeetingCleanupSecondaryTextBlock"
+                                                   Margin="0,3,0,0"
+                                                   FontFamily="Cascadia Mono, Consolas"
+                                                   Foreground="{StaticResource AppMutedTextBrush}" />
+                                        <TextBlock x:Name="MeetingCleanupAttentionTextBlock"
+                                                   Margin="0,3,0,0"
+                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock x:Name="MeetingCleanupReviewBannerTextBlock"
+                                                   Visibility="Collapsed" />
+                                    </StackPanel>
                                     <StackPanel Grid.Column="1"
                                                 Margin="12,0,0,0"
                                                 Orientation="Horizontal"
                                                 VerticalAlignment="Center">
+                                        <Button x:Name="ToggleSmartCleanupButton"
+                                                Width="154"
+                                                Height="34"
+                                                Margin="0,0,10,0"
+                                                Click="ToggleSmartCleanupButton_OnClick"
+                                                Content="Pause Smart Cleanup" />
                                         <Button x:Name="ReviewMeetingCleanupSuggestionsButton"
-                                                Width="150"
+                                                Width="188"
                                                 Height="34"
                                                 Margin="0,0,10,0"
                                                 Click="ReviewMeetingCleanupSuggestionsButton_OnClick"
-                                                Content="Review Suggestions" />
+                                                Content="Review Protected Changes" />
+                                        <Button x:Name="RetryFailedSafeMeetingCleanupButton"
+                                                Width="168"
+                                                Height="34"
+                                                Margin="0,0,10,0"
+                                                Click="RetryFailedSafeMeetingCleanupButton_OnClick"
+                                                Content="Retry Failed Safe Work" />
                                         <Button x:Name="ApplySafeMeetingCleanupFixesButton"
                                                 Width="150"
                                                 Height="34"
-                                                Click="ApplySafeMeetingCleanupFixesButton_OnClick"
-                                                Content="Apply Safe Fixes" />
+                                                Click="RunReadyMeetingCleanupWorkButton_OnClick"
+                                                Content="Run Ready Work" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -1261,7 +1295,8 @@
                                         <StackPanel VerticalAlignment="Center">
                                             <TextBlock FontWeight="SemiBold"
                                                        Text="Imported Audio Review" />
-                                            <TextBlock Margin="0,4,0,0"
+                                            <TextBlock x:Name="ExternalAudioImportPrivacyNoticeTextBlock"
+                                                       Margin="0,4,0,0"
                                                        Foreground="{StaticResource AppMutedTextBrush}"
                                                        Text="Local copy only. Original files stay in place. You are responsible for recording consent."
                                                        TextWrapping="Wrap"
@@ -1297,28 +1332,42 @@
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Source"
                                                                 Binding="{Binding SourceDisplayName, Mode=OneWay}"
-                                                                Width="1.7*" />
+                                                                Width="150" />
                                             <DataGridTextColumn Header="Method"
                                                                 Binding="{Binding ImportMethodLabel, Mode=OneWay}"
-                                                                Width="0.9*" />
+                                                                Width="90" />
                                             <DataGridTextColumn Header="Title"
                                                                 Binding="{Binding EditableTitle, Mode=OneWay}"
-                                                                Width="1.4*" />
+                                                                Width="150" />
                                             <DataGridTextColumn Header="Start Time"
                                                                 Binding="{Binding StartedAtDisplayText, Mode=OneWay}"
-                                                                Width="1.2*" />
+                                                                Width="135" />
                                             <DataGridTextColumn Header="Duration"
                                                                 Binding="{Binding DurationDisplayText, Mode=OneWay}"
-                                                                Width="0.9*" />
+                                                                Width="95" />
                                             <DataGridTextColumn Header="Status"
                                                                 Binding="{Binding StatusText, Mode=OneWay}"
-                                                                Width="1.7*" />
+                                                                Width="160">
+                                                <DataGridTextColumn.ElementStyle>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                                    </Style>
+                                                </DataGridTextColumn.ElementStyle>
+                                            </DataGridTextColumn>
                                             <DataGridTextColumn Header="Source retention"
                                                                 Binding="{Binding RetentionText, Mode=OneWay}"
-                                                                Width="1.1*" />
+                                                                Width="130" />
                                             <DataGridTextColumn Header="Next step"
                                                                 Binding="{Binding RecoveryText, Mode=OneWay}"
-                                                                Width="1.8*" />
+                                                                Width="170">
+                                                <DataGridTextColumn.ElementStyle>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                                        <Setter Property="VerticalAlignment" Value="Center" />
+                                                    </Style>
+                                                </DataGridTextColumn.ElementStyle>
+                                            </DataGridTextColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
 
@@ -3279,7 +3328,8 @@
                                                            Text="Optional batch intake. Audio placed here is copied into managed work storage; it is never moved or deleted by default." />
                                                 <CheckBox x:Name="ConfigImportInboxEnabledCheckBox"
                                                           Margin="0,10,0,0"
-                                                          Content="Scan this Inbox for new audio while Meeting Recorder is open" />
+                                                          Content="Scan this Inbox for new audio while Meeting Recorder is open"
+                                                          AutomationProperties.Name="Enable Import Inbox scanning" />
                                                 <CheckBox x:Name="ConfigImportInboxArchiveAfterQueueEnabledCheckBox"
                                                           Margin="0,6,0,0"
                                                           Content="After queueing, move Inbox-owned audio into its Archive folder" />

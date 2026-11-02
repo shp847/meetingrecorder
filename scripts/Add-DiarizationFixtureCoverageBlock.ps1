@@ -69,7 +69,7 @@ if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf) -or -not (Test-Pat
 
 $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
 $truthStore = Get-Content -LiteralPath $truthStorePath -Raw | ConvertFrom-Json
-if ($catalog.schemaVersion -ne 2 -or $truthStore.schemaVersion -ne 1) {
+if ($catalog.schemaVersion -ne 2 -or $truthStore.schemaVersion -notin @(1, 2)) {
     throw 'Unsupported fixture catalog or truth-store schema.'
 }
 if (@($catalog.fixtures | Where-Object { $_.id -eq $FixtureId }).Count -gt 0) {

@@ -32,13 +32,38 @@ public sealed class ContinuityCutoverPolicyTests
     {
         var policy = new ContinuityCutoverPolicy();
         var first = policy.Evaluate(Input(ContinuityCutoverMode.Matcher, MeetingIdentityVerdict.SameMeeting, Snapshot("a"), null));
-        var second = policy.Evaluate(Input(ContinuityCutoverMode.Matcher, MeetingIdentityVerdict.SameMeeting, Snapshot("a"), null, first.GraceReceipt, Now.AddMinutes(1)));
-        var expired = policy.Evaluate(Input(ContinuityCutoverMode.Matcher, MeetingIdentityVerdict.SameMeeting, Snapshot("a"), null, first.GraceReceipt, Now.AddMinutes(6)));
+        var second = policy.Evaluate(Input(ContinuityCutoverMode.Matcher, MeetingIdentityVerdict.SameMeeting, Snapshot("a"), null, first.GraceReceipt, Now.AddSeconds(30)));
+        var expired = policy.Evaluate(Input(ContinuityCutoverMode.Matcher, MeetingIdentityVerdict.SameMeeting, Snapshot("a"), null, first.GraceReceipt, Now.AddSeconds(90)));
 
         Assert.Equal(ContinuityLifecycleAction.Grace, first.Action);
         Assert.Equal(first.GraceReceipt?.DeadlineUtc, second.GraceReceipt?.DeadlineUtc);
         Assert.Equal(2, second.GraceReceipt?.ObservationCount);
-        Assert.NotEqual(first.GraceReceipt?.DeadlineUtc, expired.GraceReceipt?.DeadlineUtc);
+        Assert.Equal(ContinuityLifecycleAction.Stop, expired.Action);
+        Assert.Null(expired.GraceReceipt);
+    }
+
+    [Fact]
+    public void Different_Active_Meeting_Uses_One_Ninety_Second_Grace_Then_Stops()
+    {
+        var policy = new ContinuityCutoverPolicy();
+        var first = policy.Evaluate(Input(
+            ContinuityCutoverMode.Matcher,
+            MeetingIdentityVerdict.Unknown,
+            Snapshot("a"),
+            Snapshot("b")) with { OwnershipVerdict = MeetingIdentityVerdict.DifferentMeeting });
+        var expired = policy.Evaluate(Input(
+            ContinuityCutoverMode.Matcher,
+            MeetingIdentityVerdict.Unknown,
+            Snapshot("a"),
+            Snapshot("c"),
+            first.GraceReceipt,
+            Now.AddSeconds(90)) with { OwnershipVerdict = MeetingIdentityVerdict.DifferentMeeting });
+
+        Assert.Equal(ContinuityLifecycleAction.Grace, first.Action);
+        Assert.Equal(MeetingIdentityVerdict.DifferentMeeting, first.Verdict);
+        Assert.Equal(Now.AddSeconds(90), first.GraceReceipt?.DeadlineUtc);
+        Assert.Equal(ContinuityLifecycleAction.Stop, expired.Action);
+        Assert.Equal("different-meeting-identity-loss-grace-expired", expired.ReasonCode);
     }
 
     [Fact]

@@ -50,6 +50,7 @@ public sealed class AccessibilityContractTests
         Assert.Contains("AutomationProperties.Name=\"Remove only the selected row from import review\"", mainWindow);
         Assert.Contains("AutomationProperties.Name=\"Open setup for a blocked import\"", mainWindow);
         Assert.Contains("AutomationProperties.Name=\"Import privacy and consent notice\"", mainWindow);
+        Assert.Contains("AutomationProperties.Name=\"Enable Import Inbox scanning\"", mainWindow);
         Assert.Contains("AutomationProperties.HelpText=\"Select a row to edit its meeting details. The original file stays in place.\"", mainWindow);
         Assert.Contains("KeyboardNavigation.TabNavigation=\"Local\"", mainWindow);
         Assert.DoesNotContain("Binding=\"{Binding SourcePath", mainWindow, StringComparison.Ordinal);
@@ -71,16 +72,30 @@ public sealed class AccessibilityContractTests
 
     private static string GetPath(params string[] segments)
     {
-        var pathSegments = new[]
-        {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-        }.Concat(segments).ToArray();
+        var repositoryRoot = FindRepositoryRoot();
+        return Path.Combine(new[] { repositoryRoot }.Concat(segments).ToArray());
+    }
 
-        return Path.GetFullPath(Path.Combine(pathSegments));
+    private static string FindRepositoryRoot()
+    {
+        var configuredRoot = Environment.GetEnvironmentVariable("MEETINGRECORDER_REPOSITORY_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredRoot) &&
+            File.Exists(Path.Combine(configuredRoot, "MeetingRecorder.sln")))
+        {
+            return Path.GetFullPath(configuredRoot);
+        }
+
+        foreach (var startPath in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            for (var directory = new DirectoryInfo(startPath); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "MeetingRecorder.sln")))
+                {
+                    return directory.FullName;
+                }
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the Meeting Recorder repository root.");
     }
 }

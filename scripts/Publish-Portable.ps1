@@ -5,6 +5,7 @@ param(
     [string]$StableAppHostPath = "",
     [string]$StableDeploymentCliAppHostPath = "",
     [string]$StableWorkerAppHostPath = "",
+    [string]$TrustedStableAppHostManifestPath = "",
     [switch]$FrameworkDependent
 )
 
@@ -233,7 +234,8 @@ function Restore-VerifiedStableAppHostIfNeeded {
         [string]$PublishRoot,
         [string]$AppHostFileName,
         [string]$ProjectName,
-        [string]$ConfiguredStableAppHostPath
+        [string]$ConfiguredStableAppHostPath,
+        [string]$TrustedManifestPath
     )
 
     $publishedAppHostPath = Join-Path $PublishRoot $AppHostFileName
@@ -249,6 +251,42 @@ function Restore-VerifiedStableAppHostIfNeeded {
         throw "Configured stable apphost '$ConfiguredStableAppHostPath' does not exist."
     }
 
+    $manifestHash = $null
+    if (-not [string]::IsNullOrWhiteSpace($TrustedManifestPath)) {
+        $expectedManifestPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "stable-apphosts.win-x64.json"))
+        $resolvedManifestPath = [System.IO.Path]::GetFullPath($TrustedManifestPath)
+        if (-not [string]::Equals($resolvedManifestPath, $expectedManifestPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Trusted stable apphost manifest must be '$expectedManifestPath'."
+        }
+
+        if (-not (Test-Path -LiteralPath $resolvedManifestPath)) {
+            throw "Trusted stable apphost manifest '$resolvedManifestPath' does not exist."
+        }
+
+        try {
+            $manifest = Get-Content -LiteralPath $resolvedManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            throw "Trusted stable apphost manifest '$resolvedManifestPath' is not valid JSON."
+        }
+
+        if ($manifest.schemaVersion -ne 1 -or
+            $manifest.runtime -ne $Runtime -or
+            $manifest.targetFramework -ne "net8.0-windows" -or
+            $null -eq $manifest.appHosts) {
+            throw "Trusted stable apphost manifest is not compatible with runtime '$Runtime'."
+        }
+
+        $matchingEntries = @($manifest.appHosts | Where-Object {
+                $_.project -eq $ProjectName -and $_.fileName -eq $AppHostFileName
+            })
+        if ($matchingEntries.Count -ne 1 -or $matchingEntries[0].sha256 -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw "Trusted stable apphost manifest has no valid exact entry for '$ProjectName/$AppHostFileName'."
+        }
+
+        $manifestHash = $matchingEntries[0].sha256.ToUpperInvariant()
+    }
+
     $buildRoot = if ([string]::IsNullOrWhiteSpace($env:MeetingRecorderBuildRoot)) {
         Join-Path ([System.IO.Path]::GetTempPath()) "MeetingRecorderBuild"
     }
@@ -256,11 +294,20 @@ function Restore-VerifiedStableAppHostIfNeeded {
         $env:MeetingRecorderBuildRoot
     }
     $expectedAppHostPath = Join-Path $buildRoot "obj\$ProjectName\$Configuration\net8.0-windows\$Runtime\apphost.exe"
-    if (-not (Test-Path -LiteralPath $expectedAppHostPath)) {
+    $expectedHash = $null
+    if (Test-Path -LiteralPath $expectedAppHostPath) {
+        $expectedHash = Get-Sha256Hash -Path $expectedAppHostPath
+        if ($null -ne $manifestHash -and $manifestHash -ne $expectedHash) {
+            throw "Trusted stable apphost manifest hash does not match the current build apphost."
+        }
+    }
+    elseif ($null -ne $manifestHash) {
+        $expectedHash = $manifestHash
+    }
+    else {
         throw "Cannot verify stable apphost because current build apphost '$expectedAppHostPath' does not exist."
     }
 
-    $expectedHash = Get-Sha256Hash -Path $expectedAppHostPath
     $stableHash = Get-Sha256Hash -Path $ConfiguredStableAppHostPath
     if ($stableHash -ne $expectedHash) {
         throw "Configured stable apphost hash does not match the current build apphost."
@@ -377,20 +424,23 @@ Restore-VerifiedStableAppHostIfNeeded `
     -PublishRoot $appTemp `
     -AppHostFileName "MeetingRecorder.App.exe" `
     -ProjectName "MeetingRecorder.App" `
-    -ConfiguredStableAppHostPath $StableAppHostPath
+    -ConfiguredStableAppHostPath $StableAppHostPath `
+    -TrustedManifestPath $TrustedStableAppHostManifestPath
 Assert-LooseFileWpfShellPublishLayout -PublishRoot $appTemp
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\AppPlatform.Deployment.Cli\AppPlatform.Deployment.Cli.csproj") -PublishOutput $cliTemp
 Restore-VerifiedStableAppHostIfNeeded `
     -PublishRoot $cliTemp `
     -AppHostFileName "AppPlatform.Deployment.Cli.exe" `
     -ProjectName "AppPlatform.Deployment.Cli" `
-    -ConfiguredStableAppHostPath $StableDeploymentCliAppHostPath
+    -ConfiguredStableAppHostPath $StableDeploymentCliAppHostPath `
+    -TrustedManifestPath $TrustedStableAppHostManifestPath
 Invoke-DotnetPublish -ProjectPath (Join-Path $repoRoot "src\MeetingRecorder.ProcessingWorker\MeetingRecorder.ProcessingWorker.csproj") -PublishOutput $workerTemp
 Restore-VerifiedStableAppHostIfNeeded `
     -PublishRoot $workerTemp `
     -AppHostFileName "MeetingRecorder.ProcessingWorker.exe" `
     -ProjectName "MeetingRecorder.ProcessingWorker" `
-    -ConfiguredStableAppHostPath $StableWorkerAppHostPath
+    -ConfiguredStableAppHostPath $StableWorkerAppHostPath `
+    -TrustedManifestPath $TrustedStableAppHostManifestPath
 
 New-Item -ItemType Directory -Force -Path $finalPath | Out-Null
 Copy-Item -Path (Join-Path $appTemp "*") -Destination $finalPath -Recurse -Force

@@ -57,6 +57,7 @@ public sealed class MeetingDetectionEvaluatorTests
         Assert.False(decision.ShouldStart);
         Assert.True(decision.ShouldKeepRecording);
         Assert.Equal(MeetingPlatform.GoogleMeet, decision.Platform);
+        Assert.Equal("jbz-oabg-rpe", decision.SessionTitle);
         Assert.Contains("no active system audio", decision.Reason, StringComparison.OrdinalIgnoreCase);
     }
 

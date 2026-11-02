@@ -112,6 +112,7 @@ public partial class MainWindow : Window
     private readonly TeamsDetectionArbitrator _teamsDetectionArbitrator;
     private readonly ISummarySecretStore _summarySecretStore;
     private readonly SummaryProviderValidationService _summaryProviderValidationService;
+    private readonly SummarySchedulerApprovalService _summarySchedulerApprovalService;
     private readonly PublishedMeetingSummaryService _publishedMeetingSummaryService;
     private readonly HttpClient _summaryProviderHttpClient;
     private readonly ModelProxyClient _summaryModelCatalogClient;
@@ -153,6 +154,7 @@ public partial class MainWindow : Window
     private bool _isRefreshingModelProxySummaryModels;
     private bool _isRefreshingOpenAiSummaryModels;
     private bool _summaryProviderValidationIsCurrent;
+    private int _cleanupLiveLedgerReconciliationInProgress;
     private bool _isSynchronizingSummaryModelSelectors;
     private IReadOnlyList<ModelProxyModelInfo> _modelProxySummaryModels = Array.Empty<ModelProxyModelInfo>();
     private IReadOnlyList<ModelProxyModelInfo> _openAiSummaryModels = Array.Empty<ModelProxyModelInfo>();
@@ -179,6 +181,8 @@ public partial class MainWindow : Window
     private bool _isDispatchingPendingMeetingCleanupWork;
     private DateTimeOffset? _meetingCleanupSchedulerFailureBackoffUntilUtc;
     private DateTimeOffset? _lastMeetingCleanupSchedulerRefreshUtc;
+    private DateTimeOffset? _nextSummarySchedulerHealthCheckUtc;
+    private int? _lastCleanupLibraryFindingCount;
     private DateTimeOffset? _lastImportInboxReconciliationUtc;
     private string? _lastCleanupSchedulerStatusLog;
     private string? _lastCleanupSchedulerDispatchDetail;
@@ -240,6 +244,8 @@ public partial class MainWindow : Window
     private DateTimeOffset? _quietTeamsAutoStartFirstObservedUtc;
     private string? _quietGoogleMeetAutoStartFingerprint;
     private DateTimeOffset? _quietGoogleMeetAutoStartFirstObservedUtc;
+    private string? _pendingSuccessorFingerprint;
+    private DateTimeOffset? _pendingSuccessorFirstObservedUtc;
     private DateTimeOffset? _recordingStorageBackoffUntilUtc;
     private string? _lastTeamsProbeBaselineSummary;
     private string? _pendingMeetingsRefreshSelectedStem;
@@ -376,6 +382,7 @@ public partial class MainWindow : Window
         _summaryProviderValidationService = new SummaryProviderValidationService(
             summaryChatClient,
             _summaryModelCatalogClient);
+        _summarySchedulerApprovalService = new SummarySchedulerApprovalService();
         _publishedMeetingSummaryService = new PublishedMeetingSummaryService(
             new MeetingSummarizationProvider(_summarySecretStore, summaryChatClient, _summaryModelCatalogClient),
             _manifestStore);
@@ -701,6 +708,7 @@ public partial class MainWindow : Window
             await _meetingCleanupWorkLedgerService.ReconcileTerminalManifestStatesAsync(
                 _manifestStore,
                 _lifetimeCts.Token);
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
             RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler startup");
             await RunExternalAudioImportCycleAsync("startup", _lifetimeCts.Token);
             await RunAutomaticUpdateCycleAsync("startup", AppUpdateCheckTrigger.Startup, _lifetimeCts.Token);
@@ -900,6 +908,7 @@ public partial class MainWindow : Window
         {
             _meetingCleanupWorkLedgerService.RecordProcessingForManifest(snapshot.CurrentManifestPath);
         }
+        ScheduleCleanupLedgerReconciliation(snapshot);
         UpdateProcessingQueueStatusUi();
         UpdateProcessingQueueStatusTimerState();
         UpdateUpdateActionButtons();
@@ -922,6 +931,44 @@ public partial class MainWindow : Window
         ApplyProcessingQueueStatusSnapshot(_processingQueue.GetStatusSnapshot());
         UpdateProcessingQueueStatusUi();
         UpdateProcessingQueueStatusTimerState();
+    }
+
+    private void ScheduleCleanupLedgerReconciliation(ProcessingQueueStatusSnapshot snapshot)
+    {
+        if (IsShutdownRequested ||
+            Interlocked.CompareExchange(ref _cleanupLiveLedgerReconciliationInProgress, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _ = ReconcileCleanupLedgerFromQueueAsync(snapshot);
+    }
+
+    private async Task ReconcileCleanupLedgerFromQueueAsync(ProcessingQueueStatusSnapshot snapshot)
+    {
+        try
+        {
+            await _meetingCleanupWorkLedgerService.ReconcileLiveManifestStatesAsync(
+                _manifestStore,
+                snapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal),
+                _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+            // Shutdown cancels optional status reconciliation.
+        }
+        catch (Exception exception)
+        {
+            _logger.Log($"Cleanup ledger live reconciliation failed: {exception.GetType().Name}.");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _cleanupLiveLedgerReconciliationInProgress, 0);
+            if (!IsShutdownRequested)
+            {
+                _ = Dispatcher.BeginInvoke(new Action(UpdateMeetingCleanupReviewBanner), DispatcherPriority.Background);
+            }
+        }
     }
 
     private void UpdateProcessingQueueStatusTimerState()
@@ -1190,6 +1237,7 @@ public partial class MainWindow : Window
                 DateTimeOffset.UtcNow);
         _recentAutoStopContext = null;
         _continuityGraceReceipt = null;
+        ResetPendingSuccessorCandidate();
         try
         {
             await StopCurrentRecordingAsync("Manual stop requested.");
@@ -1300,15 +1348,19 @@ public partial class MainWindow : Window
         string reason,
         string? selectedStem = null)
     {
-        if (refreshMode == MeetingRefreshMode.Full)
+        var effectiveRefreshMode = _recordingCoordinator.IsRecording &&
+            refreshMode == MeetingRefreshMode.Full
+            ? MeetingRefreshMode.Fast
+            : refreshMode;
+        if (effectiveRefreshMode == MeetingRefreshMode.Full)
         {
             _hasCompletedFullMeetingsRefresh = false;
         }
 
         _hasPendingMeetingsRefreshRequest = true;
-        if (refreshMode > _pendingMeetingsRefreshMode)
+        if (effectiveRefreshMode > _pendingMeetingsRefreshMode)
         {
-            _pendingMeetingsRefreshMode = refreshMode;
+            _pendingMeetingsRefreshMode = effectiveRefreshMode;
         }
 
         if (!string.IsNullOrWhiteSpace(selectedStem))
@@ -1321,7 +1373,7 @@ public partial class MainWindow : Window
             _recordingCoordinator.IsRecording,
             isMeetingsTabSelected);
         _logger.Log(
-            $"Queued meeting list refresh request. reason='{reason}', mode='{refreshMode}', " +
+            $"Queued meeting list refresh request. reason='{reason}', requestedMode='{refreshMode}', mode='{effectiveRefreshMode}', " +
             $"selectedStem='{selectedStem ?? string.Empty}', deferred={shouldDefer}, " +
             $"isRecording={_recordingCoordinator.IsRecording}, meetingsTabSelected={isMeetingsTabSelected}.");
         UpdateMeetingsRefreshStateText();
@@ -1951,6 +2003,7 @@ public partial class MainWindow : Window
                     decision,
                     _recentAutoStopContext,
                     nowUtc);
+                var shouldStartPendingSuccessor = ShouldAutoStartPendingSuccessor(decision, nowUtc);
                 if (_liveConfig.Current.MeetingIdentityContinuityEnabled &&
                     _recentAutoStopContext is { } recentAutoStop)
                 {
@@ -1982,7 +2035,9 @@ public partial class MainWindow : Window
                     nowUtc < storageBackoffUntilUtc;
                 if (!shouldSuppressManualRestart &&
                     !isRecordingStorageBackoffActive &&
-                    (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))
+                    (shouldStartPendingSuccessor ||
+                     (!HasPendingSuccessorCandidate() &&
+                      (decision.ShouldStart || shouldAutoStartQuietTeamsMeeting || shouldAutoStartQuietGoogleMeet || shouldRecoverFromRecentAutoStop))))
                 {
                     var callbackIntent = TryBeginRecordingTransitionCallback("automatic-start");
                     if (callbackIntent is null)
@@ -2005,6 +2060,7 @@ public partial class MainWindow : Window
                             _lastPositiveDetectionUtc = nowUtc;
                             _recentAutoStopContext = null;
                             _manualStopSuppressionContext = null;
+                            ResetPendingSuccessorCandidate();
                             _recordingStorageBackoffUntilUtc = null;
                             _lastAutoStopFingerprint = null;
                             UpdateCurrentMeetingEditor();
@@ -2016,6 +2072,8 @@ public partial class MainWindow : Window
                             AppendActivity(
                                 shouldRecoverFromRecentAutoStop && !decision.ShouldStart
                                     ? $"Resumed recording for '{decision.SessionTitle}' after a recent auto-stop."
+                                    : shouldStartPendingSuccessor
+                                        ? "Started a separately confirmed successor meeting after the prior recording finalized."
                                     : shouldAutoStartQuietTeamsMeeting
                                         ? $"Auto-started recording for quiet Teams meeting '{decision.SessionTitle}' after sustained meeting detection."
                                         : shouldAutoStartQuietGoogleMeet
@@ -2035,10 +2093,51 @@ public partial class MainWindow : Window
             {
                 ResetQuietTeamsAutoStartCandidate();
                 ResetQuietGoogleMeetAutoStartCandidate();
+                ResetPendingSuccessorCandidate();
             }
 
             var activeSession = _recordingCoordinator.ActiveSession;
+            ContinuityCutoverDecision? activeContinuityDecision = null;
+            if (activeSession is { MeetingLifecycleManaged: true } &&
+                _liveConfig.Current.MeetingIdentityContinuityEnabled)
+            {
+                var ownershipVerdict = _autoRecordingContinuityPolicy.GetActiveSessionOwnershipVerdict(
+                    decision,
+                    activeSession.Manifest.Platform,
+                    activeSession.Manifest.DetectedTitle);
+                activeContinuityDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
+                    ContinuityCutoverMode.Matcher,
+                    (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
+                    _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
+                    decision is null
+                        ? null
+                        : _manifestStore.CreateIdentitySnapshotForComparison(
+                            decision.Platform,
+                            decision.SessionTitle,
+                            decision.DetectedAudioSource,
+                            nowUtc),
+                    ownershipVerdict,
+                    IsManualStop: _manualStopSuppressionContext is not null,
+                    _continuityGraceReceipt,
+                    nowUtc,
+                    ownershipVerdict));
+                _continuityGraceReceipt = activeContinuityDecision.GraceReceipt;
+                UpdatePendingSuccessorCandidate(
+                    activeContinuityDecision.Verdict == MeetingIdentityVerdict.DifferentMeeting
+                        ? decision
+                        : null,
+                    nowUtc);
+            }
+            else
+            {
+                _continuityGraceReceipt = null;
+                ResetPendingSuccessorCandidate();
+            }
+
+            // Matcher-managed recordings are title-owned. Legacy sessions retain
+            // the previous reclassification path until their next safe restart.
             if (activeSession is not null &&
+                !_liveConfig.Current.MeetingIdentityContinuityEnabled &&
                 await TryReclassifyActiveSessionAsync(
                     activeSession,
                     decision,
@@ -2058,7 +2157,9 @@ public partial class MainWindow : Window
             {
                 var loopbackRefresh = await _recordingCoordinator.RefreshLoopbackCaptureAsync(
                     activeSession.Manifest.Platform,
-                    decision?.DetectedAudioSource,
+                    (activeContinuityDecision is null || activeContinuityDecision.Action == ContinuityLifecycleAction.Continue)
+                        ? decision?.DetectedAudioSource
+                        : null,
                     _lifetimeCts.Token);
                 if (!string.IsNullOrWhiteSpace(loopbackRefresh.StatusMessage) &&
                     (loopbackRefresh.SwapPerformed || loopbackRefresh.SwapFailed))
@@ -2098,31 +2199,17 @@ public partial class MainWindow : Window
                      activeMeetingManagedSession.Manifest.DetectedTitle,
                      hasRecentLoopbackActivity,
                      hasRecentMicrophoneActivity));
-            if (activeMeetingManagedSession is not null && _liveConfig.Current.MeetingIdentityContinuityEnabled)
+            if (activeMeetingManagedSession is not null &&
+                _liveConfig.Current.MeetingIdentityContinuityEnabled &&
+                activeContinuityDecision is not null)
             {
-                var legacyVerdict = shouldRefreshLastPositiveSignal
-                    ? MeetingIdentityVerdict.SameMeeting
-                    : MeetingIdentityVerdict.Unknown;
-                var cutover = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
-                    ContinuityCutoverMode.Matcher,
-                    (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
-                    _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
-                    decision is null
-                        ? null
-                        : _manifestStore.CreateIdentitySnapshotForComparison(
-                            decision.Platform,
-                            decision.SessionTitle,
-                            decision.DetectedAudioSource,
-                            nowUtc),
-                    legacyVerdict,
-                    IsManualStop: _manualStopSuppressionContext is not null,
-                    _continuityGraceReceipt,
-                    nowUtc));
-                _continuityGraceReceipt = cutover.GraceReceipt;
-                shouldRefreshLastPositiveSignal = cutover.Action is ContinuityLifecycleAction.Continue or ContinuityLifecycleAction.Grace;
-                shouldClearAutoStopCountdown = shouldRefreshLastPositiveSignal;
+                // The immutable decision calculated above is the only matcher
+                // evaluation for this detector cycle. In particular, do not
+                // clear an expired receipt and create another grace below.
+                shouldRefreshLastPositiveSignal = activeContinuityDecision.Action == ContinuityLifecycleAction.Continue;
+                shouldClearAutoStopCountdown = activeContinuityDecision.Action == ContinuityLifecycleAction.Continue;
             }
-            else
+            else if (activeMeetingManagedSession is null || !_liveConfig.Current.MeetingIdentityContinuityEnabled)
             {
                 _continuityGraceReceipt = null;
             }
@@ -2145,18 +2232,27 @@ public partial class MainWindow : Window
                      activeMeetingManagedSession is not null)
             {
                 var activePlatform = activeMeetingManagedSession.Manifest.Platform;
-                var elapsedSincePositive = _lastPositiveDetectionUtc.HasValue
-                    ? nowUtc - _lastPositiveDetectionUtc.Value
+                var identityLossGrace = activeContinuityDecision is { Action: ContinuityLifecycleAction.Grace } matcherGrace
+                    ? matcherGrace.GraceReceipt
+                    : null;
+                var identityLossExpired = activeContinuityDecision?.Action == ContinuityLifecycleAction.Stop &&
+                    _liveConfig.Current.MeetingIdentityContinuityEnabled;
+                var lastPositiveUtc = identityLossExpired
+                    ? nowUtc - ContinuityCutoverPolicy.MaximumGrace
+                    : identityLossGrace?.StartedAtUtc ?? _lastPositiveDetectionUtc;
+                var elapsedSincePositive = lastPositiveUtc.HasValue
+                    ? nowUtc - lastPositiveUtc.Value
                     : (TimeSpan?)null;
-                var lastPositiveUtc = _lastPositiveDetectionUtc;
 
                 if (elapsedSincePositive.HasValue && lastPositiveUtc.HasValue)
                 {
-                    var stopTimeout = _autoRecordingContinuityPolicy.GetAutoStopTimeout(
-                        decision,
-                        activePlatform,
-                        activeMeetingManagedSession.Manifest.DetectedTitle,
-                        TimeSpan.FromSeconds(_liveConfig.Current.MeetingStopTimeoutSeconds));
+                    var stopTimeout = identityLossGrace is not null || identityLossExpired
+                        ? ContinuityCutoverPolicy.MaximumGrace
+                        : _autoRecordingContinuityPolicy.GetAutoStopTimeout(
+                            decision,
+                            activePlatform,
+                            activeMeetingManagedSession.Manifest.DetectedTitle,
+                            TimeSpan.FromSeconds(_liveConfig.Current.MeetingStopTimeoutSeconds));
                     var remaining = stopTimeout - elapsedSincePositive.Value;
                     if (remaining <= TimeSpan.Zero)
                     {
@@ -2168,13 +2264,17 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            _recentAutoStopContext = new RecentAutoStopContext(
-                                activePlatform,
-                                nowUtc,
-                                _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
-                                (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue));
+                            _recentAutoStopContext = identityLossGrace is null && !identityLossExpired
+                                ? new RecentAutoStopContext(
+                                    activePlatform,
+                                    nowUtc,
+                                    _manifestStore.GetIdentitySnapshotForComparison(activeMeetingManagedSession.Manifest),
+                                    (int)(activeMeetingManagedSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue))
+                                : null;
                             _continuityGraceReceipt = null;
-                            AppendAutoStopStatus($"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal.");
+                            AppendAutoStopStatus(identityLossGrace is null && !identityLossExpired
+                                ? $"Auto-stop triggered after {Math.Ceiling(stopTimeout.TotalSeconds)} seconds without a strong meeting signal."
+                                : "Auto-stop triggered: the original meeting identity was not confirmed within 90 seconds.");
                             _isRecordingTransitionInProgress = true;
                             _isAutoStopTransitionInProgress = true;
                             ClearAutoStopVisualState();
@@ -2184,7 +2284,9 @@ public partial class MainWindow : Window
                             UpdateAudioCaptureGraph();
                             try
                             {
-                                await StopCurrentRecordingAsync("Meeting signals expired after the configured timeout.");
+                                await StopCurrentRecordingAsync(identityLossGrace is null && !identityLossExpired
+                                    ? "Meeting signals expired after the configured timeout."
+                                    : "Meeting identity loss grace expired.");
                             }
                             finally
                             {
@@ -2201,8 +2303,11 @@ public partial class MainWindow : Window
                     else
                     {
                         SetAutoStopCountdown(remaining);
-                        AppendAutoStopStatus(
-                            $"Auto-stop countdown active: {Math.Ceiling(remaining.TotalSeconds)} seconds remaining. Last strong meeting signal was at {lastPositiveUtc.Value:O}.");
+                        AppendAutoStopStatus(identityLossGrace is not null
+                            ? activeContinuityDecision?.Verdict == MeetingIdentityVerdict.DifferentMeeting
+                                ? $"A different meeting is being observed. This recording will stop in {Math.Ceiling(remaining.TotalSeconds)} seconds and will not be renamed."
+                                : $"The original meeting is no longer confirmed. Auto-stop in {Math.Ceiling(remaining.TotalSeconds)} seconds."
+                            : $"Auto-stop countdown active: {Math.Ceiling(remaining.TotalSeconds)} seconds remaining. Last strong meeting signal was at {lastPositiveUtc.Value:O}.");
                     }
                 }
             }
@@ -2212,8 +2317,10 @@ public partial class MainWindow : Window
                 RecordContinuationShadow(
                     activeMeetingManagedSession,
                     decision,
-                    shouldRefreshLastPositiveSignal ? MeetingIdentityVerdict.SameMeeting : MeetingIdentityVerdict.Unknown,
-                    shouldRefreshLastPositiveSignal ? "legacy-continuation" : "legacy-continuation-unknown",
+                    activeContinuityDecision?.Verdict ??
+                        (shouldRefreshLastPositiveSignal ? MeetingIdentityVerdict.SameMeeting : MeetingIdentityVerdict.Unknown),
+                    activeContinuityDecision?.ReasonCode ??
+                        (shouldRefreshLastPositiveSignal ? "legacy-continuation" : "legacy-continuation-unknown"),
                     nowUtc);
             }
 
@@ -2302,6 +2409,76 @@ public partial class MainWindow : Window
     {
         _quietTeamsAutoStartFingerprint = null;
         _quietTeamsAutoStartFirstObservedUtc = null;
+    }
+
+    private bool HasPendingSuccessorCandidate() =>
+        !string.IsNullOrWhiteSpace(_pendingSuccessorFingerprint) &&
+        _pendingSuccessorFirstObservedUtc.HasValue;
+
+    private void UpdatePendingSuccessorCandidate(DetectionDecision? decision, DateTimeOffset nowUtc)
+    {
+        if (!TryGetSpecificMeetingFingerprint(decision, out var fingerprint))
+        {
+            ResetPendingSuccessorCandidate();
+            return;
+        }
+
+        if (!string.Equals(_pendingSuccessorFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _pendingSuccessorFingerprint = fingerprint;
+            _pendingSuccessorFirstObservedUtc = nowUtc;
+        }
+    }
+
+    private bool ShouldAutoStartPendingSuccessor(DetectionDecision decision, DateTimeOffset nowUtc)
+    {
+        if (!HasPendingSuccessorCandidate())
+        {
+            return false;
+        }
+
+        if (!TryGetSpecificMeetingFingerprint(decision, out var fingerprint))
+        {
+            ResetPendingSuccessorCandidate();
+            return false;
+        }
+
+        if (!string.Equals(_pendingSuccessorFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            _pendingSuccessorFingerprint = fingerprint;
+            _pendingSuccessorFirstObservedUtc = nowUtc;
+            return false;
+        }
+
+        return _autoRecordingContinuityPolicy.ShouldAutoStartStableSuccessor(
+            decision,
+            _pendingSuccessorFirstObservedUtc!.Value,
+            nowUtc);
+    }
+
+    private static bool TryGetSpecificMeetingFingerprint(DetectionDecision? decision, out string fingerprint)
+    {
+        fingerprint = string.Empty;
+        if (decision is null || decision.Platform == MeetingPlatform.Unknown)
+        {
+            return false;
+        }
+
+        var normalizedTitle = MeetingTitleNormalizer.NormalizeForComparison(decision.SessionTitle);
+        if (string.IsNullOrWhiteSpace(normalizedTitle) ||
+            normalizedTitle is "meeting" or "detected meeting" or "teams" or "microsoft teams" or "google meet" or "zoom" or "zoom meeting" or "zoom workplace")
+        {
+            return false;
+        }
+
+        fingerprint = $"{decision.Platform}|{normalizedTitle}";
+        return true;
+    }
+
+    private void ResetPendingSuccessorCandidate()
+    {
+        _pendingSuccessorFingerprint = null;
+        _pendingSuccessorFirstObservedUtc = null;
     }
 
     private bool ShouldAutoStartQuietGoogleMeet(DetectionDecision? decision, DateTimeOffset nowUtc)
@@ -2432,32 +2609,18 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (_liveConfig.Current.MeetingIdentityContinuityEnabled)
+        if (_liveConfig.Current.MeetingIdentityContinuityEnabled && activeSession.MeetingLifecycleManaged)
         {
-            var matcherDecision = _continuityCutoverPolicy.Evaluate(new ContinuityCutoverInput(
-                ContinuityCutoverMode.Matcher,
-                (int)(activeSession.Manifest.StartedAtUtc.UtcDateTime.Ticks % int.MaxValue),
-                _manifestStore.GetIdentitySnapshotForComparison(activeSession.Manifest),
-                _manifestStore.CreateIdentitySnapshotForComparison(
-                    decision.Platform,
-                    decision.SessionTitle,
-                    decision.DetectedAudioSource,
-                    nowUtc),
+            // Matcher-owned active sessions are finalized by the one per-scan
+            // ownership decision in DetectionTimer_OnTick. Never evaluate
+            // grace here or rename a recording to a different meeting.
+            RecordReclassificationShadow(
+                activeSession,
+                decision,
                 MeetingIdentityVerdict.Unknown,
-                IsManualStop: _manualStopSuppressionContext is not null,
-                _continuityGraceReceipt,
-                nowUtc));
-            _continuityGraceReceipt = matcherDecision.GraceReceipt;
-            if (matcherDecision.Action is not ContinuityLifecycleAction.DifferentMeeting)
-            {
-                RecordReclassificationShadow(
-                    activeSession,
-                    decision,
-                    matcherDecision.Verdict,
-                    matcherDecision.ReasonCode,
-                    nowUtc);
-                return false;
-            }
+                "active-session-ownership-managed",
+                nowUtc);
+            return false;
         }
 
         var transition = MainWindowInteractionLogic.GetEligibleActiveSessionTransition(
@@ -2730,6 +2893,14 @@ public partial class MainWindow : Window
 
         UpdateUpdateActionButtons();
         TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
+        if (!_recordingCoordinator.IsRecording &&
+            !_summaryProviderValidationIsCurrent &&
+            _nextSummarySchedulerHealthCheckUtc is { } nextHealthCheckUtc &&
+            DateTimeOffset.UtcNow >= nextHealthCheckUtc)
+        {
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
+            UpdateMeetingCleanupReviewBanner();
+        }
         if (!_lastMeetingCleanupSchedulerRefreshUtc.HasValue ||
             DateTimeOffset.UtcNow - _lastMeetingCleanupSchedulerRefreshUtc.Value >= TimeSpan.FromMinutes(5))
         {
@@ -2742,9 +2913,7 @@ public partial class MainWindow : Window
 
     private void TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset nowUtc)
     {
-        var maximumOutstanding = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current)
-            ? MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
-            : 1;
+        var maximumOutstanding = GetMaximumOutstandingCleanupWorkCount();
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         if (IsAutomaticCleanupSchedulerBlocked() ||
@@ -2764,6 +2933,11 @@ public partial class MainWindow : Window
 
     private string? GetAutomaticCleanupSchedulerBlockerReason()
     {
+        if (!_liveConfig.Current.SmartCleanupEnabled)
+        {
+            return "Smart cleanup is paused.";
+        }
+
         if (IsShutdownRequested)
         {
             return "Automatic cleanup is stopping because the app is shutting down.";
@@ -2791,6 +2965,26 @@ public partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    private int GetMaximumOutstandingCleanupWorkCount()
+    {
+        var config = _liveConfig.Current;
+        if (!config.SmartCleanupEnabled)
+        {
+            return 0;
+        }
+
+        if (BackgroundProcessingPolicy.IsOvernightDrainWindowActive(config))
+        {
+            return MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch;
+        }
+
+        var hasIdleCapacity = BacklogAccelerationProfileResolver.IsIdleCapacityEnabled(config) &&
+            _processingQueue.ResourceCapacitySnapshot.IsAvailable &&
+            WindowsUserIdleProbe.TryGetIdleDuration(out var idleDuration) &&
+            idleDuration >= TimeSpan.FromMinutes(5);
+        return hasIdleCapacity ? 2 : 1;
     }
 
     private void RecordCleanupSchedulerDispatchDetail(string detail)
@@ -3462,6 +3656,82 @@ public partial class MainWindow : Window
             _isApplyingSafeMeetingCleanupFixes = false;
             UpdateMeetingActionState();
         }
+    }
+
+    private async void RunReadyMeetingCleanupWorkButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker()))
+        {
+            await RefreshSummarySchedulerApprovalAsync(_lifetimeCts.Token);
+            if (!_summaryProviderValidationIsCurrent)
+            {
+                OpenSettingsSurface(SettingsWindowSection.Summaries);
+            }
+
+            UpdateMeetingCleanupReviewBanner();
+            return;
+        }
+
+        if (IsMeetingActionInProgress() || _recordingCoordinator.IsRecording)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Cleanup will resume when current meeting work is idle.";
+            return;
+        }
+
+        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "run ready cleanup work");
+        MeetingCleanupRecommendationsStatusTextBlock.Text = "Checking current safe work before cleanup dispatch.";
+    }
+
+    private async void ToggleSmartCleanupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (IsMeetingActionInProgress())
+        {
+            return;
+        }
+
+        var nextEnabled = !_liveConfig.Current.SmartCleanupEnabled;
+        await _liveConfig.SaveAsync(_liveConfig.Current with { SmartCleanupEnabled = nextEnabled }, _lifetimeCts.Token);
+        MeetingCleanupRecommendationsStatusTextBlock.Text = nextEnabled
+            ? "Smart cleanup resumed. Safe work will refill after current checks."
+            : "Smart cleanup paused. Active work was left unchanged.";
+        UpdateMeetingCleanupReviewBanner();
+        UpdateMeetingActionState();
+        if (nextEnabled)
+        {
+            TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
+        }
+    }
+
+    private async void RetryFailedSafeMeetingCleanupButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (IsMeetingActionInProgress())
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "Wait for current meeting work before retrying failed safe work.";
+            return;
+        }
+
+        var recommendationsByFingerprint = _meetingCleanupRecommendations.ToDictionary(
+            recommendation => recommendation.Fingerprint,
+            StringComparer.Ordinal);
+        var retryable = _meetingCleanupWorkLedgerService.GetEntries()
+            .Where(entry => entry.State == CleanupWorkState.Failed &&
+                (entry.Action is MeetingCleanupAction.GenerateSpeakerLabels or
+                    MeetingCleanupAction.RepairSpeakerLabels or
+                    MeetingCleanupAction.GenerateSummary))
+            .Where(entry => recommendationsByFingerprint.TryGetValue(entry.Fingerprint, out var recommendation) &&
+                IsScheduledIncrementalRecommendation(recommendation))
+            .Select(entry => entry.Fingerprint)
+            .ToArray();
+        var released = _meetingCleanupWorkLedgerService.ReleaseFailedSafeWork(retryable);
+        if (released == 0)
+        {
+            MeetingCleanupRecommendationsStatusTextBlock.Text = "No failed safe work is ready to retry. Check provider and speaker-label setup first.";
+            return;
+        }
+
+        MeetingCleanupRecommendationsStatusTextBlock.Text = $"Queued {released} failed safe item(s) for a fresh readiness check.";
+        AppendActivity($"Released {released} failed safe cleanup item(s) for explicit retry.");
+        await RefreshMeetingListAsync(MeetingRefreshMode.Full);
     }
 
     private async void ApplySelectedMeetingCleanupRecommendationsButton_OnClick(object sender, RoutedEventArgs e)
@@ -6012,6 +6282,10 @@ public partial class MainWindow : Window
                 return;
             }
 
+            await _meetingCleanupWorkLedgerService.ReconcileLiveManifestStatesAsync(
+                _manifestStore,
+                _latestProcessingQueueStatusSnapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal),
+                cancellationToken);
             await ReconcileLegacyCleanupLedgerAsync(records, visibleRecommendations, cancellationToken);
             _meetingCleanupRecommendations = visibleRecommendations;
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
@@ -8354,8 +8628,7 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             await RefreshMeetingListAsync(row.Source.Stem);
             RefreshOpenMeetingDetailWindow();
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.RefreshLocalNameSuggestions).SuccessText);
+            _meetingDetailWindow?.SetMaintenanceStatus(MainWindowInteractionLogic.BuildPastRematchStatusText(result));
             AppendActivity(result.Outcome is PastRematchOutcome.AutoApplied or PastRematchOutcome.Suggested
                 ? $"Rematched local speaker names for '{row.Title}'."
                 : result.Warning ?? result.PlanItem.Reason);
@@ -8389,7 +8662,7 @@ public partial class MainWindow : Window
             UserActionIntent.UndoProfileNames).ProgressText);
         try
         {
-            await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
+            var result = await _speakerNameCorrectionService.UndoProfileSpeakerNameRecognitionAsync(
                 row.Source,
                 DateTimeOffset.UtcNow,
                 Guid.NewGuid().ToString("N"),
@@ -8397,9 +8670,11 @@ public partial class MainWindow : Window
             await RefreshMeetingListAsync(row.Source.Stem);
             await RefreshVoiceProfileSettingsAsync();
             RefreshOpenMeetingDetailWindow();
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.UndoProfileNames).SuccessText);
-            AppendActivity($"Profile-applied names were removed for '{row.Title}'.");
+            var status = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(result);
+            _meetingDetailWindow?.SetMaintenanceStatus(status);
+            AppendActivity(result.UpdatedSpeakerCount > 0
+                ? $"Profile-applied names were removed for '{row.Title}'."
+                : $"No profile-applied names needed undo for '{row.Title}'.");
         }
         catch (Exception exception)
         {
@@ -8857,7 +9132,13 @@ public partial class MainWindow : Window
             : "Dismiss Selected Recommendation(s)";
         ApplySafeMeetingCleanupFixesButton.Content = _isApplyingSafeMeetingCleanupFixes
             ? "Applying..."
-            : "Apply Safe Fixes";
+            : !string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker())
+                ? "Fix Summaries"
+                : "Run Ready Work";
+        ToggleSmartCleanupButton.Content = _liveConfig.Current.SmartCleanupEnabled
+            ? "Pause Smart Cleanup"
+            : "Resume Smart Cleanup";
+        ToggleSmartCleanupButton.IsEnabled = !isMeetingActionInProgress;
         LegacyMeetingCleanupReviewBorder.Visibility = workspaceToolState.ShowCleanupTray ? Visibility.Visible : Visibility.Collapsed;
         LegacyMeetingActionDraftsBorder.Visibility = Visibility.Collapsed;
         LegacyMeetingActionDraftsExpander.IsExpanded = false;
@@ -8924,7 +9205,10 @@ public partial class MainWindow : Window
         DismissSelectedMeetingCleanupRecommendationsButton.IsEnabled = selectedRecommendationRows.Length > 0 && !isMeetingActionInProgress;
         OpenRelatedMeetingCleanupRecommendationsButton.IsEnabled = selectedRecommendationRows.Length > 0 && !isMeetingActionInProgress;
         ApplySafeMeetingCleanupFixesButton.IsEnabled =
-            MainWindowInteractionLogic.GetAutoApplicableMeetingCleanupRecommendations(_meetingCleanupRecommendations).Count > 0 &&
+            (!string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker()) || GetCleanupSchedulerStatus().EligibleNowCount > 0) &&
+            !isMeetingActionInProgress;
+        RetryFailedSafeMeetingCleanupButton.IsEnabled =
+            GetCleanupSchedulerStatus().RetryableFailedCount > 0 &&
             !isMeetingActionInProgress;
         ReviewMeetingCleanupSuggestionsButton.IsEnabled = !isMeetingActionInProgress;
         _meetingDetailWindow?.SetMaintenanceBusy(isMeetingActionInProgress);
@@ -9950,6 +10234,14 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             _summaryProviderValidationIsCurrent = result.Success;
             _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+            }
+            else
+            {
+                _summarySchedulerApprovalService.Clear();
+            }
             ConfigModelProxyValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(
                 result,
                 UserActionIntent.ValidateLocalSummaryProvider);
@@ -10006,6 +10298,14 @@ public partial class MainWindow : Window
                 _lifetimeCts.Token);
             _summaryProviderValidationIsCurrent = result.Success;
             _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+            }
+            else
+            {
+                _summarySchedulerApprovalService.Clear();
+            }
             ConfigOpenAiValidationStatusTextBlock.Text = FormatSummaryProviderValidationStatus(
                 result,
                 UserActionIntent.ValidateHostedSummaryProvider);
@@ -10035,6 +10335,86 @@ public partial class MainWindow : Window
             _isValidatingOpenAiSummaryProvider = false;
             UpdateSummaryProviderValidationActionState();
             UpdateDashboardReadiness();
+        }
+    }
+
+    private async Task RefreshSummarySchedulerApprovalAsync(CancellationToken cancellationToken)
+    {
+        var config = _liveConfig.Current;
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled ||
+            !config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries))
+        {
+            _summaryProviderValidationIsCurrent = false;
+            _nextSummarySchedulerHealthCheckUtc = null;
+            return;
+        }
+
+        try
+        {
+            var result = await ValidateScheduledSummaryProviderAsync(config, cancellationToken);
+            _summaryProviderValidationIsCurrent = result.Success;
+            _summaryProviderValidationObservedAtUtc = DateTimeOffset.UtcNow;
+            if (result.Success)
+            {
+                _summarySchedulerApprovalService.RecordSuccess(config, result.ProviderKind, _summaryProviderValidationObservedAtUtc.Value);
+                _nextSummarySchedulerHealthCheckUtc = null;
+                _logger.Log($"Summary scheduler provider check succeeded. provider={result.ProviderKind}.");
+                return;
+            }
+
+            _summarySchedulerApprovalService.Clear();
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
+            _logger.Log($"Summary scheduler provider check did not succeed. provider={result.ProviderKind}.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _summaryProviderValidationIsCurrent = false;
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
+        }
+        catch (Exception exception)
+        {
+            _summaryProviderValidationIsCurrent = false;
+            _summarySchedulerApprovalService.Clear();
+            _nextSummarySchedulerHealthCheckUtc = DateTimeOffset.UtcNow.AddMinutes(30);
+            _logger.Log($"Summary scheduler provider check failed: {exception.GetType().Name}.");
+        }
+    }
+
+    private async Task<SummaryProviderValidationResult> ValidateScheduledSummaryProviderAsync(
+        AppConfig config,
+        CancellationToken cancellationToken)
+    {
+        async Task<SummaryProviderValidationResult> ValidateModelProxyAsync()
+        {
+            var apiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.ModelProxy, cancellationToken);
+            return await _summaryProviderValidationService.ValidateModelProxyAsync(config, apiKey, cancellationToken);
+        }
+
+        async Task<SummaryProviderValidationResult> ValidateOpenAiAsync()
+        {
+            if (config.SummaryHostedRouteConsentVersion < 1)
+            {
+                return SummaryProviderValidationResult.NotConfigured(
+                    SummaryChatProviderKind.OpenAi,
+                    "Hosted summary consent is not current.");
+            }
+
+            var apiKey = await _summarySecretStore.LoadAsync(SummarySecretKind.OpenAi, cancellationToken);
+            return await _summaryProviderValidationService.ValidateOpenAiAsync(config, apiKey, cancellationToken);
+        }
+
+        return config.SummaryProviderPreference switch
+        {
+            MeetingSummaryProviderPreference.LocalOnly => await ValidateModelProxyAsync(),
+            MeetingSummaryProviderPreference.OpenAiOnly => await ValidateOpenAiAsync(),
+            MeetingSummaryProviderPreference.LocalThenOpenAi => await ValidateLocalThenHostedAsync(),
+            _ => await ValidateModelProxyAsync(),
+        };
+
+        async Task<SummaryProviderValidationResult> ValidateLocalThenHostedAsync()
+        {
+            var localResult = await ValidateModelProxyAsync();
+            return localResult.Success ? localResult : await ValidateOpenAiAsync();
         }
     }
 
@@ -13006,6 +13386,11 @@ public partial class MainWindow : Window
         {
             MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;
             MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
+            MeetingCleanupHeadlineTextBlock.Text = string.Empty;
+            MeetingCleanupQueueTextBlock.Text = string.Empty;
+            MeetingCleanupSecondaryTextBlock.Text = string.Empty;
+            MeetingCleanupAttentionTextBlock.Text = string.Empty;
+            MeetingCleanupLibraryTextBlock.Text = string.Empty;
             return;
         }
 
@@ -13015,35 +13400,95 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         MeetingCleanupReviewBannerBorder.Visibility = Visibility.Visible;
-        var overnight = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current);
+        var summaryBlocker = GetSummarySchedulerBlocker();
+        var schedulerBlocker = GetAutomaticCleanupSchedulerBlockerReason();
         var schedulerDetail = _recordingCoordinator.IsRecording
-            ? "Automatic cleanup is paused by the live recording."
-            : !string.IsNullOrWhiteSpace(GetAutomaticCleanupSchedulerBlockerReason())
-                ? GetAutomaticCleanupSchedulerBlockerReason()!
-            : schedulerStatus.ProcessingCount > 0
-                ? "Automatic cleanup resumes after the current cleanup worker completes."
-                : schedulerStatus.QueuedCount > 0
-                    ? $"Automatic cleanup is queued behind processing. {(overnight ? "Overnight batches allow up to 5 items." : "Daytime runs one item after normal work.")}"
-                    : !string.IsNullOrWhiteSpace(schedulerStatus.PrimaryBlocker)
-                        ? schedulerStatus.PrimaryBlocker
-                        : !string.IsNullOrWhiteSpace(_lastCleanupSchedulerDispatchDetail)
-                            ? _lastCleanupSchedulerDispatchDetail
-                        : overnight
-                        ? "Eligible work can run in overnight batches of up to 5 items."
-                        : "Eligible work runs one item after normal work.";
+            ? "Paused by live recording."
+            : !string.IsNullOrWhiteSpace(schedulerBlocker)
+                ? schedulerBlocker!
+                : !string.IsNullOrWhiteSpace(summaryBlocker)
+                    ? summaryBlocker!
+                    : schedulerStatus.ProcessingCount > 0
+                        ? "Work is active. Native speaker labeling reports a heartbeat, not an ETA."
+                        : schedulerStatus.RetryableFailedCount > 0
+                            ? "Failed safe work can be retried after its readiness check."
+                            : schedulerStatus.ContainmentHeldCount > 0
+                                ? "Protected archive, merge, and transcript work needs review."
+                                : "Ready work will refill as capacity opens.";
         LogCleanupSchedulerStatus(schedulerStatus, schedulerDetail);
-        MeetingCleanupReviewBannerTextBlock.Text = MainWindowInteractionLogic.BuildMeetingCleanupSchedulerBannerText(
-            _meetingCleanupRecommendations.Length,
-            impactedMeetingCount,
-            schedulerStatus.SafeFixCount,
-            schedulerStatus.EligibleNowCount,
-            schedulerStatus.QueuedCount,
-            schedulerStatus.ProcessingCount,
-            schedulerStatus.DisabledSpeakerLabelCount,
-            schedulerStatus.BlockedSummaryCount,
-            schedulerStatus.DisabledCleanupCount,
-            schedulerStatus.ManualReviewCount,
-            schedulerDetail);
+        MeetingCleanupHeadlineTextBlock.Text = _recordingCoordinator.IsRecording || !string.IsNullOrWhiteSpace(schedulerBlocker)
+            ? "Cleanup paused"
+            : schedulerStatus.ProcessingCount + schedulerStatus.QueuedCount > 0
+                ? "Cleanup working"
+                : !string.IsNullOrWhiteSpace(summaryBlocker) || schedulerStatus.RetryableFailedCount > 0 || schedulerStatus.ContainmentHeldCount > 0
+                    ? "Cleanup needs attention"
+                    : "Cleanup ready";
+        MeetingCleanupQueueTextBlock.Text =
+            $"RUNNING {schedulerStatus.ProcessingCount}   QUEUED {schedulerStatus.QueuedCount}   READY {schedulerStatus.EligibleNowCount}   PROVIDER BLOCKED {schedulerStatus.ProviderBlockedCount}";
+        MeetingCleanupSecondaryTextBlock.Text =
+            $"SCHEDULED LATER {schedulerStatus.DeferredCount}   RETRYABLE {schedulerStatus.RetryableFailedCount}   REVIEW REQUIRED {schedulerStatus.ReviewRequiredCount}";
+        MeetingCleanupAttentionTextBlock.Text = schedulerDetail;
+        var previousLibraryCount = _lastCleanupLibraryFindingCount;
+        _lastCleanupLibraryFindingCount = _meetingCleanupRecommendations.Length;
+        var catalogDelta = previousLibraryCount.HasValue
+            ? _meetingCleanupRecommendations.Length - previousLibraryCount.Value
+            : 0;
+        var catalogDeltaText = catalogDelta == 0
+            ? "UNCHANGED"
+            : catalogDelta > 0
+                ? $"+{catalogDelta} FOUND"
+                : $"{catalogDelta} CLEARED";
+        MeetingCleanupLibraryTextBlock.Text =
+            $"LIBRARY {_meetingCleanupRecommendations.Length} / {impactedMeetingCount} meetings · {catalogDeltaText} · {schedulerStatus.ResolvedCount} resolved";
+        MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
+        ApplySafeMeetingCleanupFixesButton.Content = !string.IsNullOrWhiteSpace(summaryBlocker)
+            ? "Fix Summaries"
+            : "Run Ready Work";
+        ToggleSmartCleanupButton.Content = _liveConfig.Current.SmartCleanupEnabled
+            ? "Pause Smart Cleanup"
+            : "Resume Smart Cleanup";
+        ReviewMeetingCleanupSuggestionsButton.Content = schedulerStatus.ContainmentHeldCount > 0
+            ? "Review Protected Changes"
+            : schedulerStatus.ProcessingCount > 0
+                ? "View Activity"
+                : "Review Suggestions";
+    }
+
+    private string? GetSummarySchedulerBlocker()
+    {
+        if (!_meetingCleanupRecommendations.Any(recommendation => recommendation.Action == MeetingCleanupAction.GenerateSummary))
+        {
+            return null;
+        }
+
+        var config = _liveConfig.Current;
+        if (config.SummaryGenerationMode != MeetingSummaryGenerationMode.Enabled)
+        {
+            return "AI summaries are disabled in Settings.";
+        }
+
+        if (!config.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.MissingAiSummaries))
+        {
+            return "Scheduled summaries are paused in Advanced Settings.";
+        }
+
+        if (!_summaryProviderValidationIsCurrent)
+        {
+            var reason = config.SummaryProviderPreference switch
+            {
+                MeetingSummaryProviderPreference.LocalOnly => "Local summary route needs a synthetic health check; no transcript work is queued.",
+                MeetingSummaryProviderPreference.OpenAiOnly when config.SummaryHostedRouteConsentVersion < 1 => "Hosted summary consent needs review; no transcript work is queued.",
+                MeetingSummaryProviderPreference.OpenAiOnly => "Hosted summary route needs a synthetic health check; no transcript work is queued.",
+                _ => "Summary provider needs a synthetic local-first health check; no transcript work is queued.",
+            };
+            return _nextSummarySchedulerHealthCheckUtc is { } retryAt
+                ? $"{reason} Next safe retry: {retryAt.ToLocalTime():t}."
+                : reason;
+        }
+
+        return !_summarySchedulerApprovalService.IsApproved(config)
+            ? "Summary provider approval needs refresh; no transcript work is queued."
+            : null;
     }
 
     private CleanupSchedulerStatus GetCleanupSchedulerStatus()
@@ -13052,13 +13497,14 @@ public partial class MainWindow : Window
             _meetingCleanupRecommendations,
             _meetingCleanupWorkLedgerService,
             IsScheduledIncrementalRecommendation,
-            IsSummaryBlockedBySchedule);
+            IsSummaryBlockedBySchedule,
+            _latestProcessingQueueStatusSnapshot.ActiveManifestPaths?.ToHashSet(StringComparer.Ordinal));
     }
 
     private bool IsSummaryBlockedBySchedule(MeetingCleanupRecommendation recommendation)
     {
         return recommendation.Action == MeetingCleanupAction.GenerateSummary &&
-               !IsScheduledIncrementalRecommendation(recommendation);
+               !string.IsNullOrWhiteSpace(GetSummarySchedulerBlocker());
     }
 
     private void LogCleanupSchedulerStatus(CleanupSchedulerStatus status, string schedulerDetail)
@@ -13084,9 +13530,7 @@ public partial class MainWindow : Window
         CancellationToken cancellationToken,
         AutomationCatalogSnapshot automationSnapshot)
     {
-        var maximumOutstanding = BackgroundProcessingPolicy.IsOvernightDrainWindowActive(_liveConfig.Current)
-            ? MeetingCleanupAutoApplyPlanner.MaxAutomaticFixesPerBatch
-            : 1;
+        var maximumOutstanding = GetMaximumOutstandingCleanupWorkCount();
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
         var queueIsIdle = _processingQueue.GetStatusSnapshot().RunState == ProcessingQueueRunState.Idle;
@@ -13174,7 +13618,12 @@ public partial class MainWindow : Window
 
     private bool IsScheduledIncrementalRecommendation(MeetingCleanupRecommendation recommendation)
     {
-        if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation.Action))
+        if (!_liveConfig.Current.SmartCleanupEnabled)
+        {
+            return false;
+        }
+
+        if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation))
         {
             _meetingCleanupWorkLedgerService.RecordContainmentHold(
                 recommendation.Fingerprint,
@@ -13190,7 +13639,8 @@ public partial class MainWindow : Window
                 plan.HasFlag(IncrementalWorkPlan.DeferredSpeakerLabels),
             MeetingCleanupAction.GenerateSummary =>
                 plan.HasFlag(IncrementalWorkPlan.MissingAiSummaries) &&
-                _summaryProviderValidationIsCurrent,
+                _summaryProviderValidationIsCurrent &&
+                _summarySchedulerApprovalService.IsApproved(_liveConfig.Current),
             _ => plan.HasFlag(IncrementalWorkPlan.SafeCleanup) &&
                 MainWindowInteractionLogic.IsSafeMeetingCleanupRecommendation(recommendation),
         };
@@ -13429,13 +13879,31 @@ public partial class MainWindow : Window
 
                 var orderedMergeMeetings = mergeMeetings.Select(meeting => meeting!).ToArray();
 
-                await _meetingCleanupExecutionService.MergeMeetingsAsync(
+                var mergeResult = await _meetingCleanupExecutionService.MergeMeetingsAsync(
                     orderedMergeMeetings,
                     recommendation.SuggestedTitle ?? orderedMergeMeetings[0].Title,
                     _liveConfig.Current.AudioOutputDir,
                     _liveConfig.Current.TranscriptOutputDir,
                     archiveDirectory,
                     cancellationToken);
+                if (!string.IsNullOrWhiteSpace(cleanupFingerprint) &&
+                    recommendation.ReasonCode.StartsWith("continuity-repair-v2", StringComparison.Ordinal))
+                {
+                    // Receipt is local, immutable audit context for an automatic
+                    // continuity merge. Source artifacts are retained in the
+                    // merge archive by the shared executor.
+                    var receiptPath = Path.Combine(mergeResult.ArchiveDirectory, $"{cleanupFingerprint}.continuity-repair.json");
+                    var receipt = new
+                    {
+                        schemaVersion = 1,
+                        fingerprint = cleanupFingerprint,
+                        reasonCode = recommendation.ReasonCode,
+                        sourceStems = orderedMergeMeetings.Select(meeting => meeting.Stem).ToArray(),
+                        survivingStem = mergeResult.SurvivingStem,
+                        completedAtUtc = DateTimeOffset.UtcNow,
+                    };
+                    await File.WriteAllTextAsync(receiptPath, JsonSerializer.Serialize(receipt), CancellationToken.None);
+                }
                 return;
 
             case MeetingCleanupAction.Rename:

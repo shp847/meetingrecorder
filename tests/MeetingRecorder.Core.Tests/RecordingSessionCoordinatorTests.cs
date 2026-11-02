@@ -11,6 +11,42 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class RecordingSessionCoordinatorTests
 {
     [Fact]
+    public async Task StartAsync_Normalizes_GoogleMeet_BrowserShellTitle_Before_Persisting()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"meeting-google-title-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var (liveConfig, _, manifestStore, pathBuilder, logger) = await CreateCoordinatorDependenciesAsync(root);
+            var coordinator = new RecordingSessionCoordinator(
+                liveConfig,
+                manifestStore,
+                pathBuilder,
+                logger,
+                static () => new StubWaveIn());
+
+            await coordinator.StartAsync(
+                MeetingPlatform.GoogleMeet,
+                "Meet - Project planning and 17 more pages - Work",
+                Array.Empty<DetectionSignal>(),
+                autoStarted: true);
+
+            var activeSession = Assert.IsType<ActiveRecordingSession>(coordinator.ActiveSession);
+            var reloadedManifest = await manifestStore.LoadAsync(activeSession.ManifestPath);
+
+            Assert.Equal("Project planning", activeSession.Manifest.DetectedTitle);
+            Assert.Equal("Project planning", reloadedManifest.DetectedTitle);
+
+            await coordinator.StopAsync("test cleanup");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task StartAsync_Persists_The_Initial_Loopback_Segment_And_Started_Timeline_Event()
     {
         var root = Path.Combine(Path.GetTempPath(), $"meeting-loopback-factory-{Guid.NewGuid():N}");

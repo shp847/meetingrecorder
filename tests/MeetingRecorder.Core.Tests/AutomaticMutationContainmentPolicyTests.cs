@@ -23,4 +23,14 @@ public sealed class AutomaticMutationContainmentPolicyTests
     {
         Assert.True(AutomaticMutationContainmentPolicy.CanDispatch(action));
     }
+
+    [Fact]
+    public void CanDispatch_Allows_Only_V2_Continuity_Merge_Recommendations()
+    {
+        var continuity = new MeetingCleanupRecommendation("a", MeetingCleanupAction.Merge, MeetingCleanupConfidence.High, "t", "d", "s", ["s", "t"], true, null, null, "continuity-repair-v2-historical-title");
+        var ordinary = continuity with { ReasonCode = "merge-split-pair" };
+
+        Assert.True(AutomaticMutationContainmentPolicy.CanDispatch(continuity));
+        Assert.False(AutomaticMutationContainmentPolicy.CanDispatch(ordinary));
+    }
 }

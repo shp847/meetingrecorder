@@ -1,8 +1,13 @@
 # Clean-machine baseline checklist
 
-Run this on a disposable VM or physical device, never a developer profile.
-Use generated consent-safe WAV fixtures only. Save redacted screenshots and a
-metadata-only observer log outside the repository.
+Product owner accepts best-effort testing on the existing machine to advance
+Store work. Label its results as existing-profile evidence; it cannot establish
+clean-install behavior. Use generated consent-safe WAV fixtures only. Save
+redacted screenshots and a metadata-only observer log outside the repository.
+
+On 2026-10-30 the portable startup, MSI installation, installed bundle integrity,
+and MSI-installed startup smoke checks passed on the existing Windows profile.
+First-run and Store-package behavior were not exercised.
 
 ## Reset record
 

@@ -89,6 +89,34 @@ public sealed class FilePublishServiceTests
     }
 
     [Fact]
+    public async Task PublishAsync_Removes_A_Prior_Ready_Marker_When_Replacement_Fails()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var sourceDir = Path.Combine(root, "source");
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        Directory.CreateDirectory(sourceDir);
+        var audioPath = Path.Combine(sourceDir, "source.wav");
+        var jsonPath = Path.Combine(sourceDir, "source.json");
+        CreateFloatWave(audioPath, TimeSpan.FromSeconds(1), 16_000, 1);
+        await File.WriteAllTextAsync(jsonPath, "{}");
+        const string stem = "2026-03-19_143250_teams_example";
+        var readyPath = Path.Combine(transcriptDir, "json", $"{stem}.ready");
+        Directory.CreateDirectory(Path.GetDirectoryName(readyPath)!);
+        await File.WriteAllTextAsync(readyPath, "stale-ready");
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => new FilePublishService().PublishAsync(
+            audioPath,
+            Path.Combine(sourceDir, "missing.md"),
+            jsonPath,
+            audioDir,
+            transcriptDir,
+            stem));
+
+        Assert.False(File.Exists(readyPath));
+    }
+
+    [Fact]
     public async Task PublishEnrichmentAsync_Replaces_Only_Existing_Sidecars_And_Retains_The_Ready_Marker()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

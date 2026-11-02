@@ -123,7 +123,7 @@ public sealed record ContinuityReplayDecisionResult(
 
 public sealed class ContinuityReplayDecisionContract
 {
-    public static readonly TimeSpan MaximumGrace = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan MaximumGrace = TimeSpan.FromSeconds(90);
 
     public ContinuityReplayDecisionResult Evaluate(ContinuityReplaySnapshot snapshot)
     {
@@ -197,7 +197,7 @@ public static class ContinuityReplayCorpus
         Fixture("incident-autostop-continuation-a", ContinuityCorpusSplit.Regression, MeetingPlatform.Teams, ContinuityEvidenceTier.Strong, true, false, true, false, false, false, TimeSpan.FromSeconds(30), ContinuityReplayDecision.SameMeeting, "stable-identity-continuity"),
         Fixture("incident-crash-recovery-split-a", ContinuityCorpusSplit.Regression, MeetingPlatform.GoogleMeet, ContinuityEvidenceTier.Strong, true, false, true, false, true, true, TimeSpan.FromMinutes(1), ContinuityReplayDecision.SameMeeting, "stable-identity-continuity"),
         Fixture("generic-teams-false-start-a", ContinuityCorpusSplit.Negative, MeetingPlatform.Teams, ContinuityEvidenceTier.Weak, false, false, false, false, false, false, TimeSpan.Zero, ContinuityReplayDecision.ManualReview, "insufficient-identity-evidence"),
-        Fixture("quiet-continuation-a", ContinuityCorpusSplit.Regression, MeetingPlatform.Teams, ContinuityEvidenceTier.Medium, false, false, true, false, false, false, TimeSpan.FromMinutes(2), ContinuityReplayDecision.UnknownGrace, "bounded-ambiguous-grace"),
+        Fixture("quiet-continuation-a", ContinuityCorpusSplit.Regression, MeetingPlatform.Teams, ContinuityEvidenceTier.Medium, false, false, true, false, false, false, TimeSpan.FromSeconds(60), ContinuityReplayDecision.UnknownGrace, "bounded-ambiguous-grace"),
         Fixture("same-title-different-meeting-a", ContinuityCorpusSplit.Negative, MeetingPlatform.Teams, ContinuityEvidenceTier.Strong, true, true, true, false, false, true, TimeSpan.FromSeconds(20), ContinuityReplayDecision.DifferentMeeting, "contradictory-strong-identity"),
     ];
 

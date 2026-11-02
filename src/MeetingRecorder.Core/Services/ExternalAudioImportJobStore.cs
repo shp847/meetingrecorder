@@ -126,8 +126,9 @@ public sealed class ExternalAudioImportJobStore
         var directory = Path.GetDirectoryName(JobPath)
             ?? throw new InvalidOperationException("The import job path must include a directory.");
         Directory.CreateDirectory(directory);
-        var temporaryPath = JobPath + ".tmp";
-        var backupPath = JobPath + ".bak";
+        var writeId = Guid.NewGuid().ToString("N");
+        var temporaryPath = $"{JobPath}.{writeId}.tmp";
+        var backupPath = $"{JobPath}.{writeId}.bak";
 
         try
         {

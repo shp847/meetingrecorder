@@ -62,8 +62,8 @@ public sealed class AppConfigStoreTests
         Assert.True(config.AutoDetectEnabled);
         Assert.True(config.AutoDetectSecurityPromptMigrationApplied);
         Assert.Equal(ContinuityEngineRolloutMode.Matcher, config.ContinuityEngineRolloutMode);
-        Assert.Equal(OngoingMeetingHealRolloutMode.Off, config.OngoingMeetingHealRolloutMode);
-        Assert.Equal(1, config.ContinuityRolloutMigrationVersion);
+        Assert.Equal(OngoingMeetingHealRolloutMode.Live, config.OngoingMeetingHealRolloutMode);
+        Assert.Equal(2, config.ContinuityRolloutMigrationVersion);
         Assert.True(config.MeetingIdentityContinuityEnabled);
         Assert.False(config.CalendarTitleFallbackEnabled);
         Assert.True(config.MeetingAttendeeEnrichmentEnabled);
@@ -81,6 +81,7 @@ public sealed class AppConfigStoreTests
             IncrementalWorkPlan.SafeCleanup,
             config.IncrementalWorkPlan);
         Assert.Equal(1, config.IncrementalWorkPlanMigrationVersion);
+        Assert.True(config.SmartCleanupEnabled);
         Assert.Equal("22:00", config.OvernightDrainStartLocal);
         Assert.Equal("06:00", config.OvernightDrainEndLocal);
         Assert.Equal(SpeakerNameLearningMode.LocalAutoLearn, config.SpeakerNameLearningMode);
@@ -120,6 +121,21 @@ public sealed class AppConfigStoreTests
     }
 
     [Fact]
+    public async Task LoadOrCreateAsync_Preserves_Explicit_SmartCleanup_OptOut()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var configPath = Path.Combine(root, "config", "appsettings.json");
+        var store = new AppConfigStore(configPath, Path.Combine(root, "documents"));
+
+        var config = await store.LoadOrCreateAsync();
+        await store.SaveAsync(config with { SmartCleanupEnabled = false });
+
+        var reloaded = await store.LoadOrCreateAsync();
+
+        Assert.False(reloaded.SmartCleanupEnabled);
+    }
+
+    [Fact]
     public async Task SaveAsync_Migrates_Legacy_Overnight_Profile_To_Explicit_Staged_Acceleration_Window()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -146,7 +162,7 @@ public sealed class AppConfigStoreTests
     }
 
     [Fact]
-    public async Task SaveAsync_Migrates_Legacy_Continuity_OptIns_And_Fails_Closed_For_Invalid_Rollout_Values()
+    public async Task SaveAsync_Migrates_Legacy_Continuity_To_Durable_Defaults_And_Fails_Closed_For_Invalid_Rollout_Values()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         var store = new AppConfigStore(
@@ -157,8 +173,8 @@ public sealed class AppConfigStoreTests
         var migrated = await store.SaveAsync(defaults with
         {
             ContinuityRolloutMigrationVersion = 0,
-            MeetingIdentityContinuityEnabled = true,
-            OngoingMeetingAutoHealEnabled = true,
+            MeetingIdentityContinuityEnabled = false,
+            OngoingMeetingAutoHealEnabled = false,
         });
         var safe = await store.SaveAsync(migrated with
         {

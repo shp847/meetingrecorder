@@ -404,6 +404,11 @@ public sealed class PortableBundleInstaller
         }
 
         var requestedInstallRoot = Path.GetFullPath(request.InstallRoot);
+        if (Directory.Exists(requestedInstallRoot))
+        {
+            return requestedInstallRoot;
+        }
+
         return legacyInstallRoots.FirstOrDefault(legacyInstallRoot =>
             string.Equals(legacyInstallRoot, requestedInstallRoot, StringComparison.OrdinalIgnoreCase));
     }

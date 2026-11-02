@@ -16,6 +16,53 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RepairKnownIssuesAsync_Renames_Published_GoogleMeet_Browser_Titles_And_Their_Metadata()
+    {
+        var audioDir = CreateDirectory("audio");
+        var transcriptDir = CreateDirectory("transcripts");
+        var transcriptJsonDir = Path.Combine(transcriptDir, "json");
+        var appRoot = CreateDirectory("app");
+        Directory.CreateDirectory(transcriptJsonDir);
+
+        var startedAtUtc = DateTimeOffset.Parse("2026-10-14T15:14:56Z");
+        var browserTitle = "Meet - Project planning and 17 more pages - Work - Microsoft Edge";
+        var repairedTitle = "Project planning";
+        var pathBuilder = new ArtifactPathBuilder();
+        var oldStem = pathBuilder.BuildFileStem(MeetingPlatform.GoogleMeet, startedAtUtc, browserTitle);
+        var repairedStem = pathBuilder.BuildFileStem(MeetingPlatform.GoogleMeet, startedAtUtc, repairedTitle);
+        await WriteSilentWaveFileAsync(Path.Combine(audioDir, $"{oldStem}.wav"), TimeSpan.FromSeconds(1));
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptDir, $"{oldStem}.md"),
+            $"# {browserTitle}{Environment.NewLine}{Environment.NewLine}## Transcript");
+        await File.WriteAllTextAsync(
+            Path.Combine(transcriptJsonDir, $"{oldStem}.json"),
+            JsonSerializer.Serialize(new { title = browserTitle, segments = Array.Empty<object>() }));
+        await SaveManifestAsync(
+            new SessionManifestStore(pathBuilder),
+            Path.Combine(appRoot, "work"),
+            new MeetingSessionManifest
+            {
+                SessionId = "20261014151456-browser-title",
+                Platform = MeetingPlatform.GoogleMeet,
+                DetectedTitle = browserTitle,
+                StartedAtUtc = startedAtUtc,
+                State = SessionState.Published,
+            });
+
+        var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
+
+        Assert.Equal(1, result.RepairedBrowserTitleCount);
+        Assert.True(File.Exists(Path.Combine(audioDir, $"{repairedStem}.wav")));
+        Assert.False(File.Exists(Path.Combine(audioDir, $"{oldStem}.wav")));
+        Assert.Equal($"# {repairedTitle}", (await File.ReadAllLinesAsync(Path.Combine(transcriptDir, $"{repairedStem}.md")))[0]);
+        var json = await File.ReadAllTextAsync(Path.Combine(transcriptJsonDir, $"{repairedStem}.json"));
+        Assert.Contains($"\"title\": \"{repairedTitle}\"", json, StringComparison.Ordinal);
+        var manifestPath = Assert.Single(Directory.EnumerateFiles(Path.Combine(appRoot, "work"), "manifest.json", SearchOption.AllDirectories));
+        var manifest = await new SessionManifestStore(pathBuilder).LoadAsync(manifestPath);
+        Assert.Equal(repairedTitle, manifest.DetectedTitle);
+    }
+
+    [Fact]
     public async Task RepairKnownIssuesAsync_Merges_Punctuation_Only_Title_Splits_And_Archives_Originals()
     {
         var audioDir = CreateDirectory("audio");
@@ -229,7 +276,15 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
         var result = await PublishedMeetingRepairService.RepairKnownIssuesAsync(audioDir, transcriptDir, appRoot);
 
         Assert.Equal(0, result.MergedSplitPairCount);
-        Assert.All(stems, stem => Assert.True(File.Exists(Path.Combine(audioDir, $"{stem}.wav"))));
+        Assert.Equal(3, result.RepairedBrowserTitleCount);
+        var expectedStemBuilder = new ArtifactPathBuilder();
+        Assert.All(
+            starts,
+            start => Assert.True(
+                File.Exists(
+                    Path.Combine(
+                        audioDir,
+                        $"{expectedStemBuilder.BuildFileStem(MeetingPlatform.GoogleMeet, DateTimeOffset.Parse(start), "Daily Check-in")}.wav"))));
     }
 
     [Fact]
@@ -514,7 +569,7 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
 
         Assert.False(result.AlreadyApplied);
         Assert.True(File.Exists(result.MarkerPath));
-        Assert.Equal("published-meeting-repair-v8.done", Path.GetFileName(result.MarkerPath));
+        Assert.Equal("published-meeting-repair-v9.done", Path.GetFileName(result.MarkerPath));
         Assert.True(Directory.Exists(result.ArchiveDirectory));
 
         var updatedManifest = await manifestStore.LoadAsync(Path.Combine(sessionRoot, "manifest.json"));
@@ -754,7 +809,7 @@ public sealed class PublishedMeetingRepairServiceTests : IDisposable
             isDiarizationReady: true);
 
         Assert.Equal(1, result.QueuedSpeakerLabelRepairCount);
-        Assert.Equal("published-meeting-repair-v8.done", Path.GetFileName(result.MarkerPath));
+        Assert.Equal("published-meeting-repair-v9.done", Path.GetFileName(result.MarkerPath));
         var manifestPath = Assert.Single(Directory.EnumerateFiles(Path.Combine(appRoot, "work"), "manifest.json", SearchOption.AllDirectories));
         var manifest = await new SessionManifestStore(new ArtifactPathBuilder()).LoadAsync(manifestPath);
         Assert.Equal(SessionState.Queued, manifest.State);

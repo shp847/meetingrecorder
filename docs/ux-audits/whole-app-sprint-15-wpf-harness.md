@@ -42,6 +42,10 @@ The arguments are `state`, `scale`, optional artifact root, and optional logical
 viewport. Scales are `100`, `125`, or `200`; valid states are `empty-healthy`,
 `setup-blocked`, `processing`, `selection-active`, and
 `cleanup-recommendation`, `settings-recording`, and `settings-recording-saved`.
+`import-review-setup-blocked` renders the real external-audio review path with
+one disposable settled WAV and a missing local model; it asserts visible source
+retention, readable columns, locator-free automation evidence, and review-to-
+editor keyboard focus without touching the installed profile.
 `permanent-delete-cancelled` renders an isolated destructive confirmation,
 verifies its semantic controls, and cancels it with Escape before any artifact
 operation starts.

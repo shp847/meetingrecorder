@@ -216,6 +216,45 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Separates_ProviderBlocked_Deferred_And_Resolved_Work()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        var ready = CreateRecommendation(
+            "ready-labels",
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var deferred = CreateRecommendation(
+            "deferred-labels",
+            MeetingCleanupAction.RepairSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var providerBlocked = CreateRecommendation(
+            "blocked-summary",
+            MeetingCleanupAction.GenerateSummary,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        var resolved = CreateRecommendation(
+            "resolved-labels",
+            MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High,
+            canApplyAutomatically: true);
+        ledger.Record(resolved.Fingerprint, CleanupWorkState.Completed, action: resolved.Action);
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            [ready, deferred, providerBlocked, resolved],
+            ledger,
+            recommendation => recommendation.Fingerprint == ready.Fingerprint,
+            recommendation => recommendation.Fingerprint == providerBlocked.Fingerprint);
+
+        Assert.Equal(1, status.EligibleNowCount);
+        Assert.Equal(1, status.ProviderBlockedCount);
+        Assert.Equal(1, status.DeferredCount);
+        Assert.Equal(1, status.ResolvedCount);
+    }
+
+    [Fact]
     public void BuildSchedulerStatus_Includes_Active_Ledger_Work_When_The_Next_Scan_No_Longer_Returns_Its_Recommendation()
     {
         var ledger = new MeetingCleanupWorkLedgerService(
@@ -236,6 +275,33 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
 
         Assert.Equal(1, status.QueuedCount);
         Assert.Equal(1, status.ProcessingCount);
+    }
+
+    [Fact]
+    public void BuildSchedulerStatus_Projects_All_Active_Queue_Manifests_And_Separates_Holds_From_Retryable_Failures()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(
+            Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json"));
+        ledger.Record("active-one", CleanupWorkState.Queued, "C:\\work\\one.json", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("active-two", CleanupWorkState.Queued, "C:\\work\\two.json", action: MeetingCleanupAction.RepairSpeakerLabels);
+        ledger.Record("waiting", CleanupWorkState.Queued, "C:\\work\\three.json", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("merge-hold", CleanupWorkState.ManualReview, action: MeetingCleanupAction.Merge);
+        ledger.Record("failed-summary", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSummary);
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            Array.Empty<MeetingCleanupRecommendation>(),
+            ledger,
+            _ => false,
+            _ => false,
+            new HashSet<string>(["C:\\work\\one.json", "C:\\work\\two.json"], StringComparer.Ordinal));
+
+        Assert.Equal(2, status.ProcessingCount);
+        Assert.Equal(1, status.QueuedCount);
+        Assert.Equal(1, status.ContainmentHeldCount);
+        Assert.Equal(1, status.RetryableFailedCount);
+        Assert.Equal(0, status.ResolvedCount);
+        Assert.Equal(0, status.DeferredCount);
+        Assert.Equal(1, status.ReviewRequiredCount);
     }
 
     [Fact]

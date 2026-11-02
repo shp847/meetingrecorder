@@ -247,6 +247,19 @@ public sealed class OptionalSidecarDiarizationProviderSourceTests
         Assert.Equal(new[] { "speaker_00", "speaker_01", "speaker_02" }, normalized.SpeakerTurns.Select(turn => turn.SpeakerId));
     }
 
+    [Fact]
+    public void Worker_Honors_Disabled_Speaker_Labeling_Without_Process_Memory_Inspection()
+    {
+        var program = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "Program.cs"));
+        var boundedProvider = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "BoundedLocalDiarizationProvider.cs"));
+        var nativeProvider = File.ReadAllText(GetPath("src", "MeetingRecorder.ProcessingWorker", "OptionalSidecarDiarizationProvider.cs"));
+
+        Assert.Contains("SpeakerLabelingModelProfilePreference.Disabled", program, StringComparison.Ordinal);
+        Assert.Contains("DisabledDiarizationProvider.Instance", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("WorkingSet64", boundedProvider, StringComparison.Ordinal);
+        Assert.DoesNotContain("Environment.WorkingSet", nativeProvider, StringComparison.Ordinal);
+    }
+
     private static string GetPath(params string[] segments)
     {
         var pathSegments = new[]

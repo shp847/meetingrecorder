@@ -6,6 +6,7 @@ param(
     [string]$StableAppHostPath = "",
     [string]$StableDeploymentCliAppHostPath = "",
     [string]$StableWorkerAppHostPath = "",
+    [string]$TrustedStableAppHostManifestPath = "",
     [switch]$FrameworkDependent,
     [switch]$KeepStaging,
     [string]$CodeSigningCertificateThumbprint = "",
@@ -659,6 +660,7 @@ Remove-Item -Recurse -Force $msiStagingPath -ErrorAction SilentlyContinue
     -StableAppHostPath $StableAppHostPath `
     -StableDeploymentCliAppHostPath $StableDeploymentCliAppHostPath `
     -StableWorkerAppHostPath $StableWorkerAppHostPath `
+    -TrustedStableAppHostManifestPath $TrustedStableAppHostManifestPath `
     -FrameworkDependent:$FrameworkDependent
 
 if ($LASTEXITCODE -ne 0) {

@@ -221,6 +221,13 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Content=\"Resume Blocked Imports\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportReviewBorder\"", xaml);
         Assert.Contains("x:Name=\"ExternalAudioImportDataGrid\"", xaml);
+        Assert.Contains("Header=\"Source\"", xaml);
+        Assert.Contains("Width=\"150\"", xaml);
+        Assert.Contains("Header=\"Source retention\"", xaml);
+        Assert.DoesNotContain("Width=\"1.7*\"", xaml);
+        Assert.Contains("Binding=\"{Binding StatusText, Mode=OneWay}\"", xaml);
+        Assert.Contains("Binding=\"{Binding RecoveryText, Mode=OneWay}\"", xaml);
+        Assert.Contains("TextWrapping\" Value=\"Wrap\"", xaml);
         Assert.Contains("x:Name=\"QueueExternalAudioImportsButton\"", xaml);
         Assert.Contains("x:Name=\"RetryExternalAudioImportButton\"", xaml);
         Assert.Contains("x:Name=\"SkipDuplicateExternalAudioImportButton\"", xaml);
@@ -578,6 +585,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("UndoSpeakerNameRecognitionRequested", windowSource);
         Assert.Contains("UndoOpenMeetingDetailSpeakerNameRecognitionAsync", mainWindowSource);
         Assert.Contains("UndoProfileSpeakerNameRecognitionAsync", mainWindowSource);
+        Assert.Contains("BuildPastRematchStatusText(result)", mainWindowSource);
+        Assert.Contains("BuildSpeakerNameUndoStatusText(result)", mainWindowSource);
     }
 
     [Fact]
@@ -1173,17 +1182,31 @@ public sealed class MainWindowXamlTests
 
     private static string GetPath(params string[] segments)
     {
-        var pathSegments = new[]
-        {
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-        }.Concat(segments).ToArray();
+        var repositoryRoot = FindRepositoryRoot();
+        return Path.Combine(new[] { repositoryRoot }.Concat(segments).ToArray());
+    }
 
-        return Path.GetFullPath(Path.Combine(pathSegments));
+    private static string FindRepositoryRoot()
+    {
+        var configuredRoot = Environment.GetEnvironmentVariable("MEETINGRECORDER_REPOSITORY_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredRoot) &&
+            File.Exists(Path.Combine(configuredRoot, "MeetingRecorder.sln")))
+        {
+            return Path.GetFullPath(configuredRoot);
+        }
+
+        foreach (var startPath in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
+        {
+            for (var directory = new DirectoryInfo(startPath); directory is not null; directory = directory.Parent)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "MeetingRecorder.sln")))
+                {
+                    return directory.FullName;
+                }
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the Meeting Recorder repository root.");
     }
 
     private static int CountOccurrences(string text, string value)

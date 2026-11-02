@@ -363,12 +363,21 @@ public sealed class InstallerScriptTests
         var repoRoot = Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
         var publishScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Publish-Portable.ps1"));
         var installerScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "Build-Installer.ps1"));
+        var stableAppHostManifest = File.ReadAllText(Path.Combine(repoRoot, "scripts", "stable-apphosts.win-x64.json"));
 
         Assert.Contains("[System.IO.Path]::IsPathRooted($CandidatePath)", publishScript, StringComparison.Ordinal);
         Assert.Contains("[string]$StableAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
         Assert.Contains("[string]$StableDeploymentCliAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
         Assert.Contains("[string]$StableWorkerAppHostPath = \"\"", publishScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$TrustedStableAppHostManifestPath = \"\"", publishScript, StringComparison.Ordinal);
         Assert.Contains("Restore-VerifiedStableAppHostIfNeeded", publishScript, StringComparison.Ordinal);
+        Assert.Contains("stable-apphosts.win-x64.json", publishScript, StringComparison.Ordinal);
+        Assert.Contains("Trusted stable apphost manifest hash does not match the current build apphost.", publishScript, StringComparison.Ordinal);
+        Assert.Contains("\"schemaVersion\": 1", stableAppHostManifest, StringComparison.Ordinal);
+        Assert.Contains("\"runtime\": \"win-x64\"", stableAppHostManifest, StringComparison.Ordinal);
+        Assert.Contains("\"MeetingRecorder.App.exe\"", stableAppHostManifest, StringComparison.Ordinal);
+        Assert.Contains("\"AppPlatform.Deployment.Cli.exe\"", stableAppHostManifest, StringComparison.Ordinal);
+        Assert.Contains("\"MeetingRecorder.ProcessingWorker.exe\"", stableAppHostManifest, StringComparison.Ordinal);
         Assert.Contains("-ProjectName \"AppPlatform.Deployment.Cli\"", publishScript, StringComparison.Ordinal);
         Assert.Contains("-ProjectName \"MeetingRecorder.ProcessingWorker\"", publishScript, StringComparison.Ordinal);
         Assert.Contains("Configured stable apphost hash does not match the current build apphost.", publishScript, StringComparison.Ordinal);
@@ -376,7 +385,9 @@ public sealed class InstallerScriptTests
         Assert.Contains("[string]$StableAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
         Assert.Contains("[string]$StableDeploymentCliAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
         Assert.Contains("[string]$StableWorkerAppHostPath = \"\"", installerScript, StringComparison.Ordinal);
+        Assert.Contains("[string]$TrustedStableAppHostManifestPath = \"\"", installerScript, StringComparison.Ordinal);
         Assert.Contains("-StableDeploymentCliAppHostPath $StableDeploymentCliAppHostPath", installerScript, StringComparison.Ordinal);
+        Assert.Contains("-TrustedStableAppHostManifestPath $TrustedStableAppHostManifestPath", installerScript, StringComparison.Ordinal);
         Assert.Contains("-OutputRoot $publishOutputPath", installerScript, StringComparison.Ordinal);
         Assert.Contains("$publishedAppPath = Join-Path $publishOutputPath \"MeetingRecorder\"", installerScript, StringComparison.Ordinal);
     }

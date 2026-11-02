@@ -89,6 +89,23 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void BuildPastRematchStatusText_Reports_Terminal_Outcome_Without_Claiming_A_Change()
+    {
+        var plan = new PastRematchPlanItem("meeting", "revision", "fingerprint", PastRematchDisposition.Skip, "No local profiles.");
+
+        var unchanged = MainWindowInteractionLogic.BuildPastRematchStatusText(
+            new PastRematchResult(plan, PastRematchOutcome.Unchanged, null, Array.Empty<SpeakerNamePrediction>()));
+        var skipped = MainWindowInteractionLogic.BuildPastRematchStatusText(
+            new PastRematchResult(plan, PastRematchOutcome.Skipped, null, Array.Empty<SpeakerNamePrediction>()));
+        var failed = MainWindowInteractionLogic.BuildPastRematchStatusText(
+            new PastRematchResult(plan, PastRematchOutcome.Failed, null, Array.Empty<SpeakerNamePrediction>()));
+
+        Assert.Contains("No eligible", unchanged, StringComparison.Ordinal);
+        Assert.Contains("No meeting names were changed", skipped, StringComparison.Ordinal);
+        Assert.Contains("could not complete", failed, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildSpeakerNameUndoStatusText_Separates_Restored_Suppressed_Warning_And_NoOp()
     {
         var restored = MainWindowInteractionLogic.BuildSpeakerNameUndoStatusText(
@@ -598,9 +615,9 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
-    public void ShouldDeferMeetingRefresh_Returns_True_While_Recording_Or_Meetings_Are_Hidden()
+    public void ShouldDeferMeetingRefresh_Returns_True_Only_When_Meetings_Are_Hidden()
     {
-        Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: true, isMeetingsTabSelected: true));
+        Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: true, isMeetingsTabSelected: true));
         Assert.True(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: false));
         Assert.False(MainWindowInteractionLogic.ShouldDeferMeetingRefresh(isRecording: false, isMeetingsTabSelected: true));
     }
