@@ -1079,6 +1079,21 @@ As of 2026-07-20, executable-policy facts are:
 - Outcome: retained in source; runtime containment staged. Exact native `svchost.exe` call remains unproven pending EPM audit telemetry or a controlled packaged test.
 - Follow-up / removal condition: retain speaker labeling disabled until a signed/approved package is tested on an EPM-controlled machine without a restricted-access event; then re-enable only through a pilot with worker and EPM telemetry captured.
 
+### 2026-11-05: Bounded render peak sampling
+
+- Trigger / observed symptom: a reported live Teams call did not start recording. Detection reported a meeting-like window and zero peak on the user's confirmed Teams output endpoint.
+- Exact runtime or CyberArk evidence: automatic detection was enabled; the endpoint-only render probe returned silence and no attributed session. Existing source takes one instantaneous peak reading on each scan. No CyberArk event was observed for this incident.
+- Hypothesis: instantaneous sampling can miss brief audio between scans. This is a plausible contributor, not a confirmed explanation for the incident; an actually silent endpoint or an ambiguous Teams window can still prevent automatic start.
+- APIs or signals added/removed: render endpoint meter is sampled four times over 300 ms per role; no session enumeration, process inspection, or new external signal. Existing 1.5-second total probe timeout remains authoritative.
+- Positive behavior expected: short render activity within the sample window is detected. Fully quiet calls and ambiguous Teams windows still require existing identity/attribution safety gates.
+- False-positive/security boundary retained: no threshold, title, attribution, manual-stop, or consent gate changed. No audio content is captured by the probe.
+- Tests added and results: intermittent peak and bounded delay test added; detector and continuity tests passed 123/123.
+- Package status: installer ZIP and MSI rebuilt successfully with zero warnings and errors.
+- Installed hash/version/signature status: local managed install updated; app DLL hash matches the published bundle. No signing change.
+- Live-machine result: app restarted with a visible responsive window; no live-call verification because the user reported the call had ended.
+- Outcome: mitigation retained in source; original root cause remains unconfirmed.
+- Follow-up / removal condition: validate on a subsequent call and investigate actual zero readings or ambiguous windows if the problem recurs.
+
 ## Entry Template
 
 Append future entries with all fields:

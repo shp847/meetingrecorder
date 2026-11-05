@@ -996,6 +996,19 @@ public sealed class WindowMeetingDetectorTests
     }
 
     [Fact]
+    public void SampleRenderPeak_Catches_Intermittent_Audio_And_Stays_Bounded()
+    {
+        var samples = new Queue<float>([0f, 0.08f, 0f, 0.01f]);
+        var delays = new List<int>();
+
+        var peak = AudioActivityProbeSupport.SampleRenderPeak(samples.Dequeue, delays.Add);
+
+        Assert.Equal(0.08f, peak);
+        Assert.Empty(samples);
+        Assert.Equal(new[] { 100, 100, 100 }, delays);
+    }
+
+    [Fact]
     public void SystemAudioActivityProbe_Combines_Communications_Render_Sessions_When_The_Multimedia_Endpoint_Is_Quiet()
     {
         var multimediaSnapshot = new AudioSourceAttributionSnapshot(

@@ -1707,7 +1707,12 @@ internal static class AudioActivityProbeSupport
         {
             using var enumerator = new MMDeviceEnumerator();
             using var device = enumerator.GetDefaultAudioEndpoint(flow, role);
-            var peakLevel = device.AudioMeterInformation.MasterPeakValue;
+            // A single instantaneous reading can land between spoken words.
+            // Sample a short bounded window while retaining the existing
+            // detector timeout and endpoint-only privacy boundary.
+            var peakLevel = flow == DataFlow.Render
+                ? SampleRenderPeak(() => device.AudioMeterInformation.MasterPeakValue, Thread.Sleep)
+                : device.AudioMeterInformation.MasterPeakValue;
             return new AudioSourceAttributionSnapshot(
                 device.FriendlyName,
                 peakLevel,
@@ -1726,6 +1731,18 @@ internal static class AudioActivityProbeSupport
                 Array.Empty<AudioSourceSessionSnapshot>(),
                 null);
         }
+    }
+
+    internal static float SampleRenderPeak(Func<float> readPeak, Action<int> wait)
+    {
+        var peak = readPeak();
+        for (var sample = 1; sample < 4; sample++)
+        {
+            wait(100);
+            peak = Math.Max(peak, readPeak());
+        }
+
+        return peak;
     }
 
     internal static string? TryDeriveMeetingAudioProcessName(string? metadataValue)
