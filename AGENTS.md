@@ -115,13 +115,15 @@ instructions.
 
 ## Release Hygiene
 
+- Stay on `main` for this project. For every app, installer, script, or runtime
+  behavior change, deploy locally and publish the GitHub release, including
+  installer assets, unless the user explicitly limits the current task.
 - Treat installer assets as part of the shipped product, not an optional
   follow-up.
 - When the user asks to `deploy` or requests a deployment, interpret that as:
   run the required verification/build flow, commit the intended source changes,
   push the commit, rebuild release artifacts from the clean pushed commit when
-  needed, then upload GitHub release assets including installers. Do not treat
-  `deploy` as a local install or local file-copy deployment.
+  needed, deploy locally, and upload GitHub release assets including installers.
 - For every app, installer, script, or runtime behavior change, rebuild the
   installer assets before considering the task complete.
 - After every build-backed change set that is intended to ship, commit and push
