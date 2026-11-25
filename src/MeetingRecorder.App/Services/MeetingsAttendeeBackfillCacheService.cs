@@ -20,7 +20,7 @@ internal sealed class MeetingsAttendeeBackfillCacheService
     public MeetingsAttendeeBackfillCacheService(string? cachePath = null)
     {
         _cachePath = string.IsNullOrWhiteSpace(cachePath)
-            ? Path.Combine(AppDataPaths.GetManagedAppRoot(), "cache", "meetings-attendee-backfill-v1.json")
+            ? Path.Combine(AppDataPaths.GetManagedAppRootForCurrentContext(), "cache", "meetings-attendee-backfill-v1.json")
             : Path.GetFullPath(cachePath);
     }
 

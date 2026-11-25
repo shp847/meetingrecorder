@@ -938,6 +938,44 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
+    public async Task PublishedSpeakerRecovery_IgnoresMissingRawChunksAndPreservesPublishedAudio()
+    {
+        var context = await CreateQueuedSessionWithExistingAudioAsync();
+        try
+        {
+            var transcription = new TrackingTranscriptionProvider();
+            var initial = CreateProcessor(context.ManifestStore, context.PathBuilder, transcription,
+                new TrackingDiarizationProvider(), new TrackingSummaryProvider());
+            var config = context.CreateConfig() with { ProcessingSpeedProfile = ProcessingSpeedProfile.TranscriptOnlyDrain };
+            var published = await initial.ProcessAsync(context.ManifestPath, config);
+            var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
+            var catalog = new MeetingOutputCatalogService(context.PathBuilder);
+            var record = Assert.Single(catalog.ListMeetings(config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir));
+            Assert.True(PublishedSpeakerLabelInputResolver.IsReady(record, manifest, config));
+            var originalAudio = await File.ReadAllBytesAsync(published.AudioPath);
+            var queued = MainWindowInteractionLogic.BuildQueuedPublishedSpeakerLabelManifest(
+                manifest with { RawChunkPaths = [Path.Combine(context.Root, "missing-old-chunk.wav")] },
+                DateTimeOffset.UtcNow, published.AudioPath);
+            await context.ManifestStore.SaveAsync(queued, context.ManifestPath);
+            var labels = new LabelingDiarizationProvider();
+            var processor = CreateProcessor(context.ManifestStore, context.PathBuilder, transcription, labels, new TrackingSummaryProvider());
+
+            await processor.ProcessAsync(context.ManifestPath, config, SessionProcessingStage.Diarization);
+
+            Assert.Equal(1, transcription.CallCount);
+            Assert.Equal(1, labels.CallCount);
+            Assert.Equal(originalAudio, await File.ReadAllBytesAsync(published.AudioPath));
+            Assert.Equal(StageExecutionState.Succeeded, (await context.ManifestStore.LoadAsync(context.ManifestPath)).DiarizationStatus.State);
+            File.Delete(published.ReadyMarkerPath);
+            Assert.False(PublishedSpeakerLabelInputResolver.IsReady(record, manifest, config));
+        }
+        finally
+        {
+            DeleteDirectory(context.Root);
+        }
+    }
+
+    [Fact]
     public async Task ProcessAsync_SummaryStage_Reuses_Published_Transcript_Without_Rerunning_Transcription_Or_Diarization()
     {
         var context = await CreateQueuedSessionWithExistingAudioAsync();

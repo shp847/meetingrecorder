@@ -182,7 +182,7 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
         Assert.Equal(3, status.SafeFixCount);
         Assert.Equal(1, status.EligibleNowCount);
         Assert.Equal(1, status.DisabledSpeakerLabelCount);
-        Assert.Equal(1, status.BlockedSummaryCount);
+        Assert.Equal(0, status.BlockedSummaryCount);
         Assert.Equal(1, status.ManualReviewCount);
         Assert.Contains("speaker-label", status.PrimaryBlocker, StringComparison.Ordinal);
     }
@@ -249,7 +249,7 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
             recommendation => recommendation.Fingerprint == providerBlocked.Fingerprint);
 
         Assert.Equal(1, status.EligibleNowCount);
-        Assert.Equal(1, status.ProviderBlockedCount);
+        Assert.Equal(0, status.ProviderBlockedCount);
         Assert.Equal(1, status.DeferredCount);
         Assert.Equal(1, status.ResolvedCount);
     }
@@ -289,7 +289,7 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
         ledger.Record("failed-summary", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSummary);
 
         var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
-            Array.Empty<MeetingCleanupRecommendation>(),
+            [CreateRecommendation("merge-hold", MeetingCleanupAction.Merge, MeetingCleanupConfidence.High, false)],
             ledger,
             _ => false,
             _ => false,
@@ -298,7 +298,7 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
         Assert.Equal(2, status.ProcessingCount);
         Assert.Equal(1, status.QueuedCount);
         Assert.Equal(1, status.ContainmentHeldCount);
-        Assert.Equal(1, status.RetryableFailedCount);
+        Assert.Equal(0, status.RetryableFailedCount);
         Assert.Equal(0, status.ResolvedCount);
         Assert.Equal(0, status.DeferredCount);
         Assert.Equal(1, status.ReviewRequiredCount);

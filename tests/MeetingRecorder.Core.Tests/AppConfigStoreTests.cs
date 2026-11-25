@@ -565,7 +565,7 @@ public sealed class AppConfigStoreTests
         Assert.Equal(MeetingsViewPreset.Custom, reloaded.MeetingsViewPreset);
         Assert.Equal(1, reloaded.MeetingsViewPresetMigrationVersion);
         Assert.True(reloaded.MeetingsViewPresetInitialized);
-        Assert.Equal(MeetingSummaryGenerationMode.Enabled, reloaded.SummaryGenerationMode);
+        Assert.Equal(MeetingSummaryGenerationMode.Disabled, reloaded.SummaryGenerationMode);
         Assert.Equal(MeetingSummaryProviderPreference.OpenAiOnly, reloaded.SummaryProviderPreference);
         Assert.Equal("http://127.0.0.1:8645/v1", reloaded.SummaryModelProxyBaseUrl);
         Assert.Equal(string.Empty, reloaded.SummaryModelProxyModel);

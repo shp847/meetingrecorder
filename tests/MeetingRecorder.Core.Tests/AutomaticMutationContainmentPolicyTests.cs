@@ -25,12 +25,15 @@ public sealed class AutomaticMutationContainmentPolicyTests
     }
 
     [Fact]
-    public void CanDispatch_Allows_Only_V2_Continuity_Merge_Recommendations()
+    public void CanDispatch_Requires_High_Confidence_And_Automatic_Eligibility()
     {
         var continuity = new MeetingCleanupRecommendation("a", MeetingCleanupAction.Merge, MeetingCleanupConfidence.High, "t", "d", "s", ["s", "t"], true, null, null, "continuity-repair-v2-historical-title");
         var ordinary = continuity with { ReasonCode = "merge-split-pair" };
 
         Assert.True(AutomaticMutationContainmentPolicy.CanDispatch(continuity));
-        Assert.False(AutomaticMutationContainmentPolicy.CanDispatch(ordinary));
+        Assert.True(AutomaticMutationContainmentPolicy.CanDispatch(ordinary));
+        Assert.False(AutomaticMutationContainmentPolicy.CanDispatch(ordinary with { Confidence = MeetingCleanupConfidence.Medium }));
+        Assert.False(AutomaticMutationContainmentPolicy.CanDispatch(ordinary with { CanApplyAutomatically = false }));
+        Assert.False(AutomaticMutationContainmentPolicy.CanDispatch(ordinary with { Action = MeetingCleanupAction.GenerateSummary }));
     }
 }

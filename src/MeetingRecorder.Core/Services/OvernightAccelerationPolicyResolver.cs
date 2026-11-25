@@ -38,7 +38,7 @@ internal sealed record OvernightAccelerationDecision(
         OvernightAccelerationState.Accelerating =>
             $"Overnight acceleration: {GetStageDisplayName(stage)} (up to {GetMaximumWorkerCount(stage)} worker{(GetMaximumWorkerCount(stage) == 1 ? string.Empty : "s")}).",
         OvernightAccelerationState.TranscriptOnly =>
-            "Overnight transcript-first mode: speaker labels and summaries stay deferred.",
+            "Overnight transcript-first mode: speaker labels stay deferred.",
         OvernightAccelerationState.OutsideWindow => "Overnight acceleration is outside its configured window.",
         OvernightAccelerationState.InvalidWindow => "Overnight acceleration is paused because its time window is invalid.",
         OvernightAccelerationState.AmbiguousLocalTime => "Overnight acceleration is paused during an ambiguous local time.",
@@ -60,7 +60,7 @@ internal sealed record OvernightAccelerationDecision(
 /// </summary>
 internal static class OvernightAccelerationPolicyResolver
 {
-    public static OvernightAccelerationDecision Resolve(AppConfig config, DateTimeOffset now)
+    public static OvernightAccelerationDecision Resolve(AppConfig config, DateTimeOffset now, TimeZoneInfo? timeZone = null)
     {
         ArgumentNullException.ThrowIfNull(config);
 
@@ -74,9 +74,10 @@ internal static class OvernightAccelerationPolicyResolver
             return new OvernightAccelerationDecision(OvernightAccelerationState.InvalidWindow, null, null);
         }
 
-        var localNow = now.ToLocalTime();
+        timeZone ??= TimeZoneInfo.Local;
+        var localNow = TimeZoneInfo.ConvertTime(now, timeZone);
         var localDateTime = DateTime.SpecifyKind(localNow.DateTime, DateTimeKind.Unspecified);
-        if (TimeZoneInfo.Local.IsAmbiguousTime(localDateTime))
+        if (timeZone.IsAmbiguousTime(localDateTime))
         {
             return new OvernightAccelerationDecision(OvernightAccelerationState.AmbiguousLocalTime, start, end);
         }

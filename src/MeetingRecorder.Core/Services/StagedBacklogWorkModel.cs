@@ -639,7 +639,7 @@ internal sealed class StagedBacklogWorkStore
 
         try
         {
-            await using var stream = File.OpenRead(_storePath);
+            await using var stream = new FileStream(_storePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, true);
             return await System.Text.Json.JsonSerializer.DeserializeAsync<List<StagedBacklogWorkItem>>(
                     stream,
                     SerializerOptions,
@@ -666,24 +666,30 @@ internal sealed class StagedBacklogWorkStore
             Directory.CreateDirectory(directory);
         }
 
-        var temporaryPath = _storePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
+        var delays = new[] { 100, 500, 1500 };
+        for (var attempt = 0; ; attempt++)
         {
-            await using (var stream = File.Create(temporaryPath))
+            var temporaryPath = _storePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                await System.Text.Json.JsonSerializer.SerializeAsync(stream, workItems, SerializerOptions, cancellationToken);
-            }
+                await using (var stream = File.Create(temporaryPath))
+                {
+                    await System.Text.Json.JsonSerializer.SerializeAsync(stream, workItems, SerializerOptions, cancellationToken);
+                }
 
-            File.Move(temporaryPath, _storePath, overwrite: true);
-        }
-        catch
-        {
-            if (File.Exists(temporaryPath))
+                File.Move(temporaryPath, _storePath, overwrite: true);
+                return;
+            }
+            catch (Exception exception) when (attempt < delays.Length && exception is IOException or UnauthorizedAccessException)
             {
-                File.Delete(temporaryPath);
+                await Task.Delay(delays[attempt], cancellationToken);
             }
-
-            throw;
+            finally
+            {
+                try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
         }
     }
 }

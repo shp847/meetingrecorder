@@ -118,11 +118,6 @@ internal static class MeetingCleanupRecommendationEngine
                 recommendations.Add(regenerateRecommendation);
             }
 
-            if (TryBuildGenerateSummaryRecommendation(inspection) is { } generateSummaryRecommendation)
-            {
-                recommendations.Add(generateSummaryRecommendation);
-            }
-
             if (TryBuildGenerateSpeakerLabelsRecommendation(inspection) is { } generateSpeakerLabelsRecommendation)
             {
                 recommendations.Add(generateSpeakerLabelsRecommendation);

@@ -22,6 +22,88 @@ public sealed class ProcessingQueueServiceTests
     private static readonly TimeSpan AsyncTestTimeout = TimeSpan.FromSeconds(15);
 
     [Fact]
+    public async Task ForcedPublishedSpeakerLabels_DispatchDiarizationEvenWhenLabelsAreNormallyDeferred()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var initial = await configStore.LoadOrCreateAsync();
+        var config = new LiveAppConfig(configStore, await configStore.SaveAsync(initial with
+        {
+            BackgroundSpeakerLabelingMode = BackgroundSpeakerLabelingMode.Deferred,
+            SpeakerLabelingSecurityPromptMigrationApplied = true,
+        }));
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+        var factory = new FakeWorkerProcessFactory();
+        var service = new ProcessingQueueService(config, store, new FileLogWriter(Path.Combine(root, "logs", "app.log")),
+            meetingMetadataEnricher: null, () => new WorkerLaunch("fake-worker.exe", string.Empty), factory,
+            isSpeakerLabelingAvailableProvider: () => true);
+        var path = await CreateCompletedQueuedManifestAsync(store, config.Current.WorkDir, TimeSpan.FromMinutes(10));
+        var manifest = await store.LoadAsync(path);
+        await store.SaveAsync(MainWindowInteractionLogic.BuildQueuedPublishedSpeakerLabelManifest(manifest, DateTimeOffset.UtcNow, @"C:\published\meeting.wav"), path);
+
+        await service.EnqueueAsync(path);
+        var process = await factory.WaitForStartAsync().WaitAsync(AsyncTestTimeout);
+        AssertWorkerHasStagedLease(Assert.Single(factory.StartInfos), "diarization");
+        process.CompleteExit();
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task LegacySummaryQueue_IsRetiredOnlyWhenPublishedArtifactsAreVerified()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var config = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+        var service = new ProcessingQueueService(config, store, new FileLogWriter(Path.Combine(root, "logs", "app.log")));
+        var path = await CreateCompletedQueuedManifestAsync(store, config.Current.WorkDir, TimeSpan.FromMinutes(10));
+        await SetPublishedStageStateAsync(store, path, StageExecutionState.Succeeded, StageExecutionState.Queued);
+        await store.SaveAsync((await store.LoadAsync(path)) with { State = SessionState.Queued }, path);
+
+        await service.EnqueueAsync(path);
+        var unverified = await store.LoadAsync(path);
+        Assert.Equal(SessionState.Failed, unverified.State);
+        Assert.Equal("Published recording or transcript files need review.", unverified.ErrorSummary);
+
+        var manifest = await store.LoadAsync(path);
+        var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+        var stem = new ArtifactPathBuilder().BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title);
+        var sidecarDir = ArtifactPathBuilder.BuildTranscriptSidecarRoot(config.Current.TranscriptOutputDir);
+        Directory.CreateDirectory(config.Current.AudioOutputDir);
+        Directory.CreateDirectory(sidecarDir);
+        CreateWaveFile(Path.Combine(config.Current.AudioOutputDir, stem + ".wav"), TimeSpan.FromSeconds(1));
+        await File.WriteAllTextAsync(Path.Combine(config.Current.TranscriptOutputDir, stem + ".md"), "## Transcript\nRecorded text");
+        await File.WriteAllTextAsync(Path.Combine(sidecarDir, stem + ".json"), "{\"segments\":[]}");
+        await File.WriteAllTextAsync(Path.Combine(sidecarDir, stem + ".ready"), "ready");
+
+        await service.EnqueueAsync(path);
+        var retired = await store.LoadAsync(path);
+        Assert.Equal(SessionState.Published, retired.State);
+        Assert.Equal(StageExecutionState.Skipped, retired.SummarizationStatus.State);
+        Assert.Equal(StageExecutionState.Succeeded, retired.PublishStatus.State);
+        Assert.Equal(0, service.GetStatusSnapshot().TotalRemainingCount);
+        await service.StopAsync();
+    }
+
+    [Fact]
+    public async Task GetStatusSnapshot_RefreshesObservationTimeForUnchangedIdleQueue()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var config = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var service = new ProcessingQueueService(config, new SessionManifestStore(new ArtifactPathBuilder()),
+            new FileLogWriter(Path.Combine(root, "logs", "app.log")));
+
+        var first = service.GetStatusSnapshot();
+        await Task.Delay(25);
+        var second = service.GetStatusSnapshot();
+
+        Assert.Equal(first.RunState, second.RunState);
+        Assert.True(second.LastUpdatedAtUtc > first.LastUpdatedAtUtc);
+        await service.StopAsync();
+    }
+
+    [Fact]
     public async Task EnqueueAsync_Enriches_Attendees_Before_Starting_The_Worker_When_Enabled()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
@@ -207,7 +289,7 @@ public sealed class ProcessingQueueServiceTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_Dispatches_Transcript_Then_Labels_Then_Summary_With_Lease_Arguments()
+    public async Task EnqueueAsync_Dispatches_Transcript_And_Labels_But_Skips_Obsolete_Summary_Work()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -258,12 +340,8 @@ public sealed class ProcessingQueueServiceTests
         labelsProcess.ConfigureStagedReceipt(processFactory.StartInfos[1]);
         labelsProcess.CompleteExit();
 
-        var summaryProcess = await processFactory.WaitForStartAsync(2).WaitAsync(AsyncTestTimeout);
-        AssertWorkerHasStagedLease(processFactory.StartInfos[2], "summary");
-        summaryProcess.ConfigureStagedReceipt(processFactory.StartInfos[2]);
-        summaryProcess.CompleteExit();
-
         await service.StopAsync();
+        Assert.Equal(2, processFactory.StartInfos.Count);
     }
 
     [Fact]
@@ -1028,6 +1106,8 @@ public sealed class ProcessingQueueServiceTests
         Assert.False(firstProcess.LastKillEntireProcessTree);
 
         var secondProcess = await processFactory.WaitForStartAsync(1);
+        await WaitForConditionAsync(() =>
+            string.Equals(service.GetStatusSnapshot().CurrentManifestPath, manifestPath, StringComparison.Ordinal));
         Assert.Contains(manifestPath, processFactory.StartInfos[1].Arguments, StringComparison.Ordinal);
         var manifest = await manifestStore.LoadAsync(manifestPath);
 
@@ -1737,6 +1817,34 @@ public sealed class ProcessingQueueServiceTests
                 // Best-effort cleanup for temp test files.
             }
         }
+    }
+
+    [Fact]
+    public async Task Queue_Continues_After_An_Unexpected_Worker_Launch_Failure()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), Path.Combine(root, "documents"));
+        var liveConfig = new LiveAppConfig(configStore, await configStore.LoadOrCreateAsync());
+        var manifestStore = new SessionManifestStore(new ArtifactPathBuilder());
+        var factory = new FakeWorkerProcessFactory();
+        var attempts = 0;
+        using var service = new ProcessingQueueService(liveConfig, manifestStore,
+            new FileLogWriter(Path.Combine(root, "logs", "app.log")),
+            workerLaunchResolver: () => Interlocked.Increment(ref attempts) == 1
+                ? throw new IOException("synthetic launch failure")
+                : new WorkerLaunch("fake-worker.exe", string.Empty),
+            workerProcessFactory: factory);
+        var first = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+        var second = await CreateQueuedManifestAsync(manifestStore, liveConfig.Current.WorkDir);
+        await service.EnqueueAsync(first);
+        await WaitForConditionAsync(async () => (await manifestStore.LoadAsync(first)).State == SessionState.Failed);
+        await service.EnqueueAsync(second);
+        var process = await factory.WaitForStartAsync();
+        process.CompleteExit();
+        await service.StopAsync();
+        Assert.Equal(2, attempts);
+        Assert.Equal(1, factory.StartCount);
     }
 
     [Fact]
@@ -2538,7 +2646,7 @@ public sealed class ProcessingQueueServiceTests
 
         public Task<FakeWorkerProcess> WaitForStartAsync()
         {
-            return _started.Task;
+            return _started.Task.WaitAsync(TimeSpan.FromSeconds(20));
         }
     }
 
@@ -2576,7 +2684,7 @@ public sealed class ProcessingQueueServiceTests
 
         public Task<FakeWorkerProcess> WaitForStartAsync(int index)
         {
-            return _startedSignals[index].Task;
+            return _startedSignals[index].Task.WaitAsync(TimeSpan.FromSeconds(20));
         }
     }
 

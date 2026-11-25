@@ -187,11 +187,12 @@ public sealed class BackgroundProcessingPolicyTests
         Assert.False(invalidDecision.IsAccelerating);
 
         var ambiguousLocalTime = new DateTime(2026, 11, 1, 1, 30, 0, DateTimeKind.Unspecified);
-        Assert.True(TimeZoneInfo.Local.IsAmbiguousTime(ambiguousLocalTime));
-        var ambiguousOffset = TimeZoneInfo.Local.GetAmbiguousTimeOffsets(ambiguousLocalTime)[0];
+        var daylightSavingZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+        Assert.True(daylightSavingZone.IsAmbiguousTime(ambiguousLocalTime));
+        var ambiguousOffset = daylightSavingZone.GetAmbiguousTimeOffsets(ambiguousLocalTime)[0];
         var ambiguousDecision = OvernightAccelerationPolicyResolver.Resolve(
             invalidWindow with { OvernightDrainStartLocal = "00:00", OvernightDrainEndLocal = "06:00" },
-            new DateTimeOffset(ambiguousLocalTime, ambiguousOffset));
+            new DateTimeOffset(ambiguousLocalTime, ambiguousOffset), daylightSavingZone);
 
         Assert.Equal(OvernightAccelerationState.AmbiguousLocalTime, ambiguousDecision.State);
         Assert.False(ambiguousDecision.IsAccelerating);

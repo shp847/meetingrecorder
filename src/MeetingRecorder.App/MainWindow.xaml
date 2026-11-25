@@ -1183,6 +1183,14 @@
                                                  Content="Restore Latest Archive"
                                                  ToolTip="Restores only the latest complete manual archive after receipt validation."
                                                  Visibility="Collapsed" />
+                                         <Button x:Name="RestoreAutomaticBackupButton"
+                                                 Width="150"
+                                                 Height="32"
+                                                 Margin="10,0,0,0"
+                                                 Click="RestoreAutomaticBackupButton_OnClick"
+                                                 Content="Recover Backup"
+                                                 ToolTip="Restore missing originals or save copies when newer files conflict."
+                                                 Visibility="Collapsed" />
                                     </WrapPanel>
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock x:Name="MeetingSelectionSummaryTextBlock"
@@ -3724,6 +3732,7 @@
                                                           Margin="0,4,0,0"
                                                           Content="Complete deferred speaker labels" />
                                                 <CheckBox x:Name="ConfigIncrementalAiSummariesCheckBox"
+                                                          Visibility="Collapsed"
                                                           Margin="0,4,0,0"
                                                           Content="Generate missing AI summaries using the configured provider" />
                                                 <CheckBox x:Name="ConfigIncrementalSafeCleanupCheckBox"
@@ -3755,7 +3764,7 @@
                                                 </StackPanel>
                                                 <TextBlock Margin="0,4,0,0"
                                                            Style="{StaticResource ConfigHelpTextStyle}"
-                                                           Text="Configured stages drain transcripts, then eligible speaker labels and summaries in this local-time window. New accelerated work pauses while recording. Format: HH:mm." />
+                                                           Text="Configured stages drain transcripts, then eligible speaker labels in this local-time window. New accelerated work pauses while recording. Format: HH:mm." />
                                                 <TextBlock x:Name="ConfigProcessingScheduleSummaryTextBlock"
                                                            Margin="0,8,0,0"
                                                            MinHeight="36"

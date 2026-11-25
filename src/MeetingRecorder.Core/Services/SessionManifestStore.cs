@@ -62,50 +62,64 @@ public sealed class SessionManifestStore
         return SaveAndReturnAsync(manifest, manifestPath, cancellationToken);
     }
 
-    public Task<MeetingSessionManifest> LoadAsync(string manifestPath, CancellationToken cancellationToken = default)
+    public async Task<MeetingSessionManifest> LoadAsync(string manifestPath, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var json = File.ReadAllText(manifestPath);
-        var manifest = JsonSerializer.Deserialize<MeetingSessionManifest>(json, SerializerOptions)
-            ?? throw new InvalidOperationException($"Unable to deserialize manifest '{manifestPath}'.");
-
-        return Task.FromResult(NormalizeManifest(manifest));
+        var delays = new[] { 5, 20, 50, 100, 200, 400, 800 };
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                // Readers may finish the old version while Windows replaces it.
+                using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                var json = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+                var manifest = JsonSerializer.Deserialize<MeetingSessionManifest>(json, SerializerOptions)
+                    ?? throw new InvalidOperationException($"Unable to deserialize manifest '{manifestPath}'.");
+                return NormalizeManifest(manifest);
+            }
+            catch (IOException) when (attempt < delays.Length)
+            {
+                // File.Replace can briefly hide or lock the path on Windows.
+                await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
-    public Task SaveAsync(MeetingSessionManifest manifest, string manifestPath, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(MeetingSessionManifest manifest, string manifestPath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(manifestPath) ?? throw new InvalidOperationException("Manifest path must include a directory."));
         var normalizedManifest = NormalizeManifest(_identitySnapshotService.EnsureForNormalSave(manifest));
         var json = JsonSerializer.Serialize(normalizedManifest, SerializerOptions);
-        var temporaryPath = manifestPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        var backupPath = temporaryPath + ".bak";
-        try
+        var delays = new[] { 100, 500, 1500 };
+        for (var attempt = 0; ; attempt++)
         {
-            File.WriteAllText(temporaryPath, json);
-            if (File.Exists(manifestPath))
+            var temporaryPath = manifestPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            var backupPath = temporaryPath + ".bak";
+            try
             {
-                File.Replace(temporaryPath, manifestPath, backupPath, ignoreMetadataErrors: true);
+                await File.WriteAllTextAsync(temporaryPath, json, cancellationToken).ConfigureAwait(false);
+                if (File.Exists(manifestPath))
+                    File.Replace(temporaryPath, manifestPath, backupPath, ignoreMetadataErrors: true);
+                else
+                    File.Move(temporaryPath, manifestPath);
+                return;
             }
-            else
+            catch (Exception exception) when (attempt < delays.Length && exception is IOException or UnauthorizedAccessException)
             {
-                File.Move(temporaryPath, manifestPath);
+                await Task.Delay(delays[attempt], cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                try { if (File.Exists(backupPath)) File.Delete(backupPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
         }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-
-            if (File.Exists(backupPath))
-            {
-                File.Delete(backupPath);
-            }
-        }
-        return Task.CompletedTask;
     }
 
     public MeetingIdentitySnapshot? GetIdentitySnapshotForComparison(MeetingSessionManifest manifest) =>

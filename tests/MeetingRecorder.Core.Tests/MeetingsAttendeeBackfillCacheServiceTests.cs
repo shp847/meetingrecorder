@@ -17,6 +17,16 @@ public sealed class MeetingsAttendeeBackfillCacheServiceTests : IDisposable
     }
 
     [Fact]
+    public void DefaultCache_UsesTheIsolatedAppRootDuringFixtures()
+    {
+        using var scope = AppDataPaths.PushTestAppRoot(_root);
+        var service = new MeetingsAttendeeBackfillCacheService();
+        var meeting = CreateMeeting("fixture-only", "2026-03-21T13:00:00Z", TimeSpan.FromMinutes(1));
+        service.RecordNoMatch(meeting, DateTimeOffset.UtcNow);
+        Assert.True(File.Exists(_cachePath));
+    }
+
+    [Fact]
     public void RecordNoMatch_Suppresses_Automatic_Backfill_For_Seven_Days_When_Fingerprint_Is_Unchanged()
     {
         var service = new MeetingsAttendeeBackfillCacheService(_cachePath);

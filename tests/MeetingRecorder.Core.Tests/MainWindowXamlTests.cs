@@ -107,7 +107,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("Content=\"Advanced\"", settingsWindowXaml);
         Assert.Contains("Content=\"Save Changes\"", settingsWindowXaml);
         Assert.Contains("Content=\"Close\"", settingsWindowXaml);
-        Assert.Contains("Use Settings to manage readiness, recording, processing, summaries, files, updates, and troubleshooting.", settingsWindowXaml);
+        Assert.Contains("Use Settings to manage readiness, recording, processing, files, updates, and troubleshooting.", settingsWindowXaml);
         Assert.Contains("new(\"setup\", \"Setup\"", productModule);
 
         Assert.Contains("x:Class=\"AppPlatform.Shell.Wpf.HelpHostWindow\"", helpWindowXaml);
@@ -521,10 +521,11 @@ public sealed class MainWindowXamlTests
         var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
         var rawExceptionMessageCount = CountOccurrences(source, "exception.Message");
 
-        Assert.Equal(4, rawExceptionMessageCount);
+        Assert.Equal(5, rawExceptionMessageCount);
         Assert.Contains("diagnosticsLines.Add($\"Bundled manifest install root: unavailable ({exception.Message})\")", source);
         Assert.Contains("ConfigTeamsIntegrationAdvancedDetailTextBlock.Text = exception.Message", source);
         Assert.Contains("IsSafeDirectMlRuntimeUnavailableMessage(exception.Message)", source);
+        Assert.Contains("MeetingCleanupWorkLedgerService.IsTransientFailure(exception.Message)", source);
     }
 
     [Fact]
@@ -1091,7 +1092,7 @@ public sealed class MainWindowXamlTests
         Assert.Contains("ConfirmPastRematchBatch", source);
         Assert.Contains("_pastRematchService.RematchBatchAsync(", source);
         Assert.Contains("Cancel Name Rematch", source);
-        Assert.Contains("It does not open or change audio, transcript words/timestamps, diarization, summaries, or worker processing.", source);
+        Assert.Contains("It does not open or change audio, transcript words/timestamps, diarization, or worker processing.", source);
         Assert.Contains("ConfirmSpeakerLabelRepairAsync", source);
         Assert.Contains("SpeakerRepairPreflightResolver.Resolve", source);
         Assert.Contains("_speakerRepairAuditStore.RecordQueuedAsync", source);

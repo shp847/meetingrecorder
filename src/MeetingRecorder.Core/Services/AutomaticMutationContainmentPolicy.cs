@@ -3,10 +3,8 @@ using MeetingRecorder.Core.Domain;
 namespace MeetingRecorder.Core.Services;
 
 /// <summary>
-/// Temporary production-safety fence for automatic meeting maintenance. Manual
-/// review routes remain available; only actions that can change or relocate an
-/// existing meeting are held until the recovery roadmap supplies leases and
-/// promotion receipts.
+/// Admits only high-confidence recommendations to the scheduler. The caller
+/// must create and verify a recovery snapshot before dispatching protected work.
 /// </summary>
 public static class AutomaticMutationContainmentPolicy
 {
@@ -18,14 +16,14 @@ public static class AutomaticMutationContainmentPolicy
     public static bool CanDispatch(MeetingCleanupRecommendation recommendation)
     {
         ArgumentNullException.ThrowIfNull(recommendation);
-        return recommendation.Action == MeetingCleanupAction.Merge
-            ? recommendation.CanApplyAutomatically &&
-              recommendation.Confidence == MeetingCleanupConfidence.High &&
-              recommendation.ReasonCode.StartsWith("continuity-repair-v2", StringComparison.Ordinal)
-            : CanDispatch(recommendation.Action);
+        return recommendation.CanApplyAutomatically &&
+               recommendation.Confidence == MeetingCleanupConfidence.High &&
+               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or
+                   MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or
+                   MeetingCleanupAction.RepairSpeakerLabels;
     }
 
     public static string GetReason(MeetingCleanupAction action) => CanDispatch(action)
         ? "This automatic action is outside the containment hold."
-        : "Automatic archive, merge, and transcript regeneration are paused while recovery evidence is established. Review and apply this action manually if appropriate.";
+        : "This change requires a high-confidence recommendation and a verified recovery copy. Review and apply it manually if appropriate.";
 }

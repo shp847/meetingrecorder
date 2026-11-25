@@ -6,6 +6,45 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class SessionManifestStoreTests
 {
     [Fact]
+    public async Task Concurrent_Status_Reads_Do_Not_Block_Atomic_Manifest_Updates()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+        var manifest = await store.CreateAsync(workDir, MeetingPlatform.Teams, "Fixture", Array.Empty<DetectionSignal>());
+        var path = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        var readers = Enumerable.Range(0, 3).Select(_ => Task.Run(async () =>
+        {
+            for (var index = 0; index < 100; index++)
+                Assert.Equal(manifest.SessionId, (await store.LoadAsync(path)).SessionId);
+        })).ToArray();
+        var writer = Task.Run(async () =>
+        {
+            for (var index = 0; index < 40; index++)
+                await store.SaveAsync(manifest with { DetectedTitle = $"Fixture {index}" }, path);
+        });
+        await Task.WhenAll(readers.Append(writer));
+        Assert.Equal("Fixture 39", (await store.LoadAsync(path)).DetectedTitle);
+    }
+
+    [Fact]
+    public async Task Save_Retries_A_Temporarily_Locked_Manifest()
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");
+        var store = new SessionManifestStore(new ArtifactPathBuilder());
+        var manifest = await store.CreateAsync(workDir, MeetingPlatform.Teams, "Fixture", Array.Empty<DetectionSignal>());
+        var path = Path.Combine(workDir, manifest.SessionId, "manifest.json");
+        await using (var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var save = store.SaveAsync(manifest with { DetectedTitle = "Recovered" }, path);
+            await Task.Delay(250);
+            Assert.False(save.IsCompleted);
+            await held.DisposeAsync();
+            await save;
+        }
+        Assert.Equal("Recovered", (await store.LoadAsync(path)).DetectedTitle);
+    }
+
+    [Fact]
     public async Task CreateAsync_Persists_A_Queued_Manifest_With_Default_Statuses()
     {
         var workDir = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"), "work");

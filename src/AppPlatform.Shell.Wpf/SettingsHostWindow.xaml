@@ -32,7 +32,7 @@
                        Text="Settings" />
             <TextBlock Margin="0,8,0,0"
                        Style="{StaticResource DialogBodyTextStyle}"
-                       Text="Use Settings to manage readiness, recording, processing, summaries, files, updates, and troubleshooting." />
+                       Text="Use Settings to manage readiness, recording, processing, files, updates, and troubleshooting." />
         </StackPanel>
 
         <Border Grid.Row="1"

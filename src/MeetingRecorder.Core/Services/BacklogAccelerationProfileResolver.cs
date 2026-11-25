@@ -16,7 +16,7 @@ internal static class BacklogAccelerationProfileResolver
     public static IReadOnlyList<BacklogAccelerationProfileOption> GetOptions() =>
     [
         new(BacklogAccelerationProfile.Normal, "Normal", "One staged worker; no scheduled or idle-capacity acceleration."),
-        new(BacklogAccelerationProfile.TranscriptOnlyDrain, "Transcript-only drain", "Publish transcripts first; optional labels and summaries stay deferred."),
+        new(BacklogAccelerationProfile.TranscriptOnlyDrain, "Transcript-only drain", "Publish transcripts first; optional speaker labels stay deferred."),
         new(BacklogAccelerationProfile.OvernightAcceleration, "Overnight acceleration", "Use the configured local overnight window for staged backlog work."),
         new(BacklogAccelerationProfile.IdleCapacityAcceleration, "Idle-capacity acceleration", "Use sustained local CPU capacity for daytime staged backlog work."),
         new(BacklogAccelerationProfile.OvernightAndIdleCapacityAcceleration, "Overnight + idle capacity", "Use both bounded acceleration policies; recording protection still wins."),

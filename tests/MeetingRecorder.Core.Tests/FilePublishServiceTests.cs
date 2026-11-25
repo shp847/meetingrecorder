@@ -6,6 +6,31 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class FilePublishServiceTests
 {
     [Fact]
+    public async Task PublishEnrichment_PreservesExistingSummaryInBothTranscriptFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var audioDir = Path.Combine(root, "audio");
+        var transcriptDir = Path.Combine(root, "transcripts");
+        var jsonDir = ArtifactPathBuilder.BuildTranscriptSidecarRoot(transcriptDir);
+        Directory.CreateDirectory(audioDir);
+        Directory.CreateDirectory(jsonDir);
+        await File.WriteAllTextAsync(Path.Combine(audioDir, "meeting.wav"), "audio");
+        await File.WriteAllTextAsync(Path.Combine(transcriptDir, "meeting.md"), "# Meeting\n\n## Summary\n\nOriginal summary\n\n## Transcript\nold");
+        await File.WriteAllTextAsync(Path.Combine(jsonDir, "meeting.json"), "{\"summary\":{\"overview\":\"Original summary\"},\"summarizationStatus\":{\"state\":\"Succeeded\"}}");
+        await File.WriteAllTextAsync(Path.Combine(jsonDir, "meeting.ready"), "ready");
+        var markdown = Path.Combine(root, "next.md");
+        var json = Path.Combine(root, "next.json");
+        await File.WriteAllTextAsync(markdown, "# Meeting\n\n## Transcript\nnew");
+        await File.WriteAllTextAsync(json, "{\"summary\":null,\"segments\":[]}");
+
+        await new FilePublishService().PublishEnrichmentAsync(markdown, json, audioDir, transcriptDir, "meeting");
+
+        Assert.Contains("Original summary", await File.ReadAllTextAsync(Path.Combine(transcriptDir, "meeting.md")));
+        Assert.Contains("Original summary", await File.ReadAllTextAsync(Path.Combine(jsonDir, "meeting.json")));
+        Assert.Contains("new", await File.ReadAllTextAsync(Path.Combine(transcriptDir, "meeting.md")));
+    }
+
+    [Fact]
     public async Task PublishAudioAsync_Normalizes_Published_Wav_To_Speech_Optimized_Format()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

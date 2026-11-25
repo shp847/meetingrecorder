@@ -231,7 +231,7 @@ internal static class WpfRenderHarness
                 SyntheticShellState.ImportReviewInvalid => "import-review-invalid",
                 SyntheticShellState.MeetingDetailClosed => "meeting-detail-closed",
                 SyntheticShellState.VoiceProfileDeleteCancelled => "voice-profile-delete-cancelled",
-                SyntheticShellState.HostedSummaryConsentCancelled => "hosted-summary-consent-cancelled",
+                SyntheticShellState.RetiredSummarySettings => "hosted-summary-consent-cancelled",
                 SyntheticShellState.PermanentDeleteCancelled => "permanent-delete-cancelled",
                 SyntheticShellState.SettingsRecordingSaved => "settings-recording-saved",
                 SyntheticShellState.SettingsRecording => "settings-recording",
@@ -239,10 +239,11 @@ internal static class WpfRenderHarness
                 SyntheticShellState.Processing => "processing",
                 SyntheticShellState.SelectionActive => "selection-active",
                 SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
+                SyntheticShellState.CleanupRecovery => "cleanup-recovery",
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
@@ -264,6 +265,18 @@ internal static class WpfRenderHarness
                     {
                         WaitForCleanupRecommendation(window);
                         WriteProgress(progressPath, "cleanup-recommendation-loaded");
+                    }
+                    if (state == SyntheticShellState.CleanupRecovery)
+                    {
+                        var restore = RequireElement<Button>(window, "RestoreAutomaticBackupButton");
+                        var transcript = Path.Combine(config.TranscriptOutputDir, "synthetic-recovery.md");
+                        WaitForCondition(window.Dispatcher, () => restore.IsVisible &&
+                            RequireElement<Button>(window, "RefreshMeetingsButton").IsEnabled, TimeSpan.FromSeconds(10));
+                        if (!restore.IsVisible) throw new InvalidOperationException("Recovery action was not shown.");
+                        restore.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        WaitForCondition(window.Dispatcher, () => File.Exists(transcript), TimeSpan.FromSeconds(10));
+                        if (!File.Exists(transcript) || File.ReadAllText(transcript) != "original transcript")
+                            throw new InvalidOperationException("Recovery did not restore the original transcript.");
                     }
                 }
             }
@@ -300,7 +313,7 @@ internal static class WpfRenderHarness
             }
 
             IReadOnlyList<string> settingsInteractionTrace = Array.Empty<string>();
-            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.SettingsImportInbox or SyntheticShellState.HostedSummaryConsentCancelled or SyntheticShellState.VoiceProfileDeleteCancelled)
+            if (state is SyntheticShellState.SettingsRecording or SyntheticShellState.SettingsRecordingSaved or SyntheticShellState.SettingsImportInbox or SyntheticShellState.RetiredSummarySettings or SyntheticShellState.VoiceProfileDeleteCancelled)
             {
                 if (!settingsAction.Focus())
                 {
@@ -315,9 +328,9 @@ internal static class WpfRenderHarness
                 FlushDispatcher(settingsWindow.Dispatcher, DispatcherPriority.Render);
                 WriteProgress(progressPath, "settings-opened");
 
-                if (state == SyntheticShellState.HostedSummaryConsentCancelled)
+                if (state == SyntheticShellState.RetiredSummarySettings)
                 {
-                    return CaptureHostedSummaryConsentCancellation(
+                    return CaptureRetiredSummarySettingsSafe(
                         window,
                         settingsWindow,
                         liveConfig,
@@ -383,6 +396,7 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(window, "SelectedMeetingInspectorTitleTextBlock"),
                     RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder"),
                     RequireElement<TextBlock>(window, "MeetingCleanupReviewBannerTextBlock"),
+                    RequireElement<Button>(window, "RestoreAutomaticBackupButton"),
                     RequireElement<TextBlock>(window, "DashboardModelReadinessTextBlock"),
                 }
                 : new FrameworkElement[]
@@ -425,7 +439,7 @@ internal static class WpfRenderHarness
             return config;
         }
 
-        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed))
+        if (state is not (SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed))
         {
             return config;
         }
@@ -436,6 +450,7 @@ internal static class WpfRenderHarness
                 ? MeetingsViewPreset.NeedsAttention
                 : MeetingsViewPreset.Processing,
             MeetingsViewPresetInitialized = true,
+            SmartCleanupEnabled = state is SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery ? false : config.SmartCleanupEnabled,
         };
         var pathBuilder = new ArtifactPathBuilder();
         var sessionId = "synthetic-processing";
@@ -470,13 +485,32 @@ internal static class WpfRenderHarness
         };
         var manifestPath = Path.Combine(sessionRoot, "manifest.json");
         new SessionManifestStore(pathBuilder).SaveAsync(manifest, manifestPath).GetAwaiter().GetResult();
-        if (state is SyntheticShellState.CleanupRecommendation or SyntheticShellState.PermanentDeleteCancelled)
+        if (state is SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.PermanentDeleteCancelled)
         {
             var artifactPath = Path.Combine(
                 processingConfig.AudioOutputDir,
                 pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, manifest.DetectedTitle) + ".wav");
             Directory.CreateDirectory(Path.GetDirectoryName(artifactPath)!);
             File.WriteAllBytes(artifactPath, Array.Empty<byte>());
+            if (state is SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery)
+            {
+                var recovery = new AutomaticMeetingRecoveryService();
+                var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(processingConfig.AudioOutputDir);
+                var stem = pathBuilder.BuildFileStem(MeetingPlatform.Teams, startedAtUtc, manifest.DetectedTitle);
+                Task.Run(async () =>
+                {
+                    var transcript = Path.Combine(processingConfig.TranscriptOutputDir, "synthetic-recovery.md");
+                    if (state == SyntheticShellState.CleanupRecovery)
+                    {
+                        Directory.CreateDirectory(processingConfig.TranscriptOutputDir);
+                        await File.WriteAllTextAsync(transcript, "original transcript");
+                    }
+                    var snapshot = await recovery.PrepareAsync(archiveRoot, "synthetic-recovery", "Archive", [stem],
+                        state == SyntheticShellState.CleanupRecovery ? [artifactPath, transcript] : [artifactPath]);
+                    await recovery.SetStateAsync(snapshot, "Completed");
+                    if (state == SyntheticShellState.CleanupRecovery) File.Delete(transcript);
+                }).GetAwaiter().GetResult();
+            }
         }
         configStore.SaveAsync(processingConfig).GetAwaiter().GetResult();
         return processingConfig;
@@ -1095,105 +1129,37 @@ internal static class WpfRenderHarness
         return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
     }
 
-    private static WpfRenderEvidence CaptureHostedSummaryConsentCancellation(
-        Window window,
-        Window settingsWindow,
-        LiveAppConfig liveConfig,
-        int logicalWidth,
-        int logicalHeight,
-        double rasterScale,
-        string rootDirectory)
+    private static WpfRenderEvidence CaptureRetiredSummarySettingsSafe(
+        Window window, Window settingsWindow, LiveAppConfig liveConfig,
+        int logicalWidth, int logicalHeight, double rasterScale, string rootDirectory)
     {
-        var scaleToken = ((int)Math.Round(rasterScale * 100d)).ToString();
-        var screenshotPath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-{logicalWidth}x{logicalHeight}-{scaleToken}.png");
-        var automationTracePath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-automation-tree-{scaleToken}.txt");
-        var keyboardTracePath = Path.Combine(rootDirectory, $"hosted-summary-consent-cancelled-keyboard-trace-{scaleToken}.txt");
-        RequireElement<Button>(settingsWindow, "SettingsSummariesSectionButton").RaiseEvent(
-            new RoutedEventArgs(Button.ClickEvent));
-        var summaryEnabled = RequireElement<CheckBox>(window, "ConfigSummaryGenerationEnabledCheckBox");
-        var providerPreference = RequireElement<ComboBox>(window, "ConfigSummaryProviderPreferenceComboBox");
-        var saveChanges = RequireElement<Button>(settingsWindow, "SaveChangesButton");
-        var footerStatus = RequireElement<TextBlock>(settingsWindow, "FooterStatusTextBlock");
-        summaryEnabled.IsChecked = true;
-        providerPreference.SelectedValue = MeetingSummaryProviderPreference.OpenAiOnly;
-        WaitForCondition(settingsWindow.Dispatcher, () => saveChanges.IsEnabled, TimeSpan.FromSeconds(10));
-        if (!saveChanges.Focus())
-        {
-            throw new InvalidOperationException("Save Changes must accept focus before hosted-summary consent.");
-        }
-
-        Window? consentWindow = null;
-        var dialogObserved = false;
-        var keyboardTrace = new List<string>();
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        var cancellationTimer = new DispatcherTimer(DispatcherPriority.Send, window.Dispatcher)
-        {
-            Interval = TimeSpan.FromMilliseconds(25),
-        };
-        cancellationTimer.Tick += (_, _) =>
-        {
-            consentWindow ??= Application.Current.Windows.Cast<Window>().SingleOrDefault(candidate =>
-                IsVisibleCaptureWindow(candidate, window) && !ReferenceEquals(candidate, settingsWindow));
-            if (consentWindow is null)
-            {
-                if (DateTime.UtcNow >= deadline)
-                {
-                    cancellationTimer.Stop();
-                    window.Close();
-                }
-
-                return;
-            }
-
-            cancellationTimer.Stop();
-            dialogObserved = true;
-            consentWindow.UpdateLayout();
-            FlushDispatcher(consentWindow.Dispatcher, DispatcherPriority.Render);
-            var disclosure = FindDescendant<TextBlock>(consentWindow, textBlock =>
-                AutomationProperties.GetName(textBlock).Contains("published transcript text", StringComparison.Ordinal));
-            var authorizeButton = FindDescendant<Button>(consentWindow, button =>
-                string.Equals(AutomationProperties.GetName(button), "Authorize hosted summaries", StringComparison.Ordinal));
-            var cancelButton = FindDescendant<Button>(consentWindow, button =>
-                string.Equals(AutomationProperties.GetName(button), "Cancel hosted summary authorization", StringComparison.Ordinal));
-            if (disclosure is null || authorizeButton is null || cancelButton is null)
-            {
-                throw new InvalidOperationException("Hosted-summary consent must expose its disclosure and named choices.");
-            }
-
-            SaveScreenshot(consentWindow, screenshotPath, rasterScale);
-            File.WriteAllLines(automationTracePath, CreateAutomationTrace(disclosure, authorizeButton, cancelButton));
-            if (!authorizeButton.Focus())
-            {
-                throw new InvalidOperationException("Hosted-summary authorization must accept keyboard focus.");
-            }
-
-            keyboardTrace.Add("Focus: " + GetFocusedName());
-            var source = PresentationSource.FromVisual(consentWindow)
-                ?? throw new InvalidOperationException("Hosted-summary consent has no presentation source for Escape validation.");
-            consentWindow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
-            {
-                RoutedEvent = Keyboard.PreviewKeyDownEvent,
-            });
-        };
-
-        cancellationTimer.Start();
-        saveChanges.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        cancellationTimer.Stop();
-        FlushDispatcher(window.Dispatcher, DispatcherPriority.Background);
-        if (!dialogObserved || consentWindow?.IsVisible == true)
-        {
-            throw new InvalidOperationException("Hosted-summary consent did not open and cancel through Escape.");
-        }
-
-        if (liveConfig.Current.SummaryHostedRouteConsentVersion >= SummaryExperienceResolver.HostedRouteConsentPolicyVersion ||
-            !string.Equals(footerStatus.Text, "Hosted summary changes were not saved.", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Cancelling hosted-summary consent must leave the isolated profile unchanged.");
-        }
-
-        keyboardTrace.Add("Escape: " + GetFocusedName());
-        File.WriteAllLines(keyboardTracePath, keyboardTrace);
-        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationTracePath, keyboardTracePath);
+        var sectionButton = RequireElement<Button>(settingsWindow, "SettingsSummariesSectionButton");
+        if (sectionButton.IsVisible) throw new InvalidOperationException("The retired section must not be visible.");
+        sectionButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var summaryPanel = RequireElement<ScrollViewer>(window, "SettingsSummariesSectionPanel");
+        var processingPanel = RequireElement<ScrollViewer>(window, "SettingsProcessingSectionPanel");
+        settingsWindow.UpdateLayout();
+        FlushDispatcher(settingsWindow.Dispatcher, DispatcherPriority.Render);
+        if (summaryPanel.IsVisible || !processingPanel.IsVisible)
+            throw new InvalidOperationException("Legacy summary navigation must open Processing.");
+        RequireElement<CheckBox>(window, "ConfigSummaryGenerationEnabledCheckBox").IsChecked = true;
+        RequireElement<TextBox>(window, "ConfigSummaryRequestTimeoutTextBox").Text = "invalid";
+        var save = RequireElement<Button>(settingsWindow, "SaveChangesButton");
+        WaitForCondition(settingsWindow.Dispatcher, () => save.IsEnabled, TimeSpan.FromSeconds(10));
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var footer = RequireElement<TextBlock>(settingsWindow, "FooterStatusTextBlock");
+        WaitForCondition(settingsWindow.Dispatcher,
+            () => footer.Text.Contains("Config saved", StringComparison.Ordinal), TimeSpan.FromSeconds(10));
+        if (liveConfig.Current.SummaryGenerationMode != MeetingSummaryGenerationMode.Disabled ||
+            !footer.Text.Contains("Config saved", StringComparison.Ordinal))
+            throw new InvalidOperationException("Hidden legacy values must not enable summaries or block settings save.");
+        var screenshotPath = Path.Combine(rootDirectory, "retired-summary-settings.png");
+        var automationPath = Path.Combine(rootDirectory, "retired-summary-settings-automation.txt");
+        var keyboardPath = Path.Combine(rootDirectory, "retired-summary-settings-keyboard.txt");
+        SaveScreenshot(settingsWindow, screenshotPath, rasterScale);
+        File.WriteAllLines(automationPath, CreateAutomationTrace(sectionButton, processingPanel, footer));
+        File.WriteAllText(keyboardPath, "Retired route redirected to Processing; unrelated settings saved.");
+        return new WpfRenderEvidence(rootDirectory, screenshotPath, automationPath, keyboardPath);
     }
 
     private static WpfRenderEvidence CaptureVoiceProfileDeleteCancellation(
@@ -1340,6 +1306,7 @@ internal static class WpfRenderHarness
         Processing,
         SelectionActive,
         CleanupRecommendation,
+        CleanupRecovery,
         EmptyHealthy,
         ImportReviewSetupBlocked,
         ImportReviewReady,
@@ -1348,7 +1315,7 @@ internal static class WpfRenderHarness
         SettingsRecordingSaved,
         SettingsImportInbox,
         PermanentDeleteCancelled,
-        HostedSummaryConsentCancelled,
+        RetiredSummarySettings,
         VoiceProfileDeleteCancelled,
         MeetingDetailClosed,
     }

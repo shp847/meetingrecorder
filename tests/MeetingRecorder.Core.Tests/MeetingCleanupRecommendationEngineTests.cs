@@ -209,9 +209,9 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
     }
 
     [Fact]
-    public void Analyze_Returns_Automatic_GenerateSummary_For_Missing_Summary_With_Readable_Transcript()
+    public void Analyze_DoesNotRecommendSummary_ForLegacyEnabledInspection()
     {
-        var recommendation = AnalyzeSingle(
+        var inspection =
             CreateInspection(
                 "summary-missing",
                 "Client planning",
@@ -228,12 +228,10 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                     DateTimeOffset.Parse("2026-08-16T14:30:00Z"),
                     "Client planning | Microsoft Teams"),
                 canGenerateSummary: true,
-                hasReadableStructuredTranscript: true));
+                hasReadableStructuredTranscript: true);
 
-        Assert.Equal(MeetingCleanupAction.GenerateSummary, recommendation.Action);
-        Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
-        Assert.True(recommendation.CanApplyAutomatically);
-        Assert.Equal("generate-missing-ai-summary", recommendation.ReasonCode);
+        Assert.DoesNotContain(MeetingCleanupRecommendationEngine.Analyze([inspection]),
+            recommendation => recommendation.Action == MeetingCleanupAction.GenerateSummary);
     }
 
     [Fact]

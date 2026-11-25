@@ -5,6 +5,18 @@ namespace MeetingRecorder.Core.Tests;
 public sealed class MainWindowStartupSourceTests
 {
     [Fact]
+    public void StartupAndTimer_DoNotProbeRetiredSummaryProviders()
+    {
+        var source = File.ReadAllText(GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs"));
+        var warmupStart = source.IndexOf("private async Task RunStartupWarmupAsync", StringComparison.Ordinal);
+        var warmupEnd = source.IndexOf("private void ScheduleDeferredStartupMaintenance", warmupStart, StringComparison.Ordinal);
+        var timerStart = source.IndexOf("private async void UpdateTimer_OnTick", StringComparison.Ordinal);
+        var timerEnd = source.IndexOf("private void TryScheduleMeetingCleanupAutomaticBatchRefill", timerStart, StringComparison.Ordinal);
+        Assert.True(warmupStart >= 0 && warmupEnd > warmupStart && timerStart >= 0 && timerEnd > timerStart);
+        Assert.DoesNotContain("SummaryModelsAsync", source[warmupStart..warmupEnd], StringComparison.Ordinal);
+        Assert.DoesNotContain("SummarySchedulerApprovalAsync", source[timerStart..timerEnd], StringComparison.Ordinal);
+    }
+    [Fact]
     public void OnLoaded_Queues_Startup_Warmup_Without_Awaiting_Heavy_Startup_Work()
     {
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");

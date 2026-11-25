@@ -198,6 +198,25 @@ public sealed class StagedBacklogWorkModelTests
     }
 
     [Fact]
+    public async Task Store_Retries_A_Temporarily_Locked_Ledger_Without_Losing_Work()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var storePath = Path.Combine(root, "staged-backlog.json");
+        var store = new StagedBacklogWorkStore(storePath);
+        var work = StagedBacklogWorkMigration.CreateLegacyFullPass(Id(1), "session", "manifest", "revision", NowUtc);
+        await store.SaveAsync([work]);
+        await using (var held = new FileStream(storePath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var save = store.SaveAsync([work with { SessionId = "updated" }]);
+            await Task.Delay(250);
+            Assert.False(save.IsCompleted);
+            await held.DisposeAsync();
+            await save;
+        }
+        Assert.Equal("updated", Assert.Single(await store.LoadAsync()).SessionId);
+    }
+
+    [Fact]
     public async Task Store_Rejects_Corrupt_Contents_Without_Treating_Them_As_An_Empty_Queue()
     {
         var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));

@@ -60,12 +60,6 @@ internal static class Program
             var manifestStore = new SessionManifestStore(pathBuilder);
             var transcriptionThreadCount = BackgroundProcessingPolicy.GetTranscriptionThreadCount(config, Environment.ProcessorCount);
             var diarizationThreadCount = BackgroundProcessingPolicy.GetDiarizationThreadCount(config, Environment.ProcessorCount);
-            using var summaryHttpClient = new HttpClient();
-            var modelProxyClient = new ModelProxyClient(summaryHttpClient);
-            var summarizationProvider = new MeetingSummarizationProvider(
-                FileSummarySecretStore.CreateDefault(),
-                new SummaryChatClient(summaryHttpClient),
-                modelProxyClient);
             var voiceProfileStore = new VoiceProfileStore(AppDataPaths.GetVoiceProfileStorePath());
             var speakerNameCorrectionService = new SpeakerNameCorrectionService(
                 new MeetingOutputCatalogService(pathBuilder),
@@ -81,7 +75,7 @@ internal static class Program
                 CreateDiarizationProvider(config, diarizationThreadCount, logger, resolvedConfigPath),
                 new TranscriptRenderer(),
                 new FilePublishService(),
-                summarizationProvider,
+                NoOpMeetingSummarizationProvider.Instance,
                 speakerNameCorrectionService: speakerNameCorrectionService);
 
             var published = await processor.ProcessAsync(manifestPath, config, stage);

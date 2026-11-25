@@ -51,9 +51,11 @@ public sealed class AppDataPathsTests
         using (AppDataPaths.PushTestAppRoot(testRoot))
         {
             Assert.Equal(Path.GetFullPath(testRoot), AppDataPaths.GetAppRoot());
+            Assert.Equal(Path.GetFullPath(testRoot), AppDataPaths.GetManagedAppRootForCurrentContext());
             Assert.Equal(AppDataPaths.GetManagedAppRoot(), AppDataPaths.GetAppRoot(explicitBaseDirectory));
         }
 
         Assert.Equal(defaultRoot, AppDataPaths.GetAppRoot());
+        Assert.Equal(AppDataPaths.GetManagedAppRoot(), AppDataPaths.GetManagedAppRootForCurrentContext());
     }
 }

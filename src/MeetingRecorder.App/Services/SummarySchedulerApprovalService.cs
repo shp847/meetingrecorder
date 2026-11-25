@@ -31,7 +31,7 @@ internal sealed class SummarySchedulerApprovalService
     public SummarySchedulerApprovalService(string? path = null)
     {
         _path = path ?? Path.Combine(
-            AppDataPaths.GetManagedAppRoot(),
+            AppDataPaths.GetManagedAppRootForCurrentContext(),
             "cache",
             "summary-scheduler-approval-v1.json");
     }

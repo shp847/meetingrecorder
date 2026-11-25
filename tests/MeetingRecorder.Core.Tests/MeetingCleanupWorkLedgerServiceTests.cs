@@ -9,6 +9,164 @@ public sealed class MeetingCleanupWorkLedgerServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "MeetingRecorder.Tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void DefaultLedger_UsesTheIsolatedAppRootDuringFixtures()
+    {
+        using var scope = AppDataPaths.PushTestAppRoot(_root);
+        new MeetingCleanupWorkLedgerService().Record("fixture", CleanupWorkState.Pending);
+        Assert.True(File.Exists(Path.Combine(_root, "cache", "meeting-cleanup-work-ledger-v1.json")));
+    }
+
+    [Fact]
+    public void RetiredSummaryWork_DoesNotHideOrChangeOtherCleanupWork()
+    {
+        var ledger = CreateLedger();
+        ledger.Record("summary", CleanupWorkState.Queued, "summary-manifest", action: MeetingCleanupAction.GenerateSummary);
+        ledger.Record("labels", CleanupWorkState.Failed, "labels-manifest", action: MeetingCleanupAction.GenerateSpeakerLabels);
+
+        Assert.Equal(1, ledger.RetireObsoleteSummaryWork());
+        var entries = ledger.GetEntries().ToDictionary(entry => entry.Fingerprint);
+        Assert.Equal(CleanupWorkState.Retired, entries["summary"].State);
+        Assert.Equal(CleanupWorkState.Failed, entries["labels"].State);
+        Assert.DoesNotContain("summary-manifest", ledger.GetQueuedManifestPaths());
+        Assert.Equal(0, ledger.RetireObsoleteSummaryWork());
+    }
+
+    [Fact]
+    public async Task PublishedTranscript_DoesNotMarkFailedSpeakerLabelingComplete()
+    {
+        var builder = new ArtifactPathBuilder();
+        var store = new SessionManifestStore(builder);
+        var manifest = await store.CreateAsync(_root, MeetingPlatform.Manual, "Label failure", Array.Empty<DetectionSignal>());
+        var path = Path.Combine(builder.BuildSessionRoot(_root, manifest.SessionId), "manifest.json");
+        var now = DateTimeOffset.UtcNow;
+        await store.SaveAsync(manifest with
+        {
+            State = SessionState.Published,
+            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, now, null),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Failed, now, "Worker timed out"),
+        }, path);
+        var ledger = CreateLedger();
+        ledger.Record("labels", CleanupWorkState.Processing, path, action: MeetingCleanupAction.GenerateSpeakerLabels);
+
+        await ledger.ReconcileLiveManifestStatesAsync(store, new HashSet<string>());
+
+        var entry = Assert.Single(ledger.GetEntries());
+        Assert.Equal(CleanupWorkState.Failed, entry.State);
+        Assert.Equal(1, ledger.ReleaseTransientFailures(now.AddMinutes(2)));
+    }
+
+    [Fact]
+    public async Task WorkerExitSuccess_DoesNotMaskAFailedLabelStage()
+    {
+        var builder = new ArtifactPathBuilder();
+        var store = new SessionManifestStore(builder);
+        var manifest = await store.CreateAsync(_root, MeetingPlatform.Manual, "Label failure", Array.Empty<DetectionSignal>());
+        var path = Path.Combine(builder.BuildSessionRoot(_root, manifest.SessionId), "manifest.json");
+        var now = DateTimeOffset.UtcNow;
+        await store.SaveAsync(manifest with
+        {
+            State = SessionState.Published,
+            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, now, null),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Failed, now, "timed out on private source"),
+        }, path);
+        var ledger = CreateLedger();
+        ledger.Record("labels", CleanupWorkState.Processing, path, action: MeetingCleanupAction.GenerateSpeakerLabels);
+
+        await ledger.ReconcileCompletionForManifestAsync(store, path, workerSucceeded: true, detail: null);
+
+        var entry = Assert.Single(ledger.GetEntries());
+        Assert.Equal(CleanupWorkState.Failed, entry.State);
+        Assert.DoesNotContain("private source", entry.Detail);
+    }
+
+    [Fact]
+    public async Task LegacyFailedLabelWork_UsesUnderlyingTransientTranscriptionFailure()
+    {
+        var builder = new ArtifactPathBuilder();
+        var store = new SessionManifestStore(builder);
+        var manifest = await store.CreateAsync(_root, MeetingPlatform.Manual, "Legacy failure", Array.Empty<DetectionSignal>());
+        var path = Path.Combine(builder.BuildSessionRoot(_root, manifest.SessionId), "manifest.json");
+        var now = DateTimeOffset.UtcNow;
+        await store.SaveAsync(manifest with
+        {
+            State = SessionState.Failed,
+            ErrorSummary = "The process cannot access the file because it is being used by another process.",
+            TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Failed, now, "file in use"),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Skipped, now, "Skipped because source processing failed."),
+        }, path);
+        var ledger = CreateLedger();
+        ledger.Record("legacy-label", CleanupWorkState.Failed, path, "Work could not be completed", MeetingCleanupAction.GenerateSpeakerLabels);
+
+        await ledger.ReconcileTerminalManifestStatesAsync(store);
+
+        var entry = Assert.Single(ledger.GetEntries());
+        Assert.Equal(CleanupWorkState.Failed, entry.State);
+        Assert.Contains("Temporary", entry.Detail);
+        Assert.Equal(1, ledger.ReleaseTransientFailures(now.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void TransientFailures_AreRetriedWithBoundedDurableBackoff()
+    {
+        var path = Path.Combine(_root, "ledger.json");
+        var ledger = new MeetingCleanupWorkLedgerService(path);
+        ledger.Record("labels", CleanupWorkState.Failed, detail: "Worker timed out", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        var now = DateTimeOffset.UtcNow;
+        Assert.Equal(0, ledger.ReleaseTransientFailures(now));
+        Assert.Equal(1, ledger.ReleaseTransientFailures(now.AddMinutes(2)));
+        for (var retry = 1; retry <= 3; retry++)
+        {
+            ledger = new MeetingCleanupWorkLedgerService(path);
+            Assert.Equal(retry, Assert.Single(ledger.GetEntries()).AutomaticRetryCount);
+            ledger.Record("labels", CleanupWorkState.Failed, detail: "Worker timed out");
+            Assert.Equal(retry < 3 ? 1 : 0, ledger.ReleaseTransientFailures(DateTimeOffset.UtcNow.AddMinutes(31)));
+        }
+        ledger.Record("other", CleanupWorkState.Failed, detail: "Missing model", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        Assert.Equal(0, ledger.ReleaseTransientFailures(DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
+    [Fact]
+    public void ProtectedFailure_RetriesOnlyAfterRecoveryWasVerified()
+    {
+        var ledger = CreateLedger();
+        ledger.Record("legacy", CleanupWorkState.Failed, detail: "timed out", action: MeetingCleanupAction.Archive);
+        ledger.Record("safe", CleanupWorkState.Failed, detail: "timed out", action: MeetingCleanupAction.Merge, recoveryVerified: true);
+        Assert.Equal(1, ledger.ReleaseTransientFailures(DateTimeOffset.UtcNow.AddMinutes(2)));
+        var entries = ledger.GetEntries().ToDictionary(entry => entry.Fingerprint);
+        Assert.Equal(CleanupWorkState.Failed, entries["legacy"].State);
+        Assert.Equal(CleanupWorkState.Pending, entries["safe"].State);
+    }
+
+    [Fact]
+    public void ChangedInput_ReleasesOnlyARecoverableFailureAndResetsAttempts()
+    {
+        var ledger = CreateLedger();
+        ledger.Record("labels", CleanupWorkState.Failed, detail: "timeout", action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("unsafe", CleanupWorkState.Failed, action: MeetingCleanupAction.Archive);
+        Assert.False(ledger.ObserveFailureInputRevision("labels", "first"));
+        Assert.False(ledger.ObserveFailureInputRevision("unsafe", "first"));
+        Assert.True(ledger.ObserveFailureInputRevision("labels", "second"));
+        Assert.False(ledger.ObserveFailureInputRevision("unsafe", "second"));
+        var entries = ledger.GetEntries().ToDictionary(entry => entry.Fingerprint);
+        Assert.Equal(CleanupWorkState.Pending, entries["labels"].State);
+        Assert.Equal(0, entries["labels"].AutomaticRetryCount);
+        Assert.Equal(CleanupWorkState.Failed, entries["unsafe"].State);
+    }
+
+    [Fact]
+    public void LegacyPublishedLabelRecovery_IsReleasedAtMostOnce()
+    {
+        var ledger = CreateLedger();
+        ledger.Record("legacy", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSpeakerLabels);
+        ledger.Record("other", CleanupWorkState.Failed, action: MeetingCleanupAction.Archive);
+        Assert.True(ledger.ReleaseLegacyPublishedLabelFailure("legacy"));
+        ledger.Record("legacy", CleanupWorkState.Failed, detail: "still failed");
+        Assert.False(ledger.ReleaseLegacyPublishedLabelFailure("legacy"));
+        Assert.False(ledger.ReleaseLegacyPublishedLabelFailure("other"));
+        Assert.Equal(CleanupWorkState.Failed, ledger.GetEntries().Single(entry => entry.Fingerprint == "legacy").State);
+    }
+
+    [Fact]
     public void Legacy_Queued_Entry_Migrates_To_Manual_Review_And_Does_Not_AutoRetry()
     {
         var ledger = CreateLedger();
@@ -197,9 +355,9 @@ public sealed class MeetingCleanupWorkLedgerServiceTests : IDisposable
         var released = ledger.ReleaseFailedSafeWork(["labels", "summary", "archive"]);
         var entries = ledger.GetEntries().ToDictionary(entry => entry.Fingerprint);
 
-        Assert.Equal(2, released);
+        Assert.Equal(1, released);
         Assert.Equal(CleanupWorkState.Pending, entries["labels"].State);
-        Assert.Equal(CleanupWorkState.Pending, entries["summary"].State);
+        Assert.Equal(CleanupWorkState.Failed, entries["summary"].State);
         Assert.Equal(CleanupWorkState.Failed, entries["archive"].State);
     }
 

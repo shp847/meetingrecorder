@@ -1,4 +1,4 @@
-﻿# Meeting Recorder Architecture
+# Meeting Recorder Architecture
 
 This document describes the current implementation architecture for the Meeting Recorder app as it exists in the repository today. Product behavior and scope live in [PRODUCT_REQUIREMENTS.md](C:\code\Meeting Recorder\PRODUCT_REQUIREMENTS.md). Deployment and first-run guidance live in [SETUP.md](C:\code\Meeting Recorder\SETUP.md).
 
@@ -93,7 +93,6 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
   - final audio preparation
   - Whisper transcription
   - optional diarization sidecar integration
-  - optional configured meeting summarization after diarization
   - transcript and ready-marker publishing
 
 The worker is launched as a separate process so transcription or diarization failures do not destabilize the desktop UI.
@@ -182,9 +181,7 @@ Responsibilities:
 - route detail-window maintenance events back through `MainWindow` service methods, then refresh the meeting library and open detail state after mutations
 - keep the lower Meetings area focused on collapsible cleanup recommendation review rather than single-meeting metadata and controls
 - render transcript paragraphs in the detail window by coalescing consecutive same-speaker segments from local JSON sidecars, with app-owned Markdown fallback when structured JSON is not available
-- render meeting summaries in the detail window when summary generation is enabled and a summary is available
-- show a clear disabled, unconfigured, unavailable, or failed summary state without implying that transcript generation failed
-- allow one-meeting summary generation or retry from the detail window without re-running transcription or speaker labeling
+- preserve historical summaries in transcript files without exposing summary controls in the detail window
 - rename published meetings and keep stems aligned
 - expose transcript re-generation for failed sessions and audio-only sessions
 - allow project metadata edits for one meeting from the detail window
@@ -223,9 +220,6 @@ Responsibilities:
 - keep speaker-label repair transcript-first: suspicious already-published speaker explosions become `Repair Speaker Labels` recommendations, and repair queues seed `transcription.snapshot.json` from the existing JSON or Markdown transcript with old speaker IDs removed before the worker re-runs diarization
 - keep over-segmented diarization recoverable: before the worker rejects an unsupported too-many-speakers result, it extracts local speaker embeddings for the candidate turns and lets the cluster-merge service collapse acoustically similar over-split clusters; labels are still skipped if the rescued catalog remains outside the supported automatic range
 - keep speaker-name refresh and undo metadata-only: `Refresh Local Suggestions` re-matches existing speaker voice samples against the local profile store without transcription, diarization, audio writes, learning, or worker queueing, while `Undo Profile Names` clears only profile-sourced attribution from current-meeting artifacts and stores only scoped negative feedback for `meetingId + speakerId + profileId`; user-confirmed name edits validate Diarization Label IDs, prior identity values, and an opaque artifact revision before a recoverable manifest/JSON/Markdown transaction
-- keep AI summary generation explicit and configurable under Settings, with local-first ModelProxy behavior and hosted OpenAI fallback only when the user has provided an API key; transcript-only drain profiles skip automatic summaries while leaving manual per-meeting summary generation available later
-- resolve summary action labels, eligibility, progress, success, and blocked states from one typed UI-copy taxonomy shared by Settings and meeting details; blocked copy must state its condition, safety boundary, and remedy without exposing raw provider, exception, path, key, transcript, or embedding data
-- store summary API keys and local bearer keys outside plaintext app config, and never write key material into logs, transcript artifacts, or status text
 - keep update-check behavior, manual update controls, and the update feed URL inside `Updates` and `Advanced`
 - keep infrastructure-heavy paths and troubleshooting overrides hidden by default under `Advanced`
 - expose About details, setup/help entry points, logs/data shortcuts, and release-page links from the header-level `Help` dialog
@@ -255,14 +249,11 @@ The durable session lifecycle uses these states:
 6. The worker loads the manifest, merges audio, and publishes the final WAV.
 7. If transcription succeeds, the worker persists a durable per-session transcript snapshot before optional speaker labeling begins.
 8. If speaker labeling succeeds, the worker can compute local speaker-cluster embeddings, retry over-segmented clustering with progressively stricter thresholds, prefer compact automatic speaker counts, merge acoustically similar over-split clusters, drop tiny fragment-only speaker IDs from the published catalog, match clusters against user-confirmed voice profiles, auto-apply only mature high-confidence names, keep lower-confidence matches as suggestions with decision reasons, and render transcript artifacts from the labeled segments. Later one-meeting or explicit selected-batch rematch, refresh, or undo actions update only speaker-name attribution and scoped profile feedback. Selected-batch rematch plans/revalidates each current meeting, dispatches serially, records only bounded local outcome metadata, and can cancel undispatched work; it does not re-run transcription or diarization.
-9. If summary generation is enabled and the active processing speed profile is not transcript-only drain, the worker runs summarization after speaker labeling succeeds, skips, or fails safely. The summary stage uses the final speaker-labeled transcript when labels are available and the plain transcript otherwise.
-10. If ModelProxy is configured and reachable, the summary stage sends a text-only, non-streaming Chat Completions request to the local OpenAI-compatible endpoint with web search disabled. If configured policy allows hosted fallback and the user has saved an OpenAI API key, the stage can retry through OpenAI when the local provider is unavailable.
-11. If summarization is disabled, unconfigured, unavailable, times out, or fails after all configured providers are tried, the manifest records a safe summary status and transcript publication continues. Summary failure never suppresses audio, transcript Markdown, transcript JSON, or `.ready` output.
 12. If optional speaker labeling crashes the worker process while DirectML acceleration is enabled, the queue first retries the same speaker-labeling work with CPU acceleration and preserves the selected speaker-labeling run mode. If CPU speaker labeling also crashes, or the original run was already CPU-only, the queue stamps the manifest with an internal skip-label override, switches future speaker labeling back to `Deferred`, and retries that manifest once without diarization, reusing the saved transcript snapshot instead of retranscribing the whole session.
 13. If microphone merging fails while loopback chunks are still readable, source-audio preparation falls back to a loopback-only WAV so transcript publishing can continue. If no usable source audio can be prepared, the processor and queue mark the manifest `Failed` instead of leaving it `Queued` for repeated startup retries.
 14. On startup, the queue first seals stale live-recording manifests that still have preserved raw chunks, stamps the end time from the newest usable audio chunk, requeues them for normal processing, then scans pending manifests for older stale post-transcription sessions and requeues those recoverable sessions once with the same skip-label override so backlog repair is durable across restarts.
 15. Pending-session resume order gives already-transcribed not-yet-published sessions the highest priority, so repaired backlog items publish before fresh untouched queue work.
-16. Worker launches always run at reduced OS priority so background jobs yield to foreground work. In `Responsive` mode, new background queue work also pauses while a live recording is active, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`. A versioned backlog profile controls only future staged admission: new configs begin `Normal`, while `Transcript-only drain`, `Overnight acceleration`, `Idle-capacity acceleration`, and `Overnight + idle capacity` activate their named bounded policies. Legacy configs migrate once to their existing combined behavior. In `Transcript-only drain`, the queue can run up to two transcript-only workers, skips speaker labels and automatic summaries, and publishes transcripts first. Explicit add/repair-speaker-label jobs carry a one-shot manifest override that bypasses both skip policies for one diarization attempt and is cleared afterward, including when the attempt fails safely.
+16. Worker launches always run at reduced OS priority so background jobs yield to foreground work. In `Responsive` mode, new background queue work also pauses while a live recording is active, and primary publish can complete without waiting on optional speaker labeling when that mode is `Deferred`. A versioned backlog profile controls only future staged admission: new configs begin `Normal`, while `Transcript-only drain`, `Overnight acceleration`, `Idle-capacity acceleration`, and `Overnight + idle capacity` activate their named bounded policies. Legacy configs migrate once to their existing combined behavior. In `Transcript-only drain`, the queue can run up to two transcript-only workers, skips speaker labels, and publishes transcripts first. Explicit add/repair-speaker-label jobs carry a one-shot manifest override that bypasses both skip policies for one diarization attempt and is cleared afterward, including when the attempt fails safely.
 17. Startup and pre-worker maintenance clean stale unlocked files from the diarization and transcription temp roots, with a one-time more aggressive cleanup pass after upgrade so orphaned temp files do not grow without bound. Published-session maintenance also normalizes manifests onto the retained published audio and deletes redundant bulky local work-cache files once a matching published recording exists.
 18. Before pending sessions are re-enqueued on startup, queued imported-source reprocessing manifests whose original published transcript artifacts already exist are archived out of `work` into `%LOCALAPPDATA%\MeetingRecorder\maintenance\archived-imported-source-work`, so stale reprocess jobs do not masquerade as the live backlog.
 19. When a published meeting row shares a stem with one of those stale imported-source manifests, the published artifacts remain the source of truth for display/openability instead of being downgraded by the queued manifest state.
@@ -435,7 +426,7 @@ Publish ordering:
 2. rename the final `.wav`, `.md`, and `.json` into place
 3. create `.ready` last
 
-Summaries are supplemental to this publish contract. When summary generation is enabled and succeeds, the transcript Markdown and JSON outputs should include the summary content and provider metadata. When summary generation is disabled, unconfigured, or fails, the app still publishes transcript artifacts and creates `.ready` as long as transcription succeeded.
+Existing summaries are preserved in transcript files across sidecar publication.
 
 If transcription fails:
 
@@ -444,23 +435,9 @@ If transcription fails:
 - `.ready` is not created
 - the manifest remains retryable
 
-## 9.1 Summary Provider Architecture
+## 9.1 Retired summary generation
 
-Meeting summaries use a provider abstraction separate from the WPF detail window and separate from transcript rendering. The processing worker owns automatic generation for newly processed meetings, and the app owns manual one-meeting generation or retry for already-published transcripts.
-
-Provider order is driven by Settings:
-
-- `LocalThenOpenAi` tries ModelProxy first and OpenAI second only when an OpenAI API key is configured.
-- `LocalOnly` tries ModelProxy and never sends transcript content to OpenAI.
-- `OpenAiOnly` skips ModelProxy and uses OpenAI only when the user has configured an API key.
-
-ModelProxy is treated as a local HTTP dependency, not an imported library or bundled service. Meeting Recorder now uses the portable Responses contract for transcript enrichment, keeps the provider abstraction isolated so a hosted OpenAI path can evolve independently, sends only the transcript and minimal meeting metadata needed for a summary, treats `GET /v1/models` as an OpenAI-shaped model list only, defaults to `gpt-5.4-mini` unless Settings names another model, and sends no-search summary and validation requests with `X-ModelProxy-Backend: app-server` and `X-ModelProxy-Web-Search: false`. Local-only summary requests also send `X-ModelProxy-Cloud: deny`, which can surface a structured `config_error` until the local backend is proved ready. Real ModelProxy transcript summary requests use an effective minimum timeout of 240 seconds because long no-search local requests can legitimately run longer than the lightweight synthetic validation path. The client reads ModelProxy routing headers (`X-ModelProxy-Request-Id`, requested/effective backend, web-search backend, app-server search support, and fallback reason), exposes them as safe metadata, and persists them with summary provider metadata when present. Structured `backend_busy` responses are retried with short backoff and reported as temporary saturation if retries are exhausted, not as generic endpoint reachability failures. Structured `cli_timeout` web-search failures advise narrowing the query or retrying without web search, while capability failures are treated as request-shape or feature-support problems. If a future ModelProxy request intentionally enables web search, the client tolerates CLI fallback and extends too-short web-search timeouts above ModelProxy's 45-second CLI-search bound. The streaming parser ignores SSE comment lines that start with `:` so keepalive/progress metadata cannot become assistant text, and terminal `event: error` frames or typed Responses stream errors are parsed like non-streaming structured ModelProxy errors instead of being classified as endpoint connectivity failures. Forced app-server web-search `400` responses are treated as a capability message with a retry-without-web-search path. Audio remains local-first: remote audio stays parked until `GET /v1/models` advertises `gpt-4o-transcribe` or `gpt-4o-transcribe-diarize`, and local Whisper plus local diarization remain the primary fallback on `audio_disabled`, `unsupported_model`, `backend_unavailable`, `backend_busy`, `timeout`, `quota`, `config_error`, or protocol mismatch.
-
-Hosted OpenAI fallback is opt-in because transcript text can leave the machine. API keys are entered in Settings, stored outside plaintext app config, never written to logs or transcript artifacts, and never echoed back after save.
-
-The summary schema is app-owned. A successful summary contains an overview, key points, decisions, action items, risks or open questions, provider/model metadata, generated timestamp, and transcript fingerprint. Long transcripts are summarized through deterministic chunking followed by a final combine pass. The processing worker persists matching successful summaries to `summary.snapshot.json` so repaired processing attempts can reuse summary content without another provider call.
-
-The WPF meeting detail window reads summary status and content from the published transcript JSON sidecar. It renders generated summaries as read-only sections and maps disabled, unconfigured, unavailable, failed, and in-progress states into non-error UI status. Manual generate/retry runs in the app process against the existing structured transcript JSON, updates the JSON sidecar and Markdown summary section on success, updates the manifest and `processing\summary.snapshot.json` when the original work manifest is still present, and never re-runs transcription or speaker labeling. Markdown-only transcripts remain displayable but are not eligible for manual summary generation because they do not preserve the structured sidecar schema.
+Provider-backed summaries are disabled when configuration is loaded or saved. Historical transcript summaries are preserved as opaque content during transcript sidecar publication; the app does not expose summary controls or schedule new summary work.
 
 ## 10. Model Provisioning Architecture
 

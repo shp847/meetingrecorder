@@ -54,6 +54,11 @@ public static class AppDataPaths
         return Path.Combine(localApplicationDataRoot, "MeetingRecorder");
     }
 
+    // Managed caches remain managed in production, while isolated WPF fixtures
+    // must never read or write the user's real cache.
+    internal static string GetManagedAppRootForCurrentContext() =>
+        TestAppRootOverride.Value ?? GetManagedAppRoot();
+
     public static string GetAppRoot(string? applicationBaseDirectory = null)
     {
         if (string.IsNullOrWhiteSpace(applicationBaseDirectory) &&

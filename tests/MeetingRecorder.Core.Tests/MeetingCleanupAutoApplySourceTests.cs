@@ -185,7 +185,7 @@ public sealed class MeetingCleanupAutoApplySourceTests
         Assert.Contains("GetMaximumOutstandingCleanupWorkCount()", source, StringComparison.Ordinal);
         Assert.Contains("WindowsUserIdleProbe.TryGetIdleDuration", source, StringComparison.Ordinal);
         Assert.Contains("SmartCleanupEnabled", source, StringComparison.Ordinal);
-        Assert.Contains("PROVIDER BLOCKED", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROVIDER BLOCKED", source, StringComparison.Ordinal);
         Assert.Contains("SettingsWindowSection.Summaries", source, StringComparison.Ordinal);
         Assert.Contains("CLEARED", source, StringComparison.Ordinal);
         Assert.Contains("disabledLabels=", source, StringComparison.Ordinal);

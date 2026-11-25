@@ -55,6 +55,7 @@ public sealed class FilePublishService
         // A ready marker is the reader-visible completion contract. Remove any
         // prior marker before changing a current run's artifacts, then create
         // it only after every replacement has promoted successfully.
+        PreservePriorSummary(markdownDestination, markdownPath, jsonDestination, jsonPath);
         DeleteIfPresent(readyDestination);
         PublishFile(markdownPath, markdownDestination, cancellationToken);
         PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
@@ -102,6 +103,7 @@ public sealed class FilePublishService
                 "Enrichment requires the current published audio, transcript sidecars, and ready marker.");
         }
 
+        PreservePriorSummary(markdownDestination, markdownPath, jsonDestination, jsonPath);
         PublishSidecarsWithRollback(
             markdownPath,
             markdownDestination,
@@ -113,6 +115,40 @@ public sealed class FilePublishService
             markdownDestination,
             jsonDestination,
             readyDestination));
+    }
+
+    // Summary generation is retired. Carry existing content through transcript
+    // replacement as opaque historical data, without contacting a provider.
+    private static void PreservePriorSummary(string oldMarkdownPath, string newMarkdownPath, string oldJsonPath, string newJsonPath)
+    {
+        if (File.Exists(oldJsonPath))
+        {
+            var oldJson = JsonNode.Parse(File.ReadAllText(oldJsonPath)) as JsonObject
+                ?? throw new InvalidDataException("Existing transcript JSON cannot be preserved.");
+            var newJson = JsonNode.Parse(File.ReadAllText(newJsonPath)) as JsonObject
+                ?? throw new InvalidDataException("Replacement transcript JSON cannot be preserved.");
+            var summary = oldJson["summary"] ?? oldJson["Summary"];
+            if (summary is not null)
+            {
+                newJson["summary"] = summary.DeepClone();
+                var status = oldJson["summarizationStatus"] ?? oldJson["SummarizationStatus"];
+                if (status is not null) newJson["summarizationStatus"] = status.DeepClone();
+                File.WriteAllText(newJsonPath, newJson.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            }
+        }
+
+        if (!File.Exists(oldMarkdownPath)) return;
+        var oldMarkdown = File.ReadAllText(oldMarkdownPath);
+        var start = oldMarkdown.IndexOf("## Summary", StringComparison.Ordinal);
+        if (start < 0) return;
+        var end = oldMarkdown.IndexOf("## Transcript", start, StringComparison.Ordinal);
+        if (end < 0) throw new InvalidDataException("Existing summary boundary cannot be preserved.");
+        var newMarkdown = File.ReadAllText(newMarkdownPath);
+        var newTranscript = newMarkdown.IndexOf("## Transcript", StringComparison.Ordinal);
+        if (newTranscript < 0) throw new InvalidDataException("Replacement transcript boundary cannot be found.");
+        var newSummary = newMarkdown.IndexOf("## Summary", StringComparison.Ordinal);
+        var prefixEnd = newSummary >= 0 && newSummary < newTranscript ? newSummary : newTranscript;
+        File.WriteAllText(newMarkdownPath, newMarkdown[..prefixEnd] + oldMarkdown[start..end] + newMarkdown[newTranscript..]);
     }
 
     private static void PublishFile(string sourcePath, string destinationPath, CancellationToken cancellationToken)

@@ -97,7 +97,7 @@
             <ScrollViewer Grid.Column="0"
                           VerticalScrollBarVisibility="Auto">
                 <StackPanel>
-                    <Border Style="{StaticResource DialogCardStyle}">
+                    <Border Style="{StaticResource DialogCardStyle}" Visibility="Collapsed">
                         <StackPanel>
                             <TextBlock Style="{StaticResource DialogSectionTitleStyle}"
                                        Text="AI Summary" />

@@ -129,6 +129,9 @@ public sealed class MeetingCleanupExecutionServiceTests : IDisposable
         var first = new MeetingOutputRecord(firstStem, "Wang Stein", DateTimeOffset.Parse("2026-03-19T23:55:28Z"), MeetingPlatform.Teams, TimeSpan.FromSeconds(2), firstAudioPath, firstMarkdownPath, null, null, null, null, Array.Empty<MeetingAttendee>(), false, null);
         var second = new MeetingOutputRecord(secondStem, "Wang, Stein", DateTimeOffset.Parse("2026-03-19T23:55:31Z"), MeetingPlatform.Teams, TimeSpan.FromSeconds(1), secondAudioPath, secondMarkdownPath, null, null, null, null, Array.Empty<MeetingAttendee>(), false, null);
         var service = new MeetingCleanupExecutionService(_pathBuilder, _catalog);
+        var recovery = new AutomaticMeetingRecoveryService();
+        var snapshot = await recovery.PrepareAsync(archiveRoot, "merge-fingerprint", "Merge", [firstStem, secondStem],
+            [firstAudioPath, firstMarkdownPath, secondAudioPath, secondMarkdownPath]);
 
         var merged = await service.MergeMeetingsAsync(first, second, "Wang, Stein", audioDir, transcriptDir, archiveRoot, CancellationToken.None);
 
@@ -139,6 +142,20 @@ public sealed class MeetingCleanupExecutionServiceTests : IDisposable
         Assert.False(File.Exists(secondMarkdownPath));
         Assert.True(Directory.Exists(Path.Combine(archiveRoot, "merge-split-pairs", firstStem)));
         Assert.True(Directory.Exists(Path.Combine(archiveRoot, "merge-split-pairs", secondStem)));
+        var archivedCopies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [firstAudioPath] = Path.Combine(archiveRoot, "merge-split-pairs", firstStem, Path.GetFileName(firstAudioPath)),
+            [firstMarkdownPath] = Path.Combine(archiveRoot, "merge-split-pairs", firstStem, Path.GetFileName(firstMarkdownPath)),
+            [secondAudioPath] = Path.Combine(archiveRoot, "merge-split-pairs", secondStem, Path.GetFileName(secondAudioPath)),
+            [secondMarkdownPath] = Path.Combine(archiveRoot, "merge-split-pairs", secondStem, Path.GetFileName(secondMarkdownPath)),
+        };
+        Assert.True(await recovery.AreCopiesVerifiedAsync(snapshot, archivedCopies));
+        var restored = await recovery.RestoreAsync(snapshot, [audioDir, transcriptDir]);
+        Assert.Equal(2, restored.RestoredOriginals.Count);
+        Assert.Equal(2, restored.ConflictCopies.Count);
+        Assert.Contains("Second", await File.ReadAllTextAsync(secondMarkdownPath));
+        Assert.Contains("Second", await File.ReadAllTextAsync(firstMarkdownPath));
+        Assert.Contains(restored.ConflictCopies, path => path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) && File.ReadAllText(path).Contains("First"));
     }
 
     [Fact]

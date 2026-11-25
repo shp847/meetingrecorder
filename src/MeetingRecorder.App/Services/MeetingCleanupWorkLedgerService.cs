@@ -12,6 +12,7 @@ internal enum CleanupWorkState
     Completed = 3,
     ManualReview = 4,
     Failed = 5,
+    Retired = 6,
 }
 
 internal sealed record CleanupWorkLedgerEntry(
@@ -22,7 +23,11 @@ internal sealed record CleanupWorkLedgerEntry(
     string? Detail = null,
     MeetingCleanupAction? Action = null,
     IReadOnlyList<string>? AffectedStems = null,
-    string? InputRevision = null);
+    string? InputRevision = null,
+    int AutomaticRetryCount = 0,
+    bool RecoveryVerified = false,
+    string? FailureInputRevision = null,
+    bool PublishedRecoveryAttempted = false);
 
 internal sealed record CleanupWorkLedgerDocument(IReadOnlyList<CleanupWorkLedgerEntry> Entries);
 
@@ -43,7 +48,7 @@ internal sealed class MeetingCleanupWorkLedgerService
 
     public MeetingCleanupWorkLedgerService(string? path = null)
     {
-        _path = path ?? Path.Combine(AppDataPaths.GetManagedAppRoot(), "cache", "meeting-cleanup-work-ledger-v1.json");
+        _path = path ?? Path.Combine(AppDataPaths.GetManagedAppRootForCurrentContext(), "cache", "meeting-cleanup-work-ledger-v1.json");
     }
 
     public IReadOnlyList<CleanupWorkLedgerEntry> GetEntries()
@@ -67,6 +72,36 @@ internal sealed class MeetingCleanupWorkLedgerService
         }
     }
 
+    public int RetireObsoleteSummaryWork()
+    {
+        lock (_gate)
+        {
+            var count = 0;
+            foreach (var (key, entry) in Load().ToArray())
+            {
+                if (entry.Action != MeetingCleanupAction.GenerateSummary || entry.State == CleanupWorkState.Retired) continue;
+                _entries![key] = entry with { State = CleanupWorkState.Retired, UpdatedAtUtc = DateTimeOffset.UtcNow, Detail = null };
+                count++;
+            }
+            if (count > 0) Save();
+            return count;
+        }
+    }
+
+    public bool ReleaseContainmentHold(string fingerprint, MeetingCleanupAction action)
+    {
+        lock (_gate)
+        {
+            if (!Load().TryGetValue(fingerprint, out var entry) || entry.State != CleanupWorkState.ManualReview ||
+                entry.Action != action || entry.Detail is null ||
+                !entry.Detail.StartsWith("Automatic archive, merge, and transcript regeneration are paused", StringComparison.Ordinal))
+                return false;
+            _entries![fingerprint] = entry with { State = CleanupWorkState.Pending, UpdatedAtUtc = DateTimeOffset.UtcNow, Detail = null };
+            Save();
+            return true;
+        }
+    }
+
     public bool IsEligibleForAutomaticApply(string fingerprint)
     {
         if (string.IsNullOrWhiteSpace(fingerprint))
@@ -87,7 +122,8 @@ internal sealed class MeetingCleanupWorkLedgerService
         string? detail = null,
         MeetingCleanupAction? action = null,
         IReadOnlyList<string>? affectedStems = null,
-        string? inputRevision = null)
+        string? inputRevision = null,
+        bool? recoveryVerified = null)
     {
         if (string.IsNullOrWhiteSpace(fingerprint))
         {
@@ -106,7 +142,12 @@ internal sealed class MeetingCleanupWorkLedgerService
                 string.IsNullOrWhiteSpace(detail) ? previous?.Detail : detail.Trim(),
                 action ?? previous?.Action,
                 affectedStems ?? previous?.AffectedStems,
-                string.IsNullOrWhiteSpace(inputRevision) ? previous?.InputRevision : inputRevision.Trim());
+                string.IsNullOrWhiteSpace(inputRevision) ? previous?.InputRevision : inputRevision.Trim(),
+                previous?.AutomaticRetryCount ?? 0,
+                recoveryVerified ?? previous?.RecoveryVerified ?? false,
+                state == CleanupWorkState.Failed && previous?.State != CleanupWorkState.Failed
+                    ? null : previous?.FailureInputRevision,
+                previous?.PublishedRecoveryAttempted ?? false);
             Save();
         }
     }
@@ -216,38 +257,39 @@ internal sealed class MeetingCleanupWorkLedgerService
     {
         ArgumentNullException.ThrowIfNull(manifestStore);
 
-        string[] manifestPaths;
+        CleanupWorkLedgerEntry[] entries;
         lock (_gate)
         {
-            manifestPaths = Load().Values
-                .Where(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing)
-                .Select(entry => entry.ManifestPath)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Cast<string>()
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+            entries = Load().Values
+                .Where(entry => entry.State is (CleanupWorkState.Queued or CleanupWorkState.Processing) ||
+                    entry.State is (CleanupWorkState.Failed or CleanupWorkState.ManualReview) &&
+                    entry.Action is (MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.RegenerateTranscript))
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.ManifestPath))
                 .ToArray();
         }
 
         var reconciledCount = 0;
-        foreach (var manifestPath in manifestPaths)
+        foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
-                var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
-                var succeeded = manifest.State switch
-                {
-                    SessionState.Published => true,
-                    SessionState.Failed => false,
-                    _ => (bool?)null,
-                };
-                if (!succeeded.HasValue)
+                var manifest = await manifestStore.LoadAsync(entry.ManifestPath!, cancellationToken);
+                var outcome = ResolveTerminalOutcome(entry, manifest);
+                if (outcome is null)
                 {
                     continue;
                 }
 
-                RecordCompletionForManifest(manifestPath, succeeded.Value);
+                if (entry.State is (CleanupWorkState.Failed or CleanupWorkState.ManualReview) && outcome.Value.State != CleanupWorkState.Completed)
+                {
+                    if (entry.State == CleanupWorkState.Failed && outcome.Value.State == CleanupWorkState.Failed)
+                        UpdateFailureClassification(entry.Fingerprint, outcome.Value.Detail);
+                    continue;
+                }
+
+                Record(entry.Fingerprint, outcome.Value.State, entry.ManifestPath, outcome.Value.Detail);
                 reconciledCount++;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -261,6 +303,18 @@ internal sealed class MeetingCleanupWorkLedgerService
         }
 
         return reconciledCount;
+    }
+
+    private void UpdateFailureClassification(string fingerprint, string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail)) return;
+        lock (_gate)
+        {
+            if (!Load().TryGetValue(fingerprint, out var entry) || entry.State != CleanupWorkState.Failed ||
+                string.Equals(entry.Detail, detail, StringComparison.Ordinal)) return;
+            _entries![fingerprint] = entry with { Detail = detail };
+            Save();
+        }
     }
 
     /// <summary>
@@ -302,17 +356,13 @@ internal sealed class MeetingCleanupWorkLedgerService
             try
             {
                 var manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken);
-                var targetState = manifest.State switch
-                {
-                    SessionState.Published => CleanupWorkState.Completed,
-                    SessionState.Failed => CleanupWorkState.Failed,
-                    _ when activePaths.Contains(manifestPath) => CleanupWorkState.Processing,
-                    SessionState.Queued => CleanupWorkState.Queued,
-                    _ => entry.State,
-                };
+                var outcome = ResolveTerminalOutcome(entry, manifest);
+                var targetState = activePaths.Contains(manifestPath)
+                    ? CleanupWorkState.Processing
+                    : outcome?.State ?? (manifest.State == SessionState.Queued ? CleanupWorkState.Queued : entry.State);
                 if (targetState != entry.State)
                 {
-                    Record(entry.Fingerprint, targetState, manifestPath);
+                    Record(entry.Fingerprint, targetState, manifestPath, outcome?.Detail);
                     reconciledCount++;
                 }
             }
@@ -334,6 +384,63 @@ internal sealed class MeetingCleanupWorkLedgerService
         return reconciledCount;
     }
 
+    public async Task ReconcileCompletionForManifestAsync(
+        SessionManifestStore manifestStore, string manifestPath, bool workerSucceeded, string? detail,
+        CancellationToken cancellationToken = default)
+    {
+        var entries = GetEntries().Where(entry =>
+            entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing &&
+            string.Equals(entry.ManifestPath, manifestPath, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (entries.Length == 0) return;
+        MeetingSessionManifest? manifest = null;
+        try { manifest = await manifestStore.LoadAsync(manifestPath, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch { /* Keep failure visible when the receipt cannot be verified. */ }
+        foreach (var entry in entries)
+        {
+            var outcome = manifest is null ? null : ResolveTerminalOutcome(entry, manifest);
+            if (outcome is { } resolved)
+                Record(entry.Fingerprint, resolved.State, manifestPath, resolved.Detail);
+            else if (!workerSucceeded)
+                Record(entry.Fingerprint, CleanupWorkState.Failed, manifestPath, SafeFailureDetail(detail));
+            else
+                Record(entry.Fingerprint, CleanupWorkState.ManualReview, manifestPath,
+                    "Work finished, but its requested result could not be verified.");
+        }
+    }
+
+    private static (CleanupWorkState State, string? Detail)? ResolveTerminalOutcome(
+        CleanupWorkLedgerEntry entry, MeetingSessionManifest manifest)
+    {
+        var stage = entry.Action switch
+        {
+            MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels => manifest.DiarizationStatus,
+            MeetingCleanupAction.RegenerateTranscript => manifest.TranscriptionStatus,
+            _ => null,
+        };
+        if (manifest.State == SessionState.Failed)
+        {
+            var cause = manifest.ErrorSummary ??
+                (manifest.TranscriptionStatus.State == StageExecutionState.Failed ? manifest.TranscriptionStatus.Message : null) ??
+                (manifest.PublishStatus.State == StageExecutionState.Failed ? manifest.PublishStatus.Message : null) ??
+                stage?.Message;
+            return (CleanupWorkState.Failed, SafeFailureDetail(cause));
+        }
+        if (manifest.State != SessionState.Published) return null;
+        if (stage is null) return (CleanupWorkState.Completed, null);
+        if (stage.State == StageExecutionState.Succeeded && manifest.PublishStatus.State == StageExecutionState.Succeeded)
+            return (CleanupWorkState.Completed, null);
+        if (stage.State is StageExecutionState.Failed or StageExecutionState.Skipped)
+            return (CleanupWorkState.Failed, SafeFailureDetail(stage.Message));
+        if (manifest.PublishStatus.State == StageExecutionState.Failed)
+            return (CleanupWorkState.Failed, SafeFailureDetail(manifest.PublishStatus.Message));
+        return null;
+    }
+
+    private static string SafeFailureDetail(string? detail) => IsTransientFailure(detail)
+        ? "Temporary timeout or file access failure."
+        : "The requested work did not complete. Review the meeting and its local setup.";
+
     public int ReleaseFailedSafeWork(IEnumerable<string> fingerprints)
     {
         ArgumentNullException.ThrowIfNull(fingerprints);
@@ -344,7 +451,7 @@ internal sealed class MeetingCleanupWorkLedgerService
             {
                 if (!Load().TryGetValue(fingerprint.Trim(), out var entry) ||
                     entry.State != CleanupWorkState.Failed ||
-                    !IsRetryableSafeAction(entry.Action))
+                    !IsRetryableSafeWork(entry))
                 {
                     continue;
                 }
@@ -353,6 +460,7 @@ internal sealed class MeetingCleanupWorkLedgerService
                 {
                     State = CleanupWorkState.Pending,
                     UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    AutomaticRetryCount = 0,
                     Detail = "Explicit retry requested after a prior safe-work failure.",
                 };
                 released++;
@@ -367,10 +475,93 @@ internal sealed class MeetingCleanupWorkLedgerService
         return released;
     }
 
-    private static bool IsRetryableSafeAction(MeetingCleanupAction? action) => action is
-        MeetingCleanupAction.GenerateSpeakerLabels or
-        MeetingCleanupAction.RepairSpeakerLabels or
-        MeetingCleanupAction.GenerateSummary;
+    public int ReleaseTransientFailures(DateTimeOffset nowUtc)
+    {
+        var delays = new[] { TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(30) };
+        lock (_gate)
+        {
+            var released = 0;
+            foreach (var (key, entry) in Load().ToArray())
+            {
+                if (entry.State != CleanupWorkState.Failed ||
+                    !IsRetryableSafeWork(entry) ||
+                    entry.AutomaticRetryCount < 0 || entry.AutomaticRetryCount >= delays.Length ||
+                    nowUtc - entry.UpdatedAtUtc < delays[entry.AutomaticRetryCount] ||
+                    !IsTransientFailure(entry.Detail))
+                {
+                    continue;
+                }
+
+                _entries![key] = entry with
+                {
+                    State = CleanupWorkState.Pending,
+                    UpdatedAtUtc = nowUtc,
+                    AutomaticRetryCount = entry.AutomaticRetryCount + 1,
+                    Detail = "Automatic retry scheduled after a transient failure.",
+                };
+                released++;
+            }
+
+            if (released > 0) Save();
+            return released;
+        }
+    }
+
+    public bool ObserveFailureInputRevision(string fingerprint, string revision)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint) || string.IsNullOrWhiteSpace(revision)) return false;
+        lock (_gate)
+        {
+            if (!Load().TryGetValue(fingerprint, out var entry) || entry.State != CleanupWorkState.Failed) return false;
+            if (string.Equals(entry.FailureInputRevision, revision, StringComparison.Ordinal)) return false;
+            var changed = entry.FailureInputRevision is not null && IsRetryableSafeWork(entry);
+            _entries![fingerprint] = entry with
+            {
+                FailureInputRevision = revision,
+                State = changed ? CleanupWorkState.Pending : entry.State,
+                AutomaticRetryCount = changed ? 0 : entry.AutomaticRetryCount,
+                UpdatedAtUtc = changed ? DateTimeOffset.UtcNow : entry.UpdatedAtUtc,
+                Detail = changed ? "Meeting inputs changed. Work is ready for a fresh check." : entry.Detail,
+            };
+            Save();
+            return changed;
+        }
+    }
+
+    public bool ReleaseLegacyPublishedLabelFailure(string fingerprint)
+    {
+        lock (_gate)
+        {
+            if (!Load().TryGetValue(fingerprint, out var entry) || entry.State != CleanupWorkState.Failed ||
+                entry.Action is not (MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels) ||
+                entry.PublishedRecoveryAttempted || entry.RecoveryVerified)
+                return false;
+            _entries![fingerprint] = entry with
+            {
+                State = CleanupWorkState.Pending,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                AutomaticRetryCount = 0,
+                PublishedRecoveryAttempted = true,
+                Detail = "Published inputs are ready for a fresh speaker-labeling attempt.",
+            };
+            Save();
+            return true;
+        }
+    }
+
+    internal static bool IsTransientFailure(string? detail) => !string.IsNullOrWhiteSpace(detail) &&
+        (detail.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+         detail.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+         detail.Contains("temporarily unavailable", StringComparison.OrdinalIgnoreCase) ||
+         detail.Contains("sharing violation", StringComparison.OrdinalIgnoreCase) ||
+         detail.Contains("used by another process", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool IsRetryableSafeWork(CleanupWorkLedgerEntry entry) => entry.Action switch
+    {
+        MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript => entry.RecoveryVerified,
+        MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels => true,
+        _ => false,
+    };
 
     public void MigrateLegacyEntries(IEnumerable<MeetingCleanupAutoApplyEntry> entries)
     {

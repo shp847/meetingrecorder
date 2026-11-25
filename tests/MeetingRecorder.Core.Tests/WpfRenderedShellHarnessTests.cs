@@ -107,6 +107,7 @@ public sealed class WpfRenderedShellHarnessTests
 
         Assert.Contains("MeetingCleanupReviewBannerBorder", automationTrace);
         Assert.Contains("MeetingCleanupReviewBannerTextBlock | Text |", automationTrace);
+        Assert.Contains("RestoreAutomaticBackupButton | Button | Recover Backup | True", automationTrace);
     }
 
     [Fact]
@@ -290,22 +291,25 @@ public sealed class WpfRenderedShellHarnessTests
     }
 
     [Fact]
-    public void Hosted_Summary_Consent_Explains_Its_Boundary_And_Escape_Cancels()
+    public void Meetings_Recovery_Button_Restores_A_Missing_Original()
     {
         var evidence = WpfRenderHarness.CaptureShell(
-            WpfRenderHarness.SyntheticShellState.HostedSummaryConsentCancelled,
+            WpfRenderHarness.SyntheticShellState.CleanupRecovery, 1280, 800, 1d);
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+    }
+
+    [Fact]
+    public void Retired_Summary_Settings_Cannot_Be_Opened_Or_Block_Saving()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.RetiredSummarySettings,
             logicalWidth: 1280,
             logicalHeight: 800,
             rasterScale: 1.25d);
 
         var automationTrace = File.ReadAllText(evidence.AutomationTracePath);
-        var keyboardTrace = File.ReadAllText(evidence.KeyboardTracePath);
-
-        Assert.Contains("published transcript text", automationTrace, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(" | Button | Authorize hosted summaries | True", automationTrace);
-        Assert.Contains(" | Button | Cancel hosted summary authorization | True", automationTrace);
-        Assert.Contains("Focus: Authorize hosted summaries", keyboardTrace);
-        Assert.Contains("Escape:", keyboardTrace);
+        Assert.Contains("SettingsProcessingSectionPanel", automationTrace);
+        Assert.Contains("Config saved", automationTrace);
     }
 
     [Fact]

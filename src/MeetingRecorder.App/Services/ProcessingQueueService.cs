@@ -13,6 +13,7 @@ namespace MeetingRecorder.App.Services;
 internal sealed class ProcessingQueueService : IDisposable
 {
     private static readonly TimeSpan RecoverablePendingSessionStalenessThreshold = TimeSpan.FromMinutes(5);
+    private const string UnverifiedPublishedArtifacts = "Published recording or transcript files need review.";
     private static readonly TimeSpan DefaultPublishTailEstimate = TimeSpan.FromSeconds(45);
     private const long MinimumRecoverableWaveChunkBytes = 44;
     private const double DefaultTranscriptionSecondsPerAudioSecond = 0.55d;
@@ -186,6 +187,10 @@ internal sealed class ProcessingQueueService : IDisposable
                 _config.Current.TranscriptOutputDir,
                 cancellationToken);
         var pending = importReconciliation.PendingManifestPaths.ToList();
+        // Retired work is reconciled independently of the queued-recordings
+        // preference, so an old summary job cannot keep a published meeting pending.
+        var retiredPaths = await ReconcileObsoleteSummarySessionsAsync(cancellationToken);
+        pending.RemoveAll(candidate => retiredPaths.Contains(candidate));
         if (!_config.Current.IncrementalWorkPlan.HasFlag(IncrementalWorkPlan.QueuedRecordings))
         {
             _logger.Log("Left existing queued recordings pending because queued-recording background work is disabled.");
@@ -227,11 +232,34 @@ internal sealed class ProcessingQueueService : IDisposable
         }
     }
 
+    public async Task<IReadOnlySet<string>> ReconcileObsoleteSummarySessionsAsync(CancellationToken cancellationToken = default)
+    {
+        var handled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, manifest) in await LoadReadableManifestsAsync(_config.Current.WorkDir, cancellationToken))
+        {
+            if (manifest.State is not (SessionState.Queued or SessionState.Failed)) continue;
+            try
+            {
+                if (await TryRetirePublishedSummaryWorkAsync(manifest, path, cancellationToken)) handled.Add(path);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _logger.Log($"Published meeting reconciliation needs another check: {exception.GetType().Name}.");
+            }
+        }
+        return handled;
+    }
+
     public ProcessingQueueStatusSnapshot GetStatusSnapshot()
     {
         lock (_processSyncRoot)
         {
-            return UpdateStatusSnapshotLocked(DateTimeOffset.UtcNow) ?? _statusSnapshot;
+            // A successful read is a fresh observation even if nothing changed.
+            // Keep change notifications separate from observation freshness.
+            var candidate = BuildStatusSnapshotLocked(_drainTask.IsCompleted ? _statusSnapshot.LastUpdatedAtUtc : DateTimeOffset.UtcNow);
+            _statusSnapshot = candidate;
+            return candidate;
         }
     }
 
@@ -254,6 +282,33 @@ internal sealed class ProcessingQueueService : IDisposable
         }
 
         var queueEntry = await LoadBackgroundQueueEntryAsync(manifestPath, priority, cancellationToken);
+        if (queueEntry.StagedWork is null &&
+            queueEntry.TranscriptionStatus.State == StageExecutionState.Succeeded &&
+            queueEntry.PublishStatus.State == StageExecutionState.Succeeded)
+        {
+            // A published meeting with no remaining supported stage must not
+            // fall back to a full transcription just because an old summary
+            // request was queued. Explicit transcription/label overrides remain
+            // eligible for the existing full-pass recovery path.
+            var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
+            if (manifest.ProcessingOverrides?.ForceSpeakerLabeling == true &&
+                manifest.ProcessingOverrides.ForceTranscription != true)
+            {
+                var detail = _stagedBacklogWorkUnavailable
+                    ? "Background processing records need review before speaker labeling can continue."
+                    : "Local speaker labeling is not ready. Check speaker-labeling setup.";
+                await _manifestStore.SaveAsync(manifest with
+                {
+                    State = HasVerifiedPublishedArtifacts(manifest) ? SessionState.Published : SessionState.Failed,
+                    DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Failed, DateTimeOffset.UtcNow, detail),
+                    ErrorSummary = detail,
+                }, manifestPath, cancellationToken);
+                PublishWorkCompletion(manifestPath, priority, succeeded: false, detail);
+                return;
+            }
+            if (await TryRetirePublishedSummaryWorkAsync(manifest, manifestPath, cancellationToken))
+                return;
+        }
         ProcessingQueueStatusSnapshot? snapshotToPublish = null;
         var shouldSignal = false;
         lock (_processSyncRoot)
@@ -268,6 +323,76 @@ internal sealed class ProcessingQueueService : IDisposable
         }
 
         PublishStatusSnapshot(snapshotToPublish);
+    }
+
+    private async Task<bool> TryRetirePublishedSummaryWorkAsync(
+        MeetingSessionManifest manifest, string manifestPath, CancellationToken cancellationToken)
+    {
+        if (manifest.TranscriptionStatus.State != StageExecutionState.Succeeded ||
+            manifest.PublishStatus.State != StageExecutionState.Succeeded ||
+            manifest.ProcessingOverrides?.ForceTranscription == true ||
+            manifest.ProcessingOverrides?.ForceSpeakerLabeling == true ||
+            manifest.DiarizationStatus.State is not (StageExecutionState.Succeeded or StageExecutionState.Skipped) ||
+            manifest.SummarizationStatus.State is not (StageExecutionState.NotStarted or StageExecutionState.Queued or StageExecutionState.Running or StageExecutionState.Failed))
+            return false;
+
+        var summaryFailure = string.Equals(manifest.ErrorSummary, UnverifiedPublishedArtifacts, StringComparison.Ordinal) ||
+            manifest.SummarizationStatus.State == StageExecutionState.Failed &&
+            (string.IsNullOrWhiteSpace(manifest.ErrorSummary) ||
+             manifest.ErrorSummary.Contains("summary", StringComparison.OrdinalIgnoreCase) ||
+             manifest.ErrorSummary.Contains("summariz", StringComparison.OrdinalIgnoreCase) ||
+             manifest.ErrorSummary.Contains("modelproxy", StringComparison.OrdinalIgnoreCase) ||
+             manifest.ErrorSummary.Contains("openai", StringComparison.OrdinalIgnoreCase));
+        if (manifest.State == SessionState.Failed && !summaryFailure) return false;
+
+        if (HasVerifiedPublishedArtifacts(manifest))
+        {
+            await _manifestStore.SaveAsync(manifest with
+            {
+                State = SessionState.Published,
+                SummarizationStatus = new ProcessingStageStatus("summarization", StageExecutionState.Skipped, DateTimeOffset.UtcNow, null),
+                ErrorSummary = summaryFailure ? null : manifest.ErrorSummary,
+            }, manifestPath, cancellationToken);
+            _logger.Log("Retired obsolete background work after verifying published artifacts.");
+        }
+        else
+        {
+            if (manifest.State != SessionState.Failed || !string.Equals(manifest.ErrorSummary, UnverifiedPublishedArtifacts, StringComparison.Ordinal))
+                await _manifestStore.SaveAsync(manifest with { State = SessionState.Failed, ErrorSummary = UnverifiedPublishedArtifacts }, manifestPath, cancellationToken);
+            _logger.Log("Obsolete background work was not resumed because published artifacts could not be verified.");
+        }
+        return true;
+    }
+
+    private bool HasVerifiedPublishedArtifacts(MeetingSessionManifest manifest)
+    {
+        try
+        {
+            var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
+            var paths = new ArtifactPathBuilder();
+            var stem = manifest.ImportedSourceAudio is { OutputStem: { Length: > 0 } importedStem }
+                ? importedStem
+                : manifest.ImportedSourceAudio is null
+                    ? paths.BuildFileStem(manifest.Platform, manifest.StartedAtUtc, title)
+                    : paths.BuildImportedFileStem(manifest.Platform, manifest.StartedAtUtc, title, manifest.SessionId);
+            var audio = Path.Combine(_config.Current.AudioOutputDir, stem + ".wav");
+            var markdown = Path.Combine(_config.Current.TranscriptOutputDir, stem + ".md");
+            var sidecars = ArtifactPathBuilder.BuildTranscriptSidecarRoot(_config.Current.TranscriptOutputDir);
+            var json = Path.Combine(sidecars, stem + ".json");
+            var ready = Path.Combine(sidecars, stem + ".ready");
+            if (!File.Exists(audio) || new FileInfo(audio).Length < MinimumRecoverableWaveChunkBytes ||
+                !File.Exists(markdown) || !File.ReadAllText(markdown).Contains("## Transcript", StringComparison.Ordinal) ||
+                !File.Exists(json) || !File.Exists(ready) ||
+                !string.Equals(File.ReadAllText(ready).Trim(), "ready", StringComparison.OrdinalIgnoreCase))
+                return false;
+            using var document = JsonDocument.Parse(File.ReadAllText(json));
+            using var reader = new WaveFileReader(audio);
+            return document.RootElement.ValueKind == JsonValueKind.Object && reader.Length > 0;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or FormatException)
+        {
+            return false;
+        }
     }
 
     public async Task RequestRushProcessingAsync(
@@ -501,11 +626,14 @@ internal sealed class ProcessingQueueService : IDisposable
 
     private async Task DrainQueueAsync(CancellationToken cancellationToken)
     {
+        var activeTasks = new List<Task>();
+        var consecutiveFailures = 0;
         try
         {
-            var activeTasks = new List<Task>();
             while (!cancellationToken.IsCancellationRequested)
             {
+                try
+                {
                 while (activeTasks.Count < GetMaximumConcurrentWorkerCount() &&
                        TryDequeueNextManifestPath(out var manifestPath))
                 {
@@ -527,6 +655,18 @@ internal sealed class ProcessingQueueService : IDisposable
 
                 activeTasks.Remove(completedTask);
                 await completedTask;
+                consecutiveFailures = 0;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    // Keep the remaining worker tasks supervised; restarting the whole
+                    // drain would allow duplicate workers for their manifests.
+                    _logger.Log($"Processing queue will retry after an internal failure: {exception.GetType().Name}.");
+                    consecutiveFailures++;
+                    var delay = consecutiveFailures switch { 1 => 1, 2 => 5, _ => 30 };
+                    await Task.Delay(TimeSpan.FromSeconds(delay), cancellationToken);
+                }
             }
         }
         catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
@@ -548,9 +688,19 @@ internal sealed class ProcessingQueueService : IDisposable
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.Log($"Queued processing failed unexpectedly for '{manifestPath}': {exception}");
-            await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
-            RemoveQueuedEntryAfterFailure(manifestPath);
-            PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: exception.Message);
+            try
+            {
+                await MarkManifestFailedAfterQueueExceptionAsync(manifestPath, exception, cancellationToken);
+            }
+            catch (Exception markingException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.Log($"Could not save the failed queue state: {markingException.GetType().Name}.");
+            }
+            finally
+            {
+                RemoveQueuedEntryAfterFailure(manifestPath);
+                PublishWorkCompletion(manifestPath, workPriority, succeeded: false, detail: exception.Message);
+            }
         }
     }
 
@@ -2064,7 +2214,7 @@ internal sealed class ProcessingQueueService : IDisposable
 
     private async Task<bool> EnsureStagedBacklogWorkLoadedAsync(CancellationToken cancellationToken)
     {
-        if (_stagedBacklogWorkLoaded)
+        if (_stagedBacklogWorkLoaded && !_stagedBacklogWorkUnavailable)
         {
             return !_stagedBacklogWorkUnavailable;
         }
@@ -2072,7 +2222,7 @@ internal sealed class ProcessingQueueService : IDisposable
         await _stagedBacklogWorkGate.WaitAsync(cancellationToken);
         try
         {
-            if (_stagedBacklogWorkLoaded)
+            if (_stagedBacklogWorkLoaded && !_stagedBacklogWorkUnavailable)
             {
                 return !_stagedBacklogWorkUnavailable;
             }
@@ -2089,8 +2239,9 @@ internal sealed class ProcessingQueueService : IDisposable
                     await _stagedBacklogWorkStore.SaveAsync(_stagedBacklogWorkItems, cancellationToken);
                     _logger.Log("Recovered interrupted staged backlog lease(s) as retryable local work.");
                 }
+                _stagedBacklogWorkUnavailable = false;
             }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or JsonException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
             {
                 // The untouched store is the recovery source of truth. Fall
                 // back to the existing full-pass queue instead of overwriting
@@ -2166,8 +2317,9 @@ internal sealed class ProcessingQueueService : IDisposable
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 _stagedBacklogWorkItems.Remove(work);
-                _stagedBacklogWorkUnavailable = true;
-                _logger.Log($"Staged backlog ledger could not be updated and was left unchanged for repair: {exception.Message}");
+                // The atomic write did not commit. Existing staged entries
+                // remain usable; only this new item falls back to normal work.
+                _logger.Log($"Staged backlog ledger could not be updated and was left unchanged: {exception.Message}");
                 return null;
             }
         }
@@ -2185,7 +2337,8 @@ internal sealed class ProcessingQueueService : IDisposable
             return SessionProcessingStage.Transcript;
         }
 
-        if (!BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(_config.Current) &&
+        if ((manifest.ProcessingOverrides?.ForceSpeakerLabeling == true ||
+             !BackgroundProcessingPolicy.ShouldSkipSpeakerLabelingInPrimaryPass(_config.Current)) &&
             manifest.DiarizationStatus.State is StageExecutionState.NotStarted or StageExecutionState.Queued or StageExecutionState.Failed &&
             _isSpeakerLabelingAvailableProvider())
         {

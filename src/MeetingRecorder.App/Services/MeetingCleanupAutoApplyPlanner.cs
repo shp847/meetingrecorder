@@ -22,9 +22,7 @@ internal sealed record CleanupSchedulerStatus(
 {
     public string PrimaryBlocker => DisabledSpeakerLabelCount > 0
         ? $"{DisabledSpeakerLabelCount} speaker-label fix(es) are disabled by the work plan."
-        : BlockedSummaryCount > 0
-            ? $"{BlockedSummaryCount} summary fix(es) need a current provider health check in Settings."
-            : DisabledCleanupCount > 0
+        : DisabledCleanupCount > 0
                 ? $"{DisabledCleanupCount} safe cleanup fix(es) are disabled by the work plan."
                 : string.Empty;
 }
@@ -54,6 +52,7 @@ internal static class MeetingCleanupAutoApplyPlanner
     {
         ArgumentNullException.ThrowIfNull(isScheduled);
         return recommendations
+            .Where(recommendation => recommendation.Action != MeetingCleanupAction.GenerateSummary)
             .Where(isScheduled)
             .Where(recommendation => ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint))
             .ToArray();
@@ -73,7 +72,13 @@ internal static class MeetingCleanupAutoApplyPlanner
         var pendingSafeFixes = safeFixes
             .Where(recommendation => ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint))
             .ToArray();
-        var ledgerEntries = ledger.GetEntries()
+        var allEntries = ledger.GetEntries()
+            .Where(entry => entry.Action != MeetingCleanupAction.GenerateSummary)
+            .ToArray();
+        var currentFingerprints = recommendations.Select(item => item.Fingerprint).ToHashSet(StringComparer.Ordinal);
+        var ledgerEntries = allEntries.Where(entry => currentFingerprints.Contains(entry.Fingerprint) ||
+            entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing ||
+            entry.Detail?.Contains("recovery", StringComparison.OrdinalIgnoreCase) == true && entry.State == CleanupWorkState.ManualReview)
             .ToArray();
         var activePaths = activeManifestPaths ?? new HashSet<string>(StringComparer.Ordinal);
         var processingEntries = ledgerEntries
@@ -86,16 +91,14 @@ internal static class MeetingCleanupAutoApplyPlanner
             entry.State == CleanupWorkState.ManualReview &&
             (entry.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript));
         var retryableFailed = ledgerEntries.Count(entry =>
-            entry.State == CleanupWorkState.Failed &&
-            (entry.Action is MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary));
-        var providerBlocked = pendingSafeFixes.Count(isSummaryBlocked);
+            entry.State == CleanupWorkState.Failed && MeetingCleanupWorkLedgerService.IsRetryableSafeWork(entry));
+        const int providerBlocked = 0;
         var deferred = pendingSafeFixes.Count(recommendation =>
             !isScheduled(recommendation) &&
             !isSummaryBlocked(recommendation));
         var reviewRequired = ledgerEntries.Count(entry =>
             entry.State == CleanupWorkState.ManualReview ||
-            (entry.State == CleanupWorkState.Failed &&
-             entry.Action is not (MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary)));
+            (entry.State == CleanupWorkState.Failed && !MeetingCleanupWorkLedgerService.IsRetryableSafeWork(entry)));
 
         return new CleanupSchedulerStatus(
             safeFixes.Count,
@@ -103,16 +106,13 @@ internal static class MeetingCleanupAutoApplyPlanner
             processingEntries.Count(entry => entry.State == CleanupWorkState.Queued && !activeEntries.Contains(entry)),
             processingEntries.Count(entry => entry.State == CleanupWorkState.Processing || activeEntries.Contains(entry)),
             pendingSafeFixes.Count(recommendation => IsSpeakerLabelAction(recommendation.Action) && !isScheduled(recommendation)),
-            recommendations.Count(recommendation =>
-                recommendation.Action == MeetingCleanupAction.GenerateSummary &&
-                ledger.IsEligibleForAutomaticApply(recommendation.Fingerprint) &&
-                isSummaryBlocked(recommendation)),
+            0,
             pendingSafeFixes.Count(recommendation =>
                 !IsSpeakerLabelAction(recommendation.Action) && !isScheduled(recommendation)),
             ledgerEntries.Count(entry => entry.State is CleanupWorkState.ManualReview or CleanupWorkState.Failed),
             containmentHeld,
             retryableFailed,
-            ledgerEntries.Count(entry => entry.State == CleanupWorkState.Completed),
+            allEntries.Count(entry => entry.State == CleanupWorkState.Completed),
             deferred,
             reviewRequired,
             providerBlocked);

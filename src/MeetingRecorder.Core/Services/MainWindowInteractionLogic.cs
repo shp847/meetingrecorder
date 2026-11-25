@@ -1526,6 +1526,21 @@ internal static class MainWindowInteractionLogic
         };
     }
 
+    public static MeetingSessionManifest BuildQueuedPublishedSpeakerLabelManifest(
+        MeetingSessionManifest manifest, DateTimeOffset now, string publishedAudioPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(publishedAudioPath);
+        var queued = BuildQueuedMeetingReprocessingManifest(manifest, now, "Existing published transcript is ready.",
+            forceSpeakerLabeling: true, forceTranscription: false);
+        return queued with
+        {
+            MergedAudioPath = publishedAudioPath,
+            TranscriptionStatus = new ProcessingStageStatus("transcription", StageExecutionState.Succeeded, now, null),
+            DiarizationStatus = new ProcessingStageStatus("diarization", StageExecutionState.Queued, now, null),
+            PublishStatus = new ProcessingStageStatus("publish", StageExecutionState.Succeeded, now, null),
+        };
+    }
+
     public static MeetingInspectorState BuildMeetingInspectorState(
         MeetingOutputRecord meeting,
         IReadOnlyList<MeetingCleanupRecommendation> recommendations,
@@ -2282,7 +2297,7 @@ internal static class MainWindowInteractionLogic
     {
         return recommendation.CanApplyAutomatically &&
                recommendation.Confidence == MeetingCleanupConfidence.High &&
-               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels or MeetingCleanupAction.GenerateSummary;
+               recommendation.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels;
     }
 
     public static IReadOnlyList<(InitialProcessingStrategy Value, string Label)> BuildInitialProcessingStrategyOptions()
@@ -2297,7 +2312,7 @@ internal static class MainWindowInteractionLogic
     public static string BuildInitialProcessingStrategyHelpText(InitialProcessingStrategy strategy)
     {
         return strategy == InitialProcessingStrategy.TranscriptFirst
-            ? "Publish audio and transcript first. Speaker labels and AI summaries are handled only by the selected incremental work plan."
+            ? "Publish audio and transcript first. Speaker labels are handled by the selected incremental work plan."
             : "Use the configured speaker-labeling and AI-summary settings in the primary pass.";
     }
 

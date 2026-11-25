@@ -27,13 +27,22 @@ public partial class SettingsHostWindow : Window
             SettingsAdvancedSectionButton,
         ];
 
-        for (var index = 0; index < effectiveSections.Count && index < _sectionButtons.Length; index++)
+        var availableButtons = _sectionButtons.ToList();
+        foreach (var section in effectiveSections)
         {
-            var button = _sectionButtons[index];
-            var section = effectiveSections[index];
+            var button = availableButtons.FirstOrDefault(candidate =>
+                string.Equals(candidate.Uid, section.Id, StringComparison.OrdinalIgnoreCase))
+                ?? availableButtons.FirstOrDefault();
+            if (button is null) break;
+            availableButtons.Remove(button);
             button.Content = section.Title;
             button.Uid = section.Id;
             _sectionButtonById[section.Id] = button;
+        }
+
+        foreach (var unusedButton in availableButtons)
+        {
+            unusedButton.Visibility = Visibility.Collapsed;
         }
 
         NavigateTo(effectiveSections.FirstOrDefault()?.Id ?? "setup");

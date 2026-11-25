@@ -2160,6 +2160,21 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void PublishedSpeakerLabelWork_UsesExistingArtifactsWithoutDiscardingRawHistory()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var manifest = CreatePublishedManifest() with { RawChunkPaths = [@"C:\old\chunk.wav"] };
+        var queued = MainWindowInteractionLogic.BuildQueuedPublishedSpeakerLabelManifest(manifest, now, @"C:\published\meeting.wav");
+        Assert.Equal(SessionState.Queued, queued.State);
+        Assert.Equal(StageExecutionState.Succeeded, queued.TranscriptionStatus.State);
+        Assert.Equal(StageExecutionState.Queued, queued.DiarizationStatus.State);
+        Assert.Equal(StageExecutionState.Succeeded, queued.PublishStatus.State);
+        Assert.Equal(@"C:\published\meeting.wav", queued.MergedAudioPath);
+        Assert.Equal(manifest.RawChunkPaths, queued.RawChunkPaths);
+        Assert.True(queued.ProcessingOverrides?.ForceSpeakerLabeling);
+    }
+
+    [Fact]
     public void BuildQueuedMeetingReprocessingManifest_Creates_ForceSpeakerLabeling_Override_When_None_Exists()
     {
         var now = DateTimeOffset.Parse("2026-05-01T12:00:00Z", null, DateTimeStyles.RoundtripKind);
