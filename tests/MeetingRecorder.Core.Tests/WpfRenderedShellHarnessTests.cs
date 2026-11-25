@@ -291,6 +291,17 @@ public sealed class WpfRenderedShellHarnessTests
     }
 
     [Fact]
+    public void Meetings_Library_Shows_Enough_Full_Rows_At_Supported_Sizes()
+    {
+        foreach (var viewport in new[] { (1280, 800, 1d), (1024, 768, 1d), (1024, 640, 1.25d), (819, 614, 1.25d) })
+        {
+            var evidence = WpfRenderHarness.CaptureShell(
+                WpfRenderHarness.SyntheticShellState.DenseLibrary, viewport.Item1, viewport.Item2, viewport.Item3);
+            Assert.True(File.Exists(evidence.ScreenshotPath));
+        }
+    }
+
+    [Fact]
     public void Meetings_Recovery_Button_Restores_A_Missing_Original()
     {
         var evidence = WpfRenderHarness.CaptureShell(

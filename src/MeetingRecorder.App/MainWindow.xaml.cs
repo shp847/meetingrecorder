@@ -284,11 +284,30 @@ public partial class MainWindow : Window
     private BacklogExperienceState? _currentBacklogExperienceState;
     private BacklogRecoveryMetadata? _currentBacklogRecoveryMetadata;
     private string? _currentMeetingsRefreshStateText;
+    private IInputElement? _meetingsToolsFocusReturn;
+    private bool _meetingsPreferencesLoaded;
+    private bool _isRebuildingMeetingSelection;
     private bool IsShutdownRequested => _shutdownInProgress || _lifetimeCts.IsCancellationRequested;
 
     public MainWindow(LiveAppConfig liveConfig, FileLogWriter logger)
     {
         InitializeComponent();
+        MoveSettingsChild(MeetingsToolsContent, MeetingsCustomViewExpander);
+        MoveSettingsChild(MeetingsToolsContent, MeetingsLegacyStatusPanel);
+        MoveSettingsChild(MeetingsToolsContent, MeetingCleanupReviewBannerBorder);
+        MoveSettingsChild(MeetingsToolsContent, ExternalAudioImportReviewBorder);
+        MoveSettingsChild(MeetingsToolsContent, LegacyMeetingCleanupReviewBorder);
+        MoveSettingsChild(MeetingsToolsContent, ResumeBlockedAudioImportsButton);
+        MoveSettingsChild(MeetingsToolsContent, RefreshMeetingsButton);
+        MoveSettingsChild(MeetingsToolsContent, ReviewCleanupSuggestionsLibraryButton);
+        MoveSettingsChild(MeetingsToolsContent, RestoreLatestArchiveButton);
+        MoveSettingsChild(MeetingsToolsContent, RestoreAutomaticBackupButton);
+        foreach (var button in new[] { ResumeBlockedAudioImportsButton, RefreshMeetingsButton,
+                     ReviewCleanupSuggestionsLibraryButton, RestoreLatestArchiveButton, RestoreAutomaticBackupButton })
+        {
+            button.HorizontalAlignment = HorizontalAlignment.Left;
+            button.Margin = new Thickness(0, 8, 0, 0);
+        }
         AttachSetupSectionsToSettingsHosts();
         _liveConfig = liveConfig;
         _logger = logger;
@@ -475,10 +494,9 @@ public partial class MainWindow : Window
             MeetingsPresetComboBox.SelectedValuePath = nameof(SelectionOption<MeetingsViewPreset>.Value);
             MeetingsPresetComboBox.ItemsSource = new[]
             {
-                new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.Recent, "Recent"),
+                new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.Recent, "All"),
                 new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.NeedsAttention, "Needs Attention"),
                 new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.Processing, "Processing"),
-                new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.Archived, "Archived"),
                 new SelectionOption<MeetingsViewPreset>(MeetingsViewPreset.Custom, "Custom"),
             };
 
@@ -956,6 +974,7 @@ public partial class MainWindow : Window
                     ObserveFailedCleanupInputs(snapshots, _allMeetingRows);
                 }
                 UpdateMeetingCleanupReviewBanner();
+                RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "processing completed");
                 TryScheduleMeetingCleanupAutomaticBatchRefill(DateTimeOffset.UtcNow);
             }
             catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
@@ -1012,6 +1031,9 @@ public partial class MainWindow : Window
         {
             _ = TryInstallAvailableUpdateIfIdleAsync("processing idle", _lifetimeCts.Token);
         }
+        if (previousSnapshot.RunState == ProcessingQueueRunState.Idle &&
+            snapshot.RunState != ProcessingQueueRunState.Idle)
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "processing started");
 
         UpdateDashboardReadiness();
     }
@@ -1105,9 +1127,20 @@ public partial class MainWindow : Window
             persistedBacklog,
             nowUtc,
             recovery);
-        HeaderQueueStatusBorder.Visibility = headerState.IsVisible ? Visibility.Visible : Visibility.Collapsed;
+        HeaderQueueStatusBorder.Visibility = headerState.IsVisible && !ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)
+            ? Visibility.Visible : Visibility.Collapsed;
         HeaderQueueStatusLabelTextBlock.Text = headerState.Label;
         HeaderQueueStatusDetailTextBlock.Text = headerState.Detail;
+        var attentionCount = _allMeetingRows.Count(row => row.LibraryWorkState is MeetingViewWorkState.Failed or MeetingViewWorkState.Blocked);
+        var processingCount = _allMeetingRows.Count(row => row.LibraryWorkState is MeetingViewWorkState.Queued or MeetingViewWorkState.Processing);
+        var retryCount = _allMeetingRows.Count(row => row.LibraryWorkState == MeetingViewWorkState.RetryNeeded);
+        var pausedCount = _allMeetingRows.Count(row => row.Status == "Cleanup paused");
+        MeetingsToolsButton.Content = attentionCount > 0
+            ? $"{attentionCount} need attention"
+            : processingCount > 0 ? $"Processing {processingCount}"
+            : pausedCount > 0 ? "Cleanup paused"
+            : retryCount > 0 ? $"{retryCount} retry scheduled" : "Activity and review";
+        AutomationProperties.SetName(MeetingsToolsButton, $"Open meeting activity and review. {MeetingsToolsButton.Content}");
 
         var stripState = MainWindowInteractionLogic.BuildMeetingsProcessingStripState(
             _latestProcessingQueueStatusSnapshot,
@@ -1434,8 +1467,65 @@ public partial class MainWindow : Window
 
         if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
         {
+            _isUpdatingMeetingsWorkspaceControls = true;
+            try
+            {
+                MeetingsPresetComboBox.SelectedValue = MeetingsViewPreset.Recent;
+                MeetingsSearchTextBox.Text = string.Empty;
+            }
+            finally
+            {
+                _isUpdatingMeetingsWorkspaceControls = false;
+            }
+            ApplyMeetingsWorkspaceView();
             ScheduleDeferredMeetingsRefresh();
         }
+        UpdateProcessingQueueStatusUi();
+    }
+
+    private void MeetingsToolsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        OpenMeetingsTools();
+    }
+
+    private void MeetingsViewOptionsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        MeetingsPresetComboBox.SelectedValue = MeetingsViewPreset.Custom;
+        OpenMeetingsTools();
+        MeetingsCustomViewExpander.IsExpanded = true;
+        MeetingsCustomViewExpander.BringIntoView();
+    }
+
+    private void OpenMeetingsTools()
+    {
+        if (MeetingsToolsOverlay.Visibility != Visibility.Visible)
+            _meetingsToolsFocusReturn = Keyboard.FocusedElement;
+        MeetingsToolsOverlay.Visibility = Visibility.Visible;
+        CloseMeetingsToolsButton.Focus();
+    }
+
+    private void CloseMeetingsToolsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        CloseMeetingsTools();
+    }
+
+    private void MeetingsToolsOverlay_OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CloseMeetingsTools();
+            e.Handled = true;
+        }
+    }
+
+    private void CloseMeetingsTools()
+    {
+        MeetingsToolsOverlay.Visibility = Visibility.Collapsed;
+        if (_meetingsToolsFocusReturn is UIElement { IsVisible: true, IsEnabled: true } previous)
+            previous.Focus();
+        else
+            MeetingsToolsButton.Focus();
+        _meetingsToolsFocusReturn = null;
     }
 
     private void RequestMeetingRefreshForCurrentContext(
@@ -3617,6 +3707,11 @@ public partial class MainWindow : Window
 
     private void MeetingsDataGrid_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isRebuildingMeetingSelection)
+        {
+            return;
+        }
+
         UpdateSelectedMeetingEditor(MeetingsDataGrid.SelectedItem as MeetingListRow);
         UpdateSelectedMeetingInspector(MeetingsDataGrid.SelectedItem as MeetingListRow);
         UpdateMergeMeetingsEditor();
@@ -3634,6 +3729,28 @@ public partial class MainWindow : Window
         }
 
         OpenMeetingDetailsForSelection();
+    }
+
+    private void MeetingsDataGrid_OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && GetSelectedMeetingRows().Length == 1)
+        {
+            OpenMeetingDetailsForSelection();
+            e.Handled = true;
+        }
+    }
+
+    private void MeetingsDataGrid_OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        MeetingTitleColumn.Width = Math.Max(240, e.NewSize.Width - 135 - 90 - 145 - 30);
+    }
+
+    private void MoreMeetingActionsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var menu = MeetingsDataGrid.ContextMenu;
+        menu.PlacementTarget = MoreMeetingActionsButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
     }
 
     private void ExpandAllMeetingGroupsButton_OnClick(object sender, RoutedEventArgs e)
@@ -3662,7 +3779,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _meetingGroupExpansionStates[groupLabel] = true;
+        _meetingGroupExpansionStates[GetMeetingGroupStateKey(groupLabel)] = true;
     }
 
     private void MeetingGroupExpander_OnCollapsed(object sender, RoutedEventArgs e)
@@ -3673,7 +3790,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _meetingGroupExpansionStates[groupLabel] = false;
+        _meetingGroupExpansionStates[GetMeetingGroupStateKey(groupLabel)] = false;
     }
 
     private void SetAllMeetingGroupExpansionStates(bool isExpanded)
@@ -3738,9 +3855,11 @@ public partial class MainWindow : Window
 
     private void ReviewMeetingCleanupSuggestionsButton_OnClick(object sender, RoutedEventArgs e)
     {
+        OpenMeetingsTools();
         MarkMeetingCleanupHistoricalReviewCompleted();
         LegacyMeetingCleanupReviewBorder.Visibility = Visibility.Visible;
         LegacyMeetingCleanupReviewExpander.IsExpanded = true;
+        LegacyMeetingCleanupReviewBorder.BringIntoView();
         MeetingCleanupRecommendationsDataGrid.Focus();
         MeetingCleanupRecommendationsStatusTextBlock.Text = "Review the cleanup suggestions below. Dismiss any you do not want to see again.";
         UpdateMeetingCleanupReviewBanner();
@@ -5092,6 +5211,8 @@ public partial class MainWindow : Window
             ApplyExternalAudioImportSetupState();
             _selectedExternalAudioImportRow = nextSelectedRow ?? _selectedExternalAudioImportRow ?? _externalAudioImportRows.FirstOrDefault();
             UpdateExternalAudioImportReviewState();
+            OpenMeetingsTools();
+            ExternalAudioImportReviewBorder.BringIntoView();
             ExternalAudioImportDataGrid.Focus();
             AppendActivity($"Added {candidates.Count} audio file(s) to the import review.");
         }
@@ -6274,8 +6395,9 @@ public partial class MainWindow : Window
             _automaticRecoverySnapshots = automaticRecovery;
             RestoreAutomaticBackupButton.Visibility = automaticRecovery.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             ObserveFailedCleanupInputs(automaticRecovery, _allMeetingRows);
-            MeetingsDataGrid.ItemsSource = _allMeetingRows;
-            ApplyMeetingsWorkspaceView(selectedStems);
+            var scrollOffset = FindVisualChildren<ScrollViewer>(MeetingsDataGrid).FirstOrDefault()?.VerticalOffset;
+            ReplaceMeetingRowsAndRestoreSelection(selectedStems, preserveEditorDrafts: string.IsNullOrWhiteSpace(selectedStem));
+            RestoreMeetingScrollOffset(scrollOffset);
             _logger.Log(
                 $"Meeting list refresh {refreshVersion} completed. " +
                 $"rows={_allMeetingRows.Length}, audio={_allMeetingRows.Count(row => !string.IsNullOrWhiteSpace(row.Source.AudioPath))}, " +
@@ -6311,16 +6433,8 @@ public partial class MainWindow : Window
             AppendActivity(UserActionCopyResolver.Resolve(
                 UserActionIntent.RefreshMeetingDetails,
                 UserActionBlockedReasonKind.OperationFailed).BlockedText);
-            _meetingCleanupRecommendations = Array.Empty<MeetingCleanupRecommendation>();
-            _allMeetingRows = Array.Empty<MeetingListRow>();
-            MeetingsDataGrid.ItemsSource = _allMeetingRows;
-            MeetingCleanupRecommendationsDataGrid.ItemsSource = Array.Empty<MeetingCleanupRecommendationRow>();
-            MeetingCleanupRecommendationsStatusTextBlock.Text = "Cleanup suggestions are unavailable because the meeting list failed to load.";
-            MeetingCleanupReviewBannerBorder.Visibility = Visibility.Collapsed;
-            MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
             UpdateMeetingsPresetPresentation(ResolveMeetingsViewPresetState());
-            UpdateSelectedMeetingEditor(null);
-            UpdateMeetingsRefreshStateText("Meeting details unavailable. Refresh to retry.");
+            UpdateMeetingsRefreshStateText("Couldn't refresh meetings. Showing the last loaded list; refresh to retry.");
         }
         finally
         {
@@ -6652,8 +6766,9 @@ public partial class MainWindow : Window
         _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
         _lastSuccessfulMeetingsRefreshUtc = DateTimeOffset.UtcNow;
         _hasMeetingsRefreshFailure = false;
-        MeetingsDataGrid.ItemsSource = _allMeetingRows;
-        ApplyMeetingsWorkspaceView(selectedStems, preserveEditorDrafts);
+        var scrollOffset = FindVisualChildren<ScrollViewer>(MeetingsDataGrid).FirstOrDefault()?.VerticalOffset;
+        ReplaceMeetingRowsAndRestoreSelection(selectedStems, preserveEditorDrafts);
+        RestoreMeetingScrollOffset(scrollOffset);
         UpdateProcessingQueueStatusUi();
         RefreshOpenMeetingDetailWindow();
     }
@@ -6682,6 +6797,17 @@ public partial class MainWindow : Window
         var localTranscriptionSetup = HasReadyTranscriptionModel()
             ? MeetingRecommendationAvailability.Available
             : MeetingRecommendationAvailability.Missing;
+        var activeCleanupEntries = _meetingCleanupWorkLedgerService.GetEntries()
+            .Where(entry => entry.Action != MeetingCleanupAction.GenerateSummary &&
+                entry.State is not (CleanupWorkState.Completed or CleanupWorkState.Retired))
+            .ToArray();
+        var cleanupByStem = activeCleanupEntries
+            .SelectMany(entry => (entry.AffectedStems ?? Array.Empty<string>())
+                .Select(stem => (Stem: stem, Entry: entry)))
+            .ToLookup(item => item.Stem, item => item.Entry, StringComparer.OrdinalIgnoreCase);
+        var cleanupByManifest = activeCleanupEntries
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.ManifestPath))
+            .ToLookup(entry => entry.ManifestPath!, StringComparer.OrdinalIgnoreCase);
 
         return records
             .Select(record =>
@@ -6696,7 +6822,12 @@ public partial class MainWindow : Window
                         localTranscriptionSetup,
                         snapshotIsStale),
                     evaluatedAtUtc);
-                var row = new MeetingListRow(record, recordRecommendations, primaryRecommendation);
+                var libraryStatus = MeetingLibraryStatusResolver.Resolve(record,
+                    cleanupByStem[record.Stem].Concat(string.IsNullOrWhiteSpace(record.ManifestPath)
+                        ? Array.Empty<CleanupWorkLedgerEntry>()
+                        : cleanupByManifest[record.ManifestPath]).DistinctBy(entry => entry.Fingerprint).ToArray(),
+                    _liveConfig.Current.SmartCleanupEnabled);
+                var row = new MeetingListRow(record, recordRecommendations, primaryRecommendation, libraryStatus);
                 if (string.Equals(
                         _latestProcessingQueueStatusSnapshot.RushRequest?.ManifestPath,
                         record.ManifestPath,
@@ -6925,9 +7056,39 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ReplaceMeetingRowsAndRestoreSelection(IReadOnlyList<string> selectedStems, bool preserveEditorDrafts)
+    {
+        _isRebuildingMeetingSelection = true;
+        try
+        {
+            MeetingsDataGrid.ItemsSource = _allMeetingRows;
+            ApplyMeetingsWorkspaceView(selectedStems, preserveEditorDrafts);
+        }
+        finally
+        {
+            _isRebuildingMeetingSelection = false;
+        }
+    }
+
     private void ApplyMeetingsWorkspaceView(
         IReadOnlyList<string>? preferredSelectedStems = null,
         bool preserveEditorDrafts = false)
+    {
+        var wasRebuilding = _isRebuildingMeetingSelection;
+        _isRebuildingMeetingSelection = true;
+        try
+        {
+            ApplyMeetingsWorkspaceViewCore(preferredSelectedStems, preserveEditorDrafts);
+        }
+        finally
+        {
+            _isRebuildingMeetingSelection = wasRebuilding;
+        }
+    }
+
+    private void ApplyMeetingsWorkspaceViewCore(
+        IReadOnlyList<string>? preferredSelectedStems,
+        bool preserveEditorDrafts)
     {
         if (MeetingsDataGrid.ItemsSource is null)
         {
@@ -6941,12 +7102,10 @@ public partial class MainWindow : Window
         var selectedStems = preferredSelectedStems?.Count > 0
             ? preferredSelectedStems
             : GetSelectedMeetingRows().Select(row => row.Source.Stem).ToArray();
-        var visibleRows = _allMeetingRows
-            .Where(row => presetState.ScopedMeetingIds.Contains(row.Source.Stem, StringComparer.OrdinalIgnoreCase))
-            .ToArray();
+        var visibleStemSet = presetState.ScopedMeetingIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var visibleRows = _allMeetingRows.Where(row => visibleStemSet.Contains(row.Source.Stem)).ToArray();
         ApplyMeetingGroupDisplayLabels(visibleRows);
         ResetMeetingGroupExpansionState(selectedViewMode, selectedGroupKey, visibleRows);
-        var visibleStemSet = new HashSet<string>(visibleRows.Select(row => row.Source.Stem), StringComparer.OrdinalIgnoreCase);
         var view = CollectionViewSource.GetDefaultView(MeetingsDataGrid.ItemsSource);
         if (view is null)
         {
@@ -6990,6 +7149,7 @@ public partial class MainWindow : Window
         _ = Dispatcher.BeginInvoke(ApplyMeetingGroupExpansionStateToVisibleGroups, DispatcherPriority.Background);
         UpdateMeetingCleanupRecommendationsEditor(visibleRows);
         UpdateSelectedMeetingEditor(MeetingsDataGrid.SelectedItem as MeetingListRow, preserveEditorDrafts);
+        RefreshOpenMeetingDetailWindow();
     }
 
     private void ApplyMeetingGroupDisplayLabels(IReadOnlyList<MeetingListRow> visibleRows)
@@ -7054,8 +7214,11 @@ public partial class MainWindow : Window
         }
 
         var orderedLabels = GetOrderedMeetingGroupLabels(visibleRows, groupKey);
-        _meetingGroupExpansionStates = new Dictionary<string, bool>(
-            MainWindowInteractionLogic.InitializeMeetingWorkspaceGroupExpansionState(orderedLabels),
+        var defaults = MainWindowInteractionLogic.InitializeMeetingWorkspaceGroupExpansionState(
+            orderedLabels.Select(GetMeetingGroupStateKey).ToArray());
+        _meetingGroupExpansionStates = defaults.ToDictionary(
+            pair => pair.Key,
+            pair => _meetingGroupExpansionStates.TryGetValue(pair.Key, out var existing) ? existing : pair.Value,
             StringComparer.Ordinal);
     }
 
@@ -7105,7 +7268,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var groupLabel = group.Name as string ?? string.Empty;
+        var groupLabel = GetMeetingGroupStateKey(group.Name as string ?? string.Empty);
         if (!_meetingGroupExpansionStates.TryGetValue(groupLabel, out var isExpanded))
         {
             isExpanded = true;
@@ -7120,6 +7283,15 @@ public partial class MainWindow : Window
         {
             _isApplyingMeetingGroupExpansionState = false;
         }
+    }
+
+    private static string GetMeetingGroupStateKey(string label)
+    {
+        var suffix = label.LastIndexOf(" (", StringComparison.Ordinal);
+        return suffix >= 0 && label.EndsWith(')') &&
+               int.TryParse(label.AsSpan(suffix + 2, label.Length - suffix - 3), out _)
+            ? label[..suffix]
+            : label;
     }
 
     private void UpdateMeetingsWorkspaceControlState(MeetingViewPresetState? state = null)
@@ -7157,7 +7329,6 @@ public partial class MainWindow : Window
             : new HashSet<string>(selectedStems, StringComparer.OrdinalIgnoreCase);
 
         MeetingsDataGrid.SelectedItems.Clear();
-        MeetingListRow? selectedRow = null;
         foreach (var row in visibleRows)
         {
             if (stemSet is null || !stemSet.Contains(row.Source.Stem))
@@ -7166,10 +7337,7 @@ public partial class MainWindow : Window
             }
 
             MeetingsDataGrid.SelectedItems.Add(row);
-            selectedRow ??= row;
         }
-
-        MeetingsDataGrid.SelectedItem = selectedRow;
     }
 
     private MeetingsViewMode GetSelectedMeetingsViewMode()
@@ -7212,7 +7380,8 @@ public partial class MainWindow : Window
         _isUpdatingMeetingsWorkspaceControls = true;
         try
         {
-            MeetingsPresetComboBox.SelectedValue = config.MeetingsViewPreset;
+            if (!_meetingsPreferencesLoaded)
+                MeetingsPresetComboBox.SelectedValue = MeetingsViewPreset.Recent;
             MeetingsViewModeComboBox.SelectedValue = config.MeetingsViewMode;
             MeetingsSortKeyComboBox.SelectedValue = config.MeetingsSortKey;
             MeetingsSortDirectionComboBox.SelectedValue = config.MeetingsSortDescending;
@@ -7223,7 +7392,17 @@ public partial class MainWindow : Window
             _isUpdatingMeetingsWorkspaceControls = false;
         }
 
+        _meetingsPreferencesLoaded = true;
+
         UpdateMeetingsWorkspaceControlState();
+    }
+
+    private void RestoreMeetingScrollOffset(double? offset)
+    {
+        if (!offset.HasValue) return;
+        _ = Dispatcher.BeginInvoke(new Action(() =>
+            FindVisualChildren<ScrollViewer>(MeetingsDataGrid).FirstOrDefault()?.ScrollToVerticalOffset(offset.Value)),
+            DispatcherPriority.Loaded);
     }
 
     private MeetingViewPresetState ResolveMeetingsViewPresetState()
@@ -7242,20 +7421,7 @@ public partial class MainWindow : Window
 
     private static MeetingViewPresetItem BuildMeetingViewPresetItem(MeetingListRow row)
     {
-        var workState = row.Source.ManifestState switch
-        {
-            SessionState.Queued => MeetingViewWorkState.Queued,
-            SessionState.Processing or SessionState.Finalizing => MeetingViewWorkState.Processing,
-            SessionState.Failed => MeetingViewWorkState.Failed,
-            _ => row.Status switch
-            {
-                nameof(SessionState.Queued) => MeetingViewWorkState.Queued,
-                nameof(SessionState.Processing) or nameof(SessionState.Finalizing) => MeetingViewWorkState.Processing,
-                nameof(SessionState.Failed) => MeetingViewWorkState.Failed,
-                nameof(SessionState.Published) or "Transcript files present" => MeetingViewWorkState.Complete,
-                _ => MeetingViewWorkState.Unknown,
-            },
-        };
+        var workState = row.LibraryWorkState;
         var searchText = string.Join(
             " ",
             new[]
@@ -7271,7 +7437,7 @@ public partial class MainWindow : Window
             row.Source.Stem,
             row.Source.StartedAtUtc,
             workState,
-            row.CanApplyRecommendedAction,
+            HasActionableRecommendation: false,
             IsArchived: false,
             SearchText: searchText);
     }
@@ -7284,8 +7450,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var initialPreset = _meetingViewPresetResolver.SelectInitialPreset(
-            _allMeetingRows.Select(BuildMeetingViewPresetItem).ToArray());
+        var initialPreset = MeetingsViewPreset.Recent;
         _isUpdatingMeetingsWorkspaceControls = true;
         try
         {
@@ -9230,6 +9395,8 @@ public partial class MainWindow : Window
             ? "Refreshing..."
             : "Refresh List";
         MeetingSelectionSummaryTextBlock.Text = selectionCommandState.SummaryText;
+        MeetingSelectionCommandBarBorder.Visibility = selectedMeetings.Length > 0
+            ? Visibility.Visible : Visibility.Collapsed;
         MeetingSelectionBulkHintTextBlock.Visibility = selectionCommandState.ShowBulkMeetingCommands
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -17503,7 +17670,8 @@ public partial class MainWindow : Window
         public MeetingListRow(
             MeetingOutputRecord source,
             IReadOnlyList<MeetingCleanupRecommendation> recommendations,
-            MeetingPrimaryRecommendation primaryRecommendation)
+            MeetingPrimaryRecommendation primaryRecommendation,
+            MeetingLibraryStatus libraryStatus)
         {
             Source = source;
             Recommendations = recommendations;
@@ -17515,7 +17683,8 @@ public partial class MainWindow : Window
             DurationSortValue = source.Duration ?? TimeSpan.Zero;
             Duration = FormatDuration(source.Duration);
             Platform = source.Platform.ToString();
-            Status = MeetingOutputStatusResolver.ResolveDisplayStatus(source);
+            Status = libraryStatus.Label;
+            LibraryWorkState = libraryStatus.WorkState;
             WeekGroupSortValue = MainWindowInteractionLogic.GetMeetingWorkspaceWeekGroupStart(source.StartedAtUtc);
             WeekGroupBaseLabel = MainWindowInteractionLogic.BuildMeetingWorkspaceGroupLabel(
                 MeetingsGroupKey.Week,
@@ -17614,6 +17783,8 @@ public partial class MainWindow : Window
         public string Platform { get; set; }
 
         public string Status { get; set; }
+
+        public MeetingViewWorkState LibraryWorkState { get; }
 
         public DateTime WeekGroupSortValue { get; }
 

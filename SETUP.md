@@ -175,9 +175,9 @@ The app now keeps the main workflow in two primary destinations inside one visib
 - `Home` for the current recording console: separate `Title`, `Client / project`, and `Key attendees` fields, detected-audio and capture status, live audio graph, start/stop controls, a single `Next Best Action` well, and quick settings for microphone capture and auto-detection
 - `Meetings` for the recent-and-published meetings library, visible search, intent presets, queue status, cleanup review, artifact shortcuts, and `Open Details` for single-meeting transcript review and maintenance
 Capability setup now lives in `Settings > Setup` when you need to make transcription or optional speaker labeling ready. The default setup path is `Use recommended`: it downloads only local Standard transcription and leaves microphone capture, detection, hosted services, external providers, and speaker labeling unchanged. `Use Higher Accuracy` and `Import approved file` are explicit alternatives; `Skip for now` leaves optional speaker labeling off without blocking transcription. `Speaker labeling` now also includes a direct `When to run speaker labeling` selector so you can move between `Deferred`, `Throttled`, and `Inline` without leaving Setup. Recording and auto-detect stay blocked until transcription is ready.
-When you open `Meetings`, use `Recent`, `Needs Attention`, `Processing`, or `Custom` to choose the scope without changing search. A fresh library defaults to `Needs Attention` only after the displayed normalized rows show actionable work; otherwise it uses `Recent`. Existing table/group/sort settings migrate to `Custom` unchanged. Selecting a scope or changing search clears rows that leave scope, so hidden rows cannot remain selected for bulk actions. `Archived` states that its catalog is unavailable until a catalog can confirm archived records; it never treats an archive folder as an empty list. The app then fills in cleanup suggestions plus recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
+When you open `Meetings`, the list starts with all meetings, newest first, and an empty search. Use `Processing` or `Needs attention` to narrow it, and `View options` for saved custom grouping and sorting. Selecting a scope or changing search clears rows that leave scope, so hidden rows cannot remain selected for bulk actions. The app fills in cleanup suggestions and recent Outlook attendee backfill in the background. Repeated opens reuse cached no-match results for unchanged historical meetings so large libraries stay responsive.
 
-Each row also has one truthful `Next step` based only on the current local meeting metadata. It can open the detail window, route to Setup, open Cleanup review, or refresh a stale catalog; it does not run archive, delete, transcript, or provider work automatically. `Complete — no action needed` appears only for a fresh, confirmed healthy snapshot. A dismissed low-risk recommendation is stored only by its fingerprint, rule version, and time; it returns when the underlying recommendation changes or the dismissal expires, and cannot hide failed transcript recovery.
+Each row shows its artifact or processing status. Scheduled automatic retries remain under `Processing`; exhausted retries and work requiring a person appear under `Needs attention`. Open activity and review for queue details, cleanup suggestions, imports, and recovery. A dismissed low-risk recommendation is stored only by its fingerprint, rule version, and time; it returns when the underlying recommendation changes or the dismissal expires, and cannot hide failed transcript recovery.
 
 The Meetings context menu groups actions by outcome: `Open`, `Fix`, `Organize`, `Processing`, and `Danger Zone`. Multi-meeting commands are separate under `Selected meetings`; their labels and tooltips state how many of the selected meetings are eligible and name the first blocked condition before any command runs. Archive remains recoverable and distinct from cleanup review. Permanent delete stays isolated and requires the existing typed `DELETE` confirmation.
 
@@ -589,7 +589,7 @@ The Meetings tab now includes an ongoing cleanup recommendation system.
 
 What it does:
 
-- shows row-level recommendation badges such as `Archive`, `Merge`, `Rename`, `Split`, `Retry Transcript`, `Add Speaker Labels`, or `Repair Speaker Labels`
+- offers recommendations such as `Archive`, `Merge`, `Rename`, `Split`, `Retry Transcript`, `Add Speaker Labels`, or `Repair Speaker Labels` in review
 - shows a lighter cleanup review tray for the current selection or the whole library
 - offers a one-time historical review prompt with `Review Suggestions` and `Apply Safe Fixes`
 - auto-applies current `Safe Fix` rows only after a completed, current full cleanup refresh when no other meeting action is running; fast, stale, canceled, or replaced refreshes may update the list but never dispatch a fix
@@ -616,16 +616,16 @@ Archive output is user-recoverable. A manual archive writes a local receipt only
 
 ## 8.2 Meetings Library, Detail Window, and Context Menu
 
-The Meetings tab is now a library and work-queue surface. It keeps queue status, folder links, filtering, grouped browsing, a full-width meeting list, and a compact selection command strip on the tab. Single-meeting reading and maintenance open in one owned detail window, similar to transcript-first meeting tools.
+The Meetings tab prioritizes the meeting list, with search and filters above it and a compact selection command strip below. Queue status, folder links, import review, and cleanup are in activity and review. Single-meeting reading and maintenance open in one owned detail window.
 
 Meetings workspace behavior:
 
-- grouped view is now the default for current releases, including a one-time migration for older configs
+- all meetings are shown newest first by default; `View options` provides saved grouping and sorting
 - grouped browsing can now pivot by client / project and attendee as well as time, platform, and status
 - grouped browsing opens only the first visible group by default and keeps the rest collapsed until you expand them
 - `Expand All` and `Collapse All` appear when grouped browsing is active
 - meeting timestamps in the list and detail window use the local system time zone with the current short date/time format
-- one selected meeting enables `Open Details`, `Open Transcript`, `Open Audio`, and `Open Folder`
+- one selected meeting enables `Open Details`, `Open Transcript`, `Open Audio`, and additional actions under `More actions`
 - multiple selected meetings keep bulk-safe actions in the context menu
 - cleanup recommendations stay in the library-level cleanup review panel instead of mixing with selected-meeting controls
 

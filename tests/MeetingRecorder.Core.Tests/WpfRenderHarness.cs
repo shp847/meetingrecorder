@@ -213,7 +213,7 @@ internal static class WpfRenderHarness
             FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
             WriteProgress(progressPath, "initial-rendered");
 
-            if (window.ActualWidth != logicalWidth || window.ActualHeight != logicalHeight)
+            if (Math.Abs(window.ActualWidth - logicalWidth) > 0.5 || Math.Abs(window.ActualHeight - logicalHeight) > 0.5)
             {
                 throw new InvalidOperationException(
                     $"Requested {logicalWidth}x{logicalHeight} viewport but WPF rendered " +
@@ -240,10 +240,11 @@ internal static class WpfRenderHarness
                 SyntheticShellState.SelectionActive => "selection-active",
                 SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
                 SyntheticShellState.CleanupRecovery => "cleanup-recovery",
+                SyntheticShellState.DenseLibrary => "dense-library",
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.DenseLibrary or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
@@ -253,6 +254,66 @@ internal static class WpfRenderHarness
                         new RoutedEventArgs(Button.ClickEvent));
                     WaitForMeetingRows(window);
                     WriteProgress(progressPath, "meeting-rows-loaded");
+                    if (state == SyntheticShellState.DenseLibrary)
+                    {
+                        var list = RequireElement<ListView>(window, "MeetingsDataGrid");
+                        WaitForCondition(window.Dispatcher, () => list.Items.Count >= 25, TimeSpan.FromSeconds(10));
+                        RequireElement<Border>(window, "MeetingsProcessingStatusBorder").Visibility = Visibility.Visible;
+                        RequireElement<Border>(window, "MeetingCleanupReviewBannerBorder").Visibility = Visibility.Visible;
+                        window.UpdateLayout();
+                        FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
+                        var firstItem = list.ItemContainerGenerator.ContainerFromIndex(0) as ListViewItem
+                            ?? throw new InvalidOperationException("Meeting rows were not rendered.");
+                        DependencyObject? ancestor = firstItem;
+                        while (ancestor is not null && ancestor is not ScrollContentPresenter)
+                            ancestor = VisualTreeHelper.GetParent(ancestor);
+                        var viewport = ancestor as ScrollContentPresenter
+                            ?? throw new InvalidOperationException("Meeting list viewport is unavailable.");
+                        var rows = Enumerable.Range(0, list.Items.Count)
+                            .Select(index => list.ItemContainerGenerator.ContainerFromIndex(index) as ListViewItem)
+                            .Where(item => item is { IsVisible: true })
+                            .Count(item =>
+                            {
+                                var bounds = item!.TransformToAncestor(viewport).TransformBounds(new Rect(item.RenderSize));
+                                return bounds.Top >= 0 && bounds.Bottom <= viewport.ActualHeight;
+                            });
+                        var minimumRows = logicalWidth * rasterScale <= 1024 ? 10 : 12;
+                        if (rows < minimumRows)
+                            throw new InvalidOperationException($"Only {rows} full meeting rows fit; expected at least {minimumRows}.");
+                        if (logicalWidth == 1280 && rasterScale == 1d)
+                        {
+                            list.SelectedItems.Add(list.Items[0]);
+                            list.SelectedItems.Add(list.Items[1]);
+                            var oldItems = list.ItemsSource;
+                            RequireElement<Button>(window, "RefreshMeetingsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            WaitForCondition(window.Dispatcher, () => !ReferenceEquals(oldItems, list.ItemsSource), TimeSpan.FromSeconds(10));
+                            if (ReferenceEquals(oldItems, list.ItemsSource) || list.SelectedItems.Count != 2)
+                                throw new InvalidOperationException("Refreshing must preserve both selected meetings.");
+
+                            list.SelectedItems.Remove(list.SelectedItems[1]);
+                            var titleDraft = RequireElement<TextBox>(window, "SelectedMeetingTitleTextBox");
+                            titleDraft.Text = "Unsaved title draft";
+                            oldItems = list.ItemsSource;
+                            RequireElement<Button>(window, "RefreshMeetingsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            WaitForCondition(window.Dispatcher, () => !ReferenceEquals(oldItems, list.ItemsSource), TimeSpan.FromSeconds(10));
+                            if (ReferenceEquals(oldItems, list.ItemsSource) || list.SelectedItems.Count != 1 || titleDraft.Text != "Unsaved title draft")
+                                throw new InvalidOperationException("Refreshing must preserve the selected meeting and its title draft.");
+
+                            var toolsButton = RequireElement<Button>(window, "MeetingsToolsButton");
+                            toolsButton.Focus();
+                            toolsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                            var overlay = RequireElement<Border>(window, "MeetingsToolsOverlay");
+                            var source = PresentationSource.FromVisual(window)
+                                ?? throw new InvalidOperationException("Meeting window has no presentation source.");
+                            overlay.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape)
+                            {
+                                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+                            });
+                            if (overlay.Visibility == Visibility.Visible || !ReferenceEquals(Keyboard.FocusedElement, toolsButton))
+                                throw new InvalidOperationException("Escape must close meeting activity and restore focus to its opener.");
+                            list.SelectedItems.Clear();
+                        }
+                    }
                     if (state == SyntheticShellState.SelectionActive)
                     {
                         var meetings = RequireElement<ListView>(window, "MeetingsDataGrid");
@@ -263,11 +324,13 @@ internal static class WpfRenderHarness
 
                     if (state == SyntheticShellState.CleanupRecommendation)
                     {
+                        RequireElement<Button>(window, "MeetingsToolsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         WaitForCleanupRecommendation(window);
                         WriteProgress(progressPath, "cleanup-recommendation-loaded");
                     }
                     if (state == SyntheticShellState.CleanupRecovery)
                     {
+                        RequireElement<Button>(window, "MeetingsToolsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         var restore = RequireElement<Button>(window, "RestoreAutomaticBackupButton");
                         var transcript = Path.Combine(config.TranscriptOutputDir, "synthetic-recovery.md");
                         WaitForCondition(window.Dispatcher, () => restore.IsVisible &&
@@ -383,7 +446,7 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(settingsWindow!, "FooterStatusTextBlock"),
                     RequireElement<CheckBox>(window, "ConfigCalendarTitleFallbackCheckBox"),
                 }
-                : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation
+                : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.DenseLibrary
                 ? new FrameworkElement[]
                 {
                     homeAction,
@@ -431,6 +494,24 @@ internal static class WpfRenderHarness
         AppConfig config,
         SyntheticShellState state)
     {
+        if (state == SyntheticShellState.DenseLibrary)
+        {
+            Directory.CreateDirectory(config.AudioOutputDir);
+            Directory.CreateDirectory(config.TranscriptOutputDir);
+            var builder = new ArtifactPathBuilder();
+            for (var index = 0; index < 30; index++)
+            {
+                var stem = builder.BuildFileStem(MeetingPlatform.Teams,
+                    new DateTimeOffset(2026, 9, 29, 15, 0, 0, TimeSpan.Zero).AddMinutes(-index),
+                    $"Synthetic library meeting {index:D2}");
+                WriteSyntheticWaveFile(Path.Combine(config.AudioOutputDir, stem + ".wav"));
+                File.WriteAllText(Path.Combine(config.TranscriptOutputDir, stem + ".md"), "## Transcript\nSynthetic meeting.");
+            }
+            var libraryConfig = config with { SmartCleanupEnabled = false, MeetingsViewPresetInitialized = true };
+            configStore.SaveAsync(libraryConfig).GetAwaiter().GetResult();
+            return libraryConfig;
+        }
+
         if (state is SyntheticShellState.EmptyHealthy or SyntheticShellState.ImportReviewReady)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(config.TranscriptionModelPath)!);
@@ -1307,6 +1388,7 @@ internal static class WpfRenderHarness
         SelectionActive,
         CleanupRecommendation,
         CleanupRecovery,
+        DenseLibrary,
         EmptyHealthy,
         ImportReviewSetupBlocked,
         ImportReviewReady,

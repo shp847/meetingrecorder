@@ -332,8 +332,8 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("Height=\"920\"", windowTag);
         Assert.Contains("Width=\"1440\"", windowTag);
-        Assert.Contains("MinWidth=\"1024\"", windowTag);
-        Assert.Contains("MinHeight=\"768\"", windowTag);
+        Assert.Contains("MinWidth=\"800\"", windowTag);
+        Assert.Contains("MinHeight=\"600\"", windowTag);
         Assert.DoesNotContain("Width=\"{Binding ElementName=HomeDashboardScrollViewer, Path=ViewportWidth}\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", dashboardGridTag);
         Assert.Contains("HorizontalAlignment=\"Stretch\"", recordingConsoleBorderTag);
@@ -351,7 +351,9 @@ public sealed class MainWindowXamlTests
 
         Assert.Contains("x:Name=\"HomeDashboardScrollViewer\"", xaml);
         Assert.Contains("VerticalScrollBarVisibility=\"Auto\"", xaml);
-        Assert.Contains("HorizontalScrollBarVisibility=\"Disabled\"", xaml);
+        var scrollStart = xaml.IndexOf("<ScrollViewer x:Name=\"HomeDashboardScrollViewer\"", StringComparison.Ordinal);
+        var scrollEnd = xaml.IndexOf('>', scrollStart);
+        Assert.Contains("HorizontalScrollBarVisibility=\"Auto\"", xaml[scrollStart..scrollEnd]);
         Assert.Contains("<Grid x:Name=\"HomeDashboardGrid\"", xaml);
     }
 
@@ -712,7 +714,8 @@ public sealed class MainWindowXamlTests
         Assert.Contains("AppAccentBrush", quickSettingStyleBlock);
         Assert.Contains("AppAccentForegroundBrush", quickSettingStyleBlock);
         Assert.Contains("Property=\"Width\" Value=\"72\"", quickSettingStyleBlock);
-        Assert.DoesNotContain("<WrapPanel Grid.Row=\"1\"", xaml);
+        var homeMarkup = xaml[xaml.IndexOf("x:Name=\"DashboardTabItem\"", StringComparison.Ordinal)..xaml.IndexOf("x:Name=\"MeetingsTabItem\"", StringComparison.Ordinal)];
+        Assert.DoesNotContain("<WrapPanel Grid.Row=\"1\"", homeMarkup);
         Assert.Contains("x:Name=\"HomeMicCaptureToggleGrid\"", xaml);
         Assert.Contains("x:Name=\"HomeAutoDetectToggleGrid\"", xaml);
     }
@@ -1050,7 +1053,7 @@ public sealed class MainWindowXamlTests
     }
 
     [Fact]
-    public void Meetings_Expose_One_Visible_Navigation_Only_Recommendation_At_Row_And_Menu_Level()
+    public void Meetings_Expose_Recommendation_Through_The_Review_Menu()
     {
         var xamlPath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml");
         var mainWindowCodePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
@@ -1058,9 +1061,8 @@ public sealed class MainWindowXamlTests
         var xaml = File.ReadAllText(xamlPath);
         var source = File.ReadAllText(mainWindowCodePath);
 
-        Assert.Contains("Header=\"Next step\"", xaml);
-        Assert.Contains("Text=\"{Binding Recommended, Mode=OneWay}\"", xaml);
-        Assert.Contains("Content=\"{Binding RecommendedActionLabel, Mode=OneWay}\"", xaml);
+        Assert.Contains("x:Name=\"ApplyMeetingRecommendedActionMenuItem\"", xaml);
+        Assert.DoesNotContain("<GridViewColumn Header=\"Next step\"", xaml);
         Assert.Contains("_meetingRecommendationResolver.Resolve(", source);
         Assert.Contains("OpenMeetingRecommendationAsync", source);
         Assert.Contains("MeetingRecommendationActionTarget.CleanupReview", source);

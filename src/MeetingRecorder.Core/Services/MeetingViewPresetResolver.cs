@@ -96,9 +96,7 @@ public sealed class MeetingViewPresetResolver
     public MeetingsViewPreset SelectInitialPreset(IReadOnlyList<MeetingViewPresetItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        return items.Any(item => !item.IsArchived && IsAttention(item))
-            ? MeetingsViewPreset.NeedsAttention
-            : MeetingsViewPreset.Recent;
+        return MeetingsViewPreset.Recent;
     }
 
     private static MeetingViewPresetState BuildState(
@@ -146,12 +144,9 @@ public sealed class MeetingViewPresetResolver
 
     private static bool IsAttention(MeetingViewPresetItem item)
     {
-        return item.HasActionableRecommendation || item.WorkState is
+        return item.WorkState is
             MeetingViewWorkState.Failed or
-            MeetingViewWorkState.Blocked or
-            MeetingViewWorkState.Queued or
-            MeetingViewWorkState.Processing or
-            MeetingViewWorkState.RetryNeeded;
+            MeetingViewWorkState.Blocked;
     }
 
     private static bool MatchesSearch(MeetingViewPresetItem item, string? searchText)
@@ -217,7 +212,7 @@ public sealed class MeetingViewPresetResolver
             MeetingsViewPreset.Processing => "are processing",
             MeetingsViewPreset.Archived => "are archived",
             MeetingsViewPreset.Custom => "match Custom View",
-            _ => "are recent",
+            _ => "are in All meetings",
         };
         return $"Showing {displayedCount} of {totalCount} meetings that {scope}.";
     }

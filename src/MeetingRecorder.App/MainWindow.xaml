@@ -6,8 +6,8 @@
         Icon="Assets/MeetingRecorder.ico"
         Height="920"
         Width="1440"
-        MinHeight="768"
-        MinWidth="1024"
+        MinHeight="600"
+        MinWidth="800"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style x:Key="DashboardStartButtonStyle" TargetType="Button">
@@ -364,13 +364,17 @@
                            Foreground="{StaticResource AppTextBrush}"
                            Text="MEETING RECORDER" />
 
-                <StackPanel Grid.Row="0"
-                            Grid.Column="1"
-                            Orientation="Horizontal"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center">
+                <Grid Grid.Row="0"
+                      Grid.Column="1"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
                     <Border x:Name="HeaderShellStatusBorder"
-                            Width="600"
+                            MaxWidth="600"
                             MinHeight="44"
                             Padding="10,6"
                             Margin="0,0,10,0"
@@ -425,17 +429,19 @@
                     </Border>
 
                     <Button x:Name="HeaderSettingsButton"
+                            Grid.Column="1"
                             AutomationProperties.Name="Open Settings"
                             Style="{StaticResource HeaderActionButtonStyle}"
                             Margin="0"
                             Click="HeaderSettingsButton_OnClick"
                             Content="Settings" />
                     <Button x:Name="HeaderHelpButton"
+                            Grid.Column="2"
                             AutomationProperties.Name="Open Help"
                             Style="{StaticResource HeaderActionButtonStyle}"
                             Click="HeaderHelpButton_OnClick"
                             Content="Help" />
-                </StackPanel>
+                </Grid>
 
                 <Border x:Name="HeaderQueueStatusBorder"
                         Grid.Row="1"
@@ -472,6 +478,8 @@
                   Margin="0,10,0,0">
                 <TabControl x:Name="MainTabControl"
                             SelectedIndex="0"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch"
                             Style="{StaticResource ShellSegmentedTabControlStyle}"
                             ItemContainerStyle="{StaticResource ShellSegmentedTabItemStyle}"
                             SelectionChanged="MainTabControl_OnSelectionChanged">
@@ -481,7 +489,7 @@
                                       HorizontalAlignment="Stretch"
                                       HorizontalContentAlignment="Stretch"
                                       VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Disabled">
+                                      HorizontalScrollBarVisibility="Auto">
                         <Grid x:Name="HomeDashboardGrid"
                               MinWidth="1040"
                               HorizontalAlignment="Stretch"
@@ -814,7 +822,8 @@
                         </Grid>
                         </ScrollViewer>
                 </TabItem>
-                <TabItem x:Name="MeetingsTabItem" Header="Meetings">
+                <TabItem x:Name="MeetingsTabItem" Header="Meetings"
+                         HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                     <Grid x:Name="MeetingsWorkspaceGrid"
                           Margin="0,12,0,0"
                           AllowDrop="True"
@@ -826,8 +835,9 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <StackPanel>
+                        <StackPanel x:Name="MeetingsLegacyStatusPanel">
                             <TextBlock x:Name="MeetingWorkspaceStatusTextBlock"
+                                       Visibility="Collapsed"
                                        AutomationProperties.LiveSetting="Polite"
                                        VerticalAlignment="Center"
                                        Foreground="#45504D"
@@ -850,11 +860,13 @@
                                                Text="PROCESSING · 0 remaining" />
                                     <TextBlock x:Name="MeetingsProcessingStatusLine2TextBlock"
                                                Margin="0,2,0,0"
+                                               TextWrapping="Wrap"
                                                Style="{StaticResource TechnicalMetaLabelStyle}"
                                                FontFamily="{StaticResource AppMonoFontFamily}"
                                                Text="Current: waiting to start processing." />
                                     <TextBlock x:Name="MeetingsProcessingStatusLine3TextBlock"
                                                Margin="0,2,0,0"
+                                               TextWrapping="Wrap"
                                                Style="{StaticResource TechnicalMetaLabelStyle}"
                                                FontFamily="{StaticResource AppMonoFontFamily}"
                                                Text="Overall queue: 0 remaining · ETA unavailable" />
@@ -892,8 +904,8 @@
                         </StackPanel>
 
                         <Border Grid.Row="1"
-                                Margin="0,16,0,0"
-                                Padding="14"
+                                Margin="0"
+                                Padding="8"
                                 Style="{StaticResource ShellSurfaceCardStyle}">
                             <StackPanel>
                             <WrapPanel>
@@ -901,7 +913,7 @@
                                     <TextBlock FontWeight="SemiBold"
                                                Text="Search" />
                                     <TextBox x:Name="MeetingsSearchTextBox"
-                                             Width="220"
+                                             Width="160"
                                              Height="32"
                                              Margin="0,6,0,0"
                                              AutomationProperties.Name="Search meetings"
@@ -910,21 +922,30 @@
                                 </StackPanel>
 
                                 <StackPanel Margin="0,0,14,10">
-                                    <TextBlock Style="{StaticResource TechnicalMetaLabelStyle}"
-                                               Text="VIEW PRESET" />
+                                    <TextBlock FontWeight="SemiBold" Text="View" />
                                     <ComboBox x:Name="MeetingsPresetComboBox"
                                               Style="{StaticResource ShellFilterComboBoxStyle}"
-                                              Width="160"
+                                              Width="120"
                                               Height="32"
                                               Margin="0,6,0,0"
                                               AutomationProperties.Name="Meeting view preset"
-                                              SelectionChanged="MeetingsPresetComboBox_OnSelectionChanged" />
+                                              SelectionChanged="MeetingsPresetComboBox_OnSelectionChanged">
+                                        <ComboBox.ItemContainerStyle>
+                                            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource ShellFilterComboBoxItemStyle}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Label}" Value="Custom">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ComboBox.ItemContainerStyle>
+                                    </ComboBox>
                                 </StackPanel>
 
                                 <Expander x:Name="MeetingsCustomViewExpander"
                                           Margin="0,0,14,10"
                                           VerticalAlignment="Bottom"
-                                          Header="Custom View"
+                                          Header="View options"
                                           Visibility="Collapsed">
                                     <WrapPanel Margin="0,6,0,0">
                                 <StackPanel Margin="0,0,14,10">
@@ -1004,7 +1025,7 @@
                                     <TextBlock Visibility="Hidden"
                                                Text="Import" />
                                     <Button x:Name="AddAudioFilesButton"
-                                            Width="130"
+                                            Width="120"
                                             Height="34"
                                             Margin="0,6,14,0"
                                             Click="AddAudioFilesButton_OnClick"
@@ -1013,7 +1034,22 @@
                                             AutomationProperties.HelpText="Adds files to review only. Original files stay in place." />
                                 </StackPanel>
 
-                                <StackPanel Margin="0,0,14,10"
+                                <StackPanel Margin="0,0,14,10" VerticalAlignment="Bottom">
+                                    <TextBlock Visibility="Hidden" Text="Activity" />
+                                    <Button x:Name="MeetingsToolsButton"
+                                            Height="34" Margin="0,6,0,0"
+                                            Click="MeetingsToolsButton_OnClick"
+                                            Content="Activity and review"
+                                            AutomationProperties.Name="Open meeting activity and review" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,14,10" VerticalAlignment="Bottom">
+                                    <TextBlock Visibility="Hidden" Text="Options" />
+                                    <Button x:Name="MeetingsViewOptionsButton" Height="34" Margin="0,6,0,0"
+                                            Click="MeetingsViewOptionsButton_OnClick" Content="View options" />
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,14,10" Visibility="Collapsed"
                                             VerticalAlignment="Bottom">
                                     <TextBlock Visibility="Hidden"
                                                Text="Resume imports" />
@@ -1026,7 +1062,7 @@
                                             AutomationProperties.Name="Resume staged imports blocked by transcription setup" />
                                 </StackPanel>
 
-                                <StackPanel Margin="0,0,0,10"
+                                <StackPanel Margin="0,0,0,10" Visibility="Collapsed"
                                             VerticalAlignment="Bottom">
                                     <TextBlock Visibility="Hidden"
                                                Text="Refresh" />
@@ -1073,10 +1109,10 @@
                                     BorderThickness="1"
                                     Visibility="Collapsed">
                                 <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
                                     <StackPanel VerticalAlignment="Center">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock x:Name="MeetingCleanupHeadlineTextBlock"
@@ -1102,10 +1138,7 @@
                                         <TextBlock x:Name="MeetingCleanupReviewBannerTextBlock"
                                                    Visibility="Collapsed" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="1"
-                                                Margin="12,0,0,0"
-                                                Orientation="Horizontal"
-                                                VerticalAlignment="Center">
+                                    <WrapPanel Grid.Row="1" Margin="0,8,0,0">
                                         <Button x:Name="ToggleSmartCleanupButton"
                                                 Width="154"
                                                 Height="34"
@@ -1129,16 +1162,16 @@
                                                 Height="34"
                                                 Click="RunReadyMeetingCleanupWorkButton_OnClick"
                                                 Content="Run Ready Work" />
-                                    </StackPanel>
+                                    </WrapPanel>
                                 </Grid>
                             </Border>
 
                             <Border x:Name="MeetingSelectionCommandBarBorder"
-                                    Grid.Row="2"
+                                    Grid.Row="4"
                                     Grid.Column="0"
                                     Grid.ColumnSpan="3"
-                                    Margin="0,16,0,0"
-                                    Padding="12"
+                                    Margin="0,4,0,0"
+                                    Padding="4"
                                     CornerRadius="4"
                                     Background="{StaticResource AppCardBrush}"
                                     BorderBrush="{StaticResource AppOutlineBrush}"
@@ -1169,12 +1202,16 @@
                                                 Height="32"
                                                 Margin="0,0,10,0"
                                                 Click="OpenSelectedFolderLibraryButton_OnClick"
+                                                Visibility="Collapsed"
                                                 Content="Open Folder" />
                                         <Button x:Name="ReviewCleanupSuggestionsLibraryButton"
                                                 Width="150"
                                                 Height="32"
                                                 Click="ReviewCleanupSuggestionsActionButton_OnClick"
                                                 Content="Review Suggestions" />
+                                        <Button x:Name="MoreMeetingActionsButton" Height="32"
+                                                Click="MoreMeetingActionsButton_OnClick"
+                                                Content="More actions" />
                                          <Button x:Name="RestoreLatestArchiveButton"
                                                  Width="164"
                                                  Height="32"
@@ -1248,9 +1285,21 @@
                                     KeyboardNavigation.TabNavigation="Local"
                                     Visibility="Collapsed">
                                 <StackPanel>
-                                    <DockPanel LastChildFill="True">
-                                        <WrapPanel DockPanel.Dock="Right"
-                                                   Margin="12,0,0,0">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" Text="Imported Audio Review" />
+                                        <TextBlock x:Name="ExternalAudioImportPrivacyNoticeTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                   Text="Local copy only. Original files stay in place. You are responsible for recording consent."
+                                                   TextWrapping="Wrap"
+                                                   AutomationProperties.Name="Import privacy and consent notice" />
+                                        <TextBlock x:Name="ExternalAudioImportSummaryTextBlock"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="{StaticResource AppMutedTextBrush}"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Text="Add recordings from another source, review them here, then queue the valid files. Selected files stay where they are."
+                                                   TextWrapping="Wrap" />
+                                        <WrapPanel Margin="0,8,0,0">
                                             <Button x:Name="AddMoreAudioFilesButton"
                                                     Width="130"
                                                     Height="32"
@@ -1300,23 +1349,7 @@
                                                     Content="Open Inbox"
                                                     AutomationProperties.Name="Open Import Inbox settings" />
                                         </WrapPanel>
-                                        <StackPanel VerticalAlignment="Center">
-                                            <TextBlock FontWeight="SemiBold"
-                                                       Text="Imported Audio Review" />
-                                            <TextBlock x:Name="ExternalAudioImportPrivacyNoticeTextBlock"
-                                                       Margin="0,4,0,0"
-                                                       Foreground="{StaticResource AppMutedTextBrush}"
-                                                       Text="Local copy only. Original files stay in place. You are responsible for recording consent."
-                                                       TextWrapping="Wrap"
-                                                       AutomationProperties.Name="Import privacy and consent notice" />
-                                            <TextBlock x:Name="ExternalAudioImportSummaryTextBlock"
-                                                       Margin="0,4,0,0"
-                                                       Foreground="{StaticResource AppMutedTextBrush}"
-                                                       AutomationProperties.LiveSetting="Polite"
-                                                       Text="Add recordings from another source, review them here, then queue the valid files. Selected files stay where they are."
-                                                       TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </DockPanel>
+                                    </StackPanel>
 
                                     <DataGrid x:Name="ExternalAudioImportDataGrid"
                                               Margin="0,12,0,0"
@@ -1427,7 +1460,7 @@
                             <Border x:Name="MeetingsListBorder"
                                     Grid.Row="3"
                                     Grid.Column="0"
-                                    Margin="0,16,0,0"
+                                    Margin="0,4,0,0"
                                      Style="{StaticResource MeetingsDataWellBorderStyle}">
                                 <ListView x:Name="MeetingsDataGrid"
                                           AutomationProperties.Name="Meetings list"
@@ -1438,6 +1471,8 @@
                                           VirtualizingPanel.IsVirtualizingWhenGrouping="True"
                                           VirtualizingPanel.VirtualizationMode="Recycling"
                                           SelectionMode="Extended"
+                                          SizeChanged="MeetingsDataGrid_OnSizeChanged"
+                                          KeyDown="MeetingsDataGrid_OnKeyDown"
                                           SelectionChanged="MeetingsDataGrid_OnSelectionChanged"
                                           MouseDoubleClick="MeetingsDataGrid_OnMouseDoubleClick">
                                 <ListView.ItemContainerStyle>
@@ -1509,67 +1544,23 @@
                                 </ListView.GroupStyle>
                                 <ListView.View>
                                     <GridView AllowsColumnReorder="False">
-                                        <GridViewColumn Header="Title"
-                                                        Width="235"
-                                                        DisplayMemberBinding="{Binding Title, Mode=OneWay}" />
-                                        <GridViewColumn Header="Project"
-                                                        Width="160"
-                                                        DisplayMemberBinding="{Binding ProjectName, Mode=OneWay}" />
+                                        <GridViewColumn x:Name="MeetingTitleColumn" Header="Title" Width="350">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Title}" ToolTip="{Binding Title}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
                                         <GridViewColumn Header="Started"
                                                         Width="135"
                                                         DisplayMemberBinding="{Binding StartedAtUtc, Mode=OneWay}" />
                                         <GridViewColumn Header="Duration"
                                                         Width="90"
                                                         DisplayMemberBinding="{Binding Duration, Mode=OneWay}" />
-                                        <GridViewColumn Header="Platform"
-                                                        Width="95"
-                                                        DisplayMemberBinding="{Binding Platform, Mode=OneWay}" />
                                         <GridViewColumn Header="Status"
-                                                        Width="100"
+                                                        Width="145"
                                                         DisplayMemberBinding="{Binding Status, Mode=OneWay}" />
-                                        <GridViewColumn Header="Audio"
-                                                        Width="75">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <Button Style="{StaticResource InlineArtifactActionButtonStyle}"
-                                                            Click="AudioArtifactLink_OnClick"
-                                                            Content="{Binding AudioActionLabel, Mode=OneWay}"
-                                                            ToolTip="{Binding AudioActionToolTip, Mode=OneWay}"
-                                                            IsEnabled="{Binding CanOpenAudioArtifact, Mode=OneWay}" />
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-                                        <GridViewColumn Header="Transcript"
-                                                        Width="90">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                        <Button Style="{StaticResource InlineArtifactActionButtonStyle}"
-                                                            Click="TranscriptArtifactLink_OnClick"
-                                                            Content="{Binding TranscriptActionLabel, Mode=OneWay}"
-                                                            ToolTip="{Binding TranscriptActionToolTip, Mode=OneWay}"
-                                                            IsEnabled="{Binding CanOpenTranscriptArtifact, Mode=OneWay}" />
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
-                                        <GridViewColumn Header="Next step"
-                                                        Width="220">
-                                            <GridViewColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding Recommended, Mode=OneWay}"
-                                                                   Foreground="#45504D"
-                                                                   TextWrapping="Wrap" />
-                                                        <Button Style="{StaticResource InlineRecommendationButtonStyle}"
-                                                                Margin="0,6,0,0"
-                                                                Click="MeetingRecommendedActionButton_OnClick"
-                                                                Content="{Binding RecommendedActionLabel, Mode=OneWay}"
-                                                                ToolTip="{Binding RecommendedActionToolTip, Mode=OneWay}"
-                                                                IsEnabled="{Binding CanApplyRecommendedAction, Mode=OneWay}"
-                                                                Visibility="{Binding RecommendedActionVisibility, Mode=OneWay}" />
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </GridViewColumn.CellTemplate>
-                                        </GridViewColumn>
                                     </GridView>
                                 </ListView.View>
                                 </ListView>
@@ -1590,8 +1581,9 @@
                                           Grid.Row="4"
                                           Grid.Column="0"
                                           Grid.ColumnSpan="3"
-                                          Margin="0,16,0,0"
+                                          Margin="0"
                                           MaxHeight="320"
+                                          Visibility="Collapsed"
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
                                     <Border x:Name="MeetingsInspectorBorder"
@@ -2093,6 +2085,27 @@
                                 </StackPanel>
                             </ScrollViewer>
                         </Grid>
+                        <Border x:Name="MeetingsToolsOverlay"
+                                Grid.RowSpan="3" Panel.ZIndex="10"
+                                HorizontalAlignment="Right" VerticalAlignment="Stretch"
+                                Width="620" MaxWidth="620" Padding="12"
+                                Background="{StaticResource AppCardBrush}"
+                                BorderBrush="{StaticResource AppOutlineBrush}"
+                                BorderThickness="1" Visibility="Collapsed"
+                                KeyboardNavigation.TabNavigation="Cycle"
+                                AutomationProperties.Name="Meeting activity and review"
+                                PreviewKeyDown="MeetingsToolsOverlay_OnPreviewKeyDown">
+                            <DockPanel>
+                                <Button x:Name="CloseMeetingsToolsButton" DockPanel.Dock="Top"
+                                        HorizontalAlignment="Right" Content="Close"
+                                        Click="CloseMeetingsToolsButton_OnClick"
+                                        AutomationProperties.Name="Close meeting activity and review" />
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel x:Name="MeetingsToolsContent" />
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
                     </Grid>
                 </TabItem>
                 </TabControl>

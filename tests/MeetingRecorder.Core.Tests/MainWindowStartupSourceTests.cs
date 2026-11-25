@@ -92,11 +92,12 @@ public sealed class MainWindowStartupSourceTests
         var refreshEnd = source.IndexOf("private void UpdateMeetingsRefreshStateText", refreshStart, StringComparison.Ordinal);
         var refreshBlock = source[refreshStart..refreshEnd];
 
-        var publishIndex = refreshBlock.IndexOf("MeetingsDataGrid.ItemsSource = _allMeetingRows;", StringComparison.Ordinal);
+        var publishIndex = refreshBlock.IndexOf("ReplaceMeetingRowsAndRestoreSelection(selectedStems", StringComparison.Ordinal);
         var cleanupIndex = refreshBlock.IndexOf("StartMeetingCleanupRecommendationRefresh(", StringComparison.Ordinal);
         var attendeeIndex = refreshBlock.IndexOf("StartMeetingAttendeeBackfillRefresh(", StringComparison.Ordinal);
 
-        Assert.True(publishIndex >= 0, "Expected MeetingsDataGrid.ItemsSource assignment in RefreshMeetingListAsync.");
+        Assert.True(publishIndex >= 0, "Expected baseline rows to be published in RefreshMeetingListAsync.");
+        Assert.Contains("MeetingsDataGrid.ItemsSource = _allMeetingRows;", source);
         Assert.True(cleanupIndex > publishIndex, "Cleanup refresh should start only after baseline rows are published.");
         Assert.True(attendeeIndex > publishIndex, "Attendee backfill should start only after baseline rows are published.");
     }

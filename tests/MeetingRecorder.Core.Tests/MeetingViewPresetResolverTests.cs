@@ -9,7 +9,7 @@ public sealed class MeetingViewPresetResolverTests
 
     [Theory]
     [InlineData(MeetingsViewPreset.Recent, "recent-1", "recent-2", "attention-1", "processing-1")]
-    [InlineData(MeetingsViewPreset.NeedsAttention, "attention-1", "processing-1")]
+    [InlineData(MeetingsViewPreset.NeedsAttention, "attention-1")]
     [InlineData(MeetingsViewPreset.Processing, "processing-1")]
     [InlineData(MeetingsViewPreset.Archived, "archived-1")]
     [InlineData(MeetingsViewPreset.Custom, "recent-1", "recent-2", "attention-1", "processing-1")]
@@ -130,9 +130,9 @@ public sealed class MeetingViewPresetResolverTests
     }
 
     [Fact]
-    public void SelectInitialPreset_Uses_NeedsAttention_Only_For_Actionable_Normalized_Work()
+    public void SelectInitialPreset_Always_Opens_All_Meetings()
     {
-        Assert.Equal(MeetingsViewPreset.NeedsAttention, _resolver.SelectInitialPreset(Items()));
+        Assert.Equal(MeetingsViewPreset.Recent, _resolver.SelectInitialPreset(Items()));
         Assert.Equal(MeetingsViewPreset.Recent, _resolver.SelectInitialPreset(
             [Item("complete", MeetingViewWorkState.Complete)]));
     }

@@ -38,16 +38,9 @@ public sealed class MeetingWorkspaceRefreshXamlTests
         Assert.Contains("x:Name=\"ApplyProjectButton\"", detailWindowXaml);
         Assert.Contains("x:Name=\"ClearProjectButton\"", detailWindowXaml);
         Assert.Contains("x:Name=\"ProjectTextBlock\"", detailWindowXaml);
-        Assert.Contains("Header=\"Project\"", mainWindowXaml);
-        Assert.Contains("Header=\"Started\"", mainWindowXaml);
-
-        Assert.True(
-            mainWindowXaml.IndexOf("Header=\"Project\"", StringComparison.Ordinal) <
-            mainWindowXaml.IndexOf("Header=\"Started\"", StringComparison.Ordinal));
-        Assert.Contains("Header=\"Next step\"", mainWindowXaml);
-        Assert.True(
-            mainWindowXaml.IndexOf("Header=\"Transcript\"", StringComparison.Ordinal) <
-            mainWindowXaml.LastIndexOf("Header=\"Next step\"", StringComparison.Ordinal));
+        Assert.Contains("<GridViewColumn Header=\"Started\"", mainWindowXaml);
+        Assert.DoesNotContain("<GridViewColumn Header=\"Project\"", mainWindowXaml);
+        Assert.DoesNotContain("<GridViewColumn Header=\"Next step\"", mainWindowXaml);
     }
 
     [Fact]

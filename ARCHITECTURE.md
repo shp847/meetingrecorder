@@ -170,10 +170,10 @@ Responsibilities:
 - initialize grouped browsing with only the first visible group expanded, keep the rest collapsed, and offer explicit `Expand All` and `Collapse All` controls when grouping is active
 - publish the baseline meeting list immediately, then defer cleanup suggestion analysis and attendee enrichment so opening `Meetings` does not block the shell
 - avoid awaiting routine catalog refreshes on the stop path or on unrelated config saves; those now flow through the same deferred refresh coalescer
-- show queue state, pause reason, remaining count, current processing stage, and approximate current-item plus overall queue ETA in a compact technical strip above the Meetings toolbar
-- surface title, project, local started time, duration, platform, status, and compact audio/transcript actions
+- keep detailed queue state, pause reason, remaining count, processing stage, and approximate ETA in an on-demand activity and review panel
+- surface title, local started time, duration, and status in the list; keep artifact actions in the selection strip and project and platform in details
 - let search match title, project, key attendees, and captured attendee names
-- surface cleanup recommendation badges independently from publish status
+- present cleanup recommendations independently from artifact and processing status
 - host the one-time historical cleanup review banner and ongoing recommendation block
 - keep the Meetings tab itself as a library/work-queue surface with a compact selection command strip instead of a mixed selected-meeting right rail
 - open one reusable owned `MeetingDetailWindow` for a single selected meeting when the user double-clicks a row or chooses `Open Details`
@@ -352,7 +352,7 @@ Historical behavior:
 
 - the old silent repair path has been replaced with a one-time historical review prompt in the Meetings experience
 - users can review suggestions first or apply only the high-confidence safe fixes
-- cleanup scheduling uses a persisted fingerprint ledger with pending, queued, processing, completed, failed, and manual-review states. Queue acceptance is not completion: worker outcome resolves queued repair work, and startup reconciles only queued/processing entries whose durable manifests are already published or failed. Cleanup is low-priority and uses the existing worker cap; daytime scheduling alternates one cleanup item after normal work, while the configured overnight window allows bursts of up to five cleanup items before returning to normal work. Live recordings pause new background work; recommendations recompute after a full Meetings-tab refresh, and manual actions remain available for failed or legacy-unprovable work. Baseline row refreshes preserve the previous cleanup recommendation set until the replacement background scan completes, and the cleanup review banner reserves its row while hidden to avoid first-open layout jumps.
+- cleanup scheduling uses a persisted fingerprint ledger with pending, queued, processing, completed, failed, and manual-review states. Queue acceptance is not completion: worker outcome resolves queued repair work, and startup reconciles only queued/processing entries whose durable manifests are already published or failed. Cleanup is low-priority and uses the existing worker cap; daytime scheduling alternates one cleanup item after normal work, while the configured overnight window allows bursts of up to five cleanup items before returning to normal work. Live recordings pause new background work; recommendations recompute after a full Meetings-tab refresh, and manual actions remain available for failed or legacy-unprovable work. Baseline row refreshes preserve the previous cleanup recommendation set until the replacement background scan completes; cleanup review is presented in the on-demand panel.
 - safe fixes are never permanent deletes; archive-style cleanup moves artifacts into the Meetings archive
 - current archive-style flows use a single `Documents\Meetings\Archive` root, and any older parallel legacy archive roots are treated as migration inputs rather than ongoing destinations
 - archive-style flows mark archived artifacts with the Windows unpinned file attribute after writing them, allowing OneDrive Files On-Demand to dehydrate large recovery WAVs while preserving cloud recovery
