@@ -16,8 +16,9 @@ internal static class CleanupReviewProjection
             return new("In progress", false);
         if (entry?.State == CleanupWorkState.Queued)
             return new("Queued", false);
-        if (recommendation.Action is (MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels) &&
-            !recommendation.CanApplyAutomatically)
+        if (recommendation.Confidence == MeetingCleanupConfidence.High && !recommendation.CanApplyAutomatically &&
+            recommendation.Action is (MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript or
+                MeetingCleanupAction.GenerateSpeakerLabels or MeetingCleanupAction.RepairSpeakerLabels))
             return new("Input needs review", true);
         if (entry?.State == CleanupWorkState.Completed)
             return new("Completed; checking", false);

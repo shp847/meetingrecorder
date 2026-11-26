@@ -6570,8 +6570,7 @@ public partial class MainWindow : Window
             var recommendations = await BuildVisibleMeetingCleanupRecommendationsAsync(inspections, cancellationToken);
             var visibleRecommendations = await Task.Run(() => recommendations
                 .Where(recommendation => recommendation.Action != MeetingCleanupAction.GenerateSummary)
-                .Select(recommendation => CleanupRecommendationReadiness.Project(recommendation,
-                    recordsByStem.GetValueOrDefault(recommendation.PrimaryStem)))
+                .Select(recommendation => CleanupRecommendationReadiness.Project(recommendation, recordsByStem))
                 .ToArray(), cancellationToken);
             if (refreshVersion != Volatile.Read(ref _meetingRefreshVersion) || cancellationToken.IsCancellationRequested || IsShutdownRequested)
             {
@@ -14343,7 +14342,7 @@ public partial class MainWindow : Window
                     // Receipt is local, immutable audit context for an automatic
                     // continuity merge. Source artifacts are retained in the
                     // merge archive by the shared executor.
-                    var receiptPath = Path.Combine(mergeResult.ArchiveDirectory, $"{cleanupFingerprint}.continuity-repair.json");
+                    var receiptPath = Path.Combine(mergeResult.ArchiveDirectory, BuildContinuityRepairReceiptFileName(cleanupFingerprint));
                     var receipt = new
                     {
                         schemaVersion = 1,
@@ -14428,6 +14427,13 @@ public partial class MainWindow : Window
                 await QueueSplitMeetingAsync(splitMeeting, suggestedSplitPoint, cancellationToken);
                 return;
         }
+    }
+
+    internal static string BuildContinuityRepairReceiptFileName(string fingerprint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint));
+        return $"{Convert.ToHexString(hash).ToLowerInvariant()}.continuity-repair.json";
     }
 
     private static string ResolveMeetingCleanupArchiveCategory(MeetingCleanupRecommendation recommendation)
