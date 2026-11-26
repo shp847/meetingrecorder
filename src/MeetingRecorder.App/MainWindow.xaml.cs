@@ -211,6 +211,7 @@ public partial class MainWindow : Window
     private bool _automaticRecoveryPending = true;
     private bool _isReconcilingAutomaticRecovery;
     private bool _isDeferredMeetingsRefreshQueued;
+    private bool _isBackgroundCleanupCatalogRefresh;
     private bool _hasPendingMeetingsRefreshRequest;
     private bool _hasCompletedFullMeetingsRefresh;
     private bool _isUpdatingMeetingsWorkspaceControls;
@@ -731,7 +732,10 @@ public partial class MainWindow : Window
             await _meetingCleanupWorkLedgerService.ReconcileTerminalManifestStatesAsync(
                 _manifestStore,
                 _lifetimeCts.Token);
-            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler startup");
+            if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler startup");
+            else
+                TryStartBackgroundCleanupCatalogRefresh();
             await RunExternalAudioImportCycleAsync("startup", _lifetimeCts.Token);
             await RunAutomaticUpdateCycleAsync("startup", AppUpdateCheckTrigger.Startup, _lifetimeCts.Token);
             _ = RefreshRemoteModelCatalogAsync(manual: false, _lifetimeCts.Token);
@@ -986,6 +990,9 @@ public partial class MainWindow : Window
     }
 
     private int ObserveFailedCleanupInputs(IReadOnlyList<AutomaticRecoverySnapshot> snapshots, IReadOnlyList<MeetingListRow> rows)
+        => ObserveFailedCleanupInputs(snapshots, rows.Select(row => row.Source).ToArray());
+
+    private int ObserveFailedCleanupInputs(IReadOnlyList<AutomaticRecoverySnapshot> snapshots, IReadOnlyList<MeetingOutputRecord> records)
     {
         var config = _liveConfig.Current;
         bool speakerReady;
@@ -1002,10 +1009,10 @@ public partial class MainWindow : Window
         {
             var snapshot = snapshots.FirstOrDefault(item => string.Equals(item.Receipt.Fingerprint, entry.Fingerprint, StringComparison.Ordinal));
             var paths = snapshot?.Receipt.Artifacts.Select(item => item.OriginalPath).ToArray() ??
-                rows.Where(row => (entry.AffectedStems?.Contains(row.Source.Stem, StringComparer.OrdinalIgnoreCase) ?? false) ||
+                records.Where(record => (entry.AffectedStems?.Contains(record.Stem, StringComparer.OrdinalIgnoreCase) ?? false) ||
                                   (!string.IsNullOrWhiteSpace(entry.ManifestPath) &&
-                                   string.Equals(row.Source.ManifestPath, entry.ManifestPath, StringComparison.OrdinalIgnoreCase)))
-                    .SelectMany(row => new[] { row.Source.AudioPath, row.Source.MarkdownPath, row.Source.JsonPath, row.Source.ReadyMarkerPath })
+                                   string.Equals(record.ManifestPath, entry.ManifestPath, StringComparison.OrdinalIgnoreCase)))
+                    .SelectMany(record => new[] { record.AudioPath, record.MarkdownPath, record.JsonPath, record.ReadyMarkerPath })
                     .Where(path => !string.IsNullOrWhiteSpace(path)).Cast<string>().ToArray();
             var revision = AutomaticMeetingRecoveryService.ComputeInputRevision(paths, readinessKey);
             if (revision is not null && _meetingCleanupWorkLedgerService.ObserveFailureInputRevision(entry.Fingerprint, revision)) changed++;
@@ -3120,7 +3127,10 @@ public partial class MainWindow : Window
                     _logger.Log($"Published meeting reconciliation failed: {exception.GetType().Name}.");
                 }
             }
-            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler cadence");
+            if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "cleanup scheduler cadence");
+            else
+                TryStartBackgroundCleanupCatalogRefresh();
         }
         await RunExternalAudioImportCycleAsync("background timer", _lifetimeCts.Token);
         await RunAutomaticUpdateCycleAsync("background timer", AppUpdateCheckTrigger.Scheduled, _lifetimeCts.Token);
@@ -3131,7 +3141,17 @@ public partial class MainWindow : Window
         var maximumOutstanding = GetMaximumOutstandingCleanupWorkCount();
         var outstandingCleanupCount = _meetingCleanupWorkLedgerService.GetEntries()
             .Count(entry => entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing);
+        if (!ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+        {
+            if (!IsAutomaticCleanupSchedulerBlocked() && outstandingCleanupCount < maximumOutstanding &&
+                GetEligibleScheduledIncrementalRecommendations().Count > 0)
+                TryStartBackgroundCleanupCatalogRefresh();
+            return;
+        }
         if (IsAutomaticCleanupSchedulerBlocked() ||
+            Volatile.Read(ref _meetingBaselineRefreshOperations) > 0 ||
+            Volatile.Read(ref _meetingCleanupRefreshOperations) > 0 ||
+            _hasPendingMeetingsRefreshRequest || _isDeferredMeetingsRefreshQueued ||
             outstandingCleanupCount >= maximumOutstanding ||
             GetEligibleScheduledIncrementalRecommendations().Count == 0)
         {
@@ -3139,6 +3159,67 @@ public partial class MainWindow : Window
         }
 
         RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "automatic cleanup batch refill");
+    }
+
+    private void TryStartBackgroundCleanupCatalogRefresh()
+    {
+        if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem) ||
+            IsAutomaticCleanupSchedulerBlocked() || _isBackgroundCleanupCatalogRefresh ||
+            _isDispatchingPendingMeetingCleanupWork ||
+            Volatile.Read(ref _meetingBaselineRefreshOperations) > 0 ||
+            Volatile.Read(ref _meetingCleanupRefreshOperations) > 0 ||
+            _meetingCleanupWorkLedgerService.GetEntries().Count(entry =>
+                entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing) >= GetMaximumOutstandingCleanupWorkCount())
+            return;
+
+        _isBackgroundCleanupCatalogRefresh = true;
+        _hasCompletedFullMeetingsRefresh = false;
+        var refreshVersion = Interlocked.Increment(ref _meetingRefreshVersion);
+        var cancellationToken = CreateMeetingBackgroundWorkToken();
+        var cancellationIdentity = _meetingBackgroundWorkCancellationIdentity;
+        _ = RunBackgroundCleanupCatalogRefreshAsync(refreshVersion, cancellationToken, cancellationIdentity);
+    }
+
+    private async Task RunBackgroundCleanupCatalogRefreshAsync(
+        int refreshVersion, CancellationToken cancellationToken, Guid cancellationIdentity)
+    {
+        try
+        {
+            var config = _liveConfig.Current;
+            var records = await Task.Run(() => _meetingOutputCatalogService.ListMeetings(
+                config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir), cancellationToken);
+            if (cancellationToken.IsCancellationRequested || IsShutdownRequested ||
+                refreshVersion != Volatile.Read(ref _meetingRefreshVersion) ||
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                return;
+
+            var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
+            var recoverySnapshots = await Task.Run(
+                () => _automaticMeetingRecoveryService.FindAsync(archiveRoot, cancellationToken), cancellationToken);
+            if (cancellationToken.IsCancellationRequested || IsShutdownRequested ||
+                refreshVersion != Volatile.Read(ref _meetingRefreshVersion) ||
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                return;
+            await Task.Run(() => ObserveFailedCleanupInputs(recoverySnapshots, records), cancellationToken);
+            if (cancellationToken.IsCancellationRequested || IsShutdownRequested ||
+                refreshVersion != Volatile.Read(ref _meetingRefreshVersion) ||
+                ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                return;
+            _logger.Log($"Background cleanup catalog scanned {records.Count} meeting(s).");
+            StartMeetingCleanupRecommendationRefresh(records, refreshVersion, MeetingRefreshMode.Full,
+                cancellationToken, cancellationIdentity, publishWorkspace: false);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            _logger.Log($"Background cleanup catalog refresh failed: {exception.GetType().Name}.");
+            _meetingCleanupSchedulerFailureBackoffUntilUtc = DateTimeOffset.UtcNow +
+                MeetingCleanupAutoApplyPlanner.AutomaticBatchCooldown;
+        }
+        finally
+        {
+            _isBackgroundCleanupCatalogRefresh = false;
+        }
     }
 
     private bool IsAutomaticCleanupSchedulerBlocked()
@@ -3853,6 +3934,12 @@ public partial class MainWindow : Window
         UpdateMeetingActionState();
     }
 
+    private void ShowAllCleanupSuggestionsCheckBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUiReady)
+            UpdateMeetingCleanupRecommendationsEditor();
+    }
+
     private void ReviewMeetingCleanupSuggestionsButton_OnClick(object sender, RoutedEventArgs e)
     {
         OpenMeetingsTools();
@@ -3861,7 +3948,7 @@ public partial class MainWindow : Window
         LegacyMeetingCleanupReviewExpander.IsExpanded = true;
         LegacyMeetingCleanupReviewBorder.BringIntoView();
         MeetingCleanupRecommendationsDataGrid.Focus();
-        MeetingCleanupRecommendationsStatusTextBlock.Text = "Review the cleanup suggestions below. Dismiss any you do not want to see again.";
+        UpdateMeetingCleanupRecommendationsEditor();
         UpdateMeetingCleanupReviewBanner();
     }
 
@@ -4346,14 +4433,18 @@ public partial class MainWindow : Window
 
         var usePublishedSpeakerStage = forceSpeakerLabeling && !forceTranscription &&
             CanUsePublishedSpeakerStage(meeting, await _manifestStore.LoadAsync(manifestPath, cancellationToken));
-        if (forceSpeakerLabeling && !usePublishedSpeakerStage &&
+        var seededExistingTranscript = forceSpeakerLabeling && !usePublishedSpeakerStage &&
             await _meetingOutputCatalogService.TrySeedTranscriptionSnapshotForPublishedMeetingAsync(
                 meeting,
                 manifestPath,
-                cancellationToken))
+                cancellationToken);
+        if (seededExistingTranscript)
         {
             AppendActivity($"Loaded existing transcript text for speaker labeling on '{meeting.Title}'.");
         }
+        if (processingPriority == ProcessingWorkPriority.Cleanup && forceSpeakerLabeling &&
+            !usePublishedSpeakerStage && !seededExistingTranscript)
+            throw new InvalidOperationException("Automatic speaker labeling requires a readable existing transcript.");
 
         var manifest = await _manifestStore.LoadAsync(manifestPath, cancellationToken);
         var now = DateTimeOffset.UtcNow;
@@ -6450,7 +6541,8 @@ public partial class MainWindow : Window
         int refreshVersion,
         MeetingRefreshMode refreshMode,
         CancellationToken cancellationToken,
-        Guid cancellationIdentity)
+        Guid cancellationIdentity,
+        bool publishWorkspace = true)
     {
         Interlocked.Increment(ref _meetingCleanupRefreshOperations);
         UpdateMeetingsRefreshStateText();
@@ -6459,7 +6551,8 @@ public partial class MainWindow : Window
             refreshVersion,
             refreshMode,
             cancellationToken,
-            cancellationIdentity);
+            cancellationIdentity,
+            publishWorkspace);
     }
 
     private async Task RunMeetingCleanupRecommendationRefreshAsync(
@@ -6467,14 +6560,19 @@ public partial class MainWindow : Window
         int refreshVersion,
         MeetingRefreshMode refreshMode,
         CancellationToken cancellationToken,
-        Guid cancellationIdentity)
+        Guid cancellationIdentity,
+        bool publishWorkspace)
     {
         try
         {
             var inspections = await BuildMeetingInspectionsAsync(records, cancellationToken);
-            var visibleRecommendations = (await BuildVisibleMeetingCleanupRecommendationsAsync(inspections, cancellationToken))
+            var recordsByStem = records.ToDictionary(record => record.Stem, StringComparer.OrdinalIgnoreCase);
+            var recommendations = await BuildVisibleMeetingCleanupRecommendationsAsync(inspections, cancellationToken);
+            var visibleRecommendations = await Task.Run(() => recommendations
                 .Where(recommendation => recommendation.Action != MeetingCleanupAction.GenerateSummary)
-                .ToArray();
+                .Select(recommendation => CleanupRecommendationReadiness.Project(recommendation,
+                    recordsByStem.GetValueOrDefault(recommendation.PrimaryStem)))
+                .ToArray(), cancellationToken);
             if (refreshVersion != Volatile.Read(ref _meetingRefreshVersion) || cancellationToken.IsCancellationRequested || IsShutdownRequested)
             {
                 return;
@@ -6490,8 +6588,13 @@ public partial class MainWindow : Window
                 return;
             _meetingCleanupRecommendations = visibleRecommendations;
             _meetingCleanupSchedulerFailureBackoffUntilUtc = null;
-            ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
-            UpdateTeamsPlaybackCleanupStatus(inspections, visibleRecommendations);
+            if (!publishWorkspace)
+                _logger.Log($"Background cleanup analysis found {visibleRecommendations.Length} suggestion(s).");
+            if (publishWorkspace && ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+            {
+                ApplyMeetingRowsUpdate(records, _meetingCleanupRecommendations, preserveEditorDrafts: true);
+                UpdateTeamsPlaybackCleanupStatus(inspections, visibleRecommendations);
+            }
             var automationSnapshot = AutomationCatalogSnapshot.Create(
                 refreshVersion,
                 ToAutomationCatalogRefreshMode(refreshMode),
@@ -6520,7 +6623,8 @@ public partial class MainWindow : Window
         finally
         {
             Interlocked.Decrement(ref _meetingCleanupRefreshOperations);
-            TryMarkFullMeetingsRefreshCompleted(refreshVersion);
+            if (publishWorkspace)
+                TryMarkFullMeetingsRefreshCompleted(refreshVersion);
             UpdateMeetingsRefreshStateText();
             UpdateMeetingActionState();
         }
@@ -9377,8 +9481,7 @@ public partial class MainWindow : Window
             .ToArray();
         var hasSpeakerLabels = SpeakerLabelsEditorDataGrid.ItemsSource is IEnumerable<SpeakerLabelEditorRow> labelRows &&
             labelRows.Any();
-        var visibleCleanupRecommendationRows = MeetingCleanupRecommendationsDataGrid.ItemsSource is IEnumerable<MeetingCleanupRecommendationRow> cleanupRows &&
-            cleanupRows.Any();
+        var visibleCleanupRecommendationRows = _meetingCleanupRecommendations.Length > 0;
         var workspaceToolState = MainWindowInteractionLogic.BuildMeetingWorkspaceToolState(
             selectedMeetings.Length,
             hasSpeakerLabels,
@@ -13615,26 +13718,28 @@ public partial class MainWindow : Window
         var visibleRecommendations = MainWindowInteractionLogic.FilterMeetingCleanupRecommendations(
             scopedRecommendations,
             GetSelectedMeetingRows().Select(row => row.Source.Stem).ToArray());
-        var recommendationRows = visibleRecommendations
-            .Select(recommendation => new MeetingCleanupRecommendationRow(recommendation, rowsByStem))
+        var entries = _meetingCleanupWorkLedgerService.GetEntries()
+            .ToDictionary(entry => entry.Fingerprint, StringComparer.Ordinal);
+        var projected = visibleRecommendations
+            .Select(recommendation => new
+            {
+                Recommendation = recommendation,
+                State = CleanupReviewProjection.Resolve(recommendation,
+                    entries.GetValueOrDefault(recommendation.Fingerprint),
+                    _liveConfig.Current.SmartCleanupEnabled && IsIncrementalWorkEnabled(recommendation)),
+            }).ToArray();
+        var showAll = ShowAllCleanupSuggestionsCheckBox.IsChecked == true;
+        var recommendationRows = projected
+            .Where(item => showAll || item.State.NeedsAttention)
+            .Select(item => new MeetingCleanupRecommendationRow(item.Recommendation, rowsByStem, item.State))
             .ToArray();
 
         MeetingCleanupRecommendationsDataGrid.ItemsSource = recommendationRows;
         var hasMeetingsFilter = !string.IsNullOrWhiteSpace(MeetingsSearchTextBox.Text);
 
-        MeetingCleanupRecommendationsStatusTextBlock.Text = recommendationRows.Length == 0
-            ? (_meetingCleanupRecommendations.Length == 0
-                ? "No cleanup suggestions are active right now."
-                : hasMeetingsFilter
-                    ? "No cleanup suggestions match the current Meetings search filter."
-                    : "No cleanup suggestions match the current meeting selection.")
-            : GetSelectedMeetingRows().Length == 0
-                ? hasMeetingsFilter
-                    ? $"Showing {recommendationRows.Length} cleanup suggestion(s) within the current Meetings search filter."
-                    : $"Showing {recommendationRows.Length} cleanup suggestion(s) across the library."
-                : hasMeetingsFilter
-                    ? $"Showing {recommendationRows.Length} cleanup suggestion(s) within the current Meetings search filter, with the current meeting selection prioritized first."
-                    : $"Showing {recommendationRows.Length} cleanup suggestion(s) across the library, with the current meeting selection prioritized first.";
+        MeetingCleanupRecommendationsStatusTextBlock.Text = showAll
+            ? $"Showing {recommendationRows.Length} suggestion(s){(hasMeetingsFilter ? " matching search" : string.Empty)}."
+            : $"Showing {recommendationRows.Length} item(s) needing attention; {projected.Length - recommendationRows.Length} automatic or optional suggestion(s) are hidden.";
 
         UpdateMeetingCleanupReviewBanner();
         UpdateMeetingActionState();
@@ -13689,7 +13794,7 @@ public partial class MainWindow : Window
             : !string.IsNullOrWhiteSpace(schedulerBlocker)
                 ? schedulerBlocker!
                 : schedulerStatus.ProcessingCount > 0
-                        ? "Work is active. Native speaker labeling reports a heartbeat, not an ETA."
+                        ? $"Cleanup runs up to {GetMaximumOutstandingCleanupWorkCount()} item(s) at a time; waiting work starts automatically when capacity opens."
                         : schedulerStatus.RetryableFailedCount > 0
                             ? "Failed safe work can be retried after its readiness check."
                             : schedulerStatus.ReviewRequiredCount > 0
@@ -13706,7 +13811,7 @@ public partial class MainWindow : Window
         MeetingCleanupQueueTextBlock.Text =
             $"RUNNING {schedulerStatus.ProcessingCount}   QUEUED {schedulerStatus.QueuedCount}   READY {schedulerStatus.EligibleNowCount}";
         MeetingCleanupSecondaryTextBlock.Text =
-            $"SCHEDULED LATER {schedulerStatus.DeferredCount}   RETRYABLE {schedulerStatus.RetryableFailedCount}   REVIEW REQUIRED {schedulerStatus.ReviewRequiredCount}";
+            $"SCHEDULED LATER {schedulerStatus.DeferredCount}   RETRY AVAILABLE {schedulerStatus.RetryableFailedCount}   REVIEW REQUIRED {schedulerStatus.ReviewRequiredCount}";
         MeetingCleanupAttentionTextBlock.Text = schedulerDetail;
         var previousLibraryCount = _lastCleanupLibraryFindingCount;
         _lastCleanupLibraryFindingCount = _meetingCleanupRecommendations.Length;
@@ -13719,7 +13824,7 @@ public partial class MainWindow : Window
                 ? $"+{catalogDelta} FOUND"
                 : $"{catalogDelta} CLEARED";
         MeetingCleanupLibraryTextBlock.Text =
-            $"LIBRARY {_meetingCleanupRecommendations.Length} / {impactedMeetingCount} meetings · {catalogDeltaText} · {schedulerStatus.ResolvedCount} resolved";
+            $"SUGGESTIONS {_meetingCleanupRecommendations.Length} / {impactedMeetingCount} meetings · {catalogDeltaText} · {schedulerStatus.ResolvedCount} previously completed";
         MeetingCleanupReviewBannerTextBlock.Text = string.Empty;
         ApplySafeMeetingCleanupFixesButton.Content = "Run Ready Work";
         ToggleSmartCleanupButton.Content = _liveConfig.Current.SmartCleanupEnabled
@@ -13821,7 +13926,10 @@ public partial class MainWindow : Window
                 continueOnError: true,
                 cancellationToken);
 
-            await RefreshMeetingListAsync();
+            if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+                await RefreshMeetingListAsync();
+            else
+                _hasCompletedFullMeetingsRefresh = false;
 
             var remainingRecommendationCount = _meetingCleanupRecommendations.Length;
             MeetingCleanupRecommendationsStatusTextBlock.Text = BuildAutomaticMeetingCleanupApplyStatusText(
@@ -13857,6 +13965,11 @@ public partial class MainWindow : Window
             return false;
         }
 
+        if (!MainWindowInteractionLogic.IsSafeMeetingCleanupRecommendation(recommendation))
+        {
+            return false;
+        }
+
         if (!AutomaticMutationContainmentPolicy.CanDispatch(recommendation))
         {
             _meetingCleanupWorkLedgerService.RecordContainmentHold(
@@ -13868,6 +13981,11 @@ public partial class MainWindow : Window
 
         _meetingCleanupWorkLedgerService.ReleaseContainmentHold(recommendation.Fingerprint, recommendation.Action);
 
+        return IsIncrementalWorkEnabled(recommendation);
+    }
+
+    private bool IsIncrementalWorkEnabled(MeetingCleanupRecommendation recommendation)
+    {
         var plan = _liveConfig.Current.IncrementalWorkPlan;
         return recommendation.Action switch
         {
@@ -17908,7 +18026,8 @@ public partial class MainWindow : Window
     {
         public MeetingCleanupRecommendationRow(
             MeetingCleanupRecommendation source,
-            IReadOnlyDictionary<string, MeetingListRow> rowsByStem)
+            IReadOnlyDictionary<string, MeetingListRow> rowsByStem,
+            CleanupReviewState reviewState)
         {
             Source = source;
             ActionLabel = source.Action switch
@@ -17925,6 +18044,7 @@ public partial class MainWindow : Window
             };
             ConfidenceLabel = source.Confidence.ToString();
             SafetyLabel = MainWindowInteractionLogic.BuildMeetingCleanupSafetyLabel(source);
+            ReviewStatusLabel = reviewState.Label;
             Summary = source.Title;
             RelatedMeetingsLabel = string.Join(
                 ", ",
@@ -17939,6 +18059,8 @@ public partial class MainWindow : Window
         public string ConfidenceLabel { get; }
 
         public string SafetyLabel { get; }
+
+        public string ReviewStatusLabel { get; }
 
         public string Summary { get; }
 

@@ -1799,7 +1799,12 @@
                                             <StackPanel Margin="0,12,0,0">
                                             <TextBlock Foreground="#45504D"
                                                        TextWrapping="Wrap"
-                                                       Text="Review suggested fixes when you want to clean up the selected workspace. Safe Fixes stay limited to deterministic changes, and archive suggestions still preserve the originals in the Meetings archive." />
+                                                       Text="Items needing attention appear here. Automatic work runs in the background; optional suggestions remain available below." />
+                                            <CheckBox x:Name="ShowAllCleanupSuggestionsCheckBox"
+                                                      Margin="0,10,0,0"
+                                                      Content="Show all suggestions and automatic work"
+                                                      Checked="ShowAllCleanupSuggestionsCheckBox_OnChanged"
+                                                      Unchecked="ShowAllCleanupSuggestionsCheckBox_OnChanged" />
                                             <DataGrid x:Name="MeetingCleanupRecommendationsDataGrid"
                                                       Margin="0,12,0,0"
                                                       Height="180"
@@ -1808,12 +1813,17 @@
                                                       IsReadOnly="True"
                                                       SelectionMode="Extended"
                                                       SelectionChanged="MeetingCleanupRecommendationsDataGrid_OnSelectionChanged">
+                                                <DataGrid.RowStyle>
+                                                    <Style TargetType="DataGridRow">
+                                                        <Setter Property="ToolTip" Value="{Binding Source.Description}" />
+                                                        <Setter Property="AutomationProperties.HelpText" Value="{Binding Source.Description}" />
+                                                    </Style>
+                                                </DataGrid.RowStyle>
                                                 <DataGrid.Columns>
-                                                    <DataGridTextColumn Header="Action" Binding="{Binding ActionLabel, Mode=OneWay}" Width="0.9*" />
-                                                    <DataGridTextColumn Header="Confidence" Binding="{Binding ConfidenceLabel, Mode=OneWay}" Width="0.8*" />
-                                                    <DataGridTextColumn Header="Safe to Apply" Binding="{Binding SafetyLabel, Mode=OneWay}" Width="0.95*" />
-                                                    <DataGridTextColumn Header="Summary" Binding="{Binding Summary, Mode=OneWay}" Width="2*" />
-                                                    <DataGridTextColumn Header="Meetings" Binding="{Binding RelatedMeetingsLabel, Mode=OneWay}" Width="1.6*" />
+                                                    <DataGridTextColumn Header="Action" Binding="{Binding ActionLabel, Mode=OneWay}" Width="120" />
+                                                    <DataGridTextColumn Header="Status" Binding="{Binding ReviewStatusLabel, Mode=OneWay}" Width="130" />
+                                                    <DataGridTextColumn Header="Summary" Binding="{Binding Summary, Mode=OneWay}" Width="130" />
+                                                    <DataGridTextColumn Header="Meetings" Binding="{Binding RelatedMeetingsLabel, Mode=OneWay}" Width="140" />
                                                 </DataGrid.Columns>
                                             </DataGrid>
                                             <WrapPanel Margin="0,12,0,0">

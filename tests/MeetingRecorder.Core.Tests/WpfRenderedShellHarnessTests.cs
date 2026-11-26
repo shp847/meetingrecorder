@@ -111,6 +111,30 @@ public sealed class WpfRenderedShellHarnessTests
     }
 
     [Fact]
+    public void Cleanup_Review_Defaults_To_Attention_And_Can_Show_All_Work()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.CleanupReviewFiltering, 1280, 800, 1d);
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+    }
+
+    [Fact]
+    public void Safe_Cleanup_Continues_While_Home_Is_Open()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.CleanupInBackground, 1280, 800, 1d);
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+    }
+
+    [Fact]
+    public void Paused_Cleanup_Does_Not_Start_While_Home_Is_Open()
+    {
+        var evidence = WpfRenderHarness.CaptureShell(
+            WpfRenderHarness.SyntheticShellState.CleanupBackgroundPaused, 1280, 800, 1d);
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+    }
+
+    [Fact]
     public void External_Audio_Import_Review_Renders_A_Source_Retained_Setup_Blocked_Row()
     {
         var evidence = WpfRenderHarness.CaptureShell(

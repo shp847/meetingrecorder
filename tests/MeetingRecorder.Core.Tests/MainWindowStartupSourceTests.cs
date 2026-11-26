@@ -279,7 +279,7 @@ public sealed class MainWindowStartupSourceTests
         var sourcePath = GetPath("src", "MeetingRecorder.App", "MainWindow.xaml.cs");
         var source = File.ReadAllText(sourcePath);
         var helperStart = source.IndexOf("private void RequestMeetingRefreshForCurrentContext", StringComparison.Ordinal);
-        var helperEnd = source.IndexOf("private void ApplyConfigToUi", helperStart, StringComparison.Ordinal);
+        var helperEnd = source.IndexOf("private void SchedulePendingMeetingsRefreshIfReady", helperStart, StringComparison.Ordinal);
         var helperBlock = source[helperStart..helperEnd];
 
         Assert.Contains("_recordingCoordinator.IsRecording", helperBlock);

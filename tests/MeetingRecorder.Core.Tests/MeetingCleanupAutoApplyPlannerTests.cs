@@ -216,6 +216,22 @@ public sealed class MeetingCleanupAutoApplyPlannerTests : IDisposable
     }
 
     [Fact]
+    public void BuildSchedulerStatus_Does_Not_Offer_Retry_For_Failed_Work_Without_Required_Recovery_Files()
+    {
+        var ledger = new MeetingCleanupWorkLedgerService(Path.Combine(_root, "retry-readiness.json"));
+        var missingRecoveryFiles = CreateRecommendation("missing", MeetingCleanupAction.GenerateSpeakerLabels,
+            MeetingCleanupConfidence.High, canApplyAutomatically: false);
+        ledger.Record("missing", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSpeakerLabels);
+
+        var status = MeetingCleanupAutoApplyPlanner.BuildSchedulerStatus(
+            [missingRecoveryFiles], ledger, recommendation => recommendation.CanApplyAutomatically, _ => false);
+
+        Assert.Equal(0, status.EligibleNowCount);
+        Assert.Equal(0, status.RetryableFailedCount);
+        Assert.Equal(1, status.ReviewRequiredCount);
+    }
+
+    [Fact]
     public void BuildSchedulerStatus_Separates_ProviderBlocked_Deferred_And_Resolved_Work()
     {
         var ledger = new MeetingCleanupWorkLedgerService(

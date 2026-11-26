@@ -224,6 +224,47 @@ internal static class WpfRenderHarness
             var settingsAction = RequireElement<Button>(window, "HeaderSettingsButton");
             var tabControl = RequireElement<TabControl>(window, "MainTabControl");
             var shellStatusDetail = RequireElement<TextBlock>(window, "HeaderShellStatusDetailTextBlock");
+            if (state is SyntheticShellState.CleanupInBackground or SyntheticShellState.CleanupBackgroundPaused)
+            {
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                var recoveryPending = typeof(MainWindow).GetField("_automaticRecoveryPending", flags)!;
+                WaitForCondition(window.Dispatcher, () => !(bool)recoveryPending.GetValue(window)!, TimeSpan.FromSeconds(10));
+                if ((bool)recoveryPending.GetValue(window)!)
+                    throw new InvalidOperationException("Synthetic startup recovery did not finish.");
+                var ledger = (MeetingCleanupWorkLedgerService)typeof(MainWindow)
+                    .GetField("_meetingCleanupWorkLedgerService", flags)!.GetValue(window)!;
+                var refreshVersion = typeof(MainWindow).GetField("_meetingRefreshVersion", flags)!;
+                var before = (int)refreshVersion.GetValue(window)!;
+                typeof(MainWindow).GetMethod("TryStartBackgroundCleanupCatalogRefresh", flags)!.Invoke(window, null);
+                if (state == SyntheticShellState.CleanupBackgroundPaused)
+                {
+                    if ((int)refreshVersion.GetValue(window)! != before || ledger.GetEntries().Any(entry => entry.State == CleanupWorkState.Completed))
+                        throw new InvalidOperationException("Paused cleanup must not start a background scan or change artifacts.");
+                }
+                else
+                {
+                    WaitForCondition(window.Dispatcher, () => ledger.GetEntries().Any(entry =>
+                        entry.Action == MeetingCleanupAction.Archive && entry.State == CleanupWorkState.Completed), TimeSpan.FromSeconds(30));
+                    if (!ledger.GetEntries().Any(entry => entry.Action == MeetingCleanupAction.Archive && entry.State == CleanupWorkState.Completed))
+                        throw new InvalidOperationException("Safe cleanup did not complete while Home was open.");
+                    var dispatching = typeof(MainWindow).GetField("_isDispatchingPendingMeetingCleanupWork", flags)!;
+                    WaitForCondition(window.Dispatcher, () => !(bool)dispatching.GetValue(window)!, TimeSpan.FromSeconds(10));
+                    typeof(MainWindow).GetMethod("TryScheduleMeetingCleanupAutomaticBatchRefill", flags)!
+                        .Invoke(window, [DateTimeOffset.UtcNow]);
+                    WaitForCondition(window.Dispatcher, () => ledger.GetEntries().Count(entry =>
+                        entry.Action == MeetingCleanupAction.Archive && entry.State == CleanupWorkState.Completed) >= 2, TimeSpan.FromSeconds(30));
+                    if (ledger.GetEntries().Count(entry => entry.Action == MeetingCleanupAction.Archive && entry.State == CleanupWorkState.Completed) < 2)
+                        throw new InvalidOperationException("Background cleanup did not refill after the first item.");
+                    var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
+                    var recovery = new AutomaticMeetingRecoveryService();
+                    var snapshots = Task.Run(() => recovery.FindAsync(archiveRoot)).GetAwaiter().GetResult();
+                    if (snapshots.Count(snapshot => snapshot.Receipt.State == "Completed" &&
+                        Task.Run(() => recovery.CanRestoreAsync(snapshot, [config.AudioOutputDir, config.TranscriptOutputDir])).GetAwaiter().GetResult()) < 2)
+                        throw new InvalidOperationException("Background cleanup must preserve a verified recovery copy.");
+                }
+                if (!ReferenceEquals(tabControl.SelectedItem, RequireElement<TabItem>(window, "DashboardTabItem")))
+                    throw new InvalidOperationException("Background cleanup changed the active tab.");
+            }
             var stateToken = state switch
             {
                 SyntheticShellState.ImportReviewSetupBlocked => "import-review-setup-blocked",
@@ -241,10 +282,13 @@ internal static class WpfRenderHarness
                 SyntheticShellState.CleanupRecommendation => "cleanup-recommendation",
                 SyntheticShellState.CleanupRecovery => "cleanup-recovery",
                 SyntheticShellState.DenseLibrary => "dense-library",
+                SyntheticShellState.CleanupReviewFiltering => "cleanup-review-filtering",
+                SyntheticShellState.CleanupInBackground => "cleanup-in-background",
+                SyntheticShellState.CleanupBackgroundPaused => "cleanup-background-paused",
                 SyntheticShellState.EmptyHealthy => "empty-healthy",
                 _ => "setup-blocked",
             };
-            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.DenseLibrary or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
+            if (state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.CleanupRecovery or SyntheticShellState.DenseLibrary or SyntheticShellState.CleanupReviewFiltering or SyntheticShellState.PermanentDeleteCancelled or SyntheticShellState.MeetingDetailClosed or SyntheticShellState.ImportReviewSetupBlocked or SyntheticShellState.ImportReviewReady or SyntheticShellState.ImportReviewInvalid)
             {
                 tabControl.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
                 WriteProgress(progressPath, "meetings-selected");
@@ -320,6 +364,36 @@ internal static class WpfRenderHarness
                         meetings.SelectedItem = meetings.Items[0];
                         window.UpdateLayout();
                         FlushDispatcher(window.Dispatcher, DispatcherPriority.Render);
+                    }
+
+                    if (state == SyntheticShellState.CleanupReviewFiltering)
+                    {
+                        var list = RequireElement<ListView>(window, "MeetingsDataGrid");
+                        var row = list.Items[0];
+                        var meeting = (MeetingOutputRecord)(row.GetType().GetProperty("Source")?.GetValue(row)
+                            ?? throw new InvalidOperationException("Synthetic meeting source is missing."));
+                        MeetingCleanupRecommendation Recommendation(string id, MeetingCleanupAction action, bool automatic) =>
+                            new(id, action, MeetingCleanupConfidence.High, id, "Synthetic recommendation", meeting.Stem,
+                                [meeting.Stem], automatic, null, null);
+                        var recommendations = new[] { Recommendation("automatic", MeetingCleanupAction.GenerateSpeakerLabels, true),
+                            Recommendation("optional", MeetingCleanupAction.Rename, false),
+                            Recommendation("failed", MeetingCleanupAction.GenerateSpeakerLabels, true) };
+                        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+                        typeof(MainWindow).GetField("_meetingCleanupRecommendations", fields)!.SetValue(window, recommendations);
+                        var ledger = (MeetingCleanupWorkLedgerService)typeof(MainWindow).GetField("_meetingCleanupWorkLedgerService", fields)!.GetValue(window)!;
+                        ledger.Record("failed", CleanupWorkState.Failed, action: MeetingCleanupAction.GenerateSpeakerLabels);
+                        typeof(MainWindow).GetMethod("UpdateMeetingCleanupRecommendationsEditor", fields)!.Invoke(window, [null]);
+                        RequireElement<Button>(window, "MeetingsToolsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                        var review = RequireElement<Expander>(window, "LegacyMeetingCleanupReviewExpander");
+                        review.IsExpanded = true;
+                        review.BringIntoView();
+                        var grid = RequireElement<DataGrid>(window, "MeetingCleanupRecommendationsDataGrid");
+                        var showAll = RequireElement<CheckBox>(window, "ShowAllCleanupSuggestionsCheckBox");
+                        if (grid.Items.Count != 1) throw new InvalidOperationException("Review must initially show only failed work.");
+                        showAll.IsChecked = true;
+                        if (grid.Items.Count != 3) throw new InvalidOperationException("Show all must include automatic and optional work.");
+                        showAll.IsChecked = false;
+                        window.UpdateLayout();
                     }
 
                     if (state == SyntheticShellState.CleanupRecommendation)
@@ -446,7 +520,7 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(settingsWindow!, "FooterStatusTextBlock"),
                     RequireElement<CheckBox>(window, "ConfigCalendarTitleFallbackCheckBox"),
                 }
-                : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.DenseLibrary
+                : state is SyntheticShellState.Processing or SyntheticShellState.SelectionActive or SyntheticShellState.CleanupRecommendation or SyntheticShellState.DenseLibrary or SyntheticShellState.CleanupReviewFiltering
                 ? new FrameworkElement[]
                 {
                     homeAction,
@@ -494,7 +568,7 @@ internal static class WpfRenderHarness
         AppConfig config,
         SyntheticShellState state)
     {
-        if (state == SyntheticShellState.DenseLibrary)
+        if (state is SyntheticShellState.DenseLibrary or SyntheticShellState.CleanupReviewFiltering)
         {
             Directory.CreateDirectory(config.AudioOutputDir);
             Directory.CreateDirectory(config.TranscriptOutputDir);
@@ -510,6 +584,26 @@ internal static class WpfRenderHarness
             var libraryConfig = config with { SmartCleanupEnabled = false, MeetingsViewPresetInitialized = true };
             configStore.SaveAsync(libraryConfig).GetAwaiter().GetResult();
             return libraryConfig;
+        }
+
+        if (state is SyntheticShellState.CleanupInBackground or SyntheticShellState.CleanupBackgroundPaused)
+        {
+            Directory.CreateDirectory(config.AudioOutputDir);
+            Directory.CreateDirectory(config.TranscriptOutputDir);
+            var sidecars = ArtifactPathBuilder.BuildTranscriptSidecarRoot(config.TranscriptOutputDir);
+            Directory.CreateDirectory(sidecars);
+            for (var index = 0; index < 2; index++)
+            {
+                var stem = new ArtifactPathBuilder().BuildFileStem(MeetingPlatform.Teams,
+                    new DateTimeOffset(2026, 9, 29, 15, 0, 0, TimeSpan.Zero).AddHours(index), "Microsoft Teams");
+                WriteSyntheticWaveFile(Path.Combine(config.AudioOutputDir, stem + ".wav"));
+                File.WriteAllText(Path.Combine(config.TranscriptOutputDir, stem + ".md"), "Synthetic transcript");
+                File.WriteAllText(Path.Combine(sidecars, stem + ".json"), "{}");
+                File.WriteAllText(Path.Combine(sidecars, stem + ".ready"), "ready");
+            }
+            var cleanupConfig = config with { SmartCleanupEnabled = state == SyntheticShellState.CleanupInBackground };
+            configStore.SaveAsync(cleanupConfig).GetAwaiter().GetResult();
+            return cleanupConfig;
         }
 
         if (state is SyntheticShellState.EmptyHealthy or SyntheticShellState.ImportReviewReady)
@@ -1389,6 +1483,9 @@ internal static class WpfRenderHarness
         CleanupRecommendation,
         CleanupRecovery,
         DenseLibrary,
+        CleanupReviewFiltering,
+        CleanupInBackground,
+        CleanupBackgroundPaused,
         EmptyHealthy,
         ImportReviewSetupBlocked,
         ImportReviewReady,

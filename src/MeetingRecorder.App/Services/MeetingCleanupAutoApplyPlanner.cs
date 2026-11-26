@@ -76,6 +76,7 @@ internal static class MeetingCleanupAutoApplyPlanner
             .Where(entry => entry.Action != MeetingCleanupAction.GenerateSummary)
             .ToArray();
         var currentFingerprints = recommendations.Select(item => item.Fingerprint).ToHashSet(StringComparer.Ordinal);
+        var recommendationsByFingerprint = recommendations.ToDictionary(item => item.Fingerprint, StringComparer.Ordinal);
         var ledgerEntries = allEntries.Where(entry => currentFingerprints.Contains(entry.Fingerprint) ||
             entry.State is CleanupWorkState.Queued or CleanupWorkState.Processing ||
             entry.Detail?.Contains("recovery", StringComparison.OrdinalIgnoreCase) == true && entry.State == CleanupWorkState.ManualReview)
@@ -90,15 +91,18 @@ internal static class MeetingCleanupAutoApplyPlanner
         var containmentHeld = ledgerEntries.Count(entry =>
             entry.State == CleanupWorkState.ManualReview &&
             (entry.Action is MeetingCleanupAction.Archive or MeetingCleanupAction.Merge or MeetingCleanupAction.RegenerateTranscript));
-        var retryableFailed = ledgerEntries.Count(entry =>
-            entry.State == CleanupWorkState.Failed && MeetingCleanupWorkLedgerService.IsRetryableSafeWork(entry));
+        bool CanRetry(CleanupWorkLedgerEntry entry) =>
+            MeetingCleanupWorkLedgerService.IsRetryableSafeWork(entry) &&
+            recommendationsByFingerprint.TryGetValue(entry.Fingerprint, out var recommendation) &&
+            isScheduled(recommendation);
+        var retryableFailed = ledgerEntries.Count(entry => entry.State == CleanupWorkState.Failed && CanRetry(entry));
         const int providerBlocked = 0;
         var deferred = pendingSafeFixes.Count(recommendation =>
             !isScheduled(recommendation) &&
             !isSummaryBlocked(recommendation));
         var reviewRequired = ledgerEntries.Count(entry =>
             entry.State == CleanupWorkState.ManualReview ||
-            (entry.State == CleanupWorkState.Failed && !MeetingCleanupWorkLedgerService.IsRetryableSafeWork(entry)));
+            (entry.State == CleanupWorkState.Failed && !CanRetry(entry)));
 
         return new CleanupSchedulerStatus(
             safeFixes.Count,

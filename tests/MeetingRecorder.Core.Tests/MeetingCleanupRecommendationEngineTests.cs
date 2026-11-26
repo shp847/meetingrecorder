@@ -1,5 +1,6 @@
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
+using MeetingRecorder.App.Services;
 using NAudio.Wave;
 
 namespace MeetingRecorder.Core.Tests;
@@ -702,11 +703,17 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         var stem = "2026-03-20_214258_teams_quarterly-review";
         var audioPath = Path.Combine(_root, $"{stem}.wav");
         var markdownPath = Path.Combine(_root, $"{stem}.md");
+        var jsonPath = Path.Combine(_root, $"{stem}.json");
+        var readyPath = Path.Combine(_root, $"{stem}.ready");
         await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromMinutes(24) + TimeSpan.FromSeconds(7));
         await File.WriteAllTextAsync(markdownPath, "# Quarterly Review");
+        await File.WriteAllTextAsync(jsonPath, System.Text.Json.JsonSerializer.Serialize(new
+        {
+            segments = new[] { new { start = "00:00:00", end = "00:00:02", text = new string('a', 3000) } },
+        }));
+        await File.WriteAllTextAsync(readyPath, "ready");
 
-        var recommendation = AnalyzeSingle(
-            CreateInspection(
+        var inspection = CreateInspection(
                 stem,
                 "Quarterly Review",
                 DateTimeOffset.Parse("2026-03-20T21:42:58Z"),
@@ -714,7 +721,10 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                 TimeSpan.FromMinutes(24) + TimeSpan.FromSeconds(7),
                 audioPath: audioPath,
                 markdownPath: markdownPath,
-                diarizationReady: true));
+                jsonPath: jsonPath,
+                readyPath: readyPath,
+                diarizationReady: true);
+        var recommendation = CleanupRecommendationReadiness.Project(AnalyzeSingle(inspection), inspection.Meeting);
 
         Assert.Equal(MeetingCleanupAction.GenerateSpeakerLabels, recommendation.Action);
         Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
@@ -727,11 +737,17 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         var stem = "2026-05-21_220300_teams_google-cloud-vmo-daily-touchpoints";
         var audioPath = Path.Combine(_root, $"{stem}.wav");
         var markdownPath = Path.Combine(_root, $"{stem}.md");
+        var jsonPath = Path.Combine(_root, $"{stem}.json");
+        var readyPath = Path.Combine(_root, $"{stem}.ready");
         await WriteSilentWaveFileAsync(audioPath, TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12));
         await File.WriteAllTextAsync(markdownPath, "# Google Cloud VMO - daily touchpoints");
+        await File.WriteAllTextAsync(jsonPath, System.Text.Json.JsonSerializer.Serialize(new
+        {
+            segments = new[] { new { start = "00:00:00", end = "00:00:02", text = new string('a', 3000) } },
+        }));
+        await File.WriteAllTextAsync(readyPath, "ready");
 
-        var recommendation = AnalyzeSingle(
-            CreateInspection(
+        var inspection = CreateInspection(
                 stem,
                 "Google Cloud VMO - daily touchpoints",
                 DateTimeOffset.Parse("2026-05-21T22:03:00Z"),
@@ -739,14 +755,54 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                 TimeSpan.FromMinutes(21) + TimeSpan.FromSeconds(12),
                 audioPath: audioPath,
                 markdownPath: markdownPath,
+                jsonPath: jsonPath,
+                readyPath: readyPath,
                 diarizationReady: true,
                 hasSpeakerLabels: true,
-                hasSuspiciousSpeakerLabels: true));
+                hasSuspiciousSpeakerLabels: true);
+        var recommendation = CleanupRecommendationReadiness.Project(AnalyzeSingle(inspection), inspection.Meeting);
 
         Assert.Equal(MeetingCleanupAction.RepairSpeakerLabels, recommendation.Action);
         Assert.Equal(MeetingCleanupConfidence.High, recommendation.Confidence);
         Assert.True(recommendation.CanApplyAutomatically);
         Assert.Equal("repair-speaker-labels", recommendation.ReasonCode);
+    }
+
+    [Fact]
+    public async Task Analyze_Marks_Speaker_Labels_For_Review_When_Recovery_Sidecars_Are_Missing()
+    {
+        var audio = Path.Combine(_root, "meeting.wav");
+        var markdown = Path.Combine(_root, "meeting.md");
+        await WriteSilentWaveFileAsync(audio, TimeSpan.FromMinutes(3));
+        await File.WriteAllTextAsync(markdown, "# Meeting");
+        var inspection = CreateInspection(
+            "meeting", "Customer sync", DateTimeOffset.UtcNow, MeetingPlatform.Teams,
+            TimeSpan.FromMinutes(3), audio, markdown, diarizationReady: true);
+        var recommendation = CleanupRecommendationReadiness.Project(AnalyzeSingle(inspection), inspection.Meeting);
+
+        Assert.Equal(MeetingCleanupAction.GenerateSpeakerLabels, recommendation.Action);
+        Assert.False(recommendation.CanApplyAutomatically);
+        Assert.Contains("recovery", recommendation.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Analyze_Does_Not_Automatically_Label_When_Transcript_Segments_Are_Unreadable()
+    {
+        var audio = Path.Combine(_root, "meeting.wav");
+        var markdown = Path.Combine(_root, "meeting.md");
+        var json = Path.Combine(_root, "meeting.json");
+        var ready = Path.Combine(_root, "meeting.ready");
+        await WriteSilentWaveFileAsync(audio, TimeSpan.FromMinutes(3));
+        await File.WriteAllTextAsync(markdown, "A transcript without time-aligned segments.");
+        await File.WriteAllTextAsync(json, "{}");
+        await File.WriteAllTextAsync(ready, "ready");
+        var inspection = CreateInspection("meeting", "Customer sync", DateTimeOffset.UtcNow,
+            MeetingPlatform.Teams, TimeSpan.FromMinutes(3), audio, markdown, jsonPath: json,
+            diarizationReady: true, readyPath: ready);
+        var recommendation = CleanupRecommendationReadiness.Project(AnalyzeSingle(inspection), inspection.Meeting);
+
+        Assert.False(recommendation.CanApplyAutomatically);
+        Assert.Contains("transcript segments", recommendation.Description, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -881,7 +937,8 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
         bool teamsPlaybackMergeReady = false,
         bool canGenerateSummary = false,
         bool hasReadableStructuredTranscript = false,
-        bool hasPublishedSummary = false)
+        bool hasPublishedSummary = false,
+        string? readyPath = null)
     {
         return new MeetingInspectionRecord(
             new MeetingOutputRecord(
@@ -893,7 +950,7 @@ public sealed class MeetingCleanupRecommendationEngineTests : IDisposable
                 audioPath,
                 markdownPath,
                 jsonPath,
-                null,
+                readyPath,
                 null,
                 manifestState ?? manifest?.State,
                 Array.Empty<MeetingAttendee>(),
