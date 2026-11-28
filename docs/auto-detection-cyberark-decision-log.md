@@ -1094,6 +1094,22 @@ As of 2026-07-20, executable-policy facts are:
 - Outcome: mitigation retained in source; original root cause remains unconfirmed.
 - Follow-up / removal condition: validate on a subsequent call and investigate actual zero readings or ambiguous windows if the problem recurs.
 
+### 2026-11-27: MSI launcher payload integrity
+
+- Trigger / observed symptom: release MSI extraction succeeded, but its payload lacked `Run-MeetingRecorder.cmd`, which the bundle integrity manifest requires.
+- Exact runtime or CyberArk evidence: the MSI File table has no launcher entry; the previous release MSI also lacked it. No new CyberArk policy event was observed.
+- Hypothesis: the installer staging script deliberately excluded the launcher while later deployment contracts began requiring it.
+- APIs or signals added/removed: preserve the existing launcher and dependency-check scripts in the MSI payload; verify staged files against the published integrity manifest before harvesting. No executable name, signing policy, install location, audio probe, or detector changes.
+- Positive behavior expected: MSI extraction and installation carry the same required launcher bytes as the portable bundle.
+- False-positive/security boundary retained: existing cooperative shutdown, apphost validation, and managed install path remain unchanged. No endpoint policy bypass or user recording interruption.
+- Source status: installer staging retains the launcher and dependency scripts; a guard checks staged files against the bundle manifest before harvesting.
+- Tests added and results: staging test reproduced the missing-guard failure, then passed while checking launcher retention and rejecting changed or missing files.
+- Package status: commit `d07f87e` MSI and ZIP were built and published; MSI extraction revealed the missing launcher. A replacement package is required.
+- Installed hash/version/signature status: local CLI deployment of `d07f87e` passed bundle integrity; signing unchanged.
+- Live-machine result: installed app restarted with a visible window; no live meeting or recording was used for validation.
+- Outcome: source correction retained; replacement package verification pending.
+- Follow-up / removal condition: retain the staged-payload integrity guard while MSI and portable bundle share an integrity manifest.
+
 ## Entry Template
 
 Append future entries with all fields:

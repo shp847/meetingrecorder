@@ -81,6 +81,7 @@ What it does:
 Packaging validation notes:
 
 - the MSI should no longer emit the old `ARPINSTALLLOCATION` WiX warning during normal builds
+- the MSI staging payload retains the launcher and dependency-check scripts; packaging verifies every required bundle file and launcher support file before harvesting
 - `ICE91` is intentionally suppressed for harvested release builds because the MSI is authored as per-user-only and installs into user-profile directories by design
 - the MSI now enables Windows Installer logging by default, so direct MSI troubleshooting should leave a verbose log under `%TEMP%`
 - the MSI now allows refreshed same-version release assets to replace already-installed binaries, so a rebuilt `0.x` package can still overwrite an older apphost on reinstall

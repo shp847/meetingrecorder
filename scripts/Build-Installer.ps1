@@ -430,14 +430,63 @@ function Copy-MsiPayload {
     foreach ($excludedName in @(
         "portable.mode",
         "bundle-mode.txt",
-        "Run-MeetingRecorder.cmd",
         "Install-LatestFromGitHub.cmd",
         "Install-LatestFromGitHub.ps1",
-        "Check-Dependencies.ps1",
-        "Install-Dependencies.cmd",
-        "Install-Dependencies.ps1",
         "SETUP.md")) {
         Remove-Item -Path (Join-Path $DestinationRoot $excludedName) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Assert-MsiPayloadIntegrity {
+    param(
+        [string]$SourceRoot,
+        [string]$DestinationRoot
+    )
+
+    function Get-MsiFileSha256([string]$Path) {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            try { return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '') }
+            finally { $sha256.Dispose() }
+        }
+        finally { $stream.Dispose() }
+    }
+
+    $integrityPath = Join-Path $SourceRoot "bundle-integrity.json"
+    if (-not (Test-Path -LiteralPath $integrityPath -PathType Leaf)) {
+        throw "Portable bundle integrity manifest is missing."
+    }
+    $integrity = Get-Content -LiteralPath $integrityPath -Raw | ConvertFrom-Json
+    if ($null -eq $integrity.requiredFiles -or @($integrity.requiredFiles).Count -eq 0) {
+        throw "Portable bundle integrity manifest has no required files."
+    }
+    $destinationPrefix = [System.IO.Path]::GetFullPath($DestinationRoot).TrimEnd('\') + '\'
+    foreach ($entry in $integrity.requiredFiles) {
+        $relativePath = [string]$entry.relativePath
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or [System.IO.Path]::IsPathRooted($relativePath)) {
+            throw "Portable bundle integrity manifest contains an invalid path."
+        }
+        $destinationPath = [System.IO.Path]::GetFullPath((Join-Path $DestinationRoot $relativePath))
+        if (-not $destinationPath.StartsWith($destinationPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
+            throw "MSI staging is missing required bundle file: $relativePath"
+        }
+        $file = Get-Item -LiteralPath $destinationPath
+        if ($file.Length -ne [long]$entry.lengthBytes -or
+            (Get-MsiFileSha256 $destinationPath) -ne [string]$entry.sha256) {
+            throw "MSI staging differs from the required bundle file: $relativePath"
+        }
+    }
+
+    foreach ($name in @("Check-Dependencies.ps1", "Install-Dependencies.cmd", "Install-Dependencies.ps1")) {
+        $sourcePath = Join-Path $SourceRoot $name
+        $destinationPath = Join-Path $DestinationRoot $name
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $destinationPath -PathType Leaf) -or
+            (Get-MsiFileSha256 $sourcePath) -ne (Get-MsiFileSha256 $destinationPath)) {
+            throw "MSI staging is missing or changed launcher support file: $name"
+        }
     }
 }
 
@@ -668,6 +717,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-MsiPayload -SourceRoot $publishedAppPath -DestinationRoot $msiStagingPath
+Assert-MsiPayloadIntegrity -SourceRoot $publishedAppPath -DestinationRoot $msiStagingPath
 Write-MsiHarvestAuthoring -SourceRoot $msiStagingPath -OutputPath $msiGeneratedAuthoringPath
 $installerMsiBuiltPath = Invoke-DotnetBuildMsi `
     -ProjectPath $msiProjectPath `
