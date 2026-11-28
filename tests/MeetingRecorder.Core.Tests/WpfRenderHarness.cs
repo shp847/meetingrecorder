@@ -86,6 +86,18 @@ internal static class WpfRenderHarness
                     SaveScreenshot(detail, screenshot, scale);
                     var speaker = FindDescendant<ToggleButton>(list, candidate => AutomationProperties.GetName(candidate) == "Rename Speaker 1 in this meeting")
                         ?? throw new InvalidOperationException("Inline speaker editor is unavailable.");
+                    list.SelectedIndex = 0;
+                    if (!speaker.Focus()) throw new InvalidOperationException("Speaker label must accept keyboard focus.");
+                    typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, null);
+                    detail.UpdateLayout();
+                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    var restoredFocus = Keyboard.FocusedElement as FrameworkElement;
+                    if (restoredFocus?.Name != "InlineSpeakerToggle" ||
+                        (restoredFocus.DataContext as MeetingTranscriptSegmentRow)?.SegmentId != "segment-0")
+                        throw new InvalidOperationException("Refresh did not restore focus to the same transcript control.");
+                    if ((list.SelectedItem as MeetingTranscriptSegmentRow)?.SegmentId != "segment-0")
+                        throw new InvalidOperationException("Refresh did not preserve the selected passage.");
+                    speaker = (ToggleButton)restoredFocus;
                     string? submittedName = null;
                     detail.ApplySpeakerNamesRequested += (_, args) => { submittedName = args.Rows.Single().EditedLabel; args.OnSaved?.Invoke(); };
                     speaker.IsChecked = true;

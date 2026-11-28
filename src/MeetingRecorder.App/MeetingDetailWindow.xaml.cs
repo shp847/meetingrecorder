@@ -449,6 +449,10 @@ public partial class MeetingDetailWindow : Window
         var scroll = FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox);
         var previousOffset = scroll?.VerticalOffset ?? 0;
         var hadFocus = TranscriptSegmentsListBox.IsKeyboardFocusWithin;
+        var focusedElement = hadFocus ? Keyboard.FocusedElement as FrameworkElement : null;
+        var focusedSegmentId = (focusedElement?.DataContext as MeetingTranscriptSegmentRow)?.SegmentId;
+        var focusedName = focusedElement?.Name;
+        var focusedAutomationName = focusedElement is null ? null : System.Windows.Automation.AutomationProperties.GetName(focusedElement);
         var query = TranscriptSearchTextBox.Text?.Trim();
         var filteredSegments = string.IsNullOrWhiteSpace(query)
             ? _allTranscriptSegments
@@ -468,20 +472,31 @@ public partial class MeetingDetailWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox)?.ScrollToVerticalOffset(previousOffset);
-            if (hadFocus) TranscriptSegmentsListBox.Focus();
+            if (hadFocus)
+            {
+                var focusedRow = filteredSegments.FirstOrDefault(segment =>
+                    !string.IsNullOrWhiteSpace(focusedSegmentId) && string.Equals(segment.SegmentId, focusedSegmentId, StringComparison.Ordinal));
+                var container = focusedRow is null ? null : TranscriptSegmentsListBox.ItemContainerGenerator.ContainerFromItem(focusedRow);
+                var target = container is null ? null : FindVisualChild<FrameworkElement>(container, candidate =>
+                    candidate.Focusable && candidate.IsVisible &&
+                    ((!string.IsNullOrWhiteSpace(focusedName) && string.Equals(candidate.Name, focusedName, StringComparison.Ordinal)) ||
+                     (!string.IsNullOrWhiteSpace(focusedAutomationName) && string.Equals(
+                         System.Windows.Automation.AutomationProperties.GetName(candidate), focusedAutomationName, StringComparison.Ordinal))));
+                if (target is null || !target.Focus()) TranscriptSegmentsListBox.Focus();
+            }
         }, DispatcherPriority.Loaded);
         TranscriptStatusTextBlock.Text = string.IsNullOrWhiteSpace(query)
             ? $"{_allTranscriptSegments.Length} passages"
             : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} passages";
     }
 
-    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    private static T? FindVisualChild<T>(DependencyObject parent, Func<T, bool>? predicate = null) where T : DependencyObject
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
         {
             var child = VisualTreeHelper.GetChild(parent, index);
-            if (child is T match) return match;
-            if (FindVisualChild<T>(child) is { } nested) return nested;
+            if (child is T match && (predicate is null || predicate(match))) return match;
+            if (FindVisualChild<T>(child, predicate) is { } nested) return nested;
         }
         return null;
     }
