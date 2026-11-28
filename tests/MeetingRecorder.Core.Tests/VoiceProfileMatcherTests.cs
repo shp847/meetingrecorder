@@ -14,7 +14,7 @@ public sealed class VoiceProfileMatcherTests
         TimeSpan.FromSeconds(8));
 
     [Fact]
-    public void Match_AutoApplies_When_Confidence_And_Margin_Are_High()
+    public void Match_Still_Requires_Confirmation_When_Confidence_And_Margin_Are_High()
     {
         var matcher = new VoiceProfileMatcher();
         var predictions = matcher.Match(
@@ -29,8 +29,8 @@ public sealed class VoiceProfileMatcherTests
         Assert.Equal("speaker_00", prediction.SpeakerId);
         Assert.Equal("voice_pranav", prediction.ProfileId);
         Assert.Equal("Pranav Sharma", prediction.DisplayName);
-        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, prediction.Source);
-        Assert.Equal(SpeakerNameDecisionReason.AutoAppliedHighConfidence, prediction.DecisionReason);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameDecisionReason.SuggestedHighConfidence, prediction.DecisionReason);
         Assert.True(prediction.Confidence >= 0.86d);
     }
 
@@ -99,7 +99,7 @@ public sealed class VoiceProfileMatcherTests
             [Profile("voice_pranav", "Pranav Sharma", [1f, 0f, 0f])],
             Options);
 
-        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, predictions.Single(item => item.SpeakerId == "speaker_00").Source);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, predictions.Single(item => item.SpeakerId == "speaker_00").Source);
         Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, predictions.Single(item => item.SpeakerId == "speaker_01").Source);
         Assert.Equal(
             SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
@@ -184,6 +184,18 @@ public sealed class VoiceProfileMatcherTests
         var updated = Assert.Single(matcher.ApplyPredictions([speaker], [prediction]));
 
         Assert.Equal(speaker, updated);
+    }
+
+    [Fact]
+    public void ApplyPredictions_Requires_Confirmation_Even_For_Legacy_Automatic_Prediction()
+    {
+        var speaker = new SpeakerIdentity("speaker_00", "Speaker 1", false);
+        var prediction = new SpeakerNamePrediction("speaker_00", "profile", "Alex", 0.99,
+            SpeakerNameSource.AutoAppliedVoiceProfile, SpeakerNameDecisionReason.AutoAppliedHighConfidence);
+        var updated = Assert.Single(new VoiceProfileMatcher().ApplyPredictions([speaker], [prediction]));
+        Assert.Equal("Speaker 1", updated.DisplayName);
+        Assert.Equal("Alex", updated.SuggestedDisplayName);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, updated.NameSource);
     }
 
     private static SpeakerVoiceSample Sample(string speakerId, IReadOnlyList<float> embedding)

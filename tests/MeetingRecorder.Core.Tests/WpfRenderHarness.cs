@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -34,6 +35,121 @@ internal static class WpfRenderHarness
     private static Dispatcher? applicationDispatcher;
     private static Window? applicationAnchor;
     private static Exception? applicationStartupFailure;
+
+    public static WpfRenderEvidence CaptureTranscriptWorkspace(int physicalWidth, int physicalHeight, double scale)
+    {
+        lock (CaptureGate)
+        {
+            return GetApplicationDispatcher().Invoke(() =>
+            {
+                var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderWpfHarness", "transcript-workspace", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(root);
+                var screenshot = Path.Combine(root, $"transcript-{physicalWidth}x{physicalHeight}-{scale:0.00}.png");
+                var automation = Path.Combine(root, "automation.txt");
+                var keyboard = Path.Combine(root, "keyboard.txt");
+                var detail = new MeetingDetailWindow
+                {
+                    Width = physicalWidth / scale,
+                    Height = physicalHeight / scale,
+                    WindowStartupLocation = WindowStartupLocation.Manual,
+                    Left = -10000, Top = -10000, ShowInTaskbar = false,
+                };
+                try
+                {
+                    detail.Show();
+                    RequireElement<TextBlock>(detail, "MeetingTitleTextBlock").Text = "Synthetic meeting with a long, readable title";
+                    RequireElement<TextBlock>(detail, "MeetingSubtitleTextBlock").Text = "Teams | 11/25/2026 1:03 PM | 13:57";
+                    RequireElement<Border>(detail, "DetailTaskCenterBorder").Visibility = Visibility.Collapsed;
+                    var rows = Enumerable.Range(0, 142).Select(index => new MeetingTranscriptSegmentRow(
+                        $"00:{index / 60:00}:{index % 60:00}", "Speaker 1",
+                        index == 0 ? "A readable passage with enough words to check the width of the transcript." : $"Passage number {index}.",
+                        "speaker-1", $"segment-{index}")).ToArray();
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptSegments", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(detail, rows);
+                    var grid = RequireElement<DataGrid>(detail, "SpeakerLabelsDataGrid");
+                    grid.ItemsSource = new[] { new MeetingDetailSpeakerLabelEditorRow("Speaker 1", speakerId: "speaker-1", artifactRevision: "revision") };
+                    var list = RequireElement<ListBox>(detail, "TranscriptSegmentsListBox");
+                    list.Tag = new[] { new MeetingDetailSpeakerMergeChoice("speaker-1", "Speaker 1") };
+                    typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, null);
+                    detail.UpdateLayout();
+                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Render);
+                    var count = RequireElement<TextBlock>(detail, "TranscriptStatusTextBlock");
+                    if (count.Text != "142 passages") throw new InvalidOperationException("Transcript count does not match visible passages.");
+                    var search = RequireElement<TextBox>(detail, "TranscriptSearchTextBox");
+                    search.Text = "Passage number 42";
+                    if (count.Text != "1 of 142 passages") throw new InvalidOperationException("Filtered transcript count is incorrect.");
+                    search.Text = string.Empty;
+                    detail.UpdateLayout();
+                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Render);
+                    var text = FindDescendant<TextBlock>(list, candidate => candidate.Text.StartsWith("A readable passage", StringComparison.Ordinal))
+                        ?? throw new InvalidOperationException("Transcript passage was not rendered.");
+                    if (text.ActualWidth < 250) throw new InvalidOperationException($"Transcript text is too narrow: {text.ActualWidth:0}.");
+                    SaveScreenshot(detail, screenshot, scale);
+                    var speaker = FindDescendant<ToggleButton>(list, candidate => AutomationProperties.GetName(candidate) == "Rename Speaker 1 in this meeting")
+                        ?? throw new InvalidOperationException("Inline speaker editor is unavailable.");
+                    string? submittedName = null;
+                    detail.ApplySpeakerNamesRequested += (_, args) => { submittedName = args.Rows.Single().EditedLabel; args.OnSaved?.Invoke(); };
+                    speaker.IsChecked = true;
+                    detail.UpdateLayout();
+                    var nameInput = FindDescendant<ComboBox>(list, candidate => AutomationProperties.GetName(candidate) == "Speaker name for this meeting" && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Inline speaker name field is unavailable.");
+                    nameInput.Text = "Alex";
+                    var saveName = FindDescendant<Button>(list, candidate => Equals(candidate.Content, "Save name") && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Inline speaker save action is unavailable.");
+                    saveName.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (submittedName != "Alex" || speaker.IsChecked == true) throw new InvalidOperationException("Inline speaker rename was not submitted.");
+                    speaker.IsChecked = true;
+                    detail.UpdateLayout();
+                    SaveScreenshot(detail, Path.Combine(root, "inline-speaker-edit.png"), scale);
+                    var source = PresentationSource.FromVisual(detail) ?? throw new InvalidOperationException("No WPF presentation source.");
+                    detail.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    if (speaker.IsChecked == true || !detail.IsVisible) throw new InvalidOperationException("Escape must cancel inline editing before closing details.");
+                    list.SelectedIndex = 0;
+                    detail.UpdateLayout();
+                    var correctionToggle = FindDescendant<ToggleButton>(list, candidate => Equals(candidate.Content, "Correct passage speaker") && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Passage correction is unavailable.");
+                    correctionToggle.IsChecked = true;
+                    detail.UpdateLayout();
+                    var choice = FindDescendant<ComboBox>(list, candidate => AutomationProperties.GetName(candidate) == "Choose speaker for this passage" && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Passage speaker choices are unavailable.");
+                    if (choice.Items.Count != 1) throw new InvalidOperationException("Passage speaker choices did not bind.");
+                    choice.SelectedIndex = 0;
+                    SegmentAttributionOverrideChoice? submittedChoice = null;
+                    detail.ApplyParagraphOverrideRequested += (_, args) => { submittedChoice = args.Choice; args.OnSaved?.Invoke(); };
+                    var apply = FindDescendant<Button>(list, candidate => Equals(candidate.Content, "Apply to passage") && candidate.IsVisible)!
+                        ?? throw new InvalidOperationException("Passage save action is unavailable.");
+                    apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (submittedChoice?.TargetValue != "speaker-1") throw new InvalidOperationException("Passage correction was not submitted.");
+                    var splitToggle = FindDescendant<ToggleButton>(list, candidate => Equals(candidate.Content, "Split passage") && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Passage split is unavailable.");
+                    splitToggle.IsChecked = true;
+                    detail.UpdateLayout();
+                    var splitInput = FindDescendant<TextBox>(list, candidate => AutomationProperties.GetName(candidate) == "Choose passage split position" && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Passage split field is unavailable.");
+                    splitInput.CaretIndex = 5;
+                    var submittedOffset = -1;
+                    detail.ChangePassageSplitRequested += (_, args) => { submittedOffset = args.Offset; args.OnSaved?.Invoke(); };
+                    var splitButton = FindDescendant<Button>(list, candidate => Equals(candidate.Content, "Split at cursor") && candidate.IsVisible)
+                        ?? throw new InvalidOperationException("Passage split action is unavailable.");
+                    splitButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (submittedOffset != 5) throw new InvalidOperationException("Passage split position was not submitted.");
+                    var toolsToggle = RequireElement<ToggleButton>(detail, "MeetingToolsToggle");
+                    toolsToggle.IsChecked = true;
+                    RequireElement<Expander>(detail, "SpeakerReviewExpander").IsExpanded = true;
+                    detail.UpdateLayout();
+                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Render);
+                    if (grid.Columns.Sum(column => column.ActualWidth) > grid.ActualWidth - 2)
+                        throw new InvalidOperationException("Speaker review controls exceed the available width.");
+                    SaveScreenshot(detail, Path.Combine(root, "speaker-tools.png"), scale);
+                    detail.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    if (toolsToggle.IsChecked == true || !detail.IsVisible) throw new InvalidOperationException("Escape must close meeting tools before details.");
+                    File.WriteAllText(automation, $"{count.Text}\nTranscript width: {text.ActualWidth:0}\nSearch transcript\nRename Speaker 1 in this meeting");
+                    File.WriteAllText(keyboard, "Escape cancels inline speaker editing");
+                    return new WpfRenderEvidence(root, screenshot, automation, keyboard);
+                }
+                finally { detail.Close(); }
+            });
+        }
+    }
 
     public static WpfRenderEvidence CaptureHomeShell()
     {

@@ -171,17 +171,20 @@ audio paths, embeddings, or profile contents.
 `(meeting identity, artifact revision, diarization speaker id)`. A `Speaker Label`
 is the anonymous cluster; a `Meeting Display Name` is mutable presentation; and a
 `Voice Profile` is a local remembered signature. User-entered display names win
-over suggestions and auto-applied profile matches. Suggestions never rename a
+over suggestions and any historic auto-applied profile matches. New suggestions never rename a
 speaker until confirmed, and stale snapshots allow reload only. Rows expose source,
 plain-language reason, confidence bucket, local-profile reference, evidence and
 learning readiness, and repair warning—never samples, embeddings, audio paths, or
 profile contents.
 
-The meeting-detail `Speaker Review` well appears before Organize & Fix. It keeps
-one explicit Apply Names commit, reports pending draft count, and preserves
-drafts when a background revision changes. `Refresh Local Suggestions` only
-checks local profiles; `Repair Speaker Labels` remains a separate Fix action
-for cluster quality. Neither route silently renames a speaker.
+Meeting details gives the transcript the main workspace. A speaker label opens
+an inline meeting-wide rename, while a selected passage supports a separate
+speaker correction and a reversible split. Splits preserve source text, IDs,
+and timing without inventing word timestamps. Generic labels are never treated
+as a shared identity. Meeting tools contains Speaker Review and maintenance;
+open drafts are preserved when background data changes. `Refresh Local
+Suggestions` checks local profiles; `Repair Speaker Labels` remains a separate
+Fix action. Neither route silently names a speaker.
 
 Speaker correction decisions are keyed by operation, meeting, artifact revision,
 and canonical diarization speaker—not by the displayed name. They reject stale,

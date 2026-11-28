@@ -13,7 +13,7 @@ public sealed record SegmentAttributionOverride(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("artifactRevision")] string ArtifactRevision,
     [property: JsonPropertyName("segmentId")] string SegmentId,
-    [property: JsonPropertyName("originalSpeakerId")] string OriginalSpeakerId,
+    [property: JsonPropertyName("originalSpeakerId")] string? OriginalSpeakerId,
     [property: JsonPropertyName("targetKind")] SegmentAttributionOverrideTargetKind TargetKind,
     [property: JsonPropertyName("targetValue")] string TargetValue,
     [property: JsonPropertyName("actorSource")] string ActorSource,

@@ -51,6 +51,91 @@ public sealed class MeetingOutputCatalogService
         _pathBuilder = pathBuilder;
     }
 
+    internal async Task<SegmentAttributionOverrideTransactionResult> ChangePassageSplitIfCurrentAsync(
+        MeetingOutputRecord record, string expectedSnapshot, string segmentId, string expectedText,
+        int offset, string operationId, bool undo, CancellationToken cancellationToken = default,
+        string? expectedSpeakerId = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(expectedSnapshot) ||
+            !string.Equals(GetSpeakerArtifactRevision(record), expectedSnapshot, StringComparison.Ordinal))
+            return new(false, "Meeting data changed. Reload before editing this passage.");
+        if (string.IsNullOrWhiteSpace(record.JsonPath) || !File.Exists(record.JsonPath) ||
+            string.IsNullOrWhiteSpace(record.MarkdownPath) || !File.Exists(record.MarkdownPath) ||
+            string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath))
+            return new(false, "Published transcript data is unavailable.");
+
+        var sourceRevision = GetSegmentAttributionRevision(record);
+        var artifacts = new[] { record.JsonPath, record.MarkdownPath }
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new SpeakerArtifactTransactionFile(path, path + ".passage-" + Guid.NewGuid().ToString("N") + ".tmp",
+                path + ".passage-" + Guid.NewGuid().ToString("N") + ".bak"))
+            .ToArray();
+        var temporary = artifacts.ToDictionary(item => item.SourcePath, item => item.TempPath, StringComparer.OrdinalIgnoreCase);
+        var preserveBackups = false;
+        try
+        {
+            foreach (var artifact in artifacts) File.Copy(artifact.SourcePath, artifact.TempPath, overwrite: false);
+            var jsonPath = temporary[record.JsonPath];
+            var root = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath, cancellationToken)) as JsonObject;
+            var transcript = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+            if (root is null || !transcript.HasStructuredJson) return new(false, "Published transcript data is unreadable.");
+            if (transcript.InvalidPassageSplitCount > 0) return new(false, "Saved passage edits need review before changing this transcript.");
+            var selected = transcript.StructuredSegments.FirstOrDefault(segment => string.Equals(segment.SegmentId, segmentId, StringComparison.Ordinal));
+            if (selected is null || !string.Equals(selected.Text, expectedText, StringComparison.Ordinal) ||
+                !string.Equals(selected.SpeakerId, expectedSpeakerId, StringComparison.Ordinal) ||
+                undo && !string.Equals(selected.ManualSplitId, operationId, StringComparison.Ordinal))
+                return new(false, "The passage changed. Reload before editing it.");
+            if (!MeetingTranscriptDocumentReader.TryReadUnsplitStructuredSegments(jsonPath, out var originalSegments))
+                return new(false, "Published transcript data is unreadable.");
+            string? reason;
+            var changed = undo
+                ? TranscriptPassageSplitService.TryRevert(root, operationId, out reason)
+                : TranscriptPassageSplitService.TryApply(root, originalSegments, segmentId, offset, operationId, sourceRevision, out reason);
+            if (!changed) return new(false, reason ?? "The passage could not be changed.");
+            await File.WriteAllTextAsync(jsonPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+
+            var updated = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath: null);
+            var manifest = await new SessionManifestStore(_pathBuilder).LoadAsync(record.ManifestPath, cancellationToken);
+            var speakers = (manifest.ProcessingMetadata?.Speakers ?? Array.Empty<SpeakerIdentity>())
+                .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+                .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+            await RenderTranscriptPreservingHeaderAsync(temporary[record.MarkdownPath], manifest, updated, sourceRevision, speakers, cancellationToken);
+
+            if (!string.Equals(GetSpeakerArtifactRevision(record), expectedSnapshot, StringComparison.Ordinal))
+                return new(false, "Meeting data changed. Reload before editing this passage.");
+            var committed = new List<SpeakerArtifactTransactionFile>();
+            try
+            {
+                foreach (var artifact in artifacts)
+                {
+                    File.Replace(artifact.TempPath, artifact.SourcePath, artifact.BackupPath, true);
+                    committed.Add(artifact);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    foreach (var artifact in committed.AsEnumerable().Reverse())
+                        if (File.Exists(artifact.BackupPath)) File.Copy(artifact.BackupPath, artifact.SourcePath, overwrite: true);
+                }
+                catch { preserveBackups = true; throw; }
+                throw;
+            }
+            return new(true);
+        }
+        finally
+        {
+            foreach (var artifact in artifacts)
+            {
+                TryDeleteArtifactTransactionFile(artifact.TempPath);
+                if (!preserveBackups) TryDeleteArtifactTransactionFile(artifact.BackupPath);
+            }
+        }
+    }
+
     public async Task<SegmentAttributionOverrideTransactionResult> ApplySegmentAttributionOverrideIfCurrentAsync(
         MeetingOutputRecord record, string expectedRevision, SegmentAttributionOverride value, CancellationToken cancellationToken = default)
     {
@@ -63,6 +148,7 @@ public sealed class MeetingOutputCatalogService
             string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath))
             return new(false, "Published transcript data is unavailable.");
 
+        var expectedSnapshot = GetSpeakerArtifactRevision(record);
         var artifacts = new[] { record.JsonPath, record.MarkdownPath }
             .Select(path => path!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -84,7 +170,10 @@ public sealed class MeetingOutputCatalogService
             var temporaryMarkdownPath = tempByPath[record.MarkdownPath];
             var root = JsonNode.Parse(await File.ReadAllTextAsync(temporaryJsonPath, cancellationToken)) as JsonObject;
             if (root is null) return new(false, "Published transcript data is unreadable.");
-            if (!SegmentAttributionOverrideDocumentMutator.TryApply(root, value, out var reason)) return new(false, reason ?? "Paragraph correction could not be applied.");
+            var currentTranscript = MeetingTranscriptDocumentReader.Read(temporaryJsonPath, markdownPath: null);
+            if (currentTranscript.InvalidPassageSplitCount > 0) return new(false, "Saved passage edits need review before changing this transcript.");
+            var currentSegments = currentTranscript.StructuredSegments;
+            if (!SegmentAttributionOverrideDocumentMutator.TryApply(root, value, out var reason, currentSegments)) return new(false, reason ?? "Paragraph correction could not be applied.");
             await File.WriteAllTextAsync(temporaryJsonPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
             var updatedTranscript = MeetingTranscriptDocumentReader.Read(temporaryJsonPath, markdownPath: null);
@@ -95,19 +184,10 @@ public sealed class MeetingOutputCatalogService
                 .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
                 .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
-            await File.WriteAllTextAsync(
-                temporaryMarkdownPath,
-                new TranscriptRenderer().RenderMarkdown(
-                    manifest,
-                    updatedTranscript.StructuredSegments,
-                    segment => SegmentAttributionOverrideResolver.Resolve(
-                        segment,
-                        expectedRevision,
-                        speakers,
-                        updatedTranscript.SafeAttributionOverrides).DisplayLabel),
-                cancellationToken);
+            await RenderTranscriptPreservingHeaderAsync(temporaryMarkdownPath, manifest, updatedTranscript, expectedRevision, speakers, cancellationToken);
 
-            if (!string.Equals(GetSegmentAttributionRevision(record), expectedRevision, StringComparison.Ordinal)) return new(false, "Meeting speaker data changed. Reload before correcting this paragraph.");
+            if (!string.Equals(GetSegmentAttributionRevision(record), expectedRevision, StringComparison.Ordinal) ||
+                !string.Equals(GetSpeakerArtifactRevision(record), expectedSnapshot, StringComparison.Ordinal)) return new(false, "Meeting speaker data changed. Reload before correcting this paragraph.");
 
             var committed = new List<SpeakerArtifactTransactionFile>(artifacts.Length);
             try
@@ -151,6 +231,7 @@ public sealed class MeetingOutputCatalogService
             string.IsNullOrWhiteSpace(record.ManifestPath) || !File.Exists(record.ManifestPath))
             return new(false, "Published transcript data is unavailable.");
 
+        var expectedSnapshot = GetSpeakerArtifactRevision(record);
         var artifacts = new[] { record.JsonPath, record.MarkdownPath }
             .Select(path => path!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -172,6 +253,8 @@ public sealed class MeetingOutputCatalogService
             var temporaryMarkdownPath = tempByPath[record.MarkdownPath];
             var root = JsonNode.Parse(await File.ReadAllTextAsync(temporaryJsonPath, cancellationToken)) as JsonObject;
             if (root is null) return new(false, "Published transcript data is unreadable.");
+            if (MeetingTranscriptDocumentReader.Read(temporaryJsonPath, markdownPath: null).InvalidPassageSplitCount > 0)
+                return new(false, "Saved passage edits need review before changing this transcript.");
             if (!SegmentAttributionOverrideDocumentMutator.TryRevert(root, overrideId, expectedRevision, out var reason))
                 return new(false, reason ?? "Paragraph correction could not be reverted.");
             await File.WriteAllTextAsync(temporaryJsonPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
@@ -184,18 +267,9 @@ public sealed class MeetingOutputCatalogService
                 .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
                 .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
-            await File.WriteAllTextAsync(
-                temporaryMarkdownPath,
-                new TranscriptRenderer().RenderMarkdown(
-                    manifest,
-                    updatedTranscript.StructuredSegments,
-                    segment => SegmentAttributionOverrideResolver.Resolve(
-                        segment,
-                        expectedRevision,
-                        speakers,
-                        updatedTranscript.SafeAttributionOverrides).DisplayLabel),
-                cancellationToken);
-            if (!string.Equals(GetSegmentAttributionRevision(record), expectedRevision, StringComparison.Ordinal))
+            await RenderTranscriptPreservingHeaderAsync(temporaryMarkdownPath, manifest, updatedTranscript, expectedRevision, speakers, cancellationToken);
+            if (!string.Equals(GetSegmentAttributionRevision(record), expectedRevision, StringComparison.Ordinal) ||
+                !string.Equals(GetSpeakerArtifactRevision(record), expectedSnapshot, StringComparison.Ordinal))
                 return new(false, "Meeting speaker data changed. Reload before reverting this paragraph correction.");
 
             var committed = new List<SpeakerArtifactTransactionFile>(artifacts.Length);
@@ -600,6 +674,7 @@ public sealed class MeetingOutputCatalogService
             if (normalizeTranscriptJson && JsonNode.Parse(File.ReadAllText(normalizedPath)) is JsonObject root)
             {
                 root.Remove("speakerAttributionOverrides");
+                root.Remove("manualTranscriptSplits");
                 var segments = root["segments"] as JsonArray ?? root["Segments"] as JsonArray;
                 if (segments is not null)
                 {
@@ -609,6 +684,16 @@ public sealed class MeetingOutputCatalogService
                         if (sourceLabel is not null)
                         {
                             segment[segment.ContainsKey("speakerLabel") ? "speakerLabel" : "SpeakerLabel"] = sourceLabel.DeepClone();
+                        }
+                        if (segment["manualSourceLabelAdded"]?.GetValue<bool>() == true)
+                        {
+                            segment.Remove("displaySpeakerLabel");
+                            segment.Remove("manualSourceLabelAdded");
+                        }
+                        if (segment["manualSpeakerLabelWasMissing"]?.GetValue<bool>() == true)
+                        {
+                            segment.Remove("speakerLabel");
+                            segment.Remove("manualSpeakerLabelWasMissing");
                         }
                     }
                 }
@@ -626,6 +711,55 @@ public sealed class MeetingOutputCatalogService
         }
 
         hash.AppendData([0]);
+    }
+
+    private static async Task RenderTranscriptPreservingHeaderAsync(
+        string markdownPath, MeetingSessionManifest manifest, MeetingTranscriptReaderResult transcript, string revision,
+        IReadOnlyDictionary<string, SpeakerIdentity> speakers, CancellationToken cancellationToken)
+    {
+        var rendered = new TranscriptRenderer().RenderMarkdown(manifest, transcript.StructuredSegments,
+            segment => SegmentAttributionOverrideResolver.Resolve(segment, revision, speakers, transcript.SafeAttributionOverrides,
+                SpeakerClusterMergeResolver.BuildCanonicalMap(manifest.ProcessingMetadata?.SpeakerClusterMerges)).DisplayLabel);
+        var original = await File.ReadAllTextAsync(markdownPath, cancellationToken);
+        const string heading = "## Transcript";
+        var originalStart = original.IndexOf(heading, StringComparison.Ordinal);
+        var renderedStart = rendered.IndexOf(heading, StringComparison.Ordinal);
+        if (originalStart >= 0 && renderedStart >= 0) rendered = original[..originalStart] + rendered[renderedStart..];
+        await File.WriteAllTextAsync(markdownPath, rendered, cancellationToken);
+    }
+
+    private async Task RebasePassageCorrectionsAfterSpeakerChangeAsync(
+        MeetingOutputRecord original, MeetingOutputRecord temporary, string previousRevision, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(temporary.JsonPath) || !File.Exists(temporary.JsonPath) ||
+            string.IsNullOrWhiteSpace(temporary.MarkdownPath) || !File.Exists(temporary.MarkdownPath) ||
+            string.IsNullOrWhiteSpace(temporary.ManifestPath) || !File.Exists(temporary.ManifestPath)) return;
+        if (MeetingTranscriptDocumentReader.Read(original.JsonPath, markdownPath: null).InvalidPassageSplitCount > 0)
+            throw new InvalidDataException("Saved passage edits need review before changing speaker labels.");
+        var oldManifest = await new SessionManifestStore(_pathBuilder).LoadAsync(original.ManifestPath!, cancellationToken);
+        var newManifest = await new SessionManifestStore(_pathBuilder).LoadAsync(temporary.ManifestPath, cancellationToken);
+        var oldIds = (oldManifest.ProcessingMetadata?.Speakers ?? []).Select(speaker => speaker.Id).OrderBy(id => id, StringComparer.Ordinal);
+        var newIds = (newManifest.ProcessingMetadata?.Speakers ?? []).Select(speaker => speaker.Id).OrderBy(id => id, StringComparer.Ordinal);
+        if (!oldIds.SequenceEqual(newIds, StringComparer.Ordinal)) return;
+        var nextRevision = GetSegmentAttributionRevision(temporary);
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(temporary.JsonPath, cancellationToken)) as JsonObject;
+        if (root is null) throw new InvalidDataException("Published transcript data is unreadable.");
+        if (root["speakerAttributionOverrides"] is JsonArray overrides)
+        {
+            foreach (var item in overrides.OfType<JsonObject>())
+            {
+                var key = item.ContainsKey("artifactRevision") ? "artifactRevision" : "ArtifactRevision";
+                if (string.Equals(item[key]?.GetValue<string>(), previousRevision, StringComparison.Ordinal)) item[key] = nextRevision;
+            }
+            await File.WriteAllTextAsync(temporary.JsonPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+        }
+        var transcript = MeetingTranscriptDocumentReader.Read(temporary.JsonPath, markdownPath: null);
+        if (!transcript.HasStructuredJson) return;
+        var speakers = (newManifest.ProcessingMetadata?.Speakers ?? [])
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker.Id))
+            .GroupBy(speaker => speaker.Id.Trim(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+        await RenderTranscriptPreservingHeaderAsync(temporary.MarkdownPath, newManifest, transcript, nextRevision, speakers, cancellationToken);
     }
 
     /// <summary>
@@ -654,6 +788,7 @@ public sealed class MeetingOutputCatalogService
             return new SpeakerIdentityTransactionResult(false, "Meeting manifest is unavailable. Reload or reprocess this meeting before changing names.");
         }
 
+        var previousAttributionRevision = GetSegmentAttributionRevision(record);
         var artifacts = new[]
             {
                 record.ManifestPath,
@@ -685,6 +820,7 @@ public sealed class MeetingOutputCatalogService
                 MarkdownPath = GetTemporaryPath(record.MarkdownPath, tempByPath),
             };
             await UpdateSpeakerIdentitiesAsync(temporaryRecord, updatedSpeakers, cancellationToken);
+            await RebasePassageCorrectionsAfterSpeakerChangeAsync(record, temporaryRecord, previousAttributionRevision, cancellationToken);
 
             if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
             {
@@ -803,6 +939,7 @@ public sealed class MeetingOutputCatalogService
             return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before merging speakers.");
         }
 
+        var previousAttributionRevision = GetSegmentAttributionRevision(record);
         var artifacts = new[]
             {
                 record.ManifestPath,
@@ -836,6 +973,7 @@ public sealed class MeetingOutputCatalogService
                 existing.Append(merge).ToArray(),
                 mergeDecision.CanonicalBySpeakerId,
                 cancellationToken);
+            await RebasePassageCorrectionsAfterSpeakerChangeAsync(record, temporaryRecord, previousAttributionRevision, cancellationToken);
 
             if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
             {
@@ -922,6 +1060,7 @@ public sealed class MeetingOutputCatalogService
             return new SpeakerClusterMergeTransactionResult(false, "Meeting speaker data changed. Reload before reversing a speaker merge.");
         }
 
+        var previousAttributionRevision = GetSegmentAttributionRevision(record);
         var artifacts = new[] { record.ManifestPath, record.JsonPath, record.MarkdownPath }
             .Select(path => path!)
             .Select(path => new SpeakerArtifactTransactionFile(
@@ -951,6 +1090,7 @@ public sealed class MeetingOutputCatalogService
                 canonicalBySpeakerId,
                 cancellationToken,
                 regenerateMarkdownFromSource: true);
+            await RebasePassageCorrectionsAfterSpeakerChangeAsync(record, temporaryRecord, previousAttributionRevision, cancellationToken);
 
             if (!string.Equals(GetSpeakerArtifactRevision(record), expectedRevision, StringComparison.Ordinal))
             {
@@ -2655,10 +2795,12 @@ public sealed class MeetingOutputCatalogService
             }
 
             var updatedManifest = await manifestStore.LoadAsync(temporaryRecord.ManifestPath!, cancellationToken);
-            await File.WriteAllTextAsync(
-                temporaryRecord.MarkdownPath!,
-                new TranscriptRenderer().RenderMarkdown(updatedManifest, sourceSegments),
-                cancellationToken);
+            var originalMarkdown = await File.ReadAllTextAsync(temporaryRecord.MarkdownPath!, cancellationToken);
+            var rendered = new TranscriptRenderer().RenderMarkdown(updatedManifest, sourceSegments);
+            var originalStart = originalMarkdown.IndexOf("## Transcript", StringComparison.Ordinal);
+            var renderedStart = rendered.IndexOf("## Transcript", StringComparison.Ordinal);
+            if (originalStart >= 0 && renderedStart >= 0) rendered = originalMarkdown[..originalStart] + rendered[renderedStart..];
+            await File.WriteAllTextAsync(temporaryRecord.MarkdownPath!, rendered, cancellationToken);
         }
         else
         {

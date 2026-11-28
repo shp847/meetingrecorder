@@ -1412,6 +1412,92 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Contains("**Alex:** Hello", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task SplitPassage_PersistsCorrectionsAndUndoWithoutChangingSource()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var manifestPath = Path.Combine(root, "work", "session", "manifest.json");
+        var jsonPath = Path.Combine(root, "transcripts", "json", "split.json");
+        var markdownPath = Path.Combine(root, "transcripts", "split.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+        var builder = new ArtifactPathBuilder();
+        var manifest = new MeetingSessionManifest
+        {
+            SessionId = "session", Platform = MeetingPlatform.Teams, DetectedTitle = "Split test",
+            StartedAtUtc = DateTimeOffset.Parse("2026-03-16T00:00:00Z"), State = SessionState.Published,
+            ProcessingMetadata = new MeetingProcessingMetadata("model.bin", true,
+                [new SpeakerIdentity("a", "Alex", false), new SpeakerIdentity("b", "Blair", false)]),
+        };
+        await new SessionManifestStore(builder).SaveAsync(manifest, manifestPath);
+        await File.WriteAllTextAsync(jsonPath, """{"segments":[{"segmentId":"one","start":"00:00:00","end":"00:00:05","speakerId":"a","speakerLabel":"Alex","text":"Hello there"}]}""");
+        await File.WriteAllTextAsync(markdownPath, "old");
+        var record = new MeetingOutputRecord("split", "Split test", manifest.StartedAtUtc, MeetingPlatform.Teams, null, null,
+            markdownPath, jsonPath, null, manifestPath, SessionState.Published, Array.Empty<MeetingAttendee>(), true, "model.bin");
+        var service = new MeetingOutputCatalogService(builder);
+        var sourceRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+
+        var split = await service.ChangePassageSplitIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            "one", "Hello there", 6, "split1", false, expectedSpeakerId: "a");
+        Assert.True(split.IsApplied, split.ConflictReason);
+        Assert.Equal(sourceRevision, MeetingOutputCatalogService.GetSegmentAttributionRevision(record));
+        var transcript = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.Equal(new[] { "Hello ", "there" }, transcript.StructuredSegments.Select(segment => segment.Text));
+        var second = transcript.StructuredSegments[1];
+        var nestedSplit = await service.ChangePassageSplitIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            second.SegmentId!, second.Text, 3, "split2", false, expectedSpeakerId: "a");
+        Assert.True(nestedSplit.IsApplied, nestedSplit.ConflictReason);
+        var nested = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).StructuredSegments;
+        Assert.Equal(new[] { "Hello ", "the", "re" }, nested.Select(segment => segment.Text));
+        var nestedUndo = await service.ChangePassageSplitIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            nested[1].SegmentId!, nested[1].Text, 0, "split2", true, expectedSpeakerId: "a");
+        Assert.True(nestedUndo.IsApplied, nestedUndo.ConflictReason);
+        var overrideValue = new SegmentAttributionOverride("override", sourceRevision, second.SegmentId!, "a",
+            SegmentAttributionOverrideTargetKind.Speaker, "b", "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var correction = await service.ApplySegmentAttributionOverrideIfCurrentAsync(record, sourceRevision, overrideValue);
+        Assert.True(correction.IsApplied, correction.ConflictReason);
+        Assert.Contains("**Blair:** there", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
+        var rename = await service.UpdateSpeakerIdentitiesIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            [new SpeakerIdentity("a", "Avery", true), new SpeakerIdentity("b", "Blair", false)]);
+        Assert.True(rename.IsApplied, rename.ConflictReason);
+        sourceRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        Assert.Equal(sourceRevision, Assert.Single(MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).SafeAttributionOverrides).ArtifactRevision);
+        Assert.Contains("**Blair:** there", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
+        var mergeRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var merge = await service.AddSpeakerClusterMergeIfCurrentAsync(record, mergeRevision,
+            new SpeakerClusterMergeMetadata("merge", mergeRevision, ["a", "b"], "a", "evidence", DateTimeOffset.UtcNow));
+        Assert.True(merge.IsApplied, merge.ConflictReason);
+        sourceRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        Assert.Equal(sourceRevision, Assert.Single(MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).SafeAttributionOverrides).ArtifactRevision);
+        Assert.Contains("**Blair:** there", await File.ReadAllTextAsync(markdownPath), StringComparison.Ordinal);
+        var reverse = await service.ReverseSpeakerClusterMergeIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record), "merge");
+        Assert.True(reverse.IsApplied, reverse.ConflictReason);
+        sourceRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        Assert.Equal(sourceRevision, Assert.Single(MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).SafeAttributionOverrides).ArtifactRevision);
+        var restoreName = await service.UpdateSpeakerIdentitiesIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            [new SpeakerIdentity("a", "Alex", false)]);
+        Assert.True(restoreName.IsApplied, restoreName.ConflictReason);
+        var restoredManifest = await new SessionManifestStore(builder).LoadAsync(manifestPath);
+        Assert.Equal(new SpeakerIdentity("a", "Alex", false), restoredManifest.ProcessingMetadata!.Speakers!.Single(speaker => speaker.Id == "a"));
+        sourceRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        Assert.Equal(sourceRevision, Assert.Single(MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).SafeAttributionOverrides).ArtifactRevision);
+        var protectedUndo = await service.ChangePassageSplitIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            second.SegmentId!, second.Text, 0, "split1", true, expectedSpeakerId: "a");
+        Assert.False(protectedUndo.IsApplied);
+        Assert.True((await service.RevertSegmentAttributionOverrideIfCurrentAsync(record, sourceRevision, "override")).IsApplied);
+        var undo = await service.ChangePassageSplitIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            second.SegmentId!, second.Text, 0, "split1", true, expectedSpeakerId: "a");
+        Assert.True(undo.IsApplied, undo.ConflictReason);
+        var restored = MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath);
+        Assert.Equal("Hello there", Assert.Single(restored.StructuredSegments).Text);
+        Assert.Equal("Hello there", JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!["segments"]![0]!["text"]!.GetValue<string>());
+
+        var displayCorrection = new SegmentAttributionOverride("display", sourceRevision, "one", "a",
+            SegmentAttributionOverrideTargetKind.DisplayName, "Casey", "UserOverride", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        Assert.True((await service.ApplySegmentAttributionOverrideIfCurrentAsync(record, sourceRevision, displayCorrection)).IsApplied);
+        Assert.Equal(sourceRevision, MeetingOutputCatalogService.GetSegmentAttributionRevision(record));
+        Assert.True((await service.RevertSegmentAttributionOverrideIfCurrentAsync(record, sourceRevision, "display")).IsApplied);
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         var format = new WaveFormat(16000, 16, 1);

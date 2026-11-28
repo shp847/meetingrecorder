@@ -1,7 +1,9 @@
 using MeetingRecorder.Core.Services;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
 using System.Windows.Threading;
@@ -13,9 +15,10 @@ internal sealed class MeetingDetailTextEventArgs(string text) : EventArgs
     public string Text { get; } = text;
 }
 
-internal sealed class MeetingDetailSpeakerLabelsEventArgs(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows) : EventArgs
+internal sealed class MeetingDetailSpeakerLabelsEventArgs(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows, Action? onSaved = null) : EventArgs
 {
     public IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> Rows { get; } = rows;
+    public Action? OnSaved { get; } = onSaved;
 }
 
 internal sealed class MeetingDetailSpeakerMergeEventArgs(
@@ -34,9 +37,21 @@ internal sealed class MeetingDetailSpeakerEvidenceCueEventArgs(
     public SpeakerEvidenceCue Cue { get; } = cue;
 }
 
-internal sealed class MeetingDetailSegmentAttributionEventArgs(MeetingTranscriptSegmentRow segment) : EventArgs
+internal sealed class MeetingDetailSegmentAttributionEventArgs(
+    MeetingTranscriptSegmentRow segment, SegmentAttributionOverrideChoice? choice = null, Action? onSaved = null) : EventArgs
 {
     public MeetingTranscriptSegmentRow Segment { get; } = segment;
+    public SegmentAttributionOverrideChoice? Choice { get; } = choice;
+    public Action? OnSaved { get; } = onSaved;
+}
+
+internal sealed class MeetingDetailPassageSplitEventArgs(
+    MeetingTranscriptSegmentRow segment, int offset, bool undo, Action? onSaved = null) : EventArgs
+{
+    public MeetingTranscriptSegmentRow Segment { get; } = segment;
+    public int Offset { get; } = offset;
+    public bool Undo { get; } = undo;
+    public Action? OnSaved { get; } = onSaved;
 }
 
 internal sealed record MeetingDetailSpeakerMergeChoice(string SpeakerId, string Label)
@@ -145,6 +160,9 @@ public partial class MeetingDetailWindow : Window
 {
     private MeetingTranscriptSegmentRow[] _allTranscriptSegments = Array.Empty<MeetingTranscriptSegmentRow>();
     private bool _isMaintenanceBusy;
+    private ToggleButton? _activeInlineSpeakerToggle;
+    private ToggleButton? _activePassageToggle;
+    private ToggleButton? _activeSplitToggle;
     private bool _canConfigureSummaries;
     private bool _canGenerateSummary;
     private bool _canRetrySummary;
@@ -174,6 +192,8 @@ public partial class MeetingDetailWindow : Window
         _speakerReviewProgressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _speakerReviewProgressTimer.Tick += (_, _) => UpdateSpeakerReviewProgress();
     }
+
+    public IReadOnlyList<string> InlineSpeakerNameChoices { get; private set; } = Array.Empty<string>();
 
     internal event EventHandler? OpenTranscriptRequested;
 
@@ -207,6 +227,8 @@ public partial class MeetingDetailWindow : Window
 
     internal event EventHandler<MeetingDetailSpeakerLabelsEventArgs>? ApplySpeakerNamesRequested;
 
+    internal event EventHandler? UndoInlineSpeakerNameRequested;
+
     internal event EventHandler<MeetingDetailSpeakerMergeEventArgs>? MergeSpeakerClustersRequested;
 
     internal event EventHandler<MeetingDetailSpeakerEvidenceCueEventArgs>? PlaySpeakerEvidenceRequested;
@@ -214,6 +236,8 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? ApplyParagraphOverrideRequested;
 
     internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? RevertParagraphOverrideRequested;
+
+    internal event EventHandler<MeetingDetailPassageSplitEventArgs>? ChangePassageSplitRequested;
 
     internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
@@ -269,6 +293,18 @@ public partial class MeetingDetailWindow : Window
         _appliedTitleDraft = TitleDraftTextBox.Text;
         _appliedProjectDraft = ProjectComboBox.Text;
         SpeakerLabelsDataGrid.ItemsSource = speakerLabelRows;
+        SpeakerLabelsDataGrid.Visibility = speakerLabelRows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SpeakerNameActionsPanel.Visibility = speakerLabelRows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SpeakerMergePanel.Visibility = speakerLabelRows.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        InlineSpeakerNameChoices = speakerLabelRows.SelectMany(row => row.NameChoices)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+        TranscriptSegmentsListBox.Tag = speakerLabelRows
+            .Where(row => !string.IsNullOrWhiteSpace(row.SpeakerId))
+            .Select(row => new MeetingDetailSpeakerMergeChoice(row.SpeakerId!, row.OriginalLabel))
+            .ToArray();
         _canApplySpeakerNames = speakerLabelRows.Count > 0;
         _canMergeSpeakerClusters = speakerLabelRows.Count > 1;
         _canUndoSpeakerNameRecognition = speakerLabelRows.Any(row => row.HasProfileAttribution);
@@ -276,7 +312,12 @@ public partial class MeetingDetailWindow : Window
         UpdateMaintenanceButtonAvailability();
 
         _allTranscriptSegments = state.Transcript.Segments.ToArray();
-        FooterStatusTextBlock.Text = state.Transcript.StatusText;
+        var priorEdits = state.Transcript.PriorAttributionOverrideCount + state.Transcript.PriorPassageSplitCount;
+        FooterStatusTextBlock.Text = state.Transcript.InvalidPassageSplitCount > 0
+            ? "Some saved passage splits need review. The source transcript remains available."
+            : priorEdits > 0
+            ? $"{priorEdits} earlier transcript edit(s) need review after reprocessing."
+            : _allTranscriptSegments.Length == 0 ? state.Transcript.StatusText : string.Empty;
         ApplyTranscriptFilter();
     }
 
@@ -284,6 +325,14 @@ public partial class MeetingDetailWindow : Window
     {
         SpeakerQualityTextBlock.Text = text;
     }
+
+    internal void SetInlineSpeakerUndoAvailable(bool available) =>
+        UndoInlineSpeakerNameButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+
+    internal bool HasInlineDraft => _activeInlineSpeakerToggle is not null || _activePassageToggle is not null || _activeSplitToggle is not null;
+
+    private void UndoInlineSpeakerNameButton_OnClick(object sender, RoutedEventArgs e) =>
+        UndoInlineSpeakerNameRequested?.Invoke(this, EventArgs.Empty);
 
     internal void SetSpeakerMergeUndoState(string? operationId)
     {
@@ -298,7 +347,9 @@ public partial class MeetingDetailWindow : Window
             return MeetingDetailRefreshDisposition.ApplyReadOnlyRefresh;
         }
 
-        var speakerDraft = SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
+        var speakerDraft = _activeInlineSpeakerToggle?.IsChecked == true || _activePassageToggle?.IsChecked == true ||
+            _activeSplitToggle?.IsChecked == true ||
+            SpeakerLabelsDataGrid.ItemsSource is IEnumerable<MeetingDetailSpeakerLabelEditorRow> rows &&
             rows.Any(row => !string.Equals(row.OriginalLabel, row.EditedLabel, StringComparison.Ordinal));
         return MeetingDetailTaskCenterResolver.ResolveRefresh(
             _appliedTaskCenterRevision,
@@ -386,6 +437,7 @@ public partial class MeetingDetailWindow : Window
     {
         TitleDraftTextBox.Text = title;
         SetMaintenanceStatus(statusText);
+        MeetingToolsToggle.IsChecked = true;
         MaintenanceExpander.IsExpanded = true;
         TitleDraftTextBox.Focus();
         TitleDraftTextBox.SelectAll();
@@ -393,6 +445,10 @@ public partial class MeetingDetailWindow : Window
 
     private void ApplyTranscriptFilter()
     {
+        var selectedId = (TranscriptSegmentsListBox.SelectedItem as MeetingTranscriptSegmentRow)?.SegmentId;
+        var scroll = FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox);
+        var previousOffset = scroll?.VerticalOffset ?? 0;
+        var hadFocus = TranscriptSegmentsListBox.IsKeyboardFocusWithin;
         var query = TranscriptSearchTextBox.Text?.Trim();
         var filteredSegments = string.IsNullOrWhiteSpace(query)
             ? _allTranscriptSegments
@@ -404,9 +460,30 @@ public partial class MeetingDetailWindow : Window
                 .ToArray();
 
         TranscriptSegmentsListBox.ItemsSource = filteredSegments;
+        if (!string.IsNullOrWhiteSpace(selectedId))
+        {
+            TranscriptSegmentsListBox.SelectedItem = filteredSegments.FirstOrDefault(segment =>
+                string.Equals(segment.SegmentId, selectedId, StringComparison.Ordinal));
+        }
+        Dispatcher.BeginInvoke(() =>
+        {
+            FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox)?.ScrollToVerticalOffset(previousOffset);
+            if (hadFocus) TranscriptSegmentsListBox.Focus();
+        }, DispatcherPriority.Loaded);
         TranscriptStatusTextBlock.Text = string.IsNullOrWhiteSpace(query)
-            ? $"{_allTranscriptSegments.Length} paragraph(s)"
-            : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} paragraph(s)";
+            ? $"{_allTranscriptSegments.Length} passages"
+            : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} passages";
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match) return match;
+            if (FindVisualChild<T>(child) is { } nested) return nested;
+        }
+        return null;
     }
 
     private void UpdateMaintenanceButtonAvailability()
@@ -605,8 +682,154 @@ public partial class MeetingDetailWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is SpeakerEvidenceCue cue)
         {
-            TranscriptSearchTextBox.Text = cue.TranscriptTimestamp;
-            TranscriptSegmentsListBox.ScrollIntoView(TranscriptSegmentsListBox.Items.Cast<object>().FirstOrDefault());
+            var target = TranscriptSegmentsListBox.Items.OfType<MeetingTranscriptSegmentRow>()
+                .FirstOrDefault(segment => string.Equals(segment.Timestamp, cue.TranscriptTimestamp, StringComparison.Ordinal));
+            if (target is null)
+            {
+                SetMaintenanceStatus("The evidence passage is not in the current results. Clear the transcript search to find it.");
+                return;
+            }
+
+            TranscriptSegmentsListBox.SelectedItem = target;
+            TranscriptSegmentsListBox.ScrollIntoView(target);
+            TranscriptSegmentsListBox.Focus();
+        }
+    }
+
+    private void InlineSpeakerToggle_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton toggle) return;
+        if (toggle.IsChecked == true)
+        {
+            if (_activePassageToggle is not null || _activeSplitToggle is not null ||
+                _activeInlineSpeakerToggle is { } previous && !ReferenceEquals(previous, toggle))
+            {
+                toggle.IsChecked = false;
+                SetMaintenanceStatus("Finish or cancel the open speaker name before editing another.");
+                return;
+            }
+            _activeInlineSpeakerToggle = toggle;
+        }
+        else if (ReferenceEquals(_activeInlineSpeakerToggle, toggle))
+        {
+            _activeInlineSpeakerToggle = null;
+        }
+    }
+
+    private void InlinePassageToggle_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton toggle) return;
+        if (toggle.IsChecked == true)
+        {
+            if (_activeInlineSpeakerToggle is not null || _activeSplitToggle is not null ||
+                _activePassageToggle is { } previous && !ReferenceEquals(previous, toggle))
+            {
+                toggle.IsChecked = false;
+                SetMaintenanceStatus("Finish or cancel the open edit before starting another.");
+                return;
+            }
+            _activePassageToggle = toggle;
+        }
+        else if (ReferenceEquals(_activePassageToggle, toggle))
+        {
+            _activePassageToggle = null;
+        }
+    }
+
+    private void InlineSplitToggle_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton toggle) return;
+        if (toggle.IsChecked == true)
+        {
+            if (_activeInlineSpeakerToggle is not null || _activePassageToggle is not null ||
+                _activeSplitToggle is { } previous && !ReferenceEquals(previous, toggle))
+            {
+                toggle.IsChecked = false;
+                SetMaintenanceStatus("Finish or cancel the open edit before starting another.");
+                return;
+            }
+            _activeSplitToggle = toggle;
+        }
+        else if (ReferenceEquals(_activeSplitToggle, toggle))
+        {
+            _activeSplitToggle = null;
+        }
+    }
+
+    private void SplitPassageButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: MeetingTranscriptSegmentRow segment, Tag: TextBox text } || _isMaintenanceBusy) return;
+        ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(segment, text.CaretIndex, false, () =>
+        {
+            if (_activeSplitToggle is { } toggle) toggle.IsChecked = false;
+        }));
+    }
+
+    private void UndoPassageSplitButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: MeetingTranscriptSegmentRow segment } && !_isMaintenanceBusy)
+            ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(segment, 0, true));
+    }
+
+    private void SaveInlineSpeakerNameButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: MeetingTranscriptSegmentRow segment } button ||
+            button.CommandParameter is not string proposedName || _isMaintenanceBusy)
+        {
+            return;
+        }
+
+        var name = proposedName.Trim();
+        var target = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>)?
+            .FirstOrDefault(row => string.Equals(row.SpeakerId, segment.SpeakerId, StringComparison.Ordinal));
+        if (!segment.CanRenameSpeakerInline || target is null || string.IsNullOrWhiteSpace(name))
+        {
+            SetMaintenanceStatus("Enter a name for an identified speaker, or correct this passage instead.");
+            return;
+        }
+
+        // Keep the review grid's own drafts untouched while submitting this one name.
+        var change = new MeetingDetailSpeakerLabelEditorRow(target.OriginalLabel, target.Provenance,
+            target.SuggestedDisplayName, target.SpeakerId, target.ProfileId, target.HasProfileAttribution,
+            target.ArtifactRevision, target.ExpectedNameSource) { EditedLabel = name };
+        if (string.Equals(name, target.OriginalLabel, StringComparison.Ordinal))
+        {
+            if (button.Tag is ToggleButton unchanged) unchanged.IsChecked = false;
+            return;
+        }
+        ApplySpeakerNamesRequested?.Invoke(this, new MeetingDetailSpeakerLabelsEventArgs([change], () =>
+        {
+            if (button.Tag is ToggleButton toggle) toggle.IsChecked = false;
+        }));
+    }
+
+    private void ApplyInlinePassageButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: MeetingTranscriptSegmentRow segment, Tag: ComboBox choices } button ||
+            _isMaintenanceBusy) return;
+        var name = (button.CommandParameter as string)?.Trim() ?? string.Empty;
+        var selected = choices.SelectedItem as MeetingDetailSpeakerMergeChoice;
+        if ((selected is null && (string.IsNullOrWhiteSpace(name) || name.StartsWith("Speaker", StringComparison.OrdinalIgnoreCase))) ||
+            (selected is not null && name.Length > 0))
+        {
+            SetMaintenanceStatus("Choose a speaker or enter a name for this passage.");
+            return;
+        }
+        var choice = selected is not null
+            ? new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.Speaker, selected.SpeakerId)
+            : new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.DisplayName, name);
+        ApplyParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment, choice, () =>
+        {
+            if (_activePassageToggle is { } toggle) toggle.IsChecked = false;
+        }));
+    }
+
+    private void CancelInlineSpeakerNameButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: ToggleButton toggle })
+        {
+            toggle.IsChecked = false;
+            toggle.Focus();
         }
     }
 
@@ -627,6 +850,7 @@ public partial class MeetingDetailWindow : Window
             return;
         }
 
+        MeetingToolsToggle.IsChecked = true;
         SpeakerReviewExpander.IsExpanded = true;
         SpeakerLabelsDataGrid.SelectedItem = target;
         SpeakerLabelsDataGrid.ScrollIntoView(target);
@@ -810,6 +1034,34 @@ public partial class MeetingDetailWindow : Window
     {
         if (e.Key == Key.Escape)
         {
+            if (_activeInlineSpeakerToggle is { } toggle)
+            {
+                toggle.IsChecked = false;
+                toggle.Focus();
+                e.Handled = true;
+                return;
+            }
+            if (_activePassageToggle is { } passageToggle)
+            {
+                passageToggle.IsChecked = false;
+                passageToggle.Focus();
+                e.Handled = true;
+                return;
+            }
+            if (_activeSplitToggle is { } splitToggle)
+            {
+                splitToggle.IsChecked = false;
+                splitToggle.Focus();
+                e.Handled = true;
+                return;
+            }
+            if (MeetingToolsToggle.IsChecked == true)
+            {
+                MeetingToolsToggle.IsChecked = false;
+                MeetingToolsToggle.Focus();
+                e.Handled = true;
+                return;
+            }
             Close();
             e.Handled = true;
             return;

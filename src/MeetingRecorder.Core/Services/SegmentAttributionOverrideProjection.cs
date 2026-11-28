@@ -12,13 +12,14 @@ internal static class SegmentAttributionOverrideProjectionService
         IReadOnlyList<TranscriptSegment> segments,
         string artifactRevision,
         IReadOnlyDictionary<string, SpeakerIdentity> speakers,
-        IReadOnlyList<SegmentAttributionOverride> overrides)
+        IReadOnlyList<SegmentAttributionOverride> overrides,
+        IReadOnlyDictionary<string, string>? canonicalBySpeakerId = null)
     {
         var effectiveSegments = new List<TranscriptSegment>(segments.Count);
         var rows = new List<MeetingTranscriptSegmentRow>(segments.Count);
         foreach (var segment in segments)
         {
-            var attribution = SegmentAttributionOverrideResolver.Resolve(segment, artifactRevision, speakers, overrides);
+            var attribution = SegmentAttributionOverrideResolver.Resolve(segment, artifactRevision, speakers, overrides, canonicalBySpeakerId);
             effectiveSegments.Add(segment with { SpeakerLabel = attribution.DisplayLabel });
             rows.Add(new MeetingTranscriptSegmentRow(
                 segment.Start.ToString(@"hh\:mm\:ss"),
@@ -28,7 +29,8 @@ internal static class SegmentAttributionOverrideProjectionService
                 segment.SegmentId,
                 string.IsNullOrWhiteSpace(segment.SourceSpeakerLabel) ? segment.SpeakerLabel : segment.SourceSpeakerLabel,
                 attribution.State,
-                attribution.OverrideId));
+                attribution.OverrideId,
+                segment.ManualSplitId));
         }
 
         return new SegmentAttributionOverrideProjection(effectiveSegments, rows);

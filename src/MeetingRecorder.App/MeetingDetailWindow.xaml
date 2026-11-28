@@ -4,8 +4,8 @@
         Title="Meeting Details"
         Width="1180"
         Height="760"
-        MinWidth="960"
-        MinHeight="640"
+        MinWidth="760"
+        MinHeight="500"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource AppCanvasBrush}">
     <Window.Resources>
@@ -44,12 +44,9 @@
                            Foreground="{StaticResource AppMutedTextBrush}"
                            TextWrapping="Wrap" />
                 <Border x:Name="DetailTaskCenterBorder"
-                        Margin="0,12,0,0"
-                        Padding="10"
-                        Background="{StaticResource AppMutedCardBrush}"
-                        BorderBrush="{StaticResource AppOutlineBrush}"
-                        BorderThickness="1"
-                        CornerRadius="4">
+                        Margin="0,6,0,0"
+                        Padding="0"
+                        BorderThickness="0">
                     <StackPanel>
                         <TextBlock x:Name="DetailTaskCenterHeadlineTextBlock"
                                    FontWeight="SemiBold"
@@ -59,10 +56,7 @@
                                    Foreground="{StaticResource AppMutedTextBrush}"
                                    TextWrapping="Wrap" />
                         <TextBlock x:Name="DetailTaskCenterFreshnessTextBlock"
-                                   Margin="0,4,0,0"
-                                   FontFamily="{StaticResource AppMonoFontFamily}"
-                                   Foreground="{StaticResource AppMutedTextBrush}"
-                                   TextWrapping="Wrap" />
+                                   Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -80,22 +74,38 @@
                         Click="OpenAudioButton_OnClick"
                         Content="Open Audio" />
                 <Button x:Name="OpenFolderButton"
+                        Margin="0,0,10,10"
                         Style="{StaticResource SecondaryActionButtonStyle}"
                         Click="OpenFolderButton_OnClick"
                         Content="Open Folder" />
+                <ToggleButton x:Name="MeetingToolsToggle"
+                              Padding="10,5"
+                              VerticalAlignment="Top"
+                              AutomationProperties.Name="Show meeting and speaker tools"
+                              Content="Meeting tools" />
             </WrapPanel>
         </Grid>
 
         <Grid Grid.Row="1"
               Margin="0,18,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="390" />
-                <ColumnDefinition Width="16" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <ScrollViewer Grid.Column="0"
+                          Panel.ZIndex="1"
+                          Background="{StaticResource AppCanvasBrush}"
                           VerticalScrollBarVisibility="Auto">
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsChecked, ElementName=MeetingToolsToggle}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
                 <StackPanel>
                     <Border Style="{StaticResource DialogCardStyle}" Visibility="Collapsed">
                         <StackPanel>
@@ -226,7 +236,7 @@
                     <Expander x:Name="SpeakerReviewExpander"
                               Margin="0,14,0,0"
                               Header="Speaker Review"
-                              IsExpanded="True">
+                              IsExpanded="False">
                         <Border Style="{StaticResource DialogCardStyle}">
                             <StackPanel>
                                 <DockPanel LastChildFill="False">
@@ -257,6 +267,7 @@
                                           CellEditEnding="SpeakerLabelsDataGrid_OnCellEditEnding"
                                           HeadersVisibility="Column"
                                           RowHeaderWidth="0"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                           MinHeight="108"
                                           MaxHeight="260">
                                     <DataGrid.Columns>
@@ -273,26 +284,24 @@
                                         <DataGridTextColumn Header="Diarization Label"
                                                             Binding="{Binding AnonymousLabel, Mode=OneWay}"
                                                             IsReadOnly="True"
-                                                            Width="*" />
+                                                            Width="125" />
                                         <DataGridTemplateColumn Header="Meeting Display Name"
-                                                                Width="1.2*">
+                                                                Width="165">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <ComboBox IsEditable="True"
-                                                              ItemsSource="{Binding NameChoices, Mode=OneWay}"
-                                                              Text="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                              AutomationProperties.Name="Meeting display name" />
+                                                    <StackPanel>
+                                                        <ComboBox IsEditable="True"
+                                                                  ItemsSource="{Binding NameChoices, Mode=OneWay}"
+                                                                  Text="{Binding EditedLabel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  AutomationProperties.Name="Meeting display name" />
+                                                        <TextBlock Text="{Binding SuggestionText}" TextWrapping="Wrap"
+                                                                   AutomationProperties.Name="Local Name Suggestion" />
+                                                        <TextBlock Text="{Binding SourceExplanation}" TextWrapping="Wrap"
+                                                                   AutomationProperties.Name="Name Provenance" />
+                                                    </StackPanel>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Name Provenance"
-                                                            Binding="{Binding SourceExplanation, Mode=OneWay}"
-                                                            IsReadOnly="True"
-                                                            Width="1.6*" />
-                                        <DataGridTextColumn Header="Local Name Suggestion"
-                                                            Binding="{Binding SuggestionText, Mode=OneWay}"
-                                                            IsReadOnly="True"
-                                                            Width="1.1*" />
                                         <DataGridTemplateColumn Header="Review"
                                                                 Width="205">
                                             <DataGridTemplateColumn.CellTemplate>
@@ -388,7 +397,7 @@
                                         </DataTemplate>
                                     </DataGrid.RowDetailsTemplate>
                                 </DataGrid>
-                                <WrapPanel Margin="0,10,0,0">
+                                <WrapPanel x:Name="SpeakerNameActionsPanel" Margin="0,10,0,0">
                                     <Button x:Name="ApplySpeakerNamesButton"
                                             HorizontalAlignment="Left"
                                             Style="{StaticResource SecondaryActionButtonStyle}"
@@ -407,7 +416,7 @@
                                             Click="UndoSpeakerNameRecognitionButton_OnClick"
                                             Content="Undo Profile Names" />
                                 </WrapPanel>
-                                <Border Margin="0,10,0,0"
+                                <Border x:Name="SpeakerMergePanel" Margin="0,10,0,0"
                                         Padding="10"
                                         BorderBrush="{StaticResource AppOutlineBrush}"
                                         BorderThickness="1"
@@ -681,7 +690,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <Border Grid.Column="2"
+            <Border Grid.Column="0"
                     Style="{StaticResource DialogCardStyle}">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -694,10 +703,14 @@
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="TranscriptSearchTextBox"
-                                 Height="32"
-                                 VerticalContentAlignment="Center"
-                                 TextChanged="TranscriptSearchTextBox_OnTextChanged" />
+                        <DockPanel>
+                            <TextBlock Text="Search" Margin="0,0,8,0" VerticalAlignment="Center" />
+                            <TextBox x:Name="TranscriptSearchTextBox"
+                                     Height="32"
+                                     AutomationProperties.Name="Search transcript"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="TranscriptSearchTextBox_OnTextChanged" />
+                        </DockPanel>
                         <TextBlock x:Name="TranscriptStatusTextBlock"
                                    Grid.Column="1"
                                    Margin="14,0,0,0"
@@ -711,31 +724,46 @@
                              BorderBrush="{StaticResource AppOutlineBrush}"
                              BorderThickness="1"
                              Background="{StaticResource AppMutedCardBrush}"
+                             HorizontalContentAlignment="Stretch"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="8,6">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="64" />
-                                        <ColumnDefinition Width="112" />
+                                        <ColumnDefinition Width="78" />
+                                        <ColumnDefinition Width="140" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock FontFamily="{StaticResource AppMonoFontFamily}"
                                                Foreground="{StaticResource AppSecondaryBrush}"
                                                Text="{Binding Timestamp}" />
                                     <StackPanel Grid.Column="1">
-                                        <Button HorizontalAlignment="Left"
+                                        <ToggleButton x:Name="InlineSpeakerToggle"
+                                                HorizontalAlignment="Left"
                                                 Padding="0"
                                                 Background="Transparent"
                                                 BorderThickness="0"
+                                                Foreground="{StaticResource AppSecondaryBrush}"
                                                 FontWeight="SemiBold"
-                                                IsEnabled="{Binding CanOpenSpeakerReview}"
-                                                Click="OpenSpeakerReviewFromTranscriptButton_OnClick"
+                                                IsEnabled="{Binding CanRenameSpeakerInline}"
+                                                Checked="InlineSpeakerToggle_OnChanged"
+                                                Unchecked="InlineSpeakerToggle_OnChanged"
                                                 AutomationProperties.Name="{Binding SpeakerReviewAutomationName}"
-                                                Content="{Binding SpeakerLabel}" />
+                                                ToolTip="Rename this speaker throughout the meeting"
+                                                Content="{Binding SpeakerLabel}">
+                                            <ToggleButton.ContentTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" TextDecorations="Underline" />
+                                                </DataTemplate>
+                                            </ToggleButton.ContentTemplate>
+                                        </ToggleButton>
                                         <TextBlock FontSize="11"
                                                    Foreground="{StaticResource AppMutedTextBrush}"
                                                    Text="{Binding AttributionIndicator}" />
@@ -743,33 +771,108 @@
                                     <TextBlock Grid.Column="2"
                                                TextWrapping="Wrap"
                                                Text="{Binding Text}" />
-                                    <Button Grid.Column="3"
-                                            Margin="8,0,0,0"
-                                            Padding="7,2"
-                                            VerticalAlignment="Top"
-                                            Style="{StaticResource SecondaryActionButtonStyle}"
-                                            IsEnabled="{Binding CanApplyParagraphOverride}"
-                                            Click="ApplyParagraphOverrideButton_OnClick"
-                                            AutomationProperties.Name="Apply attribution to this paragraph only"
-                                            Content="Correct" />
-                                    <Button Grid.Column="4"
-                                            Margin="6,0,0,0"
-                                            Padding="7,2"
-                                            VerticalAlignment="Top"
-                                            Style="{StaticResource SecondaryActionButtonStyle}"
-                                            IsEnabled="{Binding HasManualAttributionOverride}"
-                                            Click="ViewOriginalAttributionButton_OnClick"
-                                            AutomationProperties.Name="View original paragraph attribution"
-                                            Content="Original" />
-                                    <Button Grid.Column="5"
-                                            Margin="6,0,0,0"
-                                            Padding="7,2"
-                                            VerticalAlignment="Top"
-                                            Style="{StaticResource SecondaryActionButtonStyle}"
-                                            IsEnabled="{Binding CanRevertParagraphOverride}"
-                                            Click="RevertParagraphOverrideButton_OnClick"
-                                            AutomationProperties.Name="Revert paragraph attribution override"
-                                            Content="Revert" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=InlineSpeakerToggle}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Rename this speaker throughout this meeting" TextWrapping="Wrap" />
+                                        <WrapPanel Margin="0,4,0,0">
+                                            <ComboBox x:Name="InlineSpeakerNameTextBox" Width="190" IsEditable="True"
+                                                      Text="{Binding SpeakerLabel, Mode=OneWay}"
+                                                      ItemsSource="{Binding InlineSpeakerNameChoices, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      AutomationProperties.Name="Speaker name for this meeting" />
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Save name"
+                                                    CommandParameter="{Binding Text, ElementName=InlineSpeakerNameTextBox}"
+                                                    Tag="{Binding ElementName=InlineSpeakerToggle}"
+                                                    Click="SaveInlineSpeakerNameButton_OnClick" />
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Cancel"
+                                                    Tag="{Binding ElementName=InlineSpeakerToggle}"
+                                                    Click="CancelInlineSpeakerNameButton_OnClick" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                    <WrapPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                        <WrapPanel.Style>
+                                            <Style TargetType="WrapPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </WrapPanel.Style>
+                                        <ToggleButton x:Name="PassageEditToggle" Padding="7,2" IsEnabled="{Binding CanApplyParagraphOverride}"
+                                                      Checked="InlinePassageToggle_OnChanged" Unchecked="InlinePassageToggle_OnChanged"
+                                                      Content="Correct passage speaker" />
+                                        <ToggleButton x:Name="PassageSplitToggle" Margin="6,0,0,0" Padding="7,2"
+                                                      IsEnabled="{Binding CanSplitPassage}"
+                                                      Checked="InlineSplitToggle_OnChanged" Unchecked="InlineSplitToggle_OnChanged"
+                                                      Content="Split passage" />
+                                        <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanUndoPassageSplit}"
+                                                Click="UndoPassageSplitButton_OnClick" Content="Undo split" />
+                                        <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanOpenSpeakerReview}"
+                                                Click="OpenSpeakerReviewFromTranscriptButton_OnClick" Content="Speaker details" />
+                                        <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding HasManualAttributionOverride}"
+                                                Click="ViewOriginalAttributionButton_OnClick" Content="Original speaker" />
+                                        <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanRevertParagraphOverride}"
+                                                Click="RevertParagraphOverrideButton_OnClick" Content="Undo correction" />
+                                    </WrapPanel>
+                                    <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=PassageEditToggle}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Assign this passage to a speaker or enter a name" TextWrapping="Wrap" />
+                                        <WrapPanel Margin="0,4,0,0">
+                                            <ComboBox x:Name="PassageSpeakerChoice" Width="170" DisplayMemberPath="Label"
+                                                      ItemsSource="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                      AutomationProperties.Name="Choose speaker for this passage" />
+                                            <TextBox x:Name="PassageSpeakerName" Width="170" Margin="8,0,0,0"
+                                                     AutomationProperties.Name="Or enter a speaker name for this passage" />
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Apply to passage"
+                                                    Tag="{Binding ElementName=PassageSpeakerChoice}"
+                                                    CommandParameter="{Binding Text, ElementName=PassageSpeakerName}"
+                                                    Click="ApplyInlinePassageButton_OnClick" />
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Cancel"
+                                                    Tag="{Binding ElementName=PassageEditToggle}"
+                                                    Click="CancelInlineSpeakerNameButton_OnClick" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                    <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=PassageSplitToggle}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Place the cursor where the next speaker begins." TextWrapping="Wrap" />
+                                        <TextBox x:Name="PassageSplitText" Margin="0,4,0,0" TextWrapping="Wrap" IsReadOnly="True"
+                                                 Text="{Binding Text, Mode=OneWay}" AutomationProperties.Name="Choose passage split position" />
+                                        <WrapPanel Margin="0,4,0,0">
+                                            <Button Padding="8,3" Content="Split at cursor" Tag="{Binding ElementName=PassageSplitText}"
+                                                    Click="SplitPassageButton_OnClick" />
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Cancel"
+                                                    Tag="{Binding ElementName=PassageSplitToggle}"
+                                                    Click="CancelInlineSpeakerNameButton_OnClick" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -788,11 +891,19 @@
                        AutomationProperties.LiveSetting="Polite"
                        VerticalAlignment="Center"
                        Style="{StaticResource DialogBodyTextStyle}" />
-            <Button Grid.Column="1"
-                    AutomationProperties.Name="Close meeting details"
-                    Style="{StaticResource SecondaryActionButtonStyle}"
-                    Click="CloseButton_OnClick"
-                    Content="Close" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="UndoInlineSpeakerNameButton"
+                        Margin="0,0,10,0"
+                        Visibility="Collapsed"
+                        ToolTip="Restore the previous name in this meeting. Local voice profiles stay unchanged."
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="UndoInlineSpeakerNameButton_OnClick"
+                        Content="Undo name change" />
+                <Button AutomationProperties.Name="Close meeting details"
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="CloseButton_OnClick"
+                        Content="Close" />
+            </StackPanel>
         </Grid>
     </Grid>
 </Window>

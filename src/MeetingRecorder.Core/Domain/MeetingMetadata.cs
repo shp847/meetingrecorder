@@ -78,6 +78,7 @@ public enum SpeakerNameDecisionReason
     SuggestedProfileNeedsMoreSamples = 4,
     SuggestedSampleTooShort = 5,
     SuggestedDuplicateProfileCandidate = 6,
+    SuggestedHighConfidence = 7,
 }
 
 public sealed record SpeakerIdentity(

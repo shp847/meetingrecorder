@@ -204,22 +204,29 @@ internal sealed record MeetingTranscriptSegmentRow(
     string? SegmentId = null,
     string? OriginalSpeakerLabel = null,
     EffectiveSegmentAttributionState AttributionState = EffectiveSegmentAttributionState.Source,
-    string? AttributionOverrideId = null)
+    string? AttributionOverrideId = null,
+    string? ManualSplitId = null)
 {
     public bool CanOpenSpeakerReview => !string.IsNullOrWhiteSpace(SpeakerId);
 
-    public string SpeakerReviewAutomationName => CanOpenSpeakerReview
-        ? $"Open Speaker Review for {SpeakerLabel}"
+    // A displayed override may refer to a different person than the source speaker.
+    public bool CanRenameSpeakerInline => CanOpenSpeakerReview && AttributionState == EffectiveSegmentAttributionState.Source;
+
+    public string SpeakerReviewAutomationName => CanRenameSpeakerInline
+        ? $"Rename {SpeakerLabel} in this meeting"
         : $"Speaker label {SpeakerLabel}; speaker review is unavailable";
 
     public bool CanApplyParagraphOverride =>
         !string.IsNullOrWhiteSpace(SegmentId) &&
-        !string.IsNullOrWhiteSpace(SpeakerId) &&
         AttributionState != EffectiveSegmentAttributionState.ReviewNeeded;
 
     public bool HasManualAttributionOverride => AttributionState == EffectiveSegmentAttributionState.Override;
 
     public bool CanRevertParagraphOverride => HasManualAttributionOverride && !string.IsNullOrWhiteSpace(AttributionOverrideId);
+
+    public bool CanSplitPassage => !string.IsNullOrWhiteSpace(SegmentId) && Text.Trim().Length > 1;
+
+    public bool CanUndoPassageSplit => !string.IsNullOrWhiteSpace(ManualSplitId);
 
     public string AttributionIndicator => AttributionState switch
     {
@@ -271,7 +278,9 @@ internal sealed record MeetingTranscriptReaderResult(
     MeetingSummary? Summary,
     bool HasStructuredJson,
     IReadOnlyList<SegmentAttributionOverride>? AttributionOverrides = null,
-    int PriorAttributionOverrideCount = 0)
+    int PriorAttributionOverrideCount = 0,
+    int PriorPassageSplitCount = 0,
+    int InvalidPassageSplitCount = 0)
 {
     public IReadOnlyList<SegmentAttributionOverride> SafeAttributionOverrides => AttributionOverrides ?? Array.Empty<SegmentAttributionOverride>();
     public MeetingTranscriptReaderResult(

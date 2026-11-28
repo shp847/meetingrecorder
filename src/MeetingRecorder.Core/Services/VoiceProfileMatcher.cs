@@ -63,6 +63,9 @@ public sealed class VoiceProfileMatcher
                         DecisionReason = SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
                     }
                     : candidate)
+            .Select(candidate => candidate.Source == SpeakerNameSource.AutoAppliedVoiceProfile
+                ? candidate with { Source = SpeakerNameSource.SuggestedVoiceProfile, DecisionReason = SpeakerNameDecisionReason.SuggestedHighConfidence }
+                : candidate)
             .OrderBy(candidate => candidate.SpeakerId, StringComparer.Ordinal)
             .ToArray();
     }
@@ -93,23 +96,14 @@ public sealed class VoiceProfileMatcher
                     return speaker;
                 }
 
-                return prediction.Source == SpeakerNameSource.AutoAppliedVoiceProfile
-                    ? speaker with
-                    {
-                        DisplayName = prediction.DisplayName,
-                        ProfileId = prediction.ProfileId,
-                        NameSource = SpeakerNameSource.AutoAppliedVoiceProfile,
-                        Confidence = prediction.Confidence,
-                        SuggestedDisplayName = null,
-                        DecisionReason = prediction.DecisionReason,
-                    }
-                    : speaker with
+                return speaker with
                     {
                         ProfileId = prediction.ProfileId,
                         NameSource = SpeakerNameSource.SuggestedVoiceProfile,
                         Confidence = prediction.Confidence,
                         SuggestedDisplayName = prediction.DisplayName,
-                        DecisionReason = prediction.DecisionReason,
+                        DecisionReason = prediction.DecisionReason == SpeakerNameDecisionReason.AutoAppliedHighConfidence
+                            ? SpeakerNameDecisionReason.SuggestedHighConfidence : prediction.DecisionReason,
                     };
             })
             .ToArray();

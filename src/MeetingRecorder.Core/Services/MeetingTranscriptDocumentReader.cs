@@ -23,7 +23,9 @@ internal static class MeetingTranscriptDocumentReader
                 out var summarizationStatus,
                 out var summary,
                 out var overrides,
-                out var priorOverrideCount))
+                out var priorOverrideCount,
+                out var priorSplitCount,
+                out var invalidSplitCount))
         {
             return new MeetingTranscriptReaderResult(
                 jsonSegments.Count > 0,
@@ -34,7 +36,9 @@ internal static class MeetingTranscriptDocumentReader
                 summary,
                 HasStructuredJson: true,
                 overrides,
-                priorOverrideCount);
+                priorOverrideCount,
+                priorSplitCount,
+                invalidSplitCount);
         }
 
         var hasMarkdown = !string.IsNullOrWhiteSpace(markdownPath) && File.Exists(markdownPath);
@@ -79,6 +83,8 @@ internal static class MeetingTranscriptDocumentReader
                 out _,
                 out _,
                 out _,
+                out _,
+                out _,
                 out _) &&
             jsonStructuredSegments.Count > 0)
         {
@@ -100,7 +106,15 @@ internal static class MeetingTranscriptDocumentReader
     {
         segments = Array.Empty<TranscriptSegment>();
         return !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath) &&
-               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, out _, preferSourceLabels: true) &&
+               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, out _, out _, out _, preferSourceLabels: true) &&
+               segments.Count > 0;
+    }
+
+    internal static bool TryReadUnsplitStructuredSegments(string? jsonPath, out IReadOnlyList<TranscriptSegment> segments)
+    {
+        segments = Array.Empty<TranscriptSegment>();
+        return !string.IsNullOrWhiteSpace(jsonPath) && File.Exists(jsonPath) &&
+               TryReadJsonTranscript(jsonPath, out _, out segments, out _, out _, out _, out _, out _, out _, applySplits: false) &&
                segments.Count > 0;
     }
 
@@ -112,7 +126,10 @@ internal static class MeetingTranscriptDocumentReader
         out MeetingSummary? summary,
         out IReadOnlyList<SegmentAttributionOverride> overrides,
         out int priorOverrideCount,
-        bool preferSourceLabels = false)
+        out int priorSplitCount,
+        out int invalidSplitCount,
+        bool preferSourceLabels = false,
+        bool applySplits = true)
     {
         segments = Array.Empty<MeetingTranscriptSegmentRow>();
         structuredSegments = Array.Empty<TranscriptSegment>();
@@ -120,6 +137,8 @@ internal static class MeetingTranscriptDocumentReader
         summary = null;
         overrides = Array.Empty<SegmentAttributionOverride>();
         priorOverrideCount = 0;
+        priorSplitCount = 0;
+        invalidSplitCount = 0;
         try
         {
             var root = JsonNode.Parse(File.ReadAllText(jsonPath)) as JsonObject;
@@ -175,15 +194,23 @@ internal static class MeetingTranscriptDocumentReader
                 });
             }
 
-            segments = BuildDisplayRows(structuredRows);
-            structuredSegments = structuredRows;
+            var visibleRows = applySplits
+                ? TranscriptPassageSplitService.Project(structuredRows, root?["manualTranscriptSplits"] as JsonArray, out invalidSplitCount)
+                : structuredRows;
+            if (applySplits && root?["manualTranscriptSplits"] is not null && root["manualTranscriptSplits"] is not JsonArray)
+                invalidSplitCount++;
+            segments = BuildDisplayRows(visibleRows);
+            structuredSegments = visibleRows;
             summarizationStatus = TryReadSummarizationStatus(root);
             summary = TryReadSummary(root);
             overrides = root is null ? Array.Empty<SegmentAttributionOverride>() : ReadAttributionOverrides(root);
             priorOverrideCount = root?["priorSegmentAttributionOverrides"] is JsonArray prior
                 ? prior.OfType<JsonObject>().Count()
                 : 0;
-            return structuredRows.Count > 0;
+            priorSplitCount = root?["priorTranscriptSplits"] is JsonArray priorSplits
+                ? priorSplits.OfType<JsonObject>().Count()
+                : 0;
+            return visibleRows.Count > 0;
         }
         catch
         {

@@ -1110,7 +1110,7 @@ public sealed class SessionProcessorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_AutoNames_Only_After_Publication_And_Writes_A_Receipt()
+    public async Task ProcessAsync_Suggests_Names_After_Publication_Without_Automatic_Attribution()
     {
         var context = await CreateQueuedSessionWithExistingAudioAsync();
         try
@@ -1145,13 +1145,12 @@ public sealed class SessionProcessorTests
             var speaker = Assert.Single(manifest.ProcessingMetadata!.Speakers!);
 
             Assert.Equal(SessionState.Published, manifest.State);
-            Assert.Equal("Pranav Sharma", speaker.DisplayName);
-            Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, speaker.NameSource);
-            Assert.Contains("**Pranav Sharma:**", await File.ReadAllTextAsync(published.MarkdownPath), StringComparison.Ordinal);
-            var receiptPath = Path.Combine(context.Root, "speaker-corrections", "receipts.json");
-            var receipts = JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(await File.ReadAllTextAsync(receiptPath)) ?? [];
-            var receipt = Assert.Single(receipts.Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
-            Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+            Assert.Equal("Speaker 1", speaker.DisplayName);
+            Assert.Equal("Pranav Sharma", speaker.SuggestedDisplayName);
+            Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, speaker.NameSource);
+            Assert.Contains("**Speaker 1:**", await File.ReadAllTextAsync(published.MarkdownPath), StringComparison.Ordinal);
+            Assert.DoesNotContain("**Pranav Sharma:**", await File.ReadAllTextAsync(published.MarkdownPath), StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(context.Root, "speaker-corrections", "receipts.json")));
         }
         finally
         {

@@ -383,4 +383,17 @@ public sealed class WpfRenderedShellHarnessTests
         Assert.Contains("Focus: Close meeting details", keyboardTrace);
         Assert.Contains("Escape: Meetings list", keyboardTrace);
     }
+
+    [Theory]
+    [InlineData(1280, 800, 1.0)]
+    [InlineData(1024, 768, 1.0)]
+    [InlineData(1280, 800, 1.25)]
+    [InlineData(1024, 768, 1.25)]
+    public void Transcript_Workspace_Stays_Readable_And_Inline_Editing_Cancels_On_Escape(int width, int height, double scale)
+    {
+        var evidence = WpfRenderHarness.CaptureTranscriptWorkspace(width, height, scale);
+        Assert.True(File.Exists(evidence.ScreenshotPath));
+        Assert.Contains("142 passages", File.ReadAllText(evidence.AutomationTracePath));
+        Assert.Contains("Escape cancels", File.ReadAllText(evidence.KeyboardTracePath));
+    }
 }

@@ -343,7 +343,7 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RefreshSpeakerNameAttributionAsync_Applies_Mature_HighConfidence_Profile_Without_Retranscription()
+    public async Task RefreshSpeakerNameAttributionAsync_Suggests_Mature_HighConfidence_Profile_Without_Renaming()
     {
         var context = await CreatePublishedMeetingAsync();
         var profileStore = new VoiceProfileStore(Path.Combine(_root, "speaker-profiles", "voice-profiles.json"));
@@ -362,22 +362,21 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             operationId: "post-publish-operation");
 
         var prediction = Assert.Single(result.Predictions);
-        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, prediction.Source);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, prediction.Source);
 
         var updatedMarkdown = await File.ReadAllTextAsync(context.MarkdownPath);
-        Assert.Contains("**Pranav Sharma:** Hello there", updatedMarkdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("**Pranav Sharma:** Hello there", updatedMarkdown, StringComparison.Ordinal);
 
         var updatedManifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
         var updatedSpeaker = Assert.Single(updatedManifest.ProcessingMetadata?.Speakers ?? []);
         Assert.Equal(SessionState.Published, updatedManifest.State);
-        Assert.Equal("Pranav Sharma", updatedSpeaker.DisplayName);
-        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, updatedSpeaker.NameSource);
+        Assert.Equal("Speaker 1", updatedSpeaker.DisplayName);
+        Assert.Equal("Pranav Sharma", updatedSpeaker.SuggestedDisplayName);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, updatedSpeaker.NameSource);
         Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
         var receipt = await receiptStore.FindAsync("post-publish-operation:speaker_00");
-        Assert.NotNull(receipt);
-        Assert.Equal(SpeakerCorrectionAction.AutoApplyRecognition, receipt.Action);
-        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
-        Assert.Equal(FutureNamingEligibility.AutoApplied, Assert.Single(result.EligibilitySnapshots!).Eligibility);
+        Assert.Null(receipt);
+        Assert.Equal(FutureNamingEligibility.Suggested, Assert.Single(result.EligibilitySnapshots!).Eligibility);
     }
 
     [Fact]
@@ -405,16 +404,16 @@ public sealed class SpeakerNameCorrectionServiceTests : IDisposable
             "rematch-operation");
 
         Assert.Equal(PastRematchDisposition.Eligible, result.PlanItem.Disposition);
-        Assert.Equal(PastRematchOutcome.AutoApplied, result.Outcome);
-        Assert.Equal(PastRematchOutcome.AutoApplied, retry.Outcome);
+        Assert.Equal(PastRematchOutcome.Suggested, result.Outcome);
+        Assert.Equal(PastRematchOutcome.Suggested, retry.Outcome);
         Assert.Empty(retry.Predictions);
         Assert.Equal("audio", await File.ReadAllTextAsync(context.Record.AudioPath!));
         var manifest = await context.ManifestStore.LoadAsync(context.ManifestPath);
-        Assert.Equal(SpeakerNameSource.AutoAppliedVoiceProfile, Assert.Single(manifest.ProcessingMetadata!.Speakers!).NameSource);
-        var receipt = Assert.Single((JsonSerializer.Deserialize<SpeakerCorrectionReceipt[]>(
-            await File.ReadAllTextAsync(Path.Combine(_root, "speaker-corrections", "receipts.json"))) ?? [])
-            .Where(entry => entry.Action == SpeakerCorrectionAction.AutoApplyRecognition));
-        Assert.Equal("voice-profile-matcher-v1", receipt.PolicyVersion);
+        var speaker = Assert.Single(manifest.ProcessingMetadata!.Speakers!);
+        Assert.Equal(SpeakerNameSource.SuggestedVoiceProfile, speaker.NameSource);
+        Assert.Equal("Speaker 1", speaker.DisplayName);
+        Assert.Equal("Pranav Sharma", speaker.SuggestedDisplayName);
+        Assert.Null(await receiptStore.FindAsync("rematch-operation:speaker_00"));
     }
 
     [Fact]

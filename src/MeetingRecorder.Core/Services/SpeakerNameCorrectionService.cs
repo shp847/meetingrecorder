@@ -760,7 +760,8 @@ public sealed class SpeakerNameCorrectionService
                     IsProfileMature: profile.SampleCount >= options.MinimumAutoApplyProfileSampleCount,
                     HasMinimumSpeech: sample.SpeechDuration >= options.MinimumAutoApplySpeechDuration,
                     MeetsSuggestionThreshold: true,
-                    MeetsAutoApplyThreshold: prediction.Confidence >= options.AutoApplyConfidenceThreshold,
+                    // Names always remain suggestions until the user confirms them.
+                    MeetsAutoApplyThreshold: false,
                     HasRequiredMargin: prediction.DecisionReason != SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin,
                     IsDuplicateProfileCandidate: prediction.DecisionReason == SpeakerNameDecisionReason.SuggestedDuplicateProfileCandidate,
                     IsSuppressed: false));

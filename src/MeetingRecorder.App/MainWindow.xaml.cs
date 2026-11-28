@@ -264,6 +264,7 @@ public partial class MainWindow : Window
     private bool _settingsSectionsArranged;
     private HelpHostWindow? _helpWindow;
     private MeetingDetailWindow? _meetingDetailWindow;
+    private (string Stem, SpeakerIdentity Previous, SpeakerIdentity Applied)? _lastInlineSpeakerNameUndo;
     private string? _openMeetingDetailStem;
     private UIElement? _detachedSettingsBody;
     private ShellStatusState? _shellStatusOverride;
@@ -7739,6 +7740,11 @@ public partial class MainWindow : Window
 
     private void OpenMeetingDetails(MeetingListRow row)
     {
+        if (_lastInlineSpeakerNameUndo is { } undo && !string.Equals(undo.Stem, row.Source.Stem, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastInlineSpeakerNameUndo = null;
+            _meetingDetailWindow?.SetInlineSpeakerUndoAvailable(false);
+        }
         _openMeetingDetailStem = row.Source.Stem;
         if (_meetingDetailWindow is null)
         {
@@ -7751,6 +7757,7 @@ public partial class MainWindow : Window
                 _ = _speakerReviewClipService.CleanupAsync();
                 _meetingDetailWindow = null;
                 _openMeetingDetailStem = null;
+                _lastInlineSpeakerNameUndo = null;
                 Dispatcher.BeginInvoke(() =>
                 {
                     if (MeetingsDataGrid.IsVisible && MeetingsDataGrid.IsEnabled)
@@ -7774,9 +7781,11 @@ public partial class MainWindow : Window
             _meetingDetailWindow.AddSpeakerLabelsRequested += async (_, _) => await AddSpeakerLabelsForOpenMeetingDetailAsync();
             _meetingDetailWindow.ProcessAsapRequested += async (_, _) => await UpdateRushProcessingForOpenMeetingDetailAsync();
             _meetingDetailWindow.SplitRequested += async (_, args) => await SplitOpenMeetingDetailAsync(args.Text);
-            _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows);
-            _meetingDetailWindow.ApplyParagraphOverrideRequested += async (_, args) => await ApplyOpenMeetingDetailParagraphOverrideAsync(args.Segment);
+            _meetingDetailWindow.ApplySpeakerNamesRequested += async (_, args) => await ApplyOpenMeetingDetailSpeakerNamesAsync(args.Rows, args.OnSaved);
+            _meetingDetailWindow.UndoInlineSpeakerNameRequested += async (_, _) => await UndoOpenMeetingInlineSpeakerNameAsync();
+            _meetingDetailWindow.ApplyParagraphOverrideRequested += async (_, args) => await ApplyOpenMeetingDetailParagraphOverrideAsync(args.Segment, args.Choice, args.OnSaved);
             _meetingDetailWindow.RevertParagraphOverrideRequested += async (_, args) => await RevertOpenMeetingDetailParagraphOverrideAsync(args.Segment);
+            _meetingDetailWindow.ChangePassageSplitRequested += async (_, args) => await ChangeOpenMeetingPassageSplitAsync(args);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
             _meetingDetailWindow.PlaySpeakerEvidenceRequested += async (_, args) => await PlayOpenMeetingDetailSpeakerEvidenceAsync(args);
             _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
@@ -7917,6 +7926,7 @@ public partial class MainWindow : Window
             var evidenceSpeakerIds = new HashSet<string>(StringComparer.Ordinal);
             var diagnosticSpeakers = Array.Empty<SpeakerIdentity>();
             var diagnosticTurns = Array.Empty<SpeakerTurn>();
+            var diagnosticMerges = Array.Empty<SpeakerClusterMergeMetadata>();
             string? latestSpeakerMergeOperationId = null;
             if (!string.IsNullOrWhiteSpace(row.Source.ManifestPath) && File.Exists(row.Source.ManifestPath))
             {
@@ -7925,6 +7935,7 @@ public partial class MainWindow : Window
                     var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
                     diagnosticSpeakers = manifest.ProcessingMetadata?.Speakers?.ToArray() ?? [];
                     diagnosticTurns = manifest.ProcessingMetadata?.SpeakerTurns?.ToArray() ?? [];
+                    diagnosticMerges = manifest.ProcessingMetadata?.SpeakerClusterMerges?.ToArray() ?? [];
                     latestSpeakerMergeOperationId = manifest.ProcessingMetadata?.SpeakerClusterMerges?.LastOrDefault()?.OperationId;
                     foreach (var sample in manifest.ProcessingMetadata?.SpeakerVoiceSamples ?? Array.Empty<SpeakerVoiceSample>())
                     {
@@ -7950,7 +7961,8 @@ public partial class MainWindow : Window
                     transcript.StructuredSegments,
                     segmentAttributionRevision,
                     speakersById,
-                    transcript.SafeAttributionOverrides);
+                    transcript.SafeAttributionOverrides,
+                    SpeakerClusterMergeResolver.BuildCanonicalMap(diagnosticMerges));
                 transcript = transcript with
                 {
                     Segments = overrideProjection.Rows,
@@ -8532,11 +8544,53 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ApplyOpenMeetingDetailParagraphOverrideAsync(MeetingTranscriptSegmentRow selectedSegment)
+    private async Task ChangeOpenMeetingPassageSplitAsync(MeetingDetailPassageSplitEventArgs args)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || string.IsNullOrWhiteSpace(args.Segment.SegmentId) || IsMeetingActionInProgress())
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Wait for the current work or reload this passage before editing.");
+            return;
+        }
+        var operationId = args.Undo ? args.Segment.ManualSplitId : Guid.NewGuid().ToString("N");
+        if (string.IsNullOrWhiteSpace(operationId)) return;
+        var expectedSnapshot = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceBusy(true);
+        try
+        {
+            var result = await _meetingOutputCatalogService.ChangePassageSplitIfCurrentAsync(row.Source,
+                expectedSnapshot, args.Segment.SegmentId, args.Segment.Text, args.Offset, operationId, args.Undo,
+                _lifetimeCts.Token, args.Segment.SpeakerId);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "The passage could not be changed.");
+                return;
+            }
+            args.OnSaved?.Invoke();
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus(args.Undo ? "Passage split undone." : "Passage split. Assign a speaker to each part if needed.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Passage split failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("The passage could not be changed. Reload and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+            _meetingDetailWindow?.SetMaintenanceBusy(false);
+        }
+    }
+
+    private async Task ApplyOpenMeetingDetailParagraphOverrideAsync(MeetingTranscriptSegmentRow selectedSegment, SegmentAttributionOverrideChoice? requestedChoice = null, Action? onSaved = null)
     {
         var row = GetOpenMeetingDetailRow();
         if (row is null || !selectedSegment.CanApplyParagraphOverride ||
-            string.IsNullOrWhiteSpace(selectedSegment.SegmentId) || string.IsNullOrWhiteSpace(selectedSegment.SpeakerId))
+            string.IsNullOrWhiteSpace(selectedSegment.SegmentId))
         {
             _meetingDetailWindow?.SetMaintenanceStatus("This paragraph is no longer available for correction. Reload meeting details and try again.");
             return;
@@ -8551,7 +8605,8 @@ public partial class MainWindow : Window
         var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
         var sourceSegment = transcript.StructuredSegments.FirstOrDefault(segment =>
             string.Equals(segment.SegmentId, selectedSegment.SegmentId, StringComparison.Ordinal) &&
-            string.Equals(segment.SpeakerId, selectedSegment.SpeakerId, StringComparison.Ordinal));
+            string.Equals(segment.SpeakerId, selectedSegment.SpeakerId, StringComparison.Ordinal) &&
+            string.Equals(segment.Text, selectedSegment.Text, StringComparison.Ordinal));
         if (sourceSegment is null)
         {
             _meetingDetailWindow?.SetMaintenanceStatus("The transcript changed. Reload meeting details before correcting this paragraph.");
@@ -8572,9 +8627,15 @@ public partial class MainWindow : Window
             }
         }
 
-        var choice = ShowSegmentAttributionOverrideDialog(selectedSegment, speakers);
+        var choice = requestedChoice ?? ShowSegmentAttributionOverrideDialog(selectedSegment, speakers);
         if (choice is null)
         {
+            return;
+        }
+        if (choice.TargetKind == SegmentAttributionOverrideTargetKind.Speaker &&
+            !speakers.Any(speaker => string.Equals(speaker.Id, choice.TargetValue, StringComparison.Ordinal)))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("That speaker is no longer available. Reload and choose again.");
             return;
         }
 
@@ -8592,7 +8653,7 @@ public partial class MainWindow : Window
                     Guid.NewGuid().ToString("N"),
                     revision,
                     sourceSegment.SegmentId!,
-                    sourceSegment.SpeakerId!,
+                    sourceSegment.SpeakerId,
                     choice.TargetKind,
                     choice.TargetValue,
                     "UserOverride",
@@ -8605,6 +8666,7 @@ public partial class MainWindow : Window
                 return;
             }
 
+            onSaved?.Invoke();
             await RefreshMeetingListAsync(row.Source.Stem);
             await RefreshOpenMeetingDetailWindowAsync();
             _meetingDetailWindow?.SetMaintenanceStatus("Paragraph attribution corrected. Speaker IDs, text, timestamps, and local voice profiles were not changed.");
@@ -8778,7 +8840,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ApplyOpenMeetingDetailSpeakerNamesAsync(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows)
+    private async Task ApplyOpenMeetingDetailSpeakerNamesAsync(IReadOnlyList<MeetingDetailSpeakerLabelEditorRow> rows, Action? onSaved = null)
     {
         var row = GetOpenMeetingDetailRow();
         if (row is null)
@@ -8799,6 +8861,26 @@ public partial class MainWindow : Window
         {
             _meetingDetailWindow?.SetMaintenanceStatus("No Meeting Display Name changes are pending, or meeting speaker data needs reload.");
             return;
+        }
+
+        SpeakerIdentity? previousSpeaker = null;
+        if (onSaved is not null && rows.Count == 1 && !string.IsNullOrWhiteSpace(row.Source.ManifestPath))
+        {
+            try
+            {
+                var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
+                previousSpeaker = manifest.ProcessingMetadata?.Speakers?.FirstOrDefault(speaker =>
+                    string.Equals(speaker.Id, rows[0].SpeakerId, StringComparison.Ordinal));
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.Log($"Speaker name could not be prepared for undo: {exception}");
+            }
+            if (previousSpeaker is null)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus("Speaker data changed. Reload before changing this name.");
+                return;
+            }
         }
 
         _isApplyingSpeakerNames = true;
@@ -8822,10 +8904,27 @@ public partial class MainWindow : Window
                 return;
             }
 
+            var appliedName = string.Join(" ", rows[0].EditedLabel.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            if (previousSpeaker is not null && !string.Equals(previousSpeaker.DisplayName, appliedName, StringComparison.Ordinal))
+            {
+                var applied = previousSpeaker with
+                {
+                    DisplayName = appliedName, IsUserEdited = true, ProfileId = null,
+                    NameSource = SpeakerNameSource.UserEdited, Confidence = null,
+                    SuggestedDisplayName = null, DecisionReason = null,
+                };
+                _lastInlineSpeakerNameUndo = (row.Source.Stem, previousSpeaker, applied);
+                _meetingDetailWindow?.SetInlineSpeakerUndoAvailable(true);
+            }
+
+            onSaved?.Invoke();
             await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
             await RefreshVoiceProfileSettingsAsync();
-            _meetingDetailWindow?.SetMaintenanceStatus(UserActionCopyResolver.Resolve(
-                UserActionIntent.ApplyMeetingDisplayNames).SuccessText);
+            var successText = UserActionCopyResolver.Resolve(UserActionIntent.ApplyMeetingDisplayNames).SuccessText;
+            _meetingDetailWindow?.SetMaintenanceStatus(string.IsNullOrWhiteSpace(correctionResult.LearningWarning)
+                ? successText
+                : $"{successText} {correctionResult.LearningWarning}");
             AppendActivity($"Applied Meeting Display Name changes for '{row.Title}'.");
         }
         catch (Exception exception)
@@ -8840,6 +8939,57 @@ public partial class MainWindow : Window
         {
             _isApplyingSpeakerNames = false;
             UpdateMeetingActionState();
+        }
+    }
+
+    private async Task UndoOpenMeetingInlineSpeakerNameAsync()
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || _lastInlineSpeakerNameUndo is not { } undo ||
+            !string.Equals(row.Source.Stem, undo.Stem, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(row.Source.ManifestPath) || IsMeetingActionInProgress()) return;
+        if (_meetingDetailWindow?.HasInlineDraft == true)
+        {
+            _meetingDetailWindow.SetMaintenanceStatus("Finish or cancel the open edit before undoing the name.");
+            return;
+        }
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceBusy(true);
+        try
+        {
+            var expectedRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
+            var manifest = await _manifestStore.LoadAsync(row.Source.ManifestPath, _lifetimeCts.Token);
+            var current = manifest.ProcessingMetadata?.Speakers?.FirstOrDefault(speaker =>
+                string.Equals(speaker.Id, undo.Previous.Id, StringComparison.Ordinal));
+            if (current != undo.Applied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus("The speaker name changed again. Reload before undoing it.");
+                return;
+            }
+            var result = await _meetingOutputCatalogService.UpdateSpeakerIdentitiesIfCurrentAsync(
+                row.Source, expectedRevision, [undo.Previous], _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "The name could not be restored.");
+                return;
+            }
+            _lastInlineSpeakerNameUndo = null;
+            _meetingDetailWindow?.SetInlineSpeakerUndoAvailable(false);
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus("Previous name restored in this meeting. Local voice profiles were not changed.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Inline speaker-name undo failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("The name could not be restored. Reload and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+            _meetingDetailWindow?.SetMaintenanceBusy(false);
         }
     }
 
@@ -9711,6 +9861,7 @@ public partial class MainWindow : Window
         {
             SpeakerNameDecisionReason.AutoAppliedHighConfidence => "high confidence",
             SpeakerNameDecisionReason.SuggestedBelowAutoApplyThreshold => "below auto-apply threshold",
+            SpeakerNameDecisionReason.SuggestedHighConfidence => "high confidence; confirmation required",
             SpeakerNameDecisionReason.SuggestedAmbiguousProfileMargin => "ambiguous profile margin",
             SpeakerNameDecisionReason.SuggestedProfileNeedsMoreSamples => "needs more confirmed samples",
             SpeakerNameDecisionReason.SuggestedSampleTooShort => "sample too short",
@@ -16802,8 +16953,16 @@ public partial class MainWindow : Window
             HasProfileSuggestions: reviewRows.Any(review => review.HasSuggestion),
             HasNormalSplitCandidate: false,
             IsRepairReady: speakerExperience.Permits(SpeakerExperienceAction.RepairSpeakerLabels)));
-        var signals = diagnosis.SecondarySignals.Count == 0 ? string.Empty : $" Signals: {string.Join(", ", diagnosis.SecondarySignals)}.";
-        return $"Quality check: {diagnosis.PrimaryReason} Recommended route: {diagnosis.Route}.{signals}";
+        var nextStep = diagnosis.Route switch
+        {
+            SpeakerQualityRoute.Name => "Name speakers in the transcript.",
+            SpeakerQualityRoute.ParagraphOverride => "Correct individual passages in the transcript when needed.",
+            SpeakerQualityRoute.Merge => "Review possible duplicate speakers.",
+            SpeakerQualityRoute.Rematch => "Review local name suggestions.",
+            SpeakerQualityRoute.Repair => "Review speaker-label repair.",
+            _ => "Wait for speaker labels to finish, then review again.",
+        };
+        return $"{diagnosis.PrimaryReason} {nextStep}";
     }
 
     private bool CanChangeRushProcessing(MeetingListRow row)

@@ -56,9 +56,9 @@ public sealed class FilePublishService
         // prior marker before changing a current run's artifacts, then create
         // it only after every replacement has promoted successfully.
         PreservePriorSummary(markdownDestination, markdownPath, jsonDestination, jsonPath);
+        PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
         DeleteIfPresent(readyDestination);
         PublishFile(markdownPath, markdownDestination, cancellationToken);
-        PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
         PublishFile(jsonPath, jsonDestination, cancellationToken);
 
         if (!File.Exists(audioDestination) || !File.Exists(markdownDestination) || !File.Exists(jsonDestination))
@@ -104,6 +104,7 @@ public sealed class FilePublishService
         }
 
         PreservePriorSummary(markdownDestination, markdownPath, jsonDestination, jsonPath);
+        PreservePriorSegmentAttributionOverrides(jsonDestination, jsonPath);
         PublishSidecarsWithRollback(
             markdownPath,
             markdownDestination,
@@ -180,7 +181,7 @@ public sealed class FilePublishService
             var next = JsonNode.Parse(File.ReadAllText(nextJsonPath)) as JsonObject;
             if (existing is null || next is null)
             {
-                return;
+                throw new InvalidDataException("Transcript JSON is not an object.");
             }
 
             var prior = new JsonArray();
@@ -207,12 +208,25 @@ public sealed class FilePublishService
             if (prior.Count > 0)
             {
                 next["priorSegmentAttributionOverrides"] = prior;
-                File.WriteAllText(nextJsonPath, next.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
+            var priorSplits = new JsonArray();
+            foreach (var source in new[] { existing["priorTranscriptSplits"], existing["manualTranscriptSplits"] })
+            {
+                if (source is not JsonArray records) continue;
+                foreach (var record in records.OfType<JsonObject>())
+                {
+                    var id = record["id"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(id) && priorSplits.OfType<JsonObject>().Any(item => item["id"]?.GetValue<string>() == id)) continue;
+                    priorSplits.Add(record.DeepClone());
+                }
+            }
+            if (priorSplits.Count > 0) next["priorTranscriptSplits"] = priorSplits;
+            if (prior.Count > 0 || priorSplits.Count > 0)
+                File.WriteAllText(nextJsonPath, next.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // Publishing new source artifacts must not fail because an older optional audit cannot be read.
+            throw new InvalidDataException("Existing transcript corrections could not be preserved before publishing.", exception);
         }
     }
 

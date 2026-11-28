@@ -8,23 +8,27 @@ public static class SegmentAttributionOverrideResolver
         TranscriptSegment segment,
         string artifactRevision,
         IReadOnlyDictionary<string, SpeakerIdentity> speakers,
-        IReadOnlyList<SegmentAttributionOverride> overrides)
+        IReadOnlyList<SegmentAttributionOverride> overrides,
+        IReadOnlyDictionary<string, string>? canonicalBySpeakerId = null)
     {
         var sourceLabel = string.IsNullOrWhiteSpace(segment.SourceSpeakerLabel)
             ? string.IsNullOrWhiteSpace(segment.SpeakerLabel) ? "Speaker" : segment.SpeakerLabel.Trim()
             : segment.SourceSpeakerLabel.Trim();
         var sourceId = string.IsNullOrWhiteSpace(segment.SpeakerId) ? null : segment.SpeakerId.Trim();
+        var effectiveSourceLabel = sourceId is not null && canonicalBySpeakerId is not null &&
+            canonicalBySpeakerId.TryGetValue(sourceId, out var canonicalId) && speakers.TryGetValue(canonicalId, out var canonical)
+                ? canonical.DisplayName : sourceLabel;
         if (string.IsNullOrWhiteSpace(segment.SegmentId) || string.IsNullOrWhiteSpace(artifactRevision))
-            return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);
+            return new(effectiveSourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);
 
         var match = overrides.LastOrDefault(item =>
             string.Equals(item.ArtifactRevision, artifactRevision, StringComparison.Ordinal) &&
             string.Equals(item.SegmentId, segment.SegmentId, StringComparison.Ordinal) &&
             item.RevertedAtUtc is null);
-        if (match is null) return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);
+        if (match is null) return new(effectiveSourceLabel, sourceId, EffectiveSegmentAttributionState.Source, null, null);
         if (!string.Equals(match.ActorSource, "UserOverride", StringComparison.Ordinal))
             return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.ReviewNeeded, match.Id, "Unknown override source.");
-        if (!string.Equals(match.OriginalSpeakerId, sourceId, StringComparison.Ordinal))
+        if (!string.Equals(string.IsNullOrWhiteSpace(match.OriginalSpeakerId) ? null : match.OriginalSpeakerId.Trim(), sourceId, StringComparison.Ordinal))
             return new(sourceLabel, sourceId, EffectiveSegmentAttributionState.ReviewNeeded, match.Id, "The original speaker changed.");
 
         if (match.TargetKind == SegmentAttributionOverrideTargetKind.DisplayName && IsUsableName(match.TargetValue))

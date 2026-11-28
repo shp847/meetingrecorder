@@ -13,6 +13,24 @@ public sealed class MeetingTranscriptDocumentReaderTests : IDisposable
     }
 
     [Fact]
+    public void StructuredProjection_Uses_The_Actual_142_Passages_Instead_Of_The_Merged_Paragraph_Count()
+    {
+        var jsonPath = Path.Combine(_root, "many.json");
+        var segments = Enumerable.Range(0, 142).Select(index => new
+        {
+            segmentId = $"segment-{index}", start = "00:00:00", end = "00:00:01",
+            speakerId = "speaker-1", speakerLabel = "Speaker 1", text = $"word{index}",
+        });
+        File.WriteAllText(jsonPath, System.Text.Json.JsonSerializer.Serialize(new { segments }));
+        var transcript = MeetingTranscriptDocumentReader.Read(jsonPath, null);
+        Assert.Single(transcript.Segments);
+        var speakers = new Dictionary<string, SpeakerIdentity> { ["speaker-1"] = new("speaker-1", "Speaker 1", false) };
+        var projection = SegmentAttributionOverrideProjectionService.Project(transcript.StructuredSegments, "revision", speakers, []);
+        Assert.Equal(142, projection.Rows.Count);
+        Assert.Equal(142, projection.Rows.Select(row => row.SegmentId).Distinct().Count());
+    }
+
+    [Fact]
     public void Read_Prefers_Json_Sidecar_Segments()
     {
         var jsonPath = Path.Combine(_root, "meeting.json");
