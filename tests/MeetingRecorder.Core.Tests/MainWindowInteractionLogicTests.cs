@@ -623,6 +623,16 @@ public sealed class MainWindowInteractionLogicTests
     }
 
     [Fact]
+    public void MeetingPreloadRunsOnlyOffscreenWhenRecordingIsIdle()
+    {
+        Assert.True(MainWindowInteractionLogic.ShouldPreloadMeetings(false, false, false, false));
+        Assert.False(MainWindowInteractionLogic.ShouldPreloadMeetings(true, false, false, false));
+        Assert.False(MainWindowInteractionLogic.ShouldPreloadMeetings(false, true, false, false));
+        Assert.False(MainWindowInteractionLogic.ShouldPreloadMeetings(false, false, true, false));
+        Assert.False(MainWindowInteractionLogic.ShouldPreloadMeetings(false, false, false, true));
+    }
+
+    [Fact]
     public void BuildProcessingQueueHeaderState_IsHidden_When_No_Backlog_Exists()
     {
         var snapshot = new ProcessingQueueStatusSnapshot(

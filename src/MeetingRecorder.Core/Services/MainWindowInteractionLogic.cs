@@ -593,14 +593,17 @@ internal static class MainWindowInteractionLogic
 
     public static bool ShouldDeferMeetingRefresh(bool isRecording, bool isMeetingsTabSelected)
     {
-        // A catalog refresh still applies an ItemsSource and workspace view on the
-        // WPF dispatcher. Keep that work out of Home and Settings, where it can
-        // otherwise stall foreground controls for large meeting histories.
+        // Publishing rows applies an ItemsSource and workspace view on the WPF
+        // dispatcher. Defer that UI work while the separate background preload
+        // scans the catalog without touching Home or Settings controls.
         // When Meetings is visible, a fast catalog refresh is safe during
         // recording. The caller downgrades the expensive full scan until capture
         // stops, rather than leaving the only meeting-library surface blank.
         return !isMeetingsTabSelected;
     }
+
+    public static bool ShouldPreloadMeetings(bool isRecording, bool isRecordingTransition, bool isMeetingsTabSelected, bool isShuttingDown) =>
+        !isRecording && !isRecordingTransition && !isMeetingsTabSelected && !isShuttingDown;
 
     public static ProcessingQueueHeaderState BuildProcessingQueueHeaderState(
         ProcessingQueueStatusSnapshot snapshot,

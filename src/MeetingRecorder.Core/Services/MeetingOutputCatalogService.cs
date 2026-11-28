@@ -422,20 +422,22 @@ public sealed class MeetingOutputCatalogService
         return ListMeetings(audioOutputDir, transcriptOutputDir, workDir: null);
     }
 
-    public IReadOnlyList<MeetingOutputRecord> ListMeetings(string audioOutputDir, string transcriptOutputDir, string? workDir)
+    public IReadOnlyList<MeetingOutputRecord> ListMeetings(string audioOutputDir, string transcriptOutputDir, string? workDir,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var pathsByStem = new Dictionary<string, MeetingOutputMutableRecord>(StringComparer.OrdinalIgnoreCase);
-        AddArtifacts(pathsByStem, audioOutputDir);
-        AddArtifacts(pathsByStem, transcriptOutputDir);
-        var manifestInfoByStem = LoadManifestInfoByStem(workDir);
-        AddManifestOnlyRecords(pathsByStem, manifestInfoByStem);
+        AddArtifacts(pathsByStem, audioOutputDir, cancellationToken);
+        AddArtifacts(pathsByStem, transcriptOutputDir, cancellationToken);
+        var manifestInfoByStem = LoadManifestInfoByStem(workDir, cancellationToken);
+        AddManifestOnlyRecords(pathsByStem, manifestInfoByStem, cancellationToken);
 
         return pathsByStem.Values
-            .Select(record => BuildRecord(
-                record,
-                manifestInfoByStem.TryGetValue(record.Stem, out var manifestInfo)
-                    ? manifestInfo
-                    : null))
+            .Select(record =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return BuildRecord(record, manifestInfoByStem.TryGetValue(record.Stem, out var manifestInfo) ? manifestInfo : null);
+            })
             .OrderByDescending(record => record.StartedAtUtc)
             .ThenBy(record => record.Stem, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -1639,7 +1641,7 @@ public sealed class MeetingOutputCatalogService
             splitPoint);
     }
 
-    private static void AddArtifacts(IDictionary<string, MeetingOutputMutableRecord> pathsByStem, string directory)
+    private static void AddArtifacts(IDictionary<string, MeetingOutputMutableRecord> pathsByStem, string directory, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(directory))
         {
@@ -1648,6 +1650,7 @@ public sealed class MeetingOutputCatalogService
 
         foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var stem = Path.GetFileNameWithoutExtension(path);
             if (string.IsNullOrWhiteSpace(stem))
             {
@@ -1762,10 +1765,12 @@ public sealed class MeetingOutputCatalogService
 
     private static void AddManifestOnlyRecords(
         IDictionary<string, MeetingOutputMutableRecord> pathsByStem,
-        IDictionary<string, ManifestInfo> manifestInfoByStem)
+        IDictionary<string, ManifestInfo> manifestInfoByStem,
+        CancellationToken cancellationToken)
     {
         foreach (var pair in manifestInfoByStem)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (pathsByStem.ContainsKey(pair.Key) ||
                 !ShouldIncludeManifestOnlyRecord(pair.Value))
             {
@@ -1776,7 +1781,7 @@ public sealed class MeetingOutputCatalogService
         }
     }
 
-    private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir)
+    private IDictionary<string, ManifestInfo> LoadManifestInfoByStem(string? workDir, CancellationToken cancellationToken)
     {
         var infoByStem = new Dictionary<string, ManifestInfo>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
@@ -1787,9 +1792,10 @@ public sealed class MeetingOutputCatalogService
         var manifestStore = new SessionManifestStore(_pathBuilder);
         foreach (var manifestPath in Directory.EnumerateFiles(workDir, "manifest.json", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var manifest = manifestStore.LoadAsync(manifestPath).GetAwaiter().GetResult();
+                var manifest = manifestStore.LoadAsync(manifestPath, cancellationToken).GetAwaiter().GetResult();
                 var title = string.IsNullOrWhiteSpace(manifest.DetectedTitle) ? manifest.SessionId : manifest.DetectedTitle;
                 var stem = ResolveManifestStem(manifest, title);
                 var candidate = new ManifestInfo(
@@ -1811,6 +1817,10 @@ public sealed class MeetingOutputCatalogService
                 {
                     infoByStem[stem] = candidate;
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {

@@ -402,4 +402,10 @@ public sealed class WpfRenderedShellHarnessTests
     {
         WpfRenderHarness.VerifyLargeSpeakerBlock();
     }
+
+    [Fact]
+    public void MeetingsArePreloadedBeforeTheTabIsOpened()
+    {
+        WpfRenderHarness.VerifyMeetingPreloadBeforeTabSelection();
+    }
 }

@@ -234,6 +234,66 @@ internal static class WpfRenderHarness
         return CaptureShell(SyntheticShellState.SetupBlocked, 1280, 800, 1d);
     }
 
+    public static void VerifyMeetingPreloadBeforeTabSelection()
+    {
+        lock (CaptureGate)
+        {
+            GetApplicationDispatcher().Invoke(() =>
+            {
+                var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderWpfHarness", "meeting-preload", Guid.NewGuid().ToString("N"));
+                var documents = Path.Combine(root, "documents");
+                Directory.CreateDirectory(documents);
+                using var profileScope = AppDataPaths.PushTestAppRoot(root);
+                var configStore = new AppConfigStore(Path.Combine(root, "config", "appsettings.json"), documents);
+                var config = configStore.LoadOrCreateAsync().GetAwaiter().GetResult() with { SmartCleanupEnabled = false };
+                Directory.CreateDirectory(config.TranscriptOutputDir);
+                var stem = new ArtifactPathBuilder().BuildFileStem(MeetingPlatform.Teams, DateTimeOffset.UtcNow, "Preloaded synthetic meeting");
+                File.WriteAllText(Path.Combine(config.TranscriptOutputDir, stem + ".md"), "# Preloaded synthetic meeting\n\n## Transcript\nSynthetic text.");
+                var loggerPath = Path.Combine(root, "logs", "preload.log");
+                var window = new MainWindow(new LiveAppConfig(configStore, config), new FileLogWriter(loggerPath))
+                {
+                    Width = 1024, Height = 768, WindowStartupLocation = WindowStartupLocation.Manual,
+                    Left = -10000, Top = -10000, ShowInTaskbar = false,
+                };
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                var loaded = (RoutedEventHandler)Delegate.CreateDelegate(typeof(RoutedEventHandler), window,
+                    typeof(MainWindow).GetMethod("OnLoaded", flags | BindingFlags.DeclaredOnly)!);
+                window.Loaded -= loaded;
+                try
+                {
+                    window.Show();
+                    var tabs = RequireElement<TabControl>(window, "MainTabControl");
+                    if (ReferenceEquals(tabs.SelectedItem, RequireElement<TabItem>(window, "MeetingsTabItem")))
+                        throw new InvalidOperationException("Expected Home to be visible before preload.");
+                    typeof(MainWindow).GetMethod("RequestMeetingRefreshForCurrentContext", flags)!
+                        .Invoke(window, [MeetingRefreshMode.Fast, "synthetic startup", null, false]);
+                    var preloader = (MeetingCatalogPreloader<MeetingCatalogSnapshot>)typeof(MainWindow)
+                        .GetField("_meetingCatalogPreloader", flags)!.GetValue(window)!;
+                    var paths = new MeetingCatalogPaths(config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir);
+                    var preload = preloader.TryGet(paths) ?? throw new InvalidOperationException("Startup did not begin preloading while Home was visible.");
+                    if (!preload.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("Synthetic meeting preload did not finish.");
+                    if (preload.Result.Records.Count != 1) throw new InvalidOperationException("Preload did not read the synthetic meeting.");
+                    var grid = RequireElement<ListView>(window, "MeetingsDataGrid");
+                    if (grid.Items.Count != 0) throw new InvalidOperationException("Hidden preload applied meeting rows on the UI thread.");
+                    var watch = Stopwatch.StartNew();
+                    tabs.SelectedItem = RequireElement<TabItem>(window, "MeetingsTabItem");
+                    WaitForCondition(window.Dispatcher, () => grid.Items.Count > 0, TimeSpan.FromSeconds(10));
+                    watch.Stop();
+                    if (grid.Items.Count != 1) throw new InvalidOperationException("Opening Meetings did not show the preloaded meeting.");
+                    if (watch.Elapsed > TimeSpan.FromSeconds(5)) throw new InvalidOperationException("Opening the preloaded list took too long.");
+                    if (!File.ReadAllText(loggerPath).Contains("Using the preloaded meeting catalog for the visible list.", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Opening Meetings did not reuse the completed scan.");
+                }
+                finally
+                {
+                    ((CancellationTokenSource)typeof(MainWindow).GetField("_lifetimeCts", flags)!.GetValue(window)!).Cancel();
+                    typeof(MainWindow).GetMethod("CancelMeetingBackgroundWork", flags)!.Invoke(window, null);
+                    window.Hide();
+                }
+            });
+        }
+    }
+
     public static void VerifyLargeSpeakerBlock()
     {
         lock (CaptureGate)

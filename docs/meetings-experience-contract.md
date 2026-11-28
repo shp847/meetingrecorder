@@ -222,6 +222,15 @@ requested mode and latest stable selection, defers a pending update while
 recording, and preserves the last good rendered list on refresh failure. Manual
 retry uses the same pending request rather than starting duplicate work.
 
+After the first window render, startup begins a cancellable catalog scan while
+Home is visible. The Meetings tab reuses the completed or in-progress scan;
+meeting rows are applied only when the tab is visible. A scan older than 30
+seconds can provide an immediate list while a fresh full refresh follows.
+Recording and recording transitions defer or cancel this preload, and changes
+to the meeting folders or explicit refresh requests invalidate it. If the user
+opens Meetings before the scan completes, the loading state remains visible
+until the existing scan finishes.
+
 ## Imported meetings
 
 `MeetingOriginResolver` projects imported audio as one ordinary meeting origin:

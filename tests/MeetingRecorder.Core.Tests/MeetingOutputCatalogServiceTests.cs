@@ -1567,6 +1567,15 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.Equal(new[] { "Hello there", "good friend" }, MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).StructuredSegments.Select(s => s.Text));
     }
 
+    [Fact]
+    public void ListMeetingsHonorsCancellationBeforeScanning()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var service = new MeetingOutputCatalogService(new ArtifactPathBuilder());
+        Assert.Throws<OperationCanceledException>(() => service.ListMeetings("missing-audio", "missing-transcripts", "missing-work", cancellation.Token));
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         var format = new WaveFormat(16000, 16, 1);

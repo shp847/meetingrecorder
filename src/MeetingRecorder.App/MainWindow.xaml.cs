@@ -76,6 +76,8 @@ public partial class MainWindow : Window
     private readonly SpeakerRepairAuditStore _speakerRepairAuditStore;
     private readonly MeetingCleanupExecutionService _meetingCleanupExecutionService;
     private readonly MeetingArchiveReceiptService _meetingArchiveReceiptService;
+    private readonly MeetingCatalogPreloader<MeetingCatalogSnapshot> _meetingCatalogPreloader;
+    private static readonly TimeSpan MeetingPreloadFreshness = TimeSpan.FromSeconds(30);
     private readonly AutomaticMeetingRecoveryService _automaticMeetingRecoveryService = new();
     private IReadOnlyList<AutomaticRecoverySnapshot> _automaticRecoverySnapshots = Array.Empty<AutomaticRecoverySnapshot>();
     private readonly AutoStartRegistrationService _autoStartRegistrationService;
@@ -331,6 +333,7 @@ public partial class MainWindow : Window
         _speakerRepairAuditStore = new SpeakerRepairAuditStore();
         _meetingCleanupExecutionService = new MeetingCleanupExecutionService(_pathBuilder, _meetingOutputCatalogService);
         _meetingArchiveReceiptService = new MeetingArchiveReceiptService();
+        _meetingCatalogPreloader = new MeetingCatalogPreloader<MeetingCatalogSnapshot>(LoadMeetingCatalogSnapshotAsync);
         _autoStartRegistrationService = new AutoStartRegistrationService();
         _appUpdateService = new AppUpdateService();
         _appUpdateSchedulePolicy = new AppUpdateSchedulePolicy();
@@ -602,6 +605,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "startup warmup");
             TrySyncLaunchOnLoginSetting(_liveConfig.Current, "startup");
             await EnsureConfiguredModelPathResolvedAsync("startup", _lifetimeCts.Token);
             if (IsShutdownRequested)
@@ -611,7 +615,6 @@ public partial class MainWindow : Window
 
             RefreshWhisperModelStatus();
             RefreshDiarizationAssetStatus();
-            RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Fast, "startup warmup");
             ScheduleDeferredStartupMaintenance();
         }
         catch (OperationCanceledException)
@@ -835,7 +838,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "meetings tab selected");
+        RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "meetings tab selected", preservePreload: true);
     }
 
     private async Task RunDeferredMeetingsRefreshAsync(CallbackIntent callbackIntent)
@@ -844,7 +847,7 @@ public partial class MainWindow : Window
         {
             while (_hasPendingMeetingsRefreshRequest && !IsShutdownRequested)
             {
-                if (MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
+                if (_isRecordingTransitionInProgress || MainWindowInteractionLogic.ShouldDeferMeetingRefresh(
                         _recordingCoordinator.IsRecording,
                         ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)))
                 {
@@ -858,7 +861,7 @@ public partial class MainWindow : Window
                 _pendingMeetingsRefreshSelectedStem = null;
 
                 var stopwatch = Stopwatch.StartNew();
-                await RefreshMeetingListAsync(selectedStem, refreshMode);
+                await RefreshMeetingListAsync(selectedStem, refreshMode, reusePreload: true);
                 _logger.Log(
                     $"Completed queued meeting list refresh. mode='{refreshMode}', " +
                     $"selectedStem='{selectedStem ?? string.Empty}', elapsedMs={stopwatch.ElapsedMilliseconds}.");
@@ -875,6 +878,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _meetingCatalogPreloader.Dispose();
         PersistCallbackTraceForRecovery();
         _detectionTimer.Stop();
         _audioGraphTimer.Stop();
@@ -915,7 +919,9 @@ public partial class MainWindow : Window
 
     private CallbackIntent? TryBeginRecordingTransitionCallback(string edge = "manual-recording-transition")
     {
-        return TryBeginCallbackIntent("recording-transition", edge);
+        var callback = TryBeginCallbackIntent("recording-transition", edge);
+        if (callback is not null) _meetingCatalogPreloader.Invalidate();
+        return callback;
     }
 
     private CallbackIntent? TryBeginCallbackIntent(string key, string edge)
@@ -941,6 +947,8 @@ public partial class MainWindow : Window
     private void CompleteRecordingTransitionCallback(CallbackIntent callbackIntent)
     {
         CompleteCallbackIntent(callbackIntent);
+        if (!IsShutdownRequested)
+            _ = Dispatcher.BeginInvoke(new Action(SchedulePendingMeetingsRefreshIfReady), DispatcherPriority.Background);
     }
 
     private void CompleteCallbackIntent(CallbackIntent callbackIntent)
@@ -1471,8 +1479,6 @@ public partial class MainWindow : Window
         }
 
         UpdateAudioGraphTimerState();
-        SchedulePendingMeetingsRefreshIfReady();
-
         if (ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
         {
             _isUpdatingMeetingsWorkspaceControls = true;
@@ -1488,6 +1494,7 @@ public partial class MainWindow : Window
             ApplyMeetingsWorkspaceView();
             ScheduleDeferredMeetingsRefresh();
         }
+        SchedulePendingMeetingsRefreshIfReady();
         UpdateProcessingQueueStatusUi();
     }
 
@@ -1539,8 +1546,10 @@ public partial class MainWindow : Window
     private void RequestMeetingRefreshForCurrentContext(
         MeetingRefreshMode refreshMode,
         string reason,
-        string? selectedStem = null)
+        string? selectedStem = null,
+        bool preservePreload = false)
     {
+        if (!preservePreload) _meetingCatalogPreloader.Invalidate();
         var effectiveRefreshMode = _recordingCoordinator.IsRecording &&
             refreshMode == MeetingRefreshMode.Full
             ? MeetingRefreshMode.Fast
@@ -1573,9 +1582,24 @@ public partial class MainWindow : Window
         SchedulePendingMeetingsRefreshIfReady();
     }
 
+    private static MeetingCatalogPaths GetMeetingCatalogPaths(AppConfig config) =>
+        new(config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir);
+
+    private async Task<MeetingCatalogSnapshot> LoadMeetingCatalogSnapshotAsync(MeetingCatalogPaths paths, CancellationToken cancellationToken)
+    {
+        var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(paths.AudioDirectory);
+        var recordsTask = Task.Run(() => _meetingOutputCatalogService.ListMeetings(
+            paths.AudioDirectory, paths.TranscriptDirectory, paths.WorkDirectory, cancellationToken), cancellationToken);
+        var receiptsTask = Task.Run(() => _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, cancellationToken), cancellationToken);
+        var recoveryTask = Task.Run(() => _automaticMeetingRecoveryService.FindAsync(archiveRoot, cancellationToken), cancellationToken);
+        await Task.WhenAll(recordsTask, receiptsTask, recoveryTask).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new MeetingCatalogSnapshot(await recordsTask, await receiptsTask, await recoveryTask, DateTimeOffset.UtcNow);
+    }
+
     private void SchedulePendingMeetingsRefreshIfReady()
     {
-        if (!_hasPendingMeetingsRefreshRequest || _isDeferredMeetingsRefreshQueued || IsShutdownRequested)
+        if (!_hasPendingMeetingsRefreshRequest || _isDeferredMeetingsRefreshQueued || IsShutdownRequested || _isRecordingTransitionInProgress)
         {
             return;
         }
@@ -1584,6 +1608,10 @@ public partial class MainWindow : Window
                 _recordingCoordinator.IsRecording,
                 ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem)))
         {
+            if (MainWindowInteractionLogic.ShouldPreloadMeetings(_recordingCoordinator.IsRecording,
+                    _isRecordingTransitionInProgress, ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem), IsShutdownRequested) &&
+                _meetingCatalogPreloader.Start(GetMeetingCatalogPaths(_liveConfig.Current), _lifetimeCts.Token))
+                _logger.Log("Started background meeting catalog preload.");
             UpdateMeetingsRefreshStateText();
             return;
         }
@@ -3187,15 +3215,30 @@ public partial class MainWindow : Window
         try
         {
             var config = _liveConfig.Current;
-            var records = await Task.Run(() => _meetingOutputCatalogService.ListMeetings(
-                config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir), cancellationToken);
+            var paths = GetMeetingCatalogPaths(config);
+            var preload = _meetingCatalogPreloader.TryGet(paths);
+            MeetingCatalogSnapshot? snapshot = null;
+            if (preload is not null)
+            {
+                try { snapshot = await preload.WaitAsync(cancellationToken); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception exception)
+                {
+                    _logger.Log($"Meeting catalog preload unavailable to cleanup: {exception.GetType().Name}.");
+                }
+                if (!ReferenceEquals(_meetingCatalogPreloader.TryGet(paths), preload)) return;
+                if (snapshot is not null && DateTimeOffset.UtcNow - snapshot.CapturedAtUtc > MeetingPreloadFreshness)
+                    snapshot = null;
+            }
+            var records = snapshot?.Records ?? await Task.Run(() => _meetingOutputCatalogService.ListMeetings(
+                config.AudioOutputDir, config.TranscriptOutputDir, config.WorkDir, cancellationToken), cancellationToken);
             if (cancellationToken.IsCancellationRequested || IsShutdownRequested ||
                 refreshVersion != Volatile.Read(ref _meetingRefreshVersion) ||
                 ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
                 return;
 
             var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
-            var recoverySnapshots = await Task.Run(
+            var recoverySnapshots = snapshot?.AutomaticRecovery ?? await Task.Run(
                 () => _automaticMeetingRecoveryService.FindAsync(archiveRoot, cancellationToken), cancellationToken);
             if (cancellationToken.IsCancellationRequested || IsShutdownRequested ||
                 refreshVersion != Volatile.Read(ref _meetingRefreshVersion) ||
@@ -6425,7 +6468,8 @@ public partial class MainWindow : Window
     private async Task RefreshMeetingListAsync(
         string? selectedStem = null,
         MeetingRefreshMode refreshMode = MeetingRefreshMode.Full,
-        bool bypassAttendeeNoMatchCacheForVisibleRows = false)
+        bool bypassAttendeeNoMatchCacheForVisibleRows = false,
+        bool reusePreload = false)
     {
         if (IsShutdownRequested)
         {
@@ -6457,30 +6501,67 @@ public partial class MainWindow : Window
 
         try
         {
-            var recordsTask = Task.Run(
-                () => _meetingOutputCatalogService.ListMeetings(
-                    config.AudioOutputDir,
-                    config.TranscriptOutputDir,
-                    config.WorkDir),
-                _lifetimeCts.Token);
-            var archiveRoot = MeetingCleanupExecutionService.GetArchiveRoot(config.AudioOutputDir);
-            var recoveryReceiptsTask = Task.Run(
-                () => _meetingArchiveReceiptService.FindReceiptsAsync(archiveRoot, _lifetimeCts.Token),
-                _lifetimeCts.Token);
-            var automaticRecoveryTask = Task.Run(
-                () => _automaticMeetingRecoveryService.FindAsync(archiveRoot, _lifetimeCts.Token),
-                _lifetimeCts.Token);
-            var records = await recordsTask;
-            var recoveryReceipts = await recoveryReceiptsTask;
-            var automaticRecovery = await automaticRecoveryTask;
+            var paths = GetMeetingCatalogPaths(config);
+            var preload = reusePreload ? _meetingCatalogPreloader.TryGet(paths) : null;
+            var wasPreloaded = preload is not null;
+            if (reusePreload && preload is null)
+            {
+                _meetingCatalogPreloader.Start(paths, _lifetimeCts.Token);
+                preload = _meetingCatalogPreloader.TryGet(paths);
+            }
+            MeetingCatalogSnapshot snapshot;
+            var usedPreload = preload is not null;
+            if (preload is not null)
+            {
+                try { snapshot = await preload; }
+                catch (OperationCanceledException) when (!_lifetimeCts.IsCancellationRequested)
+                {
+                    RequeueUnpublishedMeetingRefresh(refreshMode, selectedStem);
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _logger.Log($"Meeting catalog preload failed; retrying on demand: {exception.GetType().Name}.");
+                    if (!ReferenceEquals(_meetingCatalogPreloader.TryGet(paths), preload))
+                    {
+                        RequeueUnpublishedMeetingRefresh(refreshMode, selectedStem);
+                        return;
+                    }
+                    _meetingCatalogPreloader.Invalidate();
+                    _meetingCatalogPreloader.Start(paths, _lifetimeCts.Token);
+                    preload = _meetingCatalogPreloader.TryGet(paths)!;
+                    usedPreload = false;
+                    snapshot = await preload;
+                }
+                if (!ReferenceEquals(_meetingCatalogPreloader.TryGet(paths), preload))
+                {
+                    RequeueUnpublishedMeetingRefresh(refreshMode, selectedStem);
+                    return;
+                }
+            }
+            else
+            {
+                if (!reusePreload) _meetingCatalogPreloader.Invalidate();
+                snapshot = await LoadMeetingCatalogSnapshotAsync(paths, _lifetimeCts.Token);
+            }
+            var records = snapshot.Records;
+            var recoveryReceipts = snapshot.ArchiveReceipts;
+            var automaticRecovery = snapshot.AutomaticRecovery;
+            if (wasPreloaded && usedPreload) _logger.Log("Using the preloaded meeting catalog for the visible list.");
             if (refreshVersion != Volatile.Read(ref _meetingRefreshVersion) || _lifetimeCts.IsCancellationRequested)
             {
                 return;
             }
 
-            _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
-            _lastSuccessfulMeetingsRefreshUtc = DateTimeOffset.UtcNow;
+            if (reusePreload && !ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+            {
+                RequeueUnpublishedMeetingRefresh(refreshMode, selectedStem);
+                return;
+            }
+
+            _lastSuccessfulMeetingsRefreshUtc = snapshot.CapturedAtUtc;
             _hasMeetingsRefreshFailure = false;
+            _allMeetingRows = BuildMeetingRows(records, _meetingCleanupRecommendations);
             RestoreLatestArchiveButton.Visibility = recoveryReceipts.Count > 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -6496,7 +6577,12 @@ public partial class MainWindow : Window
                 $"transcripts={_allMeetingRows.Count(row => !string.IsNullOrWhiteSpace(row.Source.MarkdownPath) || !string.IsNullOrWhiteSpace(row.Source.JsonPath))}, " +
                 $"manifests={_allMeetingRows.Count(row => !string.IsNullOrWhiteSpace(row.Source.ManifestPath))}.");
 
-            if (refreshMode == MeetingRefreshMode.Full &&
+            var stalePreload = usedPreload && DateTimeOffset.UtcNow - snapshot.CapturedAtUtc > MeetingPreloadFreshness;
+            if (stalePreload && refreshMode == MeetingRefreshMode.Full && ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
+            {
+                RequestMeetingRefreshForCurrentContext(MeetingRefreshMode.Full, "refresh older preloaded meetings");
+            }
+            else if (refreshMode == MeetingRefreshMode.Full &&
                 ReferenceEquals(MainTabControl.SelectedItem, MeetingsTabItem))
             {
                 var backgroundToken = CreateMeetingBackgroundWorkToken();
@@ -6515,6 +6601,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             _logger.Log($"Meeting list refresh {refreshVersion} was canceled.");
+            if (reusePreload && !IsShutdownRequested) RequeueUnpublishedMeetingRefresh(refreshMode, selectedStem);
             // Ignore refresh cancellation during shutdown or superseded refresh requests.
         }
         catch (Exception exception)
@@ -6535,6 +6622,14 @@ public partial class MainWindow : Window
             UpdateMeetingActionState();
             TryDispatchPendingMeetingCleanupWork();
         }
+    }
+
+    private void RequeueUnpublishedMeetingRefresh(MeetingRefreshMode mode, string? selectedStem)
+    {
+        var effectiveMode = _recordingCoordinator.IsRecording ? MeetingRefreshMode.Fast : mode;
+        _hasPendingMeetingsRefreshRequest = true;
+        if (effectiveMode > _pendingMeetingsRefreshMode) _pendingMeetingsRefreshMode = effectiveMode;
+        if (!string.IsNullOrWhiteSpace(selectedStem)) _pendingMeetingsRefreshSelectedStem = selectedStem;
     }
 
     private void StartMeetingCleanupRecommendationRefresh(
