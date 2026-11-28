@@ -205,12 +205,21 @@ internal sealed record MeetingTranscriptSegmentRow(
     string? OriginalSpeakerLabel = null,
     EffectiveSegmentAttributionState AttributionState = EffectiveSegmentAttributionState.Source,
     string? AttributionOverrideId = null,
-    string? ManualSplitId = null)
+    string? ManualSplitId = null,
+    string? EffectiveSpeakerKey = null,
+    IReadOnlyList<TranscriptSpeakerBlockPart>? BlockParts = null,
+    string? SourceSegmentId = null,
+    string? SelectionCorrectionId = null,
+    int SourceTextOffset = 0,
+    string? InlineRenameSpeakerId = null)
 {
-    public bool CanOpenSpeakerReview => !string.IsNullOrWhiteSpace(SpeakerId);
+    public bool CanOpenSpeakerReview => BlockParts is { Count: > 0 } && AttributionState == EffectiveSegmentAttributionState.Override
+        ? !string.IsNullOrWhiteSpace(InlineRenameSpeakerId)
+        : !string.IsNullOrWhiteSpace(SpeakerId);
 
     // A displayed override may refer to a different person than the source speaker.
-    public bool CanRenameSpeakerInline => CanOpenSpeakerReview && AttributionState == EffectiveSegmentAttributionState.Source;
+    public bool CanRenameSpeakerInline => !string.IsNullOrWhiteSpace(InlineRenameSpeakerId) ||
+        CanOpenSpeakerReview && AttributionState == EffectiveSegmentAttributionState.Source;
 
     public string SpeakerReviewAutomationName => CanRenameSpeakerInline
         ? $"Rename {SpeakerLabel} in this meeting"
@@ -220,13 +229,19 @@ internal sealed record MeetingTranscriptSegmentRow(
         !string.IsNullOrWhiteSpace(SegmentId) &&
         AttributionState != EffectiveSegmentAttributionState.ReviewNeeded;
 
-    public bool HasManualAttributionOverride => AttributionState == EffectiveSegmentAttributionState.Override;
+    public bool HasManualAttributionOverride => BlockParts is { Count: > 0 }
+        ? BlockParts.Any(part => part.Row.HasManualAttributionOverride)
+        : AttributionState == EffectiveSegmentAttributionState.Override;
 
-    public bool CanRevertParagraphOverride => HasManualAttributionOverride && !string.IsNullOrWhiteSpace(AttributionOverrideId);
+    public bool CanRevertParagraphOverride => BlockParts is { Count: > 0 }
+        ? BlockParts.Any(part => part.Row.CanRevertParagraphOverride)
+        : HasManualAttributionOverride && !string.IsNullOrWhiteSpace(AttributionOverrideId) && string.IsNullOrWhiteSpace(SelectionCorrectionId);
 
     public bool CanSplitPassage => !string.IsNullOrWhiteSpace(SegmentId) && Text.Trim().Length > 1;
 
-    public bool CanUndoPassageSplit => !string.IsNullOrWhiteSpace(ManualSplitId);
+    public bool CanUndoPassageSplit => BlockParts is { Count: > 0 }
+        ? BlockParts.Any(part => part.Row.CanUndoPassageSplit)
+        : !string.IsNullOrWhiteSpace(ManualSplitId);
 
     public string AttributionIndicator => AttributionState switch
     {

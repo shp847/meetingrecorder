@@ -32,14 +32,15 @@ internal static class TranscriptPassageSplitService
             if (!string.Equals(Read(record, "textHash"), Hash(parent.Text), StringComparison.Ordinal) ||
                 !ValidBoundary(parent.Text, offset) || result.Any(segment => segment.SegmentId == leftId || segment.SegmentId == rightId)) { invalidCount++; continue; }
             result.RemoveAt(index);
-            result.Insert(index, parent with { SegmentId = rightId, Text = parent.Text[offset..], ManualSplitId = operationId });
-            result.Insert(index, parent with { SegmentId = leftId, Text = parent.Text[..offset], ManualSplitId = operationId });
+            var sourceId = parent.SourceSegmentId ?? parent.SegmentId;
+            result.Insert(index, parent with { SegmentId = rightId, Text = parent.Text[offset..], ManualSplitId = operationId, SourceSegmentId = sourceId, SourceTextOffset = parent.SourceTextOffset + offset });
+            result.Insert(index, parent with { SegmentId = leftId, Text = parent.Text[..offset], ManualSplitId = operationId, SourceSegmentId = sourceId });
         }
         return result;
     }
 
     public static bool TryApply(JsonObject document, IReadOnlyList<TranscriptSegment> source,
-        string segmentId, int offset, string operationId, string revision, out string? reason)
+        string segmentId, int offset, string operationId, string revision, out string? reason, bool allowActiveOverride = false)
     {
         reason = null;
         if (string.IsNullOrWhiteSpace(segmentId) || string.IsNullOrWhiteSpace(operationId) || string.IsNullOrWhiteSpace(revision))
@@ -54,7 +55,7 @@ internal static class TranscriptPassageSplitService
         var segment = projected.FirstOrDefault(item => string.Equals(item.SegmentId, segmentId, StringComparison.Ordinal));
         if (segment is null || !ValidBoundary(segment.Text, offset))
         { reason = "Choose a boundary inside the passage with words on both sides."; return false; }
-        if (HasActiveOverride(document, segmentId))
+        if (!allowActiveOverride && HasActiveOverride(document, segmentId))
         { reason = "Undo the passage correction before splitting it, then correct each part."; return false; }
         records ??= new JsonArray();
         if (document["manualTranscriptSplits"] is null) document["manualTranscriptSplits"] = records;

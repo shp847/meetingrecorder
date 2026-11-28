@@ -85,6 +85,14 @@ public static class SegmentAttributionOverrideDocumentMutator
             return false;
         }
 
+        if (document["speakerSelectionCorrections"] is JsonArray selectionCorrections &&
+            selectionCorrections.OfType<JsonObject>().Any(operation => operation["revertedAtUtc"] is null &&
+                operation["overrideIds"] is JsonArray ids && ids.Any(id => id?.GetValue<string>() == overrideId)))
+        {
+            reason = "Undo the complete selected-text correction instead.";
+            return false;
+        }
+
         if (item["revertedAtUtc"] is not null || item["RevertedAtUtc"] is not null)
         {
             return true;

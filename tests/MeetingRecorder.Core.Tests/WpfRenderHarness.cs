@@ -4,12 +4,14 @@ using MeetingRecorder.Core.Configuration;
 using MeetingRecorder.Core.Domain;
 using MeetingRecorder.Core.Services;
 using System.IO;
+using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -61,28 +63,46 @@ internal static class WpfRenderHarness
                     RequireElement<TextBlock>(detail, "MeetingSubtitleTextBlock").Text = "Teams | 11/25/2026 1:03 PM | 13:57";
                     RequireElement<Border>(detail, "DetailTaskCenterBorder").Visibility = Visibility.Collapsed;
                     var rows = Enumerable.Range(0, 142).Select(index => new MeetingTranscriptSegmentRow(
-                        $"00:{index / 60:00}:{index % 60:00}", "Speaker 1",
+                        $"00:{index / 60:00}:{index % 60:00}", index < 2 || index % 2 != 0 ? "Speaker 1" : "Speaker 2",
                         index == 0 ? "A readable passage with enough words to check the width of the transcript." : $"Passage number {index}.",
-                        "speaker-1", $"segment-{index}")).ToArray();
+                        index < 2 || index % 2 != 0 ? "speaker-1" : "speaker-2", $"segment-{index}",
+                        EffectiveSpeakerKey: index < 2 || index % 2 != 0 ? "speaker-1" : "speaker-2", SourceSegmentId: $"segment-{index}")).ToArray();
                     typeof(MeetingDetailWindow).GetField("_allTranscriptSegments", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(detail, rows);
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptBlocks", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .SetValue(detail, TranscriptSpeakerBlockBuilder.Build(rows).Select(block => block.AsRow()).ToArray());
+                    detail.SetTranscriptSelectionState("snapshot", null);
                     var grid = RequireElement<DataGrid>(detail, "SpeakerLabelsDataGrid");
                     grid.ItemsSource = new[] { new MeetingDetailSpeakerLabelEditorRow("Speaker 1", speakerId: "speaker-1", artifactRevision: "revision") };
                     var list = RequireElement<ListBox>(detail, "TranscriptSegmentsListBox");
                     list.Tag = new[] { new MeetingDetailSpeakerMergeChoice("speaker-1", "Speaker 1") };
                     typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, null);
                     detail.UpdateLayout();
-                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Render);
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
                     var count = RequireElement<TextBlock>(detail, "TranscriptStatusTextBlock");
-                    if (count.Text != "142 passages") throw new InvalidOperationException("Transcript count does not match visible passages.");
+                    if (count.Text != "141 speaker blocks") throw new InvalidOperationException("Transcript count does not match visible speaker blocks.");
                     var search = RequireElement<TextBox>(detail, "TranscriptSearchTextBox");
                     search.Text = "Passage number 42";
-                    if (count.Text != "1 of 142 passages") throw new InvalidOperationException("Filtered transcript count is incorrect.");
+                    if (count.Text != "1 of 141 speaker blocks") throw new InvalidOperationException("Filtered transcript count is incorrect.");
+                    search.Text = "transcript. Passage number 1";
+                    if (count.Text != "1 of 141 speaker blocks") throw new InvalidOperationException("Search across passages did not match the whole block.");
                     search.Text = string.Empty;
                     detail.UpdateLayout();
-                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Render);
-                    var text = FindDescendant<TextBlock>(list, candidate => candidate.Text.StartsWith("A readable passage", StringComparison.Ordinal))
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    var text = FindDescendant<RichTextBox>(list, candidate => candidate.Name == "TranscriptBlockText" && candidate.DataContext is MeetingTranscriptSegmentRow row && row.SegmentId == "segment-0")
                         ?? throw new InvalidOperationException("Transcript passage was not rendered.");
                     if (text.ActualWidth < 250) throw new InvalidOperationException($"Transcript text is too narrow: {text.ActualWidth:0}.");
+                    var cue = new SpeakerEvidenceCue(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), "Passage number 1.", SpeakerEvidenceSourceKind.StructuredTranscript, 1);
+                    var cueButton = new Button { DataContext = cue };
+                    typeof(MeetingDetailWindow).GetMethod("ShowSpeakerEvidenceCueButton_OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(detail, [cueButton, new RoutedEventArgs()]);
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    if (text.Selection.Text != "Passage number 1.") throw new InvalidOperationException("Evidence did not navigate to the interior passage.");
+                    if (!text.Focus() || !ApplicationCommands.SelectAll.CanExecute(null, text)) throw new InvalidOperationException("Transcript text is not keyboard accessible.");
+                    ApplicationCommands.SelectAll.Execute(null, text);
+                    var allSelection = ((int Start, int Length))typeof(MeetingDetailWindow).GetMethod("GetTextSelection", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [text])!;
+                    if (allSelection.Start != 0 || allSelection.Length != ((MeetingTranscriptSegmentRow)text.DataContext).Text.Length)
+                        throw new InvalidOperationException("Keyboard select all did not select the block text.");
+                    text.Selection.Select(text.Document.ContentStart, text.Document.ContentStart);
                     SaveScreenshot(detail, screenshot, scale);
                     var speaker = FindDescendant<ToggleButton>(list, candidate => AutomationProperties.GetName(candidate) == "Rename Speaker 1 in this meeting")
                         ?? throw new InvalidOperationException("Inline speaker editor is unavailable.");
@@ -90,7 +110,7 @@ internal static class WpfRenderHarness
                     if (!speaker.Focus()) throw new InvalidOperationException("Speaker label must accept keyboard focus.");
                     typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, null);
                     detail.UpdateLayout();
-                    FlushDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
                     var restoredFocus = Keyboard.FocusedElement as FrameworkElement;
                     if (restoredFocus?.Name != "InlineSpeakerToggle" ||
                         (restoredFocus.DataContext as MeetingTranscriptSegmentRow)?.SegmentId != "segment-0")
@@ -117,20 +137,42 @@ internal static class WpfRenderHarness
                     if (speaker.IsChecked == true || !detail.IsVisible) throw new InvalidOperationException("Escape must cancel inline editing before closing details.");
                     list.SelectedIndex = 0;
                     detail.UpdateLayout();
-                    var correctionToggle = FindDescendant<ToggleButton>(list, candidate => Equals(candidate.Content, "Correct passage speaker") && candidate.IsVisible)
+                    var firstBlock = (MeetingTranscriptSegmentRow)list.SelectedItem;
+                    text = FindDescendant<RichTextBox>(list, candidate => candidate.Name == "TranscriptBlockText" && ReferenceEquals(candidate.DataContext, firstBlock))!;
+                    var paragraph = (Paragraph)text.Document.Blocks.FirstBlock;
+                    var selectedStart = firstBlock.Text.IndexOf("transcript. Passage", StringComparison.Ordinal);
+                    if (selectedStart < 0) throw new InvalidOperationException($"Unexpected selected block: {firstBlock.Text}");
+                    var findPosition = typeof(MeetingDetailWindow).GetMethod("FindTextPosition", BindingFlags.Static | BindingFlags.NonPublic)!;
+                    var startPointer = (TextPointer?)findPosition.Invoke(null, [paragraph.ContentStart, selectedStart]);
+                    var endPointer = (TextPointer?)findPosition.Invoke(null, [paragraph.ContentStart, selectedStart + "transcript. Passage".Length]);
+                    if (startPointer is null || endPointer is null) throw new InvalidOperationException($"Could not map selected transcript text. Document: '{new TextRange(paragraph.ContentStart, paragraph.ContentEnd).Text}'; expected: '{firstBlock.Text}'.");
+                    text.Focus();
+                    text.Selection.Select(startPointer, endPointer);
+                    if (!RequireElement<TextBlock>(detail, "TranscriptSelectionTimeTextBlock").Text.Contains("00:00:01"))
+                        throw new InvalidOperationException("Selected passage timestamps are unavailable.");
+                    search.Text = "transcript";
+                    detail.UpdateLayout();
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    text = FindDescendant<RichTextBox>(list, candidate => candidate.Name == "TranscriptBlockText" && candidate.DataContext is MeetingTranscriptSegmentRow row && row.SegmentId == "segment-0")!;
+                    if (text.Selection.Text != "transcript. Passage") throw new InvalidOperationException("Refresh did not preserve selected text.");
+                    var correctionToggle = FindDescendant<ToggleButton>(list, candidate => Equals(candidate.Content, "Correct selected speaker") && candidate.IsVisible)
                         ?? throw new InvalidOperationException("Passage correction is unavailable.");
                     correctionToggle.IsChecked = true;
                     detail.UpdateLayout();
                     var choice = FindDescendant<ComboBox>(list, candidate => AutomationProperties.GetName(candidate) == "Choose speaker for this passage" && candidate.IsVisible)
                         ?? throw new InvalidOperationException("Passage speaker choices are unavailable.");
                     if (choice.Items.Count != 1) throw new InvalidOperationException("Passage speaker choices did not bind.");
+                    choice.Focus();
                     choice.SelectedIndex = 0;
+                    SaveScreenshot(detail, Path.Combine(root, "selection-correction.png"), scale);
                     SegmentAttributionOverrideChoice? submittedChoice = null;
-                    detail.ApplyParagraphOverrideRequested += (_, args) => { submittedChoice = args.Choice; args.OnSaved?.Invoke(); };
-                    var apply = FindDescendant<Button>(list, candidate => Equals(candidate.Content, "Apply to passage") && candidate.IsVisible)!
+                    IReadOnlyList<TranscriptSelectionSlice>? submittedSlices = null;
+                    detail.ChangeSelectionCorrectionRequested += (_, args) => { submittedChoice = args.Choice; submittedSlices = args.Slices; args.OnSaved?.Invoke(); };
+                    var apply = FindDescendant<Button>(list, candidate => Equals(candidate.Content, "Apply to selection") && candidate.IsVisible)!
                         ?? throw new InvalidOperationException("Passage save action is unavailable.");
                     apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                    if (submittedChoice?.TargetValue != "speaker-1") throw new InvalidOperationException("Passage correction was not submitted.");
+                    if (submittedChoice?.TargetValue != "speaker-1" || submittedSlices?.Count != 2)
+                        throw new InvalidOperationException("Cross-passage correction was not submitted.");
                     var splitToggle = FindDescendant<ToggleButton>(list, candidate => Equals(candidate.Content, "Split passage") && candidate.IsVisible)
                         ?? throw new InvalidOperationException("Passage split is unavailable.");
                     splitToggle.IsChecked = true;
@@ -144,6 +186,30 @@ internal static class WpfRenderHarness
                         ?? throw new InvalidOperationException("Passage split action is unavailable.");
                     splitButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     if (submittedOffset != 5) throw new InvalidOperationException("Passage split position was not submitted.");
+                    text.Focus();
+                    var prefix = rows[0].Text[..selectedStart];
+                    var suffix = rows[0].Text[selectedStart..];
+                    var changed = new[]
+                    {
+                        rows[0] with { SegmentId = "first-prefix", Text = prefix },
+                        rows[0] with { SegmentId = "first-selected", Text = suffix, SourceTextOffset = selectedStart, SpeakerLabel = "Speaker 2", SpeakerId = "speaker-2", EffectiveSpeakerKey = "speaker-2" },
+                        rows[1] with { SegmentId = "second-selected", Text = "Passage", SpeakerLabel = "Speaker 2", SpeakerId = "speaker-2", EffectiveSpeakerKey = "speaker-2" },
+                        rows[1] with { SegmentId = "second-suffix", Text = rows[1].Text[7..], SourceTextOffset = 7 },
+                    }.Concat(rows.Skip(2)).ToArray();
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptSegments", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(detail, changed);
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptBlocks", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .SetValue(detail, TranscriptSpeakerBlockBuilder.Build(changed).Select(block => block.AsRow()).ToArray());
+                    typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(detail, null);
+                    detail.UpdateLayout();
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
+                    var correctedText = FindDescendant<RichTextBox>(list, candidate => candidate.Name == "TranscriptBlockText" &&
+                        candidate.DataContext is MeetingTranscriptSegmentRow row && row.SegmentId == "first-selected")
+                        ?? throw new InvalidOperationException("Corrected block is unavailable after refresh.");
+                    if (correctedText.Selection.Text != "transcript. Passage" || !correctedText.IsKeyboardFocusWithin)
+                        throw new InvalidOperationException("Refresh did not retain selection and keyboard focus after regrouping.");
+                    search.Text = string.Empty;
+                    detail.UpdateLayout();
+                    PumpDispatcher(detail.Dispatcher, DispatcherPriority.Loaded);
                     var toolsToggle = RequireElement<ToggleButton>(detail, "MeetingToolsToggle");
                     toolsToggle.IsChecked = true;
                     RequireElement<Expander>(detail, "SpeakerReviewExpander").IsExpanded = true;
@@ -166,6 +232,50 @@ internal static class WpfRenderHarness
     public static WpfRenderEvidence CaptureHomeShell()
     {
         return CaptureShell(SyntheticShellState.SetupBlocked, 1280, 800, 1d);
+    }
+
+    public static void VerifyLargeSpeakerBlock()
+    {
+        lock (CaptureGate)
+        {
+            GetApplicationDispatcher().Invoke(() =>
+            {
+                var window = new MeetingDetailWindow
+                {
+                    Width = 1024, Height = 768, WindowStartupLocation = WindowStartupLocation.Manual,
+                    Left = -10000, Top = -10000, ShowInTaskbar = false,
+                };
+                try
+                {
+                    window.Show();
+                    var rows = Enumerable.Range(0, 3000).Select(index => new MeetingTranscriptSegmentRow(
+                        $"00:{index / 60:00}:{index % 60:00}", "Speaker 1", $"Sentence number {index}.",
+                        "speaker-1", $"segment-{index}", EffectiveSpeakerKey: "speaker-1", SourceSegmentId: $"segment-{index}")).ToArray();
+                    var watch = Stopwatch.StartNew();
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptSegments", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, rows);
+                    typeof(MeetingDetailWindow).GetField("_allTranscriptBlocks", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .SetValue(window, TranscriptSpeakerBlockBuilder.Build(rows).Select(block => block.AsRow()).ToArray());
+                    typeof(MeetingDetailWindow).GetMethod("ApplyTranscriptFilter", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+                    window.UpdateLayout();
+                    PumpDispatcher(window.Dispatcher, DispatcherPriority.Loaded);
+                    var list = RequireElement<ListBox>(window, "TranscriptSegmentsListBox");
+                    var scroller = FindDescendant<ScrollViewer>(list, candidate => candidate.ScrollableHeight > 10)
+                        ?? throw new InvalidOperationException("A long speaker block cannot scroll.");
+                    scroller.ScrollToVerticalOffset(scroller.ScrollableHeight / 2);
+                    PumpDispatcher(window.Dispatcher, DispatcherPriority.Loaded);
+                    if (scroller.VerticalOffset <= 0) throw new InvalidOperationException("Scrolling cannot reach the middle of a long speaker block.");
+                    RequireElement<TextBox>(window, "TranscriptSearchTextBox").Text = "Sentence number 2999";
+                    window.UpdateLayout();
+                    PumpDispatcher(window.Dispatcher, DispatcherPriority.Loaded);
+                    watch.Stop();
+                    if (RequireElement<TextBlock>(window, "TranscriptStatusTextBlock").Text != "1 of 1 speaker blocks")
+                        throw new InvalidOperationException("A long speaker block was not searchable.");
+                    if (watch.Elapsed > TimeSpan.FromSeconds(15))
+                        throw new InvalidOperationException($"A 3,000-passage block took {watch.Elapsed.TotalSeconds:0.0} seconds to display and search.");
+                }
+                finally { window.Close(); }
+            });
+        }
     }
 
     public static WpfRenderEvidence CaptureProcessingShell()
@@ -1100,6 +1210,13 @@ internal static class WpfRenderHarness
         }
 
         dispatcher.Invoke(() => { }, priority);
+    }
+
+    private static void PumpDispatcher(Dispatcher dispatcher, DispatcherPriority priority)
+    {
+        var frame = new DispatcherFrame();
+        dispatcher.BeginInvoke(priority, new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
     }
 
     private static bool IsVisibleCaptureWindow(Window candidate, Window currentWindow)

@@ -7786,6 +7786,7 @@ public partial class MainWindow : Window
             _meetingDetailWindow.ApplyParagraphOverrideRequested += async (_, args) => await ApplyOpenMeetingDetailParagraphOverrideAsync(args.Segment, args.Choice, args.OnSaved);
             _meetingDetailWindow.RevertParagraphOverrideRequested += async (_, args) => await RevertOpenMeetingDetailParagraphOverrideAsync(args.Segment);
             _meetingDetailWindow.ChangePassageSplitRequested += async (_, args) => await ChangeOpenMeetingPassageSplitAsync(args);
+            _meetingDetailWindow.ChangeSelectionCorrectionRequested += async (_, args) => await ChangeOpenMeetingSelectionCorrectionAsync(args);
             _meetingDetailWindow.MergeSpeakerClustersRequested += async (_, args) => await MergeOpenMeetingDetailSpeakerClustersAsync(args.Rows, args.CanonicalSpeakerId);
             _meetingDetailWindow.PlaySpeakerEvidenceRequested += async (_, args) => await PlayOpenMeetingDetailSpeakerEvidenceAsync(args);
             _meetingDetailWindow.UndoSpeakerMergeRequested += async (_, args) => await UndoOpenMeetingDetailSpeakerMergeAsync(args.Text);
@@ -7883,6 +7884,7 @@ public partial class MainWindow : Window
 
             var detailWindow = _meetingDetailWindow;
 
+            var speakerArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
             var transcript = MeetingTranscriptDocumentReader.Read(row.Source.JsonPath, row.Source.MarkdownPath);
             var speakerExperience = ResolveSpeakerExperienceForMeeting(row);
             var canQueueSpeakerLabels = speakerExperience.Permits(SpeakerExperienceAction.AddSpeakerLabels) ||
@@ -7906,7 +7908,6 @@ public partial class MainWindow : Window
                     ? "Repair Speaker Labels"
                     : "Add Speaker Labels",
             };
-            var speakerArtifactRevision = MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source);
             var segmentAttributionRevision = MeetingOutputCatalogService.GetSegmentAttributionRevision(row.Source);
             var speakerLabels = _meetingOutputCatalogService.ListSpeakerLabelDetails(row.Source);
             var localProfileNames = Array.Empty<string>();
@@ -8064,7 +8065,13 @@ public partial class MainWindow : Window
                 return;
             }
 
+            if (!string.Equals(speakerArtifactRevision, MeetingOutputCatalogService.GetSpeakerArtifactRevision(row.Source), StringComparison.Ordinal))
+            {
+                detailWindow.SetMaintenanceStatus("Meeting data changed while loading. Refresh meeting details and try again.");
+                return;
+            }
             detailWindow.ApplyState(state, GetRecentMeetingProjectNames(), speakerRows);
+            detailWindow.SetTranscriptSelectionState(speakerArtifactRevision, MeetingOutputCatalogService.GetLatestSelectionCorrectionId(row.Source));
             detailWindow.SetSpeakerMergeUndoState(latestSpeakerMergeOperationId);
             detailWindow.SetSpeakerQualityStatus(BuildSpeakerQualityStatus(
                 row,
@@ -8541,6 +8548,46 @@ public partial class MainWindow : Window
         {
             _isSplittingMeeting = false;
             UpdateMeetingActionState();
+        }
+    }
+
+    private async Task ChangeOpenMeetingSelectionCorrectionAsync(MeetingDetailSelectionCorrectionEventArgs args)
+    {
+        var row = GetOpenMeetingDetailRow();
+        if (row is null || IsMeetingActionInProgress() || (!args.Undo && args.Choice is null))
+        {
+            _meetingDetailWindow?.SetMaintenanceStatus("Wait for the current work or reload before changing this selection.");
+            return;
+        }
+        _isApplyingSpeakerNames = true;
+        UpdateMeetingActionState();
+        _meetingDetailWindow?.SetMaintenanceBusy(true);
+        try
+        {
+            var result = await _meetingOutputCatalogService.ChangeSelectionCorrectionIfCurrentAsync(row.Source,
+                args.Snapshot, args.Slices, args.OperationId, args.Undo,
+                args.Choice?.TargetKind ?? SegmentAttributionOverrideTargetKind.Speaker,
+                args.Choice?.TargetValue ?? string.Empty, _lifetimeCts.Token);
+            if (!result.IsApplied)
+            {
+                _meetingDetailWindow?.SetMaintenanceStatus(result.ConflictReason ?? "The selection could not be changed.");
+                return;
+            }
+            args.OnSaved?.Invoke();
+            await RefreshMeetingListAsync(row.Source.Stem);
+            await RefreshOpenMeetingDetailWindowAsync();
+            _meetingDetailWindow?.SetMaintenanceStatus(args.Undo ? "Speaker correction undone." : "Selected words assigned to the chosen speaker.");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.Log($"Selected text speaker correction failed: {exception}");
+            _meetingDetailWindow?.SetMaintenanceStatus("The selection could not be changed. Reload and try again.");
+        }
+        finally
+        {
+            _isApplyingSpeakerNames = false;
+            UpdateMeetingActionState();
+            _meetingDetailWindow?.SetMaintenanceBusy(false);
         }
     }
 

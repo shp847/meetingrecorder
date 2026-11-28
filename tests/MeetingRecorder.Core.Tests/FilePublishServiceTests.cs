@@ -199,7 +199,7 @@ public sealed class FilePublishServiceTests
         var jsonPath = Path.Combine(sourceDir, "source.json");
         CreateFloatWave(audioPath, TimeSpan.FromSeconds(1), 16_000, 1);
         await File.WriteAllTextAsync(markdownPath, "# First");
-        await File.WriteAllTextAsync(jsonPath, """{ "segments":[], "speakerAttributionOverrides":[{"id":"override-1"}] }""");
+        await File.WriteAllTextAsync(jsonPath, """{ "segments":[], "speakerAttributionOverrides":[{"id":"override-1"}], "manualTranscriptSplits":[{"id":"split-1"}], "speakerSelectionCorrections":[{"id":"selection-1","splitIds":["split-1"],"overrideIds":["override-1"]}] }""");
         var service = new FilePublishService();
         var first = await service.PublishAsync(audioPath, markdownPath, jsonPath, audioDir, transcriptDir, "2026-03-19_143250_teams_example");
 
@@ -211,6 +211,10 @@ public sealed class FilePublishServiceTests
         Assert.Contains("priorSegmentAttributionOverrides", publishedJson, StringComparison.Ordinal);
         Assert.Contains("override-1", publishedJson, StringComparison.Ordinal);
         Assert.DoesNotContain("\"speakerAttributionOverrides\"", publishedJson, StringComparison.Ordinal);
+        Assert.Contains("priorTranscriptSplits", publishedJson, StringComparison.Ordinal);
+        Assert.Contains("priorSpeakerSelectionCorrections", publishedJson, StringComparison.Ordinal);
+        Assert.Contains("selection-1", publishedJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"speakerSelectionCorrections\"", publishedJson, StringComparison.Ordinal);
         Assert.Equal(first.ReadyMarkerPath, reprocessed.ReadyMarkerPath);
     }
 

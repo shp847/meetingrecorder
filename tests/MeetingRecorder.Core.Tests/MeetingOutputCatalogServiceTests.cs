@@ -1498,6 +1498,75 @@ public sealed class MeetingOutputCatalogServiceTests
         Assert.True((await service.RevertSegmentAttributionOverrideIfCurrentAsync(record, sourceRevision, "display")).IsApplied);
     }
 
+    [Fact]
+    public async Task SelectionCorrectionCommitsAndUndoesAcrossPublishedPassages()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "MeetingRecorderTests", Guid.NewGuid().ToString("N"));
+        var manifestPath = Path.Combine(root, "work", "session", "manifest.json");
+        var jsonPath = Path.Combine(root, "transcripts", "selection.json");
+        var markdownPath = Path.Combine(root, "transcripts", "selection.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+        var builder = new ArtifactPathBuilder();
+        var manifest = new MeetingSessionManifest
+        {
+            SessionId = "session", Platform = MeetingPlatform.Teams, DetectedTitle = "Selection test",
+            StartedAtUtc = DateTimeOffset.Parse("2026-03-16T00:00:00Z"), State = SessionState.Published,
+            ProcessingMetadata = new MeetingProcessingMetadata("model.bin", true,
+                [new SpeakerIdentity("a", "Alex", false), new SpeakerIdentity("b", "Blair", false)]),
+        };
+        await new SessionManifestStore(builder).SaveAsync(manifest, manifestPath);
+        const string original = """{"segments":[{"segmentId":"one","start":"00:00:00","end":"00:00:05","speakerId":"a","speakerLabel":"Alex","text":"Hello there"},{"segmentId":"two","start":"00:00:06","end":"00:00:08","speakerId":"a","speakerLabel":"Alex","text":"good friend"}]}""";
+        await File.WriteAllTextAsync(jsonPath, original);
+        await File.WriteAllTextAsync(markdownPath, "# Preserved header\n\n## Transcript\nold");
+        var record = new MeetingOutputRecord("selection", "Selection test", manifest.StartedAtUtc, MeetingPlatform.Teams, null, null,
+            markdownPath, jsonPath, null, manifestPath, SessionState.Published, Array.Empty<MeetingAttendee>(), true, "model.bin");
+        var service = new MeetingOutputCatalogService(builder);
+        var differentSpeaker = original.Replace("\"speakerId\":\"a\",\"speakerLabel\":\"Alex\",\"text\":\"good friend\"",
+            "\"speakerId\":\"b\",\"speakerLabel\":\"Blair\",\"text\":\"good friend\"", StringComparison.Ordinal);
+        await File.WriteAllTextAsync(jsonPath, differentSpeaker);
+        var crossSpeaker = await service.ChangeSelectionCorrectionIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            [new TranscriptSelectionSlice("one", "a", "Hello there", 6, 5), new TranscriptSelectionSlice("two", "b", "good friend", 0, 4)],
+            "cross-speaker", false, SegmentAttributionOverrideTargetKind.Speaker, "b");
+        Assert.False(crossSpeaker.IsApplied);
+        Assert.Contains("single speaker block", crossSpeaker.ConflictReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(differentSpeaker, await File.ReadAllTextAsync(jsonPath));
+        await File.WriteAllTextAsync(jsonPath, original);
+        var snapshot = MeetingOutputCatalogService.GetSpeakerArtifactRevision(record);
+        var revision = MeetingOutputCatalogService.GetSegmentAttributionRevision(record);
+        var slices = new[] { new TranscriptSelectionSlice("one", "a", "Hello there", 6, 5), new TranscriptSelectionSlice("two", "a", "good friend", 0, 4) };
+
+        // Hold the second destination open without delete sharing so promotion fails after JSON replacement.
+        using (var lockedMarkdown = new FileStream(markdownPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => service.ChangeSelectionCorrectionIfCurrentAsync(record, snapshot, slices,
+                "failed-op", false, SegmentAttributionOverrideTargetKind.Speaker, "b"));
+            Assert.Equal(original, await File.ReadAllTextAsync(jsonPath));
+            Assert.Equal("# Preserved header\n\n## Transcript\nold", await File.ReadAllTextAsync(markdownPath));
+        }
+
+        var result = await service.ChangeSelectionCorrectionIfCurrentAsync(record, snapshot, slices, "selection-op", false,
+            SegmentAttributionOverrideTargetKind.Speaker, "b");
+        Assert.True(result.IsApplied, result.ConflictReason);
+        Assert.Equal(revision, MeetingOutputCatalogService.GetSegmentAttributionRevision(record));
+        Assert.Equal("selection-op", MeetingOutputCatalogService.GetLatestSelectionCorrectionId(record));
+        Assert.Contains("**Blair:** there good", await File.ReadAllTextAsync(markdownPath));
+        Assert.StartsWith("# Preserved header", await File.ReadAllTextAsync(markdownPath));
+        var document = JsonNode.Parse(await File.ReadAllTextAsync(jsonPath))!;
+        Assert.Equal("Hello there", document["segments"]![0]!["text"]!.GetValue<string>());
+        Assert.Equal("good friend", document["segments"]![1]!["text"]!.GetValue<string>());
+        var renamed = await service.UpdateSpeakerIdentitiesIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record),
+            [new SpeakerIdentity("a", "Avery", true), new SpeakerIdentity("b", "Blair", false)]);
+        Assert.True(renamed.IsApplied, renamed.ConflictReason);
+        Assert.Equal("selection-op", MeetingOutputCatalogService.GetLatestSelectionCorrectionId(record));
+        Assert.Contains("**Blair:** there good", await File.ReadAllTextAsync(markdownPath));
+        var stale = await service.ChangeSelectionCorrectionIfCurrentAsync(record, snapshot, [], "selection-op", true);
+        Assert.False(stale.IsApplied);
+        var undone = await service.ChangeSelectionCorrectionIfCurrentAsync(record, MeetingOutputCatalogService.GetSpeakerArtifactRevision(record), [], "selection-op", true);
+        Assert.True(undone.IsApplied, undone.ConflictReason);
+        Assert.Null(MeetingOutputCatalogService.GetLatestSelectionCorrectionId(record));
+        Assert.Equal(new[] { "Hello there", "good friend" }, MeetingTranscriptDocumentReader.Read(jsonPath, markdownPath).StructuredSegments.Select(s => s.Text));
+    }
+
     private static Task WriteSilentWaveFileAsync(string path, TimeSpan duration)
     {
         var format = new WaveFormat(16000, 16, 1);

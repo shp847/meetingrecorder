@@ -45,6 +45,12 @@ public sealed record TranscriptSegment
     [JsonIgnore]
     public string? ManualSplitId { get; init; }
 
+    [JsonIgnore]
+    public string? SourceSegmentId { get; init; }
+
+    [JsonIgnore]
+    public int SourceTextOffset { get; init; }
+
     public TranscriptSegment(TimeSpan Start, TimeSpan End, string? SpeakerLabel, string Text)
         : this(Start, End, null, SpeakerLabel, Text)
     {

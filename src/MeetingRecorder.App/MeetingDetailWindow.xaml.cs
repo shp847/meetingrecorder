@@ -4,9 +4,11 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Documents;
 using MeetingRecorder.Core.Domain;
 using NAudio.Wave;
 using System.Windows.Threading;
+using System.Globalization;
 
 namespace MeetingRecorder.App;
 
@@ -50,6 +52,18 @@ internal sealed class MeetingDetailPassageSplitEventArgs(
 {
     public MeetingTranscriptSegmentRow Segment { get; } = segment;
     public int Offset { get; } = offset;
+    public bool Undo { get; } = undo;
+    public Action? OnSaved { get; } = onSaved;
+}
+
+internal sealed class MeetingDetailSelectionCorrectionEventArgs(
+    IReadOnlyList<TranscriptSelectionSlice> slices, SegmentAttributionOverrideChoice? choice,
+    string snapshot, string operationId, bool undo, Action? onSaved = null) : EventArgs
+{
+    public IReadOnlyList<TranscriptSelectionSlice> Slices { get; } = slices;
+    public SegmentAttributionOverrideChoice? Choice { get; } = choice;
+    public string Snapshot { get; } = snapshot;
+    public string OperationId { get; } = operationId;
     public bool Undo { get; } = undo;
     public Action? OnSaved { get; } = onSaved;
 }
@@ -159,7 +173,11 @@ internal sealed class MeetingDetailSpeakerLabelEditorRow(
 public partial class MeetingDetailWindow : Window
 {
     private MeetingTranscriptSegmentRow[] _allTranscriptSegments = Array.Empty<MeetingTranscriptSegmentRow>();
+    private MeetingTranscriptSegmentRow[] _allTranscriptBlocks = Array.Empty<MeetingTranscriptSegmentRow>();
+    private string _transcriptSnapshot = string.Empty;
+    private string? _latestSelectionCorrectionId;
     private bool _isMaintenanceBusy;
+    private bool _restoringTranscriptSelection;
     private ToggleButton? _activeInlineSpeakerToggle;
     private ToggleButton? _activePassageToggle;
     private ToggleButton? _activeSplitToggle;
@@ -238,6 +256,7 @@ public partial class MeetingDetailWindow : Window
     internal event EventHandler<MeetingDetailSegmentAttributionEventArgs>? RevertParagraphOverrideRequested;
 
     internal event EventHandler<MeetingDetailPassageSplitEventArgs>? ChangePassageSplitRequested;
+    internal event EventHandler<MeetingDetailSelectionCorrectionEventArgs>? ChangeSelectionCorrectionRequested;
 
     internal event EventHandler<MeetingDetailTextEventArgs>? UndoSpeakerMergeRequested;
 
@@ -312,6 +331,7 @@ public partial class MeetingDetailWindow : Window
         UpdateMaintenanceButtonAvailability();
 
         _allTranscriptSegments = state.Transcript.Segments.ToArray();
+        _allTranscriptBlocks = TranscriptSpeakerBlockBuilder.Build(_allTranscriptSegments).Select(block => block.AsRow()).ToArray();
         var priorEdits = state.Transcript.PriorAttributionOverrideCount + state.Transcript.PriorPassageSplitCount;
         FooterStatusTextBlock.Text = state.Transcript.InvalidPassageSplitCount > 0
             ? "Some saved passage splits need review. The source transcript remains available."
@@ -328,6 +348,13 @@ public partial class MeetingDetailWindow : Window
 
     internal void SetInlineSpeakerUndoAvailable(bool available) =>
         UndoInlineSpeakerNameButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+
+    internal void SetTranscriptSelectionState(string snapshot, string? latestCorrectionId)
+    {
+        _transcriptSnapshot = snapshot;
+        _latestSelectionCorrectionId = latestCorrectionId;
+        UndoSelectionCorrectionButton.Visibility = string.IsNullOrWhiteSpace(latestCorrectionId) ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     internal bool HasInlineDraft => _activeInlineSpeakerToggle is not null || _activePassageToggle is not null || _activeSplitToggle is not null;
 
@@ -445,7 +472,11 @@ public partial class MeetingDetailWindow : Window
 
     private void ApplyTranscriptFilter()
     {
-        var selectedId = (TranscriptSegmentsListBox.SelectedItem as MeetingTranscriptSegmentRow)?.SegmentId;
+        var selectedRow = TranscriptSegmentsListBox.SelectedItem as MeetingTranscriptSegmentRow;
+        var selectedId = selectedRow?.SegmentId;
+        var selectedContainer = selectedRow is null ? null : TranscriptSegmentsListBox.ItemContainerGenerator.ContainerFromItem(selectedRow);
+        var selectedText = selectedContainer is null ? null : FindVisualChild<RichTextBox>(selectedContainer, item => item.Name == "TranscriptBlockText");
+        var selectionAnchor = selectedRow is null || selectedText is null ? null : CaptureSelectionAnchor(selectedRow, selectedText);
         var scroll = FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox);
         var previousOffset = scroll?.VerticalOffset ?? 0;
         var hadFocus = TranscriptSegmentsListBox.IsKeyboardFocusWithin;
@@ -455,27 +486,43 @@ public partial class MeetingDetailWindow : Window
         var focusedAutomationName = focusedElement is null ? null : System.Windows.Automation.AutomationProperties.GetName(focusedElement);
         var query = TranscriptSearchTextBox.Text?.Trim();
         var filteredSegments = string.IsNullOrWhiteSpace(query)
-            ? _allTranscriptSegments
-            : _allTranscriptSegments
+            ? _allTranscriptBlocks
+            : _allTranscriptBlocks
                 .Where(segment =>
                     segment.Text.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                     segment.SpeakerLabel.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                    segment.Timestamp.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    (segment.BlockParts?.Any(part => part.Row.Timestamp.Contains(query, StringComparison.OrdinalIgnoreCase)) ?? segment.Timestamp.Contains(query, StringComparison.OrdinalIgnoreCase)))
                 .ToArray();
 
         TranscriptSegmentsListBox.ItemsSource = filteredSegments;
-        if (!string.IsNullOrWhiteSpace(selectedId))
+        if (selectionAnchor is not null)
+        {
+            TranscriptSegmentsListBox.SelectedItem = filteredSegments.FirstOrDefault(block =>
+                FindAnchorOffset(block, selectionAnchor.StartSourceId, selectionAnchor.StartOffset, false) is not null &&
+                FindAnchorOffset(block, selectionAnchor.EndSourceId, selectionAnchor.EndOffset, true) is not null);
+        }
+        if (TranscriptSegmentsListBox.SelectedItem is null && !string.IsNullOrWhiteSpace(selectedId))
         {
             TranscriptSegmentsListBox.SelectedItem = filteredSegments.FirstOrDefault(segment =>
-                string.Equals(segment.SegmentId, selectedId, StringComparison.Ordinal));
+                HasSegment(segment, selectedId));
         }
         Dispatcher.BeginInvoke(() =>
         {
             FindVisualChild<ScrollViewer>(TranscriptSegmentsListBox)?.ScrollToVerticalOffset(previousOffset);
+            if (selectionAnchor is not null && TranscriptSegmentsListBox.SelectedItem is MeetingTranscriptSegmentRow selectedBlock &&
+                TranscriptSegmentsListBox.ItemContainerGenerator.ContainerFromItem(selectedBlock) is { } selectionContainer &&
+                FindVisualChild<RichTextBox>(selectionContainer, item => item.Name == "TranscriptBlockText") is { } restoredText &&
+                restoredText.Document.Blocks.FirstBlock is Paragraph paragraph &&
+                FindAnchorOffset(selectedBlock, selectionAnchor.StartSourceId, selectionAnchor.StartOffset, false) is { } startOffset &&
+                FindAnchorOffset(selectedBlock, selectionAnchor.EndSourceId, selectionAnchor.EndOffset, true) is { } endOffset &&
+                FindTextPosition(paragraph.ContentStart, startOffset) is { } startPointer &&
+                FindTextPosition(paragraph.ContentStart, endOffset) is { } endPointer)
+                restoredText.Selection.Select(startPointer, endPointer);
             if (hadFocus)
             {
                 var focusedRow = filteredSegments.FirstOrDefault(segment =>
-                    !string.IsNullOrWhiteSpace(focusedSegmentId) && string.Equals(segment.SegmentId, focusedSegmentId, StringComparison.Ordinal));
+                    !string.IsNullOrWhiteSpace(focusedSegmentId) && HasSegment(segment, focusedSegmentId)) ??
+                    (selectionAnchor is not null ? TranscriptSegmentsListBox.SelectedItem as MeetingTranscriptSegmentRow : null);
                 var container = focusedRow is null ? null : TranscriptSegmentsListBox.ItemContainerGenerator.ContainerFromItem(focusedRow);
                 var target = container is null ? null : FindVisualChild<FrameworkElement>(container, candidate =>
                     candidate.Focusable && candidate.IsVisible &&
@@ -486,8 +533,167 @@ public partial class MeetingDetailWindow : Window
             }
         }, DispatcherPriority.Loaded);
         TranscriptStatusTextBlock.Text = string.IsNullOrWhiteSpace(query)
-            ? $"{_allTranscriptSegments.Length} passages"
-            : $"{filteredSegments.Length} of {_allTranscriptSegments.Length} passages";
+            ? $"{_allTranscriptBlocks.Length} speaker blocks"
+            : $"{filteredSegments.Length} of {_allTranscriptBlocks.Length} speaker blocks";
+    }
+
+    private static bool HasSegment(MeetingTranscriptSegmentRow block, string segmentId) =>
+        block.BlockParts?.Any(part => string.Equals(part.Row.SegmentId, segmentId, StringComparison.Ordinal)) ??
+        string.Equals(block.SegmentId, segmentId, StringComparison.Ordinal);
+
+    private sealed record TranscriptSelectionAnchor(string StartSourceId, int StartOffset, string EndSourceId, int EndOffset);
+
+    private static TranscriptSelectionAnchor? CaptureSelectionAnchor(MeetingTranscriptSegmentRow block, RichTextBox text)
+    {
+        var selection = GetTextSelection(text);
+        if (selection.Length == 0 || block.BlockParts is null) return null;
+        var end = selection.Start + selection.Length;
+        var parts = block.BlockParts.Where(part => selection.Start < part.Start + part.Length && end > part.Start).ToArray();
+        if (parts.Length == 0 || parts[0].Row.SourceSegmentId is not { Length: > 0 } firstId ||
+            parts[^1].Row.SourceSegmentId is not { Length: > 0 } lastId) return null;
+        var first = parts[0];
+        var last = parts[^1];
+        return new TranscriptSelectionAnchor(firstId, first.Row.SourceTextOffset + Math.Max(0, selection.Start - first.Start),
+            lastId, last.Row.SourceTextOffset + Math.Min(last.Length, end - last.Start));
+    }
+
+    private static int? FindAnchorOffset(MeetingTranscriptSegmentRow block, string sourceId, int sourceOffset, bool isEnd)
+    {
+        foreach (var part in block.BlockParts ?? [])
+        {
+            if (!string.Equals(part.Row.SourceSegmentId, sourceId, StringComparison.Ordinal)) continue;
+            var relative = sourceOffset - part.Row.SourceTextOffset;
+            if (relative >= 0 && relative <= part.Length &&
+                (isEnd || relative < part.Length) && (!isEnd || relative > 0))
+                return part.Start + relative;
+        }
+        return null;
+    }
+
+    private void TranscriptBlockText_OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is RichTextBox text) RenderTranscriptBlock(text);
+    }
+
+    private void TranscriptBlockText_OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is RichTextBox text) RenderTranscriptBlock(text);
+    }
+
+    private void RenderTranscriptBlock(RichTextBox text)
+    {
+        if (text.DataContext is not MeetingTranscriptSegmentRow block) return;
+        var paragraph = new Paragraph(new Run(block.Text)) { Margin = new Thickness(0) };
+        text.Document = new FlowDocument(paragraph) { PagePadding = new Thickness(0) };
+        var query = TranscriptSearchTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(query)) return;
+        var position = 0;
+        while (position < block.Text.Length)
+        {
+            var index = block.Text.IndexOf(query, position, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) break;
+            var first = FindTextPosition(paragraph.ContentStart, index);
+            var last = FindTextPosition(paragraph.ContentStart, index + query.Length);
+            if (first is not null && last is not null)
+                new TextRange(first, last).ApplyPropertyValue(TextElement.BackgroundProperty, new SolidColorBrush(Color.FromRgb(255, 230, 130)));
+            position = index + query.Length;
+        }
+    }
+
+    private static TextPointer? FindTextPosition(TextPointer start, int offset)
+    {
+        var position = start;
+        while (position is not null)
+        {
+            if (position.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+            {
+                var length = position.GetTextRunLength(LogicalDirection.Forward);
+                if (offset <= length) return position.GetPositionAtOffset(offset, LogicalDirection.Forward);
+                offset -= length;
+            }
+            position = position.GetNextContextPosition(LogicalDirection.Forward);
+        }
+        return null;
+    }
+
+    private static (int Start, int Length) GetTextSelection(RichTextBox text)
+    {
+        if (text.Document.Blocks.FirstBlock is not Paragraph paragraph) return (0, 0);
+        var first = text.Selection.Start.CompareTo(paragraph.ContentStart) < 0 ? paragraph.ContentStart : text.Selection.Start;
+        var last = text.Selection.End.CompareTo(paragraph.ContentEnd) > 0 ? paragraph.ContentEnd : text.Selection.End;
+        if (first.CompareTo(last) > 0) return (0, 0);
+        var start = new TextRange(paragraph.ContentStart, first).Text.Length;
+        var length = new TextRange(first, last).Text.Length;
+        return (start, length);
+    }
+
+    private void TranscriptBlockText_OnGotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is RichTextBox { DataContext: MeetingTranscriptSegmentRow block } text)
+        {
+            TranscriptSegmentsListBox.SelectedItem = block;
+            TranscriptBlockText_OnSelectionChanged(text, new RoutedEventArgs());
+        }
+    }
+
+    private void TranscriptSegmentsListBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_restoringTranscriptSelection) return;
+        var active = _activeInlineSpeakerToggle ?? _activePassageToggle ?? _activeSplitToggle;
+        if (active?.DataContext is not MeetingTranscriptSegmentRow draft)
+        {
+            if (TranscriptSelectionTimeTextBlock is not null) TranscriptSelectionTimeTextBlock.Text = string.Empty;
+            return;
+        }
+        if (ReferenceEquals(TranscriptSegmentsListBox.SelectedItem, draft) || !TranscriptSegmentsListBox.Items.Contains(draft)) return;
+        _restoringTranscriptSelection = true;
+        try { TranscriptSegmentsListBox.SelectedItem = draft; }
+        finally { _restoringTranscriptSelection = false; }
+        SetMaintenanceStatus("Finish or cancel the open edit before selecting another block.");
+        Dispatcher.BeginInvoke(() => active.Focus(), DispatcherPriority.Input);
+    }
+
+    private void TranscriptBlockText_OnSelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RichTextBox { DataContext: MeetingTranscriptSegmentRow block } text || TranscriptSelectionTimeTextBlock is null) return;
+        if (!ReferenceEquals(TranscriptSegmentsListBox.SelectedItem, block)) return;
+        var selection = GetTextSelection(text);
+        var end = selection.Start + selection.Length;
+        var matchingParts = selection.Length == 0 ? [] : block.BlockParts?.Where(part =>
+            selection.Start < part.Start + part.Length && end > part.Start).ToArray() ?? [];
+        TranscriptSelectionTimeTextBlock.Text = matchingParts.Length switch
+        {
+            0 => string.Empty,
+            1 => $"Selected passage: {matchingParts[0].Row.Timestamp}",
+            _ => $"Selected passages: {matchingParts[0].Row.Timestamp}–{matchingParts[^1].Row.Timestamp}",
+        };
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T match) return match;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return null;
+    }
+
+    private static RichTextBox? FindBlockText(DependencyObject child)
+    {
+        var container = FindVisualAncestor<ListBoxItem>(child);
+        return container is null ? null : FindVisualChild<RichTextBox>(container, candidate => candidate.Name == "TranscriptBlockText");
+    }
+
+    private static MeetingTranscriptSegmentRow? FindPassageAtCursor(MeetingTranscriptSegmentRow block, int offset) =>
+        block.BlockParts?.FirstOrDefault(part => offset >= part.Start && offset <= part.Start + part.Length)?.Row ??
+        (block.BlockParts is null ? block : null);
+
+    private void UndoSelectionCorrectionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isMaintenanceBusy || string.IsNullOrWhiteSpace(_latestSelectionCorrectionId)) return;
+        ChangeSelectionCorrectionRequested?.Invoke(this, new MeetingDetailSelectionCorrectionEventArgs(
+            [], null, _transcriptSnapshot, _latestSelectionCorrectionId, true));
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent, Func<T, bool>? predicate = null) where T : DependencyObject
@@ -697,8 +903,12 @@ public partial class MeetingDetailWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is SpeakerEvidenceCue cue)
         {
+            var indexedSegmentId = cue.SourceKind == SpeakerEvidenceSourceKind.StructuredTranscript && cue.SegmentIndex >= 0 &&
+                cue.SegmentIndex < _allTranscriptSegments.Length && TimestampMatches(_allTranscriptSegments[cue.SegmentIndex].Timestamp, cue.Start)
+                    ? _allTranscriptSegments[cue.SegmentIndex].SegmentId : null;
             var target = TranscriptSegmentsListBox.Items.OfType<MeetingTranscriptSegmentRow>()
-                .FirstOrDefault(segment => string.Equals(segment.Timestamp, cue.TranscriptTimestamp, StringComparison.Ordinal));
+                .FirstOrDefault(segment => indexedSegmentId is not null ? HasSegment(segment, indexedSegmentId) :
+                    segment.BlockParts?.Any(part => TimestampMatches(part.Row.Timestamp, cue.Start)) ?? TimestampMatches(segment.Timestamp, cue.Start));
             if (target is null)
             {
                 SetMaintenanceStatus("The evidence passage is not in the current results. Clear the transcript search to find it.");
@@ -707,9 +917,25 @@ public partial class MeetingDetailWindow : Window
 
             TranscriptSegmentsListBox.SelectedItem = target;
             TranscriptSegmentsListBox.ScrollIntoView(target);
-            TranscriptSegmentsListBox.Focus();
+            var selectedPart = target.BlockParts?.FirstOrDefault(part =>
+                indexedSegmentId is not null ? part.Row.SegmentId == indexedSegmentId : TimestampMatches(part.Row.Timestamp, cue.Start));
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (selectedPart is null || TranscriptSegmentsListBox.ItemContainerGenerator.ContainerFromItem(target) is not { } container ||
+                    FindVisualChild<RichTextBox>(container, item => item.Name == "TranscriptBlockText") is not { } editor ||
+                    editor.Document.Blocks.FirstBlock is not Paragraph paragraph ||
+                    FindTextPosition(paragraph.ContentStart, selectedPart.Start) is not { } start ||
+                    FindTextPosition(paragraph.ContentStart, selectedPart.Start + selectedPart.Length) is not { } end) return;
+                editor.Selection.Select(start, end);
+                editor.Focus();
+                editor.BringIntoView(start.GetCharacterRect(LogicalDirection.Forward));
+            }, DispatcherPriority.Loaded);
         }
     }
+
+    private static bool TimestampMatches(string text, TimeSpan time) =>
+        TimeSpan.TryParseExact(text, @"hh\:mm\:ss", CultureInfo.InvariantCulture, out var parsed) &&
+        parsed == TimeSpan.FromSeconds(Math.Floor(time.TotalSeconds));
 
     private void InlineSpeakerToggle_OnChanged(object sender, RoutedEventArgs e)
     {
@@ -729,6 +955,7 @@ public partial class MeetingDetailWindow : Window
         {
             _activeInlineSpeakerToggle = null;
         }
+        TranscriptSearchTextBox.IsEnabled = !HasInlineDraft;
     }
 
     private void InlinePassageToggle_OnChanged(object sender, RoutedEventArgs e)
@@ -749,6 +976,7 @@ public partial class MeetingDetailWindow : Window
         {
             _activePassageToggle = null;
         }
+        TranscriptSearchTextBox.IsEnabled = !HasInlineDraft;
     }
 
     private void InlineSplitToggle_OnChanged(object sender, RoutedEventArgs e)
@@ -769,12 +997,16 @@ public partial class MeetingDetailWindow : Window
         {
             _activeSplitToggle = null;
         }
+        TranscriptSearchTextBox.IsEnabled = !HasInlineDraft;
     }
 
     private void SplitPassageButton_OnClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: MeetingTranscriptSegmentRow segment, Tag: TextBox text } || _isMaintenanceBusy) return;
-        ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(segment, text.CaretIndex, false, () =>
+        var part = segment.BlockParts?.FirstOrDefault(item => text.CaretIndex > item.Start && text.CaretIndex < item.Start + item.Length);
+        var target = part?.Row ?? (segment.BlockParts is null ? segment : null);
+        if (target is null) { SetMaintenanceStatus("Choose a position inside one original passage."); return; }
+        ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(target, text.CaretIndex - (part?.Start ?? 0), false, () =>
         {
             if (_activeSplitToggle is { } toggle) toggle.IsChecked = false;
         }));
@@ -782,8 +1014,11 @@ public partial class MeetingDetailWindow : Window
 
     private void UndoPassageSplitButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: MeetingTranscriptSegmentRow segment } && !_isMaintenanceBusy)
-            ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(segment, 0, true));
+        if (sender is not Button { DataContext: MeetingTranscriptSegmentRow segment } button || _isMaintenanceBusy) return;
+        var text = FindBlockText(button);
+        var target = FindPassageAtCursor(segment, text is null ? 0 : GetTextSelection(text).Start);
+        if (target?.CanUndoPassageSplit == true) ChangePassageSplitRequested?.Invoke(this, new MeetingDetailPassageSplitEventArgs(target, 0, true));
+        else SetMaintenanceStatus("Place the cursor in a split passage to undo its split.");
     }
 
     private void SaveInlineSpeakerNameButton_OnClick(object sender, RoutedEventArgs e)
@@ -796,7 +1031,7 @@ public partial class MeetingDetailWindow : Window
 
         var name = proposedName.Trim();
         var target = (SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>)?
-            .FirstOrDefault(row => string.Equals(row.SpeakerId, segment.SpeakerId, StringComparison.Ordinal));
+            .FirstOrDefault(row => string.Equals(row.SpeakerId, segment.InlineRenameSpeakerId ?? segment.SpeakerId, StringComparison.Ordinal));
         if (!segment.CanRenameSpeakerInline || target is null || string.IsNullOrWhiteSpace(name))
         {
             SetMaintenanceStatus("Enter a name for an identified speaker, or correct this passage instead.");
@@ -833,7 +1068,16 @@ public partial class MeetingDetailWindow : Window
         var choice = selected is not null
             ? new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.Speaker, selected.SpeakerId)
             : new SegmentAttributionOverrideChoice(SegmentAttributionOverrideTargetKind.DisplayName, name);
-        ApplyParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment, choice, () =>
+        var text = FindBlockText(button);
+        var selection = text is null ? (Start: 0, Length: 0) : GetTextSelection(text);
+        var slices = TranscriptSpeakerBlockBuilder.GetSelection(segment, selection.Start, selection.Length);
+        if (slices.Count == 0)
+        {
+            SetMaintenanceStatus("Select transcript words before choosing a speaker.");
+            return;
+        }
+        ChangeSelectionCorrectionRequested?.Invoke(this, new MeetingDetailSelectionCorrectionEventArgs(slices, choice,
+            _transcriptSnapshot, Guid.NewGuid().ToString("N"), false, () =>
         {
             if (_activePassageToggle is { } toggle) toggle.IsChecked = false;
         }));
@@ -851,14 +1095,14 @@ public partial class MeetingDetailWindow : Window
     private void OpenSpeakerReviewFromTranscriptButton_OnClick(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not MeetingTranscriptSegmentRow segment ||
-            string.IsNullOrWhiteSpace(segment.SpeakerId))
+            !segment.CanOpenSpeakerReview)
         {
             SetMaintenanceStatus("Speaker review is unavailable for this transcript label.");
             return;
         }
 
         var rows = SpeakerLabelsDataGrid.ItemsSource as IEnumerable<MeetingDetailSpeakerLabelEditorRow>;
-        var target = rows?.FirstOrDefault(row => string.Equals(row.SpeakerId, segment.SpeakerId, StringComparison.Ordinal));
+        var target = rows?.FirstOrDefault(row => string.Equals(row.SpeakerId, segment.InlineRenameSpeakerId ?? segment.SpeakerId, StringComparison.Ordinal));
         if (target is null)
         {
             SetMaintenanceStatus("This transcript label is no longer current. Refresh meeting details and try again.");
@@ -888,17 +1132,25 @@ public partial class MeetingDetailWindow : Window
 
     private void ViewOriginalAttributionButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow { HasManualAttributionOverride: true } segment)
+        if (sender is FrameworkElement { DataContext: MeetingTranscriptSegmentRow segment } element)
         {
-            SetMaintenanceStatus($"Original paragraph attribution: {segment.OriginalSpeakerLabel ?? segment.SpeakerId ?? "Speaker"}.");
+            var text = FindBlockText(element);
+            var target = FindPassageAtCursor(segment, text is null ? 0 : GetTextSelection(text).Start);
+            if (target?.HasManualAttributionOverride == true)
+                SetMaintenanceStatus($"Original passage attribution: {target.OriginalSpeakerLabel ?? target.SpeakerId ?? "Speaker"}.");
+            else SetMaintenanceStatus("Place the cursor in a corrected passage to see its original speaker.");
         }
     }
 
     private void RevertParagraphOverrideButton_OnClick(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is MeetingTranscriptSegmentRow segment && segment.CanRevertParagraphOverride)
+        if (sender is FrameworkElement { DataContext: MeetingTranscriptSegmentRow segment } element)
         {
-            RevertParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(segment));
+            var text = FindBlockText(element);
+            var target = FindPassageAtCursor(segment, text is null ? 0 : GetTextSelection(text).Start);
+            if (target?.CanRevertParagraphOverride == true)
+                RevertParagraphOverrideRequested?.Invoke(this, new MeetingDetailSegmentAttributionEventArgs(target));
+            else SetMaintenanceStatus("Place the cursor in a corrected passage to undo it.");
         }
     }
 

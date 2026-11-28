@@ -393,7 +393,13 @@ public sealed class WpfRenderedShellHarnessTests
     {
         var evidence = WpfRenderHarness.CaptureTranscriptWorkspace(width, height, scale);
         Assert.True(File.Exists(evidence.ScreenshotPath));
-        Assert.Contains("142 passages", File.ReadAllText(evidence.AutomationTracePath));
+        Assert.Contains("143 speaker blocks", File.ReadAllText(evidence.AutomationTracePath));
         Assert.Contains("Escape cancels", File.ReadAllText(evidence.KeyboardTracePath));
+    }
+
+    [Fact]
+    public void Large_Single_Speaker_Block_Remains_Searchable()
+    {
+        WpfRenderHarness.VerifyLargeSpeakerBlock();
     }
 }

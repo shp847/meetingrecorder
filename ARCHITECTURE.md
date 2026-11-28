@@ -86,6 +86,7 @@ The MSI finish-launch path is intentionally not a raw second launch of `MeetingR
 - WAV merge and mix logic, including loopback-aware microphone bleed reduction, short-lag raw correlation checks, and a rolling `20 ms` envelope-history detector that can suppress delayed `80-400 ms` speaker pickup during published-audio preparation
   - transcript rendering
   - transcript document reading for the Meetings detail window, preferring structured JSON sidecars and falling back to the app-owned Markdown transcript format
+  - a speaker-block display projection retaining source segment offsets, plus revision-checked selected-text attribution transactions that stage reversible split and override records together, preserve prior corrections, and roll back JSON/Markdown replacement failures
   - publish helpers
   - Whisper model inspection, download, and import logic
 - `MeetingRecorder.ProcessingWorker`

@@ -711,11 +711,11 @@
                                      VerticalContentAlignment="Center"
                                      TextChanged="TranscriptSearchTextBox_OnTextChanged" />
                         </DockPanel>
-                        <TextBlock x:Name="TranscriptStatusTextBlock"
-                                   Grid.Column="1"
-                                   Margin="14,0,0,0"
-                                   VerticalAlignment="Center"
-                                   Style="{StaticResource DialogBodyTextStyle}" />
+                        <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="TranscriptStatusTextBlock" Style="{StaticResource DialogBodyTextStyle}" />
+                            <TextBlock x:Name="TranscriptSelectionTimeTextBlock" Style="{StaticResource DialogBodyTextStyle}"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
                     </Grid>
 
                     <ListBox x:Name="TranscriptSegmentsListBox"
@@ -725,6 +725,10 @@
                              BorderThickness="1"
                              Background="{StaticResource AppMutedCardBrush}"
                              HorizontalContentAlignment="Stretch"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.ScrollUnit="Pixel"
+                             ScrollViewer.CanContentScroll="True"
+                             SelectionChanged="TranscriptSegmentsListBox_OnSelectionChanged"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -768,9 +772,15 @@
                                                    Foreground="{StaticResource AppMutedTextBrush}"
                                                    Text="{Binding AttributionIndicator}" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2"
-                                               TextWrapping="Wrap"
-                                               Text="{Binding Text}" />
+                                    <RichTextBox x:Name="TranscriptBlockText" Grid.Column="2" IsReadOnly="True"
+                                                 IsInactiveSelectionHighlightEnabled="True"
+                                                 BorderThickness="0" Padding="0" Background="Transparent"
+                                                 VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled"
+                                                 AutomationProperties.Name="Transcript text; select words to correct the speaker"
+                                                 DataContextChanged="TranscriptBlockText_OnDataContextChanged"
+                                                 Loaded="TranscriptBlockText_OnLoaded"
+                                                 SelectionChanged="TranscriptBlockText_OnSelectionChanged"
+                                                 GotKeyboardFocus="TranscriptBlockText_OnGotKeyboardFocus" />
                                     <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
                                         <StackPanel.Style>
                                             <Style TargetType="StackPanel">
@@ -810,19 +820,27 @@
                                         </WrapPanel.Style>
                                         <ToggleButton x:Name="PassageEditToggle" Padding="7,2" IsEnabled="{Binding CanApplyParagraphOverride}"
                                                       Checked="InlinePassageToggle_OnChanged" Unchecked="InlinePassageToggle_OnChanged"
-                                                      Content="Correct passage speaker" />
+                                                      Content="Correct selected speaker" />
                                         <ToggleButton x:Name="PassageSplitToggle" Margin="6,0,0,0" Padding="7,2"
                                                       IsEnabled="{Binding CanSplitPassage}"
                                                       Checked="InlineSplitToggle_OnChanged" Unchecked="InlineSplitToggle_OnChanged"
                                                       Content="Split passage" />
                                         <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanUndoPassageSplit}"
-                                                Click="UndoPassageSplitButton_OnClick" Content="Undo split" />
+                                                Click="UndoPassageSplitButton_OnClick" Content="Undo split">
+                                            <Button.Style><Style TargetType="Button"><Style.Triggers><DataTrigger Binding="{Binding CanUndoPassageSplit}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                        </Button>
                                         <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanOpenSpeakerReview}"
-                                                Click="OpenSpeakerReviewFromTranscriptButton_OnClick" Content="Speaker details" />
+                                                Click="OpenSpeakerReviewFromTranscriptButton_OnClick" Content="Speaker details">
+                                            <Button.Style><Style TargetType="Button"><Style.Triggers><DataTrigger Binding="{Binding CanOpenSpeakerReview}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                        </Button>
                                         <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding HasManualAttributionOverride}"
-                                                Click="ViewOriginalAttributionButton_OnClick" Content="Original speaker" />
+                                                Click="ViewOriginalAttributionButton_OnClick" Content="Original speaker">
+                                            <Button.Style><Style TargetType="Button"><Style.Triggers><DataTrigger Binding="{Binding HasManualAttributionOverride}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                        </Button>
                                         <Button Margin="6,0,0,0" Padding="7,2" IsEnabled="{Binding CanRevertParagraphOverride}"
-                                                Click="RevertParagraphOverrideButton_OnClick" Content="Undo correction" />
+                                                Click="RevertParagraphOverrideButton_OnClick" Content="Undo correction">
+                                            <Button.Style><Style TargetType="Button"><Style.Triggers><DataTrigger Binding="{Binding CanRevertParagraphOverride}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                        </Button>
                                     </WrapPanel>
                                     <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
                                         <StackPanel.Style>
@@ -835,14 +853,14 @@
                                                 </Style.Triggers>
                                             </Style>
                                         </StackPanel.Style>
-                                        <TextBlock Text="Assign this passage to a speaker or enter a name" TextWrapping="Wrap" />
+                                        <TextBlock Text="Select words above, then choose a speaker or enter a name" TextWrapping="Wrap" />
                                         <WrapPanel Margin="0,4,0,0">
                                             <ComboBox x:Name="PassageSpeakerChoice" Width="170" DisplayMemberPath="Label"
                                                       ItemsSource="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}"
                                                       AutomationProperties.Name="Choose speaker for this passage" />
                                             <TextBox x:Name="PassageSpeakerName" Width="170" Margin="8,0,0,0"
                                                      AutomationProperties.Name="Or enter a speaker name for this passage" />
-                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Apply to passage"
+                                            <Button Margin="8,0,0,0" Padding="8,3" Content="Apply to selection"
                                                     Tag="{Binding ElementName=PassageSpeakerChoice}"
                                                     CommandParameter="{Binding Text, ElementName=PassageSpeakerName}"
                                                     Click="ApplyInlinePassageButton_OnClick" />
@@ -892,6 +910,9 @@
                        VerticalAlignment="Center"
                        Style="{StaticResource DialogBodyTextStyle}" />
             <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="UndoSelectionCorrectionButton" Margin="0,0,10,0" Visibility="Collapsed"
+                        Style="{StaticResource SecondaryActionButtonStyle}"
+                        Click="UndoSelectionCorrectionButton_OnClick" Content="Undo speaker correction" />
                 <Button x:Name="UndoInlineSpeakerNameButton"
                         Margin="0,0,10,0"
                         Visibility="Collapsed"

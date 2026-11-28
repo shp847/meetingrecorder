@@ -177,11 +177,15 @@ plain-language reason, confidence bucket, local-profile reference, evidence and
 learning readiness, and repair warning—never samples, embeddings, audio paths, or
 profile contents.
 
-Meeting details gives the transcript the main workspace. A speaker label opens
-an inline meeting-wide rename, while a selected passage supports a separate
-speaker correction and a reversible split. Splits preserve source text, IDs,
-and timing without inventing word timestamps. Generic labels are never treated
-as a shared identity. Meeting tools contains Speaker Review and maintenance;
+Meeting details gives the transcript the main workspace. Consecutive passages
+with the same resolved identity appear as one continuous speaker block. Search
+returns whole matching blocks and highlights matching text; each block shows its
+start and a selection reveals its source passage times. Selecting words supports
+a speaker correction across source passage boundaries, with one undo for the
+complete correction. A speaker label opens an inline meeting-wide rename.
+The original segments, splits, speaker assignments, and timestamps remain
+available beneath the grouped view. Generic labels are never treated as a shared
+identity. Meeting tools contains Speaker Review and maintenance;
 open drafts are preserved when background data changes. `Refresh Local
 Suggestions` checks local profiles; `Repair Speaker Labels` remains a separate
 Fix action. Neither route silently names a speaker.

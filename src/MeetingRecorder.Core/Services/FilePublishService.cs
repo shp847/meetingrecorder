@@ -221,7 +221,19 @@ public sealed class FilePublishService
                 }
             }
             if (priorSplits.Count > 0) next["priorTranscriptSplits"] = priorSplits;
-            if (prior.Count > 0 || priorSplits.Count > 0)
+            var priorSelections = new JsonArray();
+            foreach (var source in new[] { existing["priorSpeakerSelectionCorrections"], existing["speakerSelectionCorrections"] })
+            {
+                if (source is not JsonArray records) continue;
+                foreach (var record in records.OfType<JsonObject>())
+                {
+                    var id = record["id"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(id) && priorSelections.OfType<JsonObject>().Any(item => item["id"]?.GetValue<string>() == id)) continue;
+                    priorSelections.Add(record.DeepClone());
+                }
+            }
+            if (priorSelections.Count > 0) next["priorSpeakerSelectionCorrections"] = priorSelections;
+            if (prior.Count > 0 || priorSplits.Count > 0 || priorSelections.Count > 0)
                 File.WriteAllText(nextJsonPath, next.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

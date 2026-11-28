@@ -13,7 +13,7 @@ public sealed class TranscriptSpeakerReviewNavigationSourceTests
         Assert.Contains("OpenSpeakerReviewFromTranscriptButton_OnClick", xaml);
         Assert.Contains("CanOpenSpeakerReview", xaml);
         Assert.Contains("SpeakerReviewAutomationName", xaml);
-        Assert.Contains("string.Equals(row.SpeakerId, segment.SpeakerId", source);
+        Assert.Contains("string.Equals(row.SpeakerId, segment.InlineRenameSpeakerId ?? segment.SpeakerId", source);
         Assert.Contains("SpeakerLabelsDataGrid.ScrollIntoView(target);", source);
         Assert.Contains("SpeakerLabelsDataGrid.CurrentCell", source);
     }
